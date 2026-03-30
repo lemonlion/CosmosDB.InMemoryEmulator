@@ -1,9 +1,7 @@
-using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
 

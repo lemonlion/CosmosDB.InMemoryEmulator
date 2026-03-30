@@ -3,9 +3,7 @@ using System.Text;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using NSubstitute;
 using Xunit;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
@@ -1931,11 +1929,16 @@ public class FaultInjectionTests
             var count = Interlocked.Increment(ref callCount);
             if (count <= 2)
             {
-                return new HttpResponseMessage((HttpStatusCode)429)
+                var response = new HttpResponseMessage((HttpStatusCode)429)
                 {
                     Content = new StringContent("""{"message":"throttled"}""",
                         Encoding.UTF8, "application/json")
                 };
+                // Real Cosmos DB always includes x-ms-retry-after-ms on 429 responses.
+                // Without it the SDK uses its own backoff with random jitter, which can
+                // exceed MaxRetryWaitTimeOnRateLimitedRequests and cause flaky failures.
+                response.Headers.Add("x-ms-retry-after-ms", "10");
+                return response;
             }
 
             return null; // Allow normal processing after first 2 calls

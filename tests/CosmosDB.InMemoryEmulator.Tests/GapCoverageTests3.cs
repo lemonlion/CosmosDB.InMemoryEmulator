@@ -2,8 +2,6 @@ using System.Net;
 using System.Text;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
-using Microsoft.Azure.Cosmos.Linq;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
 
