@@ -1,0 +1,11 @@
+[*.cs]
+# Define static_fields symbol and pascal_case_style,
+# which are referenced but never defined in the root .editorconfig.
+# Without these, all private static readonly fields fall through to the
+# private_fields rule that requires an underscore prefix.
+
+dotnet_naming_symbols.static_fields.applicable_kinds = field
+dotnet_naming_symbols.static_fields.applicable_accessibilities = *
+dotnet_naming_symbols.static_fields.required_modifiers = static
+
+dotnet_naming_style.pascal_case_style.capitalization = pascal_case

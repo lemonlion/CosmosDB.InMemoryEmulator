@@ -1,0 +1,74 @@
+using System.Collections.Concurrent;
+using System.Linq;
+using System.Reflection;
+using CosmosDB.InMemoryEmulator.ProductionExtensions;
+
+namespace CosmosDB.InMemoryEmulator;
+
+/// <summary>
+/// Wires up the <see cref="CosmosOverridableFeedIteratorExtensions.FeedIteratorFactory"/> delegate
+/// so that <c>.ToFeedIteratorOverridable()</c> returns an <see cref="InMemoryFeedIterator{T}"/>
+/// backed by the LINQ <see cref="IQueryable{T}"/> rather than calling into the real Cosmos SDK.
+///
+/// <b>When is this needed?</b>
+/// If any production code uses <c>container.GetItemLinqQueryable&lt;T&gt;()</c> followed by
+/// <c>.ToFeedIteratorOverridable()</c>, this setup ensures those queries execute in-memory during
+/// component tests. Without this registration, <c>.ToFeedIteratorOverridable()</c> would fall
+/// through to <c>.ToFeedIterator()</c>, which requires a real Cosmos connection.
+///
+/// <b>Usage:</b>
+/// Call <c>InMemoryFeedIteratorSetup.Register()</c> once during test fixture initialisation, e.g.:
+/// <code>
+/// // In your InMemoryDatabaseClientFactory constructor or test setup:
+/// InMemoryFeedIteratorSetup.Register();
+/// </code>
+///
+/// <b>Important:</b>
+/// If production code uses <c>.ToFeedIterator()</c> directly (without the "Overridable" variant),
+/// it will bypass this factory and fail when running against an in-memory container. Always use
+/// <c>.ToFeedIteratorOverridable()</c> in production code to ensure testability.
+/// </summary>
+public static class InMemoryFeedIteratorSetup
+{
+    private static readonly MethodInfo CreateMethod = typeof(InMemoryFeedIteratorSetup)
+        .GetMethod(nameof(CreateInMemoryFeedIterator), BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly ConcurrentDictionary<Type, MethodInfo> MethodCache = new();
+
+    public static void Register()
+    {
+        Func<object, object> factory = queryable =>
+        {
+            var queryableType = queryable.GetType();
+            var elementType = queryableType
+                .GetInterfaces()
+                .Concat([queryableType])
+                .Where(interfaceType => interfaceType.IsGenericType && interfaceType.GetGenericTypeDefinition() == typeof(IQueryable<>))
+                .Select(interfaceType => interfaceType.GetGenericArguments()[0])
+                .FirstOrDefault();
+
+            if (elementType is null)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot create InMemoryFeedIterator: the queryable type '{queryableType.FullName}' " +
+                    "does not implement IQueryable<T>. Ensure you are passing a valid LINQ queryable.");
+            }
+
+            var method = MethodCache.GetOrAdd(elementType, type => CreateMethod.MakeGenericMethod(type));
+            return method.Invoke(null, [queryable])!;
+        };
+
+        CosmosOverridableFeedIteratorExtensions.FeedIteratorFactory = factory;
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory = factory;
+    }
+
+    public static void Deregister()
+    {
+        CosmosOverridableFeedIteratorExtensions.FeedIteratorFactory = null;
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory = null;
+        MethodCache.Clear();
+    }
+
+    private static InMemoryFeedIterator<T> CreateInMemoryFeedIterator<T>(IQueryable<T> queryable)
+        => new(queryable.AsEnumerable());
+}
