@@ -335,10 +335,18 @@ public sealed class FakeCosmosHandler : HttpMessageHandler
                 queryInfo["hasSelectValue"] = true;
             }
 
-            // Rewritten query — pass through the original SQL; the handler
-            // already knows how to simplify SDK-rewritten queries and handle
-            // both wrapped and unwrapped formats.
-            queryInfo["rewrittenQuery"] = sqlQuery;
+            // Rewritten query — on non-Windows platforms the SDK uses this verbatim.
+            // For ORDER BY queries the SDK expects documents wrapped with
+            // orderByItems + payload, so the rewritten query must use that form.
+            if (parsed.OrderByFields is { Length: > 0 })
+            {
+                queryInfo["rewrittenQuery"] = BuildOrderByRewrittenQuery(parsed);
+                queryInfo["hasSelectValue"] = true;
+            }
+            else
+            {
+                queryInfo["rewrittenQuery"] = sqlQuery;
+            }
         }
         else
         {
@@ -535,6 +543,43 @@ public sealed class FakeCosmosHandler : HttpMessageHandler
         }
 
         return documents;
+    }
+
+    /// <summary>
+    /// Builds the ORDER BY rewritten query in the format the SDK expects:
+    /// <c>SELECT VALUE {"orderByItems": [{"item": c.field}], "payload": c} FROM c ... ORDER BY c.field ASC</c>
+    /// </summary>
+    private static string BuildOrderByRewrittenQuery(CosmosSqlQuery parsed)
+    {
+        var alias = parsed.FromAlias ?? "c";
+
+        // Build orderByItems array: [{"item": c.field1}, {"item": c.field2}]
+        var orderByItemsParts = parsed.OrderByFields!
+            .Select(field => $"{{\"item\": {field.Field}}}")
+            .ToList();
+        var orderByItemsArray = $"[{string.Join(", ", orderByItemsParts)}]";
+
+        // Build SELECT VALUE {orderByItems, payload}
+        var sb = new StringBuilder("SELECT VALUE {\"orderByItems\": ");
+        sb.Append(orderByItemsArray);
+        sb.Append($", \"payload\": {alias}}}");
+
+        // FROM clause
+        sb.Append($" FROM {alias}");
+
+        // WHERE clause — reconstruct from the where expression if present
+        if (parsed.WhereExpr is not null)
+        {
+            sb.Append(" WHERE ");
+            sb.Append(CosmosSqlParser.ExprToString(parsed.WhereExpr));
+        }
+
+        // ORDER BY clause
+        var orderByStr = string.Join(", ", parsed.OrderByFields!.Select(field =>
+            $"{field.Field} {(field.Ascending ? "ASC" : "DESC")}"));
+        sb.Append($" ORDER BY {orderByStr}");
+
+        return sb.ToString();
     }
 
     private static string BuildFallbackOrderBySql(CosmosSqlQuery parsed)
