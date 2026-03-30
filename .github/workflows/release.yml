@@ -5,7 +5,43 @@ on:
     tags: [ 'v*' ]
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build
+        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
+
+      - name: Test
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests --configuration Release --no-build --verbosity normal
+
+  performance-tests:
+    runs-on: ubuntu-latest
+    env:
+      LOAD_TEST_RPS: 50
+      LOAD_TEST_DURATION_SECONDS: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build
+        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
+
+      - name: Performance Tests
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Performance --configuration Release --no-build --verbosity normal
+
   release:
+    needs: [test, performance-tests]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -24,9 +60,6 @@ jobs:
 
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release -p:Version=${{ steps.version.outputs.VERSION }}
-
-      - name: Test
-        run: dotnet test CosmosDB.InMemoryEmulator.sln --configuration Release --no-build --verbosity normal
 
       - name: Pack
         run: dotnet pack CosmosDB.InMemoryEmulator.sln --configuration Release --no-build --output ./nupkgs -p:Version=${{ steps.version.outputs.VERSION }}
