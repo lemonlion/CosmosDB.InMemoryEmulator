@@ -7,15 +7,18 @@ There are three ways to integrate CosmosDB.InMemoryEmulator into your tests. Eac
 | | DI Extensions (Recommended) | Direct `InMemoryContainer` | `FakeCosmosHandler` |
 |---|---|---|---|
 | **Production code changes** | None | One token per LINQ call site¹ | **None** |
-| **Query execution** | In-memory SQL parser | LINQ-to-Objects | Full SQL parser via HTTP |
+| **SQL queries** | `CosmosSqlParser` | `CosmosSqlParser` | `CosmosSqlParser` (same engine) |
+| **LINQ queries** | LINQ-to-Objects | LINQ-to-Objects | SDK translates LINQ → SQL → `CosmosSqlParser`² |
 | **Setup complexity** | **Minimal** | Minimal | Moderate |
 | **Fault injection** | No | No | Yes (429s, 503s, timeouts) |
 | **Pagination fidelity** | Basic | Basic | Realistic continuation tokens |
 | **Query logging** | No | No | Yes |
-| **SDK fidelity** | Medium | Lower (bypasses SDK pipeline) | **Highest** (exercises full SDK HTTP pipeline) |
+| **SDK fidelity** | Medium | Lower (bypasses SDK pipeline) | **Highest** (exercises full SDK pipeline) |
 | **Best for** | **Most projects** | Unit tests without DI | Acceptance tests, fault injection |
 
 ¹ `.ToFeedIterator()` → `.ToFeedIteratorOverridable()`. Not needed if you don't use LINQ `.ToFeedIterator()`.
+
+² All approaches run entirely in-process — nothing goes over the network. With `FakeCosmosHandler`, the SDK's HTTP pipeline executes but the handler intercepts requests before they leave the process.
 
 ---
 
