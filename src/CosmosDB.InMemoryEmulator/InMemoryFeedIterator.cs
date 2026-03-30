@@ -11,6 +11,12 @@ namespace CosmosDB.InMemoryEmulator;
 
 #nullable disable
 
+/// <summary>
+/// In-memory implementation of <see cref="FeedIterator{T}"/> that pages through a
+/// pre-computed list of items. Supports pagination via <c>maxItemCount</c>,
+/// continuation tokens (offset-based), and deferred evaluation via factory delegates.
+/// </summary>
+/// <typeparam name="T">The item type returned by each page.</typeparam>
 public sealed class InMemoryFeedIterator<T> : FeedIterator<T>
 {
     private IReadOnlyList<T> _items;
@@ -18,6 +24,12 @@ public sealed class InMemoryFeedIterator<T> : FeedIterator<T>
     private readonly int? _maxItemCount;
     private int _offset;
 
+    /// <summary>
+    /// Creates a feed iterator from a pre-computed list of items.
+    /// </summary>
+    /// <param name="items">The complete list of items to paginate.</param>
+    /// <param name="maxItemCount">Maximum items per page. If null, all items are returned in one page.</param>
+    /// <param name="initialOffset">The starting offset (for continuation token support).</param>
     public InMemoryFeedIterator(IReadOnlyList<T> items, int? maxItemCount = null, int initialOffset = 0)
     {
         _items = items;
@@ -25,12 +37,23 @@ public sealed class InMemoryFeedIterator<T> : FeedIterator<T>
         _offset = initialOffset;
     }
 
+    /// <summary>
+    /// Creates a feed iterator from an enumerable source, materialising it eagerly.
+    /// </summary>
+    /// <param name="source">The items to paginate.</param>
+    /// <param name="maxItemCount">Maximum items per page.</param>
     public InMemoryFeedIterator(IEnumerable<T> source, int? maxItemCount = null)
     {
         _items = Materialize(source);
         _maxItemCount = maxItemCount;
     }
 
+    /// <summary>
+    /// Creates a feed iterator with deferred evaluation. The factory is called
+    /// on the first access to produce the list of items.
+    /// </summary>
+    /// <param name="factory">A factory that produces the items on first access.</param>
+    /// <param name="maxItemCount">Maximum items per page.</param>
     public InMemoryFeedIterator(Func<IReadOnlyList<T>> factory, int? maxItemCount = null)
     {
         _factory = factory;

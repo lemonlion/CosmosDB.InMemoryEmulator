@@ -10,23 +10,50 @@ using NSubstitute;
 
 namespace CosmosDB.InMemoryEmulator;
 
+/// <summary>
+/// In-memory implementation of <see cref="Database"/> for testing.
+/// Manages a collection of <see cref="InMemoryContainer"/> instances.
+/// Containers are created lazily via <see cref="GetContainer"/> or explicitly
+/// via <see cref="CreateContainerAsync"/> / <see cref="CreateContainerIfNotExistsAsync"/>.
+/// </summary>
+/// <remarks>
+/// Throughput operations return synthetic values (400 RU/s by default).
+/// User and client encryption key operations throw <see cref="System.NotImplementedException"/>.
+/// </remarks>
 public sealed class InMemoryDatabase : Database
 {
     private readonly ConcurrentDictionary<string, InMemoryContainer> _containers = new();
     private readonly InMemoryCosmosClient _client;
 
+    /// <summary>
+    /// Creates a new <see cref="InMemoryDatabase"/> with no parent client.
+    /// </summary>
+    /// <param name="id">The database identifier.</param>
     public InMemoryDatabase(string id) : this(id, null) { }
 
+    /// <summary>
+    /// Creates a new <see cref="InMemoryDatabase"/> owned by the given <paramref name="client"/>.
+    /// </summary>
+    /// <param name="id">The database identifier.</param>
+    /// <param name="client">The owning <see cref="InMemoryCosmosClient"/>, or null.</param>
     public InMemoryDatabase(string id, InMemoryCosmosClient client)
     {
         Id = id;
         _client = client;
     }
 
+    /// <summary>The database identifier.</summary>
     public override string Id { get; }
 
+    /// <summary>The owning <see cref="InMemoryCosmosClient"/>, or null.</summary>
     public override CosmosClient Client => _client;
 
+    /// <summary>
+    /// Gets or creates an <see cref="InMemoryContainer"/> with the given identifier and partition key path.
+    /// Used internally by DI extensions and <see cref="GetContainer"/>.
+    /// </summary>
+    /// <param name="containerId">The container identifier.</param>
+    /// <param name="partitionKeyPath">The JSON path to the partition key field (e.g. <c>/partitionKey</c>).</param>
     internal InMemoryContainer GetOrCreateContainer(string containerId, string partitionKeyPath = "/id")
     {
         return _containers.GetOrAdd(containerId, name => new InMemoryContainer(name, partitionKeyPath));

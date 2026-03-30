@@ -35,6 +35,12 @@ public static class InMemoryFeedIteratorSetup
 
     private static readonly ConcurrentDictionary<Type, MethodInfo> MethodCache = new();
 
+    /// <summary>
+    /// Registers the in-memory feed iterator factory so that
+    /// <c>.ToFeedIteratorOverridable()</c> returns an <see cref="InMemoryFeedIterator{T}"/>
+    /// backed by LINQ-to-Objects rather than requiring a real Cosmos connection.
+    /// Call this once during test fixture initialisation.
+    /// </summary>
     public static void Register()
     {
         Func<object, object> factory = queryable =>
@@ -62,6 +68,11 @@ public static class InMemoryFeedIteratorSetup
         CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory = factory;
     }
 
+    /// <summary>
+    /// Clears both the AsyncLocal and static fallback factories, reverting
+    /// <c>.ToFeedIteratorOverridable()</c> to its default production behaviour
+    /// (delegating to the real Cosmos SDK's <c>.ToFeedIterator()</c>).
+    /// </summary>
     public static void Deregister()
     {
         CosmosOverridableFeedIteratorExtensions.FeedIteratorFactory = null;

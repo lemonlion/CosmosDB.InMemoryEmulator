@@ -15,6 +15,24 @@ using NSubstitute;
 
 namespace CosmosDB.InMemoryEmulator;
 
+/// <summary>
+/// In-memory implementation of <see cref="Container"/> for testing. Supports the full
+/// breadth of the Cosmos DB SDK surface area: CRUD, SQL queries (40+ built-in functions),
+/// LINQ, transactional batches, change feed, patch operations, ETags, TTL, ReadMany,
+/// stream APIs, stored procedures, UDFs, state persistence, and more.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Create an instance directly for simple unit tests, or use the DI extension methods
+/// (<see cref="ServiceCollectionExtensions"/>) for integration tests.
+/// For HTTP-level interception with zero production code changes, wrap this container
+/// in a <see cref="FakeCosmosHandler"/>.
+/// </para>
+/// <para>
+/// Thread-safe for concurrent reads and writes. All data is stored in
+/// <see cref="ConcurrentDictionary{TKey,TValue}"/> collections keyed by (id, partitionKey).
+/// </para>
+/// </remarks>
 public sealed class InMemoryContainer : Container
 {
     private static readonly JsonSerializerSettings JsonSettings = new()
@@ -45,6 +63,11 @@ public sealed class InMemoryContainer : Container
     private readonly Dictionary<string, Func<object[], object>> _userDefinedFunctions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<PartitionKey, dynamic[], string>> _storedProcedures = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Creates a new <see cref="InMemoryContainer"/> with a single partition key path.
+    /// </summary>
+    /// <param name="id">The container identifier. Defaults to <c>"in-memory-container"</c>.</param>
+    /// <param name="partitionKeyPath">The JSON path to the partition key field (e.g. <c>/partitionKey</c>). Defaults to <c>/id</c>.</param>
     public InMemoryContainer(string id = "in-memory-container", string partitionKeyPath = "/id")
     {
         Id = id;
@@ -53,6 +76,11 @@ public sealed class InMemoryContainer : Container
         _scripts = ConfigureScripts();
     }
 
+    /// <summary>
+    /// Creates a new <see cref="InMemoryContainer"/> with composite (hierarchical) partition key paths.
+    /// </summary>
+    /// <param name="id">The container identifier.</param>
+    /// <param name="partitionKeyPaths">One or more JSON paths for the composite partition key.</param>
     public InMemoryContainer(string id, IReadOnlyList<string> partitionKeyPaths)
     {
         Id = id;
@@ -63,17 +91,33 @@ public sealed class InMemoryContainer : Container
 
     // ─── Properties ───────────────────────────────────────────────────────────
 
+    /// <summary>The container identifier.</summary>
     public override string Id { get; } = default!;
+
+    /// <summary>Returns a stubbed <see cref="Microsoft.Azure.Cosmos.Database"/> instance.</summary>
     public override Database Database => Substitute.For<Database>();
+
+    /// <summary>Returns a stubbed <see cref="Microsoft.Azure.Cosmos.Conflicts"/> instance.</summary>
     public override Conflicts Conflicts => Substitute.For<Conflicts>();
+
+    /// <summary>The <see cref="Microsoft.Azure.Cosmos.Scripts.Scripts"/> instance for executing stored procedures and UDFs.</summary>
     public override Scripts Scripts => _scripts;
 
+    /// <summary>
+    /// Container-level default TTL in seconds. When set, items expire after this duration
+    /// unless overridden by a per-item <c>_ttl</c> property. Set to <c>null</c> to disable.
+    /// Items are lazily evicted on the next read attempt.
+    /// </summary>
     public int? DefaultTimeToLive { get; set; }
 
+    /// <summary>The partition key path(s) for this container.</summary>
     public IReadOnlyList<string> PartitionKeyPaths { get; }
 
     // ─── Public helpers for test infrastructure ───────────────────────────────
 
+    /// <summary>
+    /// Removes all items, ETags, timestamps, and change feed entries from the container.
+    /// </summary>
     public void ClearItems()
     {
         _items.Clear();
@@ -82,6 +126,7 @@ public sealed class InMemoryContainer : Container
         lock (_changeFeedLock) { _changeFeed.Clear(); }
     }
 
+    /// <summary>Returns the number of items currently stored in the container.</summary>
     public int ItemCount => _items.Count;
 
     // ─── State persistence ────────────────────────────────────────────────────
@@ -138,6 +183,10 @@ public sealed class InMemoryContainer : Container
 
     // ─── IndexingPolicy ───────────────────────────────────────────────────────
 
+    /// <summary>
+    /// The indexing policy for this container. Accepted and stored but does not affect
+    /// query performance — all queries scan all items regardless of indexing settings.
+    /// </summary>
     public IndexingPolicy IndexingPolicy { get; set; } = new()
     {
         Automatic = true,

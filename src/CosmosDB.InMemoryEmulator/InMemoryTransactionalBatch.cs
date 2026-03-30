@@ -7,6 +7,20 @@ using NSubstitute;
 
 namespace CosmosDB.InMemoryEmulator;
 
+/// <summary>
+/// In-memory implementation of <see cref="TransactionalBatch"/> for testing.
+/// Executes batch operations atomically against an <see cref="InMemoryContainer"/>
+/// with automatic rollback on failure. Supports <c>CreateItem</c>, <c>UpsertItem</c>,
+/// <c>ReplaceItem</c>, <c>DeleteItem</c>, <c>ReadItem</c>, <c>PatchItem</c>,
+/// and their stream variants.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Enforces Cosmos DB batch limits: max 100 operations and 2 MB total payload.
+/// On failure, all preceding operations are rolled back and marked as
+/// <see cref="HttpStatusCode.FailedDependency"/>, matching real Cosmos DB behaviour.
+/// </para>
+/// </remarks>
 public sealed class InMemoryTransactionalBatch : TransactionalBatch
 {
     private static readonly JsonSerializerSettings JsonSettings = new()
