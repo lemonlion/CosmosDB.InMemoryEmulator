@@ -20,7 +20,7 @@ dotnet add package CosmosDB.InMemoryEmulator.ProductionExtensions
 
 This package contains only the `ToFeedIteratorOverridable()` extension method — no test infrastructure, no NSubstitute, no Superpower parser. It has a single dependency on `Microsoft.Azure.Cosmos`.
 
-> **Note:** If you use the `FakeCosmosHandler` approach (recommended), you don't need this package at all — production code stays completely untouched.
+> **Note:** If you use the [`FakeCosmosHandler` approach](integration-approaches.md#fakecosmoshandler-high-fidelity), you don't need this package at all — production code stays completely untouched.
 
 ### Requirements
 
@@ -102,7 +102,7 @@ public class OrderServiceTests
 
 ## Next Steps
 
-- [Choose an integration approach](integration-approaches.md) — understand the trade-offs between direct usage, FakeCosmosHandler, and DI extensions
+- [Choose an integration approach](integration-approaches.md) — understand the trade-offs between DI extensions, direct usage, and FakeCosmosHandler
 - [SQL query support](sql-queries.md) — full reference for the built-in query engine
 - [Dependency injection guide](dependency-injection.md) — step-by-step DI integration
 - [API reference](api-reference.md) — complete class and method reference

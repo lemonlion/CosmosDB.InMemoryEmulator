@@ -89,6 +89,7 @@ var page = await iterator.ReadNextAsync();
 | **[Getting Started](docs/getting-started.md)** | Installation, quick start, first test |
 | **[Integration Approaches](docs/integration-approaches.md)** | Detailed comparison of all three approaches with pros/cons |
 | **[Dependency Injection](docs/dependency-injection.md)** | Step-by-step DI setup for all patterns |
+| **[Feed Iterator Usage](docs/feed-iterator-usage-guide.md)** | Making `.ToFeedIterator()` work — `FakeCosmosHandler` vs `ToFeedIteratorOverridable()` |
 | **[SQL Queries](docs/sql-queries.md)** | Full SQL reference — clauses, operators, 40+ functions |
 | **[Features](docs/features.md)** | Patch, batches, change feed, ETags, TTL, stored procs, state persistence |
 | **[API Reference](docs/api-reference.md)** | Complete class and method reference |

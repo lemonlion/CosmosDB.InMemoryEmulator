@@ -4,22 +4,58 @@ There are three ways to integrate CosmosDB.InMemoryEmulator into your tests. Eac
 
 ## At a Glance
 
-| | Approach 1: Direct `InMemoryContainer` | Approach 2: `FakeCosmosHandler` | Approach 3: DI Extensions |
+| | DI Extensions (Recommended) | Direct `InMemoryContainer` | `FakeCosmosHandler` |
 |---|---|---|---|
-| **Production code changes** | One token per LINQ call site¹ | **None** | None |
-| **Query execution** | LINQ-to-Objects | Full SQL parser via HTTP | In-memory SQL parser |
-| **Setup complexity** | Minimal | Moderate | Minimal |
-| **Fault injection** | No | Yes (429s, 503s, timeouts) | No |
-| **Pagination fidelity** | Basic | Realistic continuation tokens | Basic |
-| **Query logging** | No | Yes | No |
-| **SDK fidelity** | Lower (bypasses SDK pipeline) | **Highest** (exercises full SDK HTTP pipeline) | Medium |
-| **Best for** | Unit tests | Component/acceptance tests, CI | Integration tests with DI |
+| **Production code changes** | None | One token per LINQ call site¹ | **None** |
+| **Query execution** | In-memory SQL parser | LINQ-to-Objects | Full SQL parser via HTTP |
+| **Setup complexity** | **Minimal** | Minimal | Moderate |
+| **Fault injection** | No | No | Yes (429s, 503s, timeouts) |
+| **Pagination fidelity** | Basic | Basic | Realistic continuation tokens |
+| **Query logging** | No | No | Yes |
+| **SDK fidelity** | Medium | Lower (bypasses SDK pipeline) | **Highest** (exercises full SDK HTTP pipeline) |
+| **Best for** | **Most projects** | Unit tests without DI | Acceptance tests, fault injection |
 
 ¹ `.ToFeedIterator()` → `.ToFeedIteratorOverridable()`. Not needed if you don't use LINQ `.ToFeedIterator()`.
 
 ---
 
-## Approach 1: Direct `InMemoryContainer` Usage
+## DI Extensions (Recommended)
+
+**Start here.** Covers the vast majority of test scenarios with one line of setup. Full guide: [Dependency Injection](dependency-injection.md).
+
+### Quick Example
+
+```csharp
+// In your WebApplicationFactory or test setup
+builder.ConfigureTestServices(services =>
+{
+    services.UseInMemoryCosmosDB();
+});
+```
+
+Existing `CosmosClient` and `Container` registrations are automatically replaced with in-memory equivalents. See the [DI guide](dependency-injection.md) for zero-config auto-detect, explicit container configuration, typed clients, and more.
+
+### Pros
+
+- ✅ One-liner setup
+- ✅ Zero-config auto-detect of existing container registrations
+- ✅ No production code changes (except `.ToFeedIteratorOverridable()` for LINQ)
+- ✅ Automatically matches existing service lifetimes
+
+### Cons
+
+- ❌ Requires DI in the system under test
+- ❌ For LINQ `.ToFeedIterator()` support, needs `.ToFeedIteratorOverridable()` in production code
+
+### When to Use
+
+- Integration tests with `WebApplicationFactory`
+- Any system that uses DI for Cosmos registrations
+- **Default choice for most projects**
+
+---
+
+## Direct `InMemoryContainer`
 
 **Best for:** Unit tests, simple component tests, testing repository classes directly.
 
@@ -96,9 +132,9 @@ This requires adding the `CosmosDB.InMemoryEmulator.ProductionExtensions` NuGet 
 
 ---
 
-## Approach 2: `FakeCosmosHandler` (Recommended for High Fidelity)
+## `FakeCosmosHandler` (High Fidelity)
 
-**Best for:** Component tests, acceptance tests, CI pipelines, testing retry policies.
+**Best for:** Acceptance tests, CI pipelines where you need maximum confidence, testing retry policies.
 
 ### How It Works
 
@@ -257,62 +293,27 @@ foreach (var query in handler.QueryLog)
 
 ---
 
-## Approach 3: DI Extension Methods
-
-**Best for:** Integration tests using `WebApplicationFactory` or any DI-based test host.
-
-### How It Works
-
-Extension methods on `IServiceCollection` replace existing `CosmosClient` and/or `Container` registrations with in-memory equivalents. Call them from `ConfigureTestServices` in your `WebApplicationFactory` or equivalent test setup.
-
-### Full guide: [Dependency Injection](dependency-injection.md)
-
-### Quick Example
-
-```csharp
-// In your WebApplicationFactory or test setup
-services.UseInMemoryCosmosDB(options => options
-    .AddContainer("orders", "/customerId")
-    .AddContainer("customers", "/id"));
-```
-
-### Pros
-
-- ✅ No production code changes (except services needing `.ToFeedIteratorOverridable()` for LINQ)
-- ✅ One-liner setup in `ConfigureTestServices`
-- ✅ Automatically matches existing service lifetimes (singleton/scoped/transient)
-- ✅ Configuration callbacks for seeding data
-
-### Cons
-
-- ❌ Requires DI in the system under test
-- ❌ For LINQ `.ToFeedIterator()` support, needs `.ToFeedIteratorOverridable()` in production code
-
-### When to Use
-
-- Integration tests with `WebApplicationFactory`
-- Systems that already use DI for Cosmos
-
 ---
 
 ## Combining Approaches
 
 Approaches are **complementary, not mutually exclusive**. A common pattern:
 
-1. **Unit tests** → Approach 1 (direct `InMemoryContainer`)
-2. **Integration tests** → Approach 3 (DI extensions)
-3. **Acceptance tests** → Approach 2 (`FakeCosmosHandler` for full fidelity + fault injection)
+1. **Integration tests** → DI Extensions (covers most scenarios)
+2. **Unit tests** → Direct `InMemoryContainer` (no DI overhead)
+3. **Acceptance tests** → `FakeCosmosHandler` (full fidelity + fault injection)
 
 ## Decision Flowchart
 
 ```
-Do you need fault injection / query logging?
-├── Yes → Approach 2 (FakeCosmosHandler)
-└── No
-    ├── Does the system under test use DI?
-    │   ├── Yes → Approach 3 (DI Extensions)
-    │   └── No → Approach 1 (Direct InMemoryContainer)
-    └── Does production code use .ToFeedIterator()?
-        ├── Yes, and you can't change it → Approach 2 (FakeCosmosHandler)
-        └── Yes, and you can change it → Approach 1 with .ToFeedIteratorOverridable()
+Does the system under test use DI?
+├── Yes → DI Extensions (UseInMemoryCosmosDB) ← start here
+└── No → Direct InMemoryContainer
+
+Do you also need fault injection / query logging?
+├── Yes → FakeCosmosHandler
+└── No → stick with the above
+
+Does production code use .ToFeedIterator() and you can't change it?
+└── Yes → FakeCosmosHandler (no production code changes needed)
 ```

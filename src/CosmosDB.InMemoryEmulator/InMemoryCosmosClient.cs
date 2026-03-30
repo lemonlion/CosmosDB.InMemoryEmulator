@@ -27,10 +27,10 @@ namespace CosmosDB.InMemoryEmulator;
 /// In test projects, you can create one-liner subclasses that shadow production typed clients:
 /// <code>
 /// // Production code (unchanged):
-/// public class BiometricCosmosClient : CosmosClient { ... }
+/// public class EmployeeCosmosClient : CosmosClient { ... }
 ///
 /// // Test project shadow type:
-/// public class BiometricCosmosClient : InMemoryCosmosClient { }
+/// public class EmployeeCosmosClient : InMemoryCosmosClient { }
 /// </code>
 /// </para>
 /// <para>

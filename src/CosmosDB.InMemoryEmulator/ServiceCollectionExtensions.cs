@@ -135,12 +135,12 @@ public static class ServiceCollectionExtensions
     /// <typeparamref name="TClient"/> must extend <see cref="InMemoryCosmosClient"/>.
     /// In your <b>test project</b>, create a one-line subclass that shadows the production type:
     /// <code>
-    /// // In test project — shadows the production BiometricCosmosClient
-    /// public class BiometricCosmosClient : InMemoryCosmosClient { }
+    /// // In test project — shadows the production EmployeeCosmosClient
+    /// public class EmployeeCosmosClient : InMemoryCosmosClient { }
     /// </code>
     /// No changes to production code are needed. The test subclass must be in the same namespace
     /// or use a <c>using</c> alias so that DI resolves the test type for repos that depend on
-    /// <c>BiometricCosmosClient</c>.
+    /// <c>EmployeeCosmosClient</c>.
     /// </para>
     /// <para>
     /// Does NOT register <see cref="Container"/> in DI — Pattern 2 repos call

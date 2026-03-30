@@ -92,6 +92,23 @@ services.UseInMemoryCosmosDB(options => options
 
 Each container is registered as a separate `Container` service descriptor. If your production code resolves multiple `Container` instances, they'll each get a distinct in-memory container.
 
+> **Important — explicit mode is all-or-nothing.** As soon as you call `AddContainer()`, *all* existing `Container` registrations are removed and only the containers you explicitly add are registered. If your production code registers three containers but you only call `AddContainer()` for one of them, the other two will not be available via DI.
+>
+> If you only need a custom partition key path on one container and are happy with `/id` for the rest, consider zero-config mode and pre-configuring just the one container via `OnClientCreated`:
+>
+> ```csharp
+> services.UseInMemoryCosmosDB(options =>
+> {
+>     options.OnClientCreated = client =>
+>     {
+>         // Pre-create "orders" with a specific partition key path;
+>         // all other containers auto-created with /id when resolved
+>         var db = (InMemoryDatabase)client.GetDatabase("MyDatabase");
+>         db.GetOrCreateContainer("orders", "/customerId");
+>     };
+> });
+> ```
+
 ---
 
 ## Pattern 2: Typed CosmosClient Subclasses
@@ -102,25 +119,25 @@ Each container is registered as a separate `Container` service descriptor. If yo
 
 ```csharp
 // Production typed clients
-public class BiometricCosmosClient : CosmosClient
+public class EmployeeCosmosClient : CosmosClient
 {
-    public BiometricCosmosClient(string connectionString) : base(connectionString) { }
+    public EmployeeCosmosClient(string connectionString) : base(connectionString) { }
 }
 
-public class OOBCosmosClient : CosmosClient
+public class CustomerCosmosClient : CosmosClient
 {
-    public OOBCosmosClient(string connectionString) : base(connectionString) { }
+    public CustomerCosmosClient(string connectionString) : base(connectionString) { }
 }
 
 // Registration
-services.AddSingleton(new BiometricCosmosClient(config["Biometric:ConnectionString"]));
-services.AddSingleton(new OOBCosmosClient(config["OOB:ConnectionString"]));
+services.AddSingleton(new EmployeeCosmosClient(config["Biometric:ConnectionString"]));
+services.AddSingleton(new CustomerCosmosClient(config["OOB:ConnectionString"]));
 
 // Repos resolve the typed client
 public class BiometricRepository
 {
-    private readonly BiometricCosmosClient _client;
-    public BiometricRepository(BiometricCosmosClient client) => _client = client;
+    private readonly EmployeeCosmosClient _client;
+    public BiometricRepository(EmployeeCosmosClient client) => _client = client;
 }
 ```
 
@@ -132,8 +149,8 @@ public class BiometricRepository
 // In your test project — shadows the production type
 namespace MyApp.Cosmos;  // Same namespace as production
 
-public class BiometricCosmosClient : InMemoryCosmosClient { }
-public class OOBCosmosClient : InMemoryCosmosClient { }
+public class EmployeeCosmosClient : InMemoryCosmosClient { }
+public class CustomerCosmosClient : InMemoryCosmosClient { }
 ```
 
 > **Important:** These must be in the same namespace as the production types, or use `using` aliases, so that DI resolves the test type for repos that depend on the typed client.
@@ -143,27 +160,27 @@ public class OOBCosmosClient : InMemoryCosmosClient { }
 ```csharp
 builder.ConfigureTestServices(services =>
 {
-    services.UseInMemoryCosmosDB<BiometricCosmosClient>(options => options
-        .AddContainer("biometric-data", "/userId"));
+    services.UseInMemoryCosmosDB<EmployeeCosmosClient>(options => options
+        .AddContainer("employee-data", "/employeeId"));
 
-    services.UseInMemoryCosmosDB<OOBCosmosClient>(options => options
-        .AddContainer("oob-messages", "/channelId"));
+    services.UseInMemoryCosmosDB<CustomerCosmosClient>(options => options
+        .AddContainer("customer-stuff", "/customerId"));
 });
 ```
 
 ### What Happens
 
-1. The existing `BiometricCosmosClient` registration is removed
-2. A new `BiometricCosmosClient` (which is `InMemoryCosmosClient`) is registered, preserving lifetime
+1. The existing `EmployeeCosmosClient` registration is removed
+2. A new `EmployeeCosmosClient` (which is `InMemoryCosmosClient`) is registered, preserving lifetime
 3. No `Container` or base `CosmosClient` is registered — Pattern 2 repos call `client.GetContainer()` directly
-4. Repos that depend on `BiometricCosmosClient` resolve the in-memory version
+4. Repos that depend on `EmployeeCosmosClient` resolve the in-memory version
 
 ### Why Shadow Types Are Needed
 
 The generic method requires `TClient : InMemoryCosmosClient, new()`. This is because:
 
 - `CosmosClient` has `internal virtual` methods that prevent runtime proxying (NSubstitute/Castle.Core)
-- .NET DI type-checks at resolution time — you can't register `InMemoryCosmosClient` as `BiometricCosmosClient`
+- .NET DI type-checks at resolution time — you can't register `InMemoryCosmosClient` as `EmployeeCosmosClient`
 
 The one-liner shadow type is the only approach that works. It goes in the **test project only** — production code is never changed.
 
@@ -343,7 +360,7 @@ public class OrderApiFactory : WebApplicationFactory<Program>
 
 Your production code uses `.ToFeedIterator()` which requires the real Cosmos SDK LINQ provider. Two fixes:
 
-1. **Recommended:** Switch to [Approach 2 (FakeCosmosHandler)](integration-approaches.md#approach-2-fakecosmoshandler-recommended-for-high-fidelity) — no code changes needed
+1. **Recommended:** Switch to [`FakeCosmosHandler`](integration-approaches.md#fakecosmoshandler-high-fidelity) — no code changes needed
 2. Change `.ToFeedIterator()` to `.ToFeedIteratorOverridable()` in production code and add `CosmosDB.InMemoryEmulator.ProductionExtensions` to your production project
 
 ### Container not found / empty results
