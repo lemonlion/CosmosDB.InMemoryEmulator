@@ -6,6 +6,20 @@ Detailed reference for all emulator features beyond basic CRUD and queries.
 
 Supports all five Cosmos DB patch operation types with deep nested path support.
 
+### Atomicity
+
+Patch operations are atomic and executed sequentially, matching real Cosmos DB. If any operation in a batch fails, none of the operations are applied — the item remains unchanged.
+
+```csharp
+// If the increment fails (e.g., /name is a string), the set is also rolled back
+await container.PatchItemAsync<MyDocument>("id", new PartitionKey("pk"),
+    [
+        PatchOperation.Set("/name", "Changed"),
+        PatchOperation.Increment("/name", 1),  // Fails — name is now a string
+    ]);
+// Item is unchanged — atomicity preserved
+```
+
 ### Operation Types
 
 | Operation | Description | Example |
@@ -65,6 +79,34 @@ await container.PatchItemAsync<MyDocument>(
 var response = await container.PatchItemStreamAsync(
     "id", new PartitionKey("pk"), patchOps);
 // Returns ResponseMessage with StatusCode instead of throwing
+```
+
+---
+
+## System Metadata Properties
+
+All stored items are automatically enriched with system metadata properties, matching real Cosmos DB behaviour:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `_ts` | `long` | Unix epoch timestamp (seconds) of the last write |
+| `_etag` | `string` | Entity tag for optimistic concurrency |
+
+These properties are updated on every Create, Upsert, Replace, and Patch operation, and are available when reading items back:
+
+```csharp
+// Read back system properties via JObject
+var response = await container.ReadItemAsync<JObject>("id", new PartitionKey("pk"));
+long timestamp = response.Resource["_ts"].Value<long>();
+string etag = response.Resource["_etag"].ToString();
+
+// Or map to your own type
+public class MyDocument
+{
+    [JsonProperty("id")] public string Id { get; set; }
+    [JsonProperty("_ts")] public long Timestamp { get; set; }
+    [JsonProperty("_etag")] public string ETag { get; set; }
+}
 ```
 
 ---

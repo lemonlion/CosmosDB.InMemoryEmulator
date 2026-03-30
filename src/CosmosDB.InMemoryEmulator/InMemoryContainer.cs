@@ -158,9 +158,10 @@ public sealed class InMemoryContainer : Container
                 var jObj = JsonParseHelpers.ParseJson(itemJson);
                 var pk = ExtractPartitionKeyValue(null, jObj);
                 var key = (id, pk);
-                _items[key] = itemJson;
-                _etags[key] = Guid.NewGuid().ToString();
+                var importEtag = $"\"{ Guid.NewGuid()}\"";
+                _etags[key] = importEtag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
+                _items[key] = EnrichWithSystemProperties(itemJson, importEtag, _timestamps[key]);
             }
         }
     }
@@ -255,7 +256,8 @@ public sealed class InMemoryContainer : Container
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        RecordChangeFeed(itemId, pk, json);
+        _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+        RecordChangeFeed(itemId, pk, _items[key]);
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         return Task.FromResult(CreateItemResponse(item, HttpStatusCode.Created, etag, suppressContent));
     }
@@ -301,11 +303,11 @@ public sealed class InMemoryContainer : Container
 
         CheckIfMatch(requestOptions, key);
         var existed = _items.ContainsKey(key);
-        _items[key] = json;
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        RecordChangeFeed(itemId, pk, json);
+        _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+        RecordChangeFeed(itemId, pk, _items[key]);
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         return Task.FromResult(CreateItemResponse(item, existed ? HttpStatusCode.OK : HttpStatusCode.Created, etag, suppressContent));
     }
@@ -328,11 +330,11 @@ public sealed class InMemoryContainer : Container
         }
 
         CheckIfMatch(requestOptions, key);
-        _items[key] = json;
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        RecordChangeFeed(id, pk, json);
+        _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+        RecordChangeFeed(id, pk, _items[key]);
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         return Task.FromResult(CreateItemResponse(item, HttpStatusCode.OK, etag, suppressContent));
     }
@@ -403,13 +405,15 @@ public sealed class InMemoryContainer : Container
         ApplyPatchOperations(jObj, patchOperations);
         var updatedJson = jObj.ToString(Formatting.None);
         ValidateDocumentSize(updatedJson);
-        _items[key] = updatedJson;
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        RecordChangeFeed(id, pk, updatedJson);
-        var result = JsonConvert.DeserializeObject<T>(updatedJson, JsonSettings);
-        return Task.FromResult(CreateItemResponse(result, HttpStatusCode.OK, etag));
+        var enrichedJson = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
+        _items[key] = enrichedJson;
+        RecordChangeFeed(id, pk, enrichedJson);
+        var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
+        var result = JsonConvert.DeserializeObject<T>(enrichedJson, JsonSettings);
+        return Task.FromResult(CreateItemResponse(result, HttpStatusCode.OK, etag, suppressContent));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -436,8 +440,10 @@ public sealed class InMemoryContainer : Container
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        RecordChangeFeed(itemId, pk, json);
-        return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created, json, etag));
+        var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+        _items[key] = enrichedJson;
+        RecordChangeFeed(itemId, pk, enrichedJson);
+        return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created, enrichedJson, etag));
     }
 
     public override Task<ResponseMessage> ReadItemStreamAsync(
@@ -476,12 +482,13 @@ public sealed class InMemoryContainer : Container
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
         }
         var existed = _items.ContainsKey(key);
-        _items[key] = json;
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        RecordChangeFeed(itemId, pk, json);
-        return Task.FromResult(CreateResponseMessage(existed ? HttpStatusCode.OK : HttpStatusCode.Created, json, etag));
+        var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+        _items[key] = enrichedJson;
+        RecordChangeFeed(itemId, pk, enrichedJson);
+        return Task.FromResult(CreateResponseMessage(existed ? HttpStatusCode.OK : HttpStatusCode.Created, enrichedJson, etag));
     }
 
     public override Task<ResponseMessage> ReplaceItemStreamAsync(
@@ -503,12 +510,13 @@ public sealed class InMemoryContainer : Container
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
         }
 
-        _items[key] = json;
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        RecordChangeFeed(id, pk, json);
-        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, json, etag));
+        var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+        _items[key] = enrichedJson;
+        RecordChangeFeed(id, pk, enrichedJson);
+        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, enrichedJson, etag));
     }
 
     public override Task<ResponseMessage> DeleteItemStreamAsync(
@@ -557,12 +565,13 @@ public sealed class InMemoryContainer : Container
         ApplyPatchOperations(jObj, patchOperations);
         var updatedJson = jObj.ToString(Formatting.None);
         ValidateDocumentSize(updatedJson);
-        _items[key] = updatedJson;
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        RecordChangeFeed(id, pk, updatedJson);
-        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, updatedJson, etag));
+        var enrichedJson = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
+        _items[key] = enrichedJson;
+        RecordChangeFeed(id, pk, enrichedJson);
+        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, enrichedJson, etag));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1078,6 +1087,14 @@ public sealed class InMemoryContainer : Container
     }
 
     private static string GenerateETag() => $"\"{Guid.NewGuid()}\"";
+
+    private static string EnrichWithSystemProperties(string json, string etag, DateTimeOffset timestamp)
+    {
+        var jObj = JsonParseHelpers.ParseJson(json);
+        jObj["_etag"] = etag;
+        jObj["_ts"] = timestamp.ToUnixTimeSeconds();
+        return jObj.ToString(Formatting.None);
+    }
 
     private static int ParseContinuationToken(string continuationToken)
     {

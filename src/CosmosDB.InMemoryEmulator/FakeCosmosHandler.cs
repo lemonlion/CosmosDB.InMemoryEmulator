@@ -192,6 +192,12 @@ public sealed class FakeCosmosHandler : HttpMessageHandler
 
         if (method == "POST" && path.Contains("/docs"))
         {
+            if (request.Headers.TryGetValues("x-ms-cosmos-is-query-plan-request", out var qpValues) &&
+                qpValues.Any(v => v.Equals("True", StringComparison.OrdinalIgnoreCase)))
+            {
+                return await HandleQueryPlanAsync(request, cancellationToken);
+            }
+
             return await HandleQueryAsync(request, cancellationToken);
         }
 
@@ -223,6 +229,176 @@ public sealed class FakeCosmosHandler : HttpMessageHandler
         var response = CreateJsonResponse(GetPartitionKeyRanges());
         response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue(PkRangesEtag);
         return response;
+    }
+
+    /// <summary>
+    /// Handles the gateway query plan request that the SDK sends on non-Windows platforms
+    /// (where the native ServiceInterop DLL is unavailable). Parses the SQL query and
+    /// returns a <c>PartitionedQueryExecutionInfo</c> with accurate metadata so that the
+    /// SDK builds the same execution pipeline (ORDER BY merge sort, aggregate accumulation,
+    /// DISTINCT deduplication, etc.) as it would on Windows via ServiceInterop.
+    /// </summary>
+    private async Task<HttpResponseMessage> HandleQueryPlanAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+        var queryBody = JsonParseHelpers.ParseJson(body);
+        var sqlQuery = queryBody["query"]?.ToString() ?? "SELECT * FROM c";
+
+        var queryInfo = new JObject
+        {
+            ["distinctType"] = "None",
+            ["top"] = null,
+            ["offset"] = null,
+            ["limit"] = null,
+            ["orderBy"] = new JArray(),
+            ["orderByExpressions"] = new JArray(),
+            ["groupByExpressions"] = new JArray(),
+            ["groupByAliases"] = new JArray(),
+            ["aggregates"] = new JArray(),
+            ["groupByAliasToAggregateType"] = new JObject(),
+            ["rewrittenQuery"] = "",
+            ["hasSelectValue"] = false,
+            ["hasNonStreamingOrderBy"] = false
+        };
+
+        if (CosmosSqlParser.TryParse(sqlQuery, out var parsed))
+        {
+            // ORDER BY
+            if (parsed.OrderByFields is { Length: > 0 })
+            {
+                var orderByArr = new JArray();
+                var orderByExprArr = new JArray();
+                foreach (var field in parsed.OrderByFields)
+                {
+                    orderByArr.Add(field.Ascending ? "Ascending" : "Descending");
+                    orderByExprArr.Add(field.Field);
+                }
+
+                queryInfo["orderBy"] = orderByArr;
+                queryInfo["orderByExpressions"] = orderByExprArr;
+                queryInfo["hasNonStreamingOrderBy"] = true;
+            }
+
+            // TOP
+            if (parsed.TopCount.HasValue)
+            {
+                queryInfo["top"] = parsed.TopCount.Value;
+            }
+
+            // OFFSET / LIMIT
+            if (parsed.Offset.HasValue)
+            {
+                queryInfo["offset"] = parsed.Offset.Value;
+            }
+
+            if (parsed.Limit.HasValue)
+            {
+                queryInfo["limit"] = parsed.Limit.Value;
+            }
+
+            // DISTINCT
+            if (parsed.IsDistinct)
+            {
+                queryInfo["distinctType"] = parsed.OrderByFields is { Length: > 0 }
+                    ? "Ordered"
+                    : "Unordered";
+            }
+
+            // GROUP BY
+            if (parsed.GroupByFields is { Length: > 0 })
+            {
+                queryInfo["groupByExpressions"] = new JArray(parsed.GroupByFields);
+            }
+
+            // Aggregates — detect COUNT, SUM, MIN, MAX, AVG in SELECT fields
+            var aggregates = new JArray();
+            var groupByAliasToAgg = new JObject();
+            foreach (var field in parsed.SelectFields)
+            {
+                DetectAggregates(field.SqlExpr, aggregates, groupByAliasToAgg, field.Alias);
+            }
+
+            if (aggregates.Count > 0)
+            {
+                queryInfo["aggregates"] = aggregates;
+            }
+
+            if (groupByAliasToAgg.Count > 0)
+            {
+                queryInfo["groupByAliasToAggregateType"] = groupByAliasToAgg;
+            }
+
+            // SELECT VALUE
+            if (parsed.IsValueSelect)
+            {
+                queryInfo["hasSelectValue"] = true;
+            }
+
+            // Rewritten query — pass through the original SQL; the handler
+            // already knows how to simplify SDK-rewritten queries and handle
+            // both wrapped and unwrapped formats.
+            queryInfo["rewrittenQuery"] = sqlQuery;
+        }
+        else
+        {
+            queryInfo["rewrittenQuery"] = sqlQuery;
+        }
+
+        var queryPlan = new JObject
+        {
+            ["partitionedQueryExecutionInfoVersion"] = 2,
+            ["queryInfo"] = queryInfo,
+            ["queryRanges"] = new JArray(new JObject
+            {
+                ["min"] = "",
+                ["max"] = "FF",
+                ["isMinInclusive"] = true,
+                ["isMaxInclusive"] = false
+            })
+        };
+
+        return CreateJsonResponse(queryPlan.ToString(Formatting.None));
+    }
+
+    private static void DetectAggregates(
+        SqlExpression? expr, JArray aggregates, JObject groupByAliasToAgg, string? alias)
+    {
+        if (expr is FunctionCallExpression func)
+        {
+            var name = func.FunctionName.ToUpperInvariant();
+            string? aggType = name switch
+            {
+                "COUNT" => "Count",
+                "SUM" => "Sum",
+                "MIN" => "Min",
+                "MAX" => "Max",
+                "AVG" => "Average",
+                _ => null
+            };
+
+            if (aggType is not null)
+            {
+                if (!aggregates.Any(a => a.ToString() == aggType))
+                {
+                    aggregates.Add(aggType);
+                }
+
+                if (alias is not null)
+                {
+                    groupByAliasToAgg[alias] = aggType;
+                }
+            }
+        }
+        else if (expr is BinaryExpression bin)
+        {
+            DetectAggregates(bin.Left, aggregates, groupByAliasToAgg, null);
+            DetectAggregates(bin.Right, aggregates, groupByAliasToAgg, null);
+        }
+        else if (expr is UnaryExpression unary)
+        {
+            DetectAggregates(unary.Operand, aggregates, groupByAliasToAgg, null);
+        }
     }
 
     private async Task<HttpResponseMessage> HandleQueryAsync(

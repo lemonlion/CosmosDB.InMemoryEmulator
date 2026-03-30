@@ -414,6 +414,24 @@ public class WebApplicationFactoryIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task ZeroConfig_AutoDetect_ContainerNameMatchesProduction()
+    {
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB());
+
+        // The auto-detected container should be the one from the production factory:
+        // client.GetContainer("ProductionDb", "items")
+        var container = app.Services.GetRequiredService<Container>();
+        container.Id.Should().Be("items");
+
+        // Verify the client also returns the same container instance
+        var cosmosClient = (InMemoryCosmosClient)app.Services.GetRequiredService<CosmosClient>();
+        var clientContainer = cosmosClient.GetContainer("ProductionDb", "items");
+        container.Should().BeSameAs(clientContainer);
+    }
+
+    [Fact]
     public async Task UpsertAndQuery()
     {
         await using var app = await TestAppHost.CreateAsync(

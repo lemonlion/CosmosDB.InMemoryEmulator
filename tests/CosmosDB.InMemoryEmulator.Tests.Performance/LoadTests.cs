@@ -11,15 +11,15 @@ namespace CosmosDB.InMemoryEmulator.Tests.Performance;
 public class LoadTests(ITestOutputHelper output)
 {
     private static readonly int _targetCallsPerSecond =
-        int.TryParse(Environment.GetEnvironmentVariable("LOAD_TEST_RPS"), out var rps) ? rps : 100;
+        int.TryParse(Environment.GetEnvironmentVariable("LOAD_TEST_RPS"), out var rps) ? rps : 500;
 
     private static readonly int _durationSeconds =
-        int.TryParse(Environment.GetEnvironmentVariable("LOAD_TEST_DURATION_SECONDS"), out var dur) ? dur : 300;
+        int.TryParse(Environment.GetEnvironmentVariable("LOAD_TEST_DURATION_SECONDS"), out var dur) ? dur : 60;
 
     private static readonly int _totalOperations = _targetCallsPerSecond * _durationSeconds;
 
     [Fact]
-    public async Task ReadHeavyLoad_100Rps_Over5Minutes()
+    public async Task ReadHeavyLoad_80PercentReads_20PercentWrites()
     {
         var container = new InMemoryContainer("read-heavy", "/partitionKey");
         var stats = new LoadStats();
@@ -32,7 +32,7 @@ public class LoadTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task WriteHeavyLoad_100Rps_Over5Minutes()
+    public async Task WriteHeavyLoad_20PercentReads_80PercentWrites()
     {
         var container = new InMemoryContainer("write-heavy", "/partitionKey");
         var stats = new LoadStats();
@@ -45,7 +45,7 @@ public class LoadTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task EvenMixLoad_100Rps_Over5Minutes()
+    public async Task EvenMixLoad_50PercentReads_50PercentWrites()
     {
         var container = new InMemoryContainer("even-mix", "/partitionKey");
         var stats = new LoadStats();

@@ -29,6 +29,7 @@ var results = container
 ## Features
 
 - **Full CRUD** — typed and stream variants with proper status codes and ETags
+- **System metadata** — `_ts` and `_etag` injected into stored items, matching real Cosmos DB
 - **Rich SQL query engine** — 40+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries
 - **LINQ support** — `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` interception
 - **Transactional batches** — atomic execution with rollback on failure
@@ -41,7 +42,7 @@ var results = container
 - **DI integration** — `UseInMemoryCosmosDB()` extension methods for `IServiceCollection`
 - **State persistence** — export/import container state as JSON
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
-- **900+ tests** covering all features
+- **950+ tests** covering all features
 
 ## Installation
 

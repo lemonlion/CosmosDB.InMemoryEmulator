@@ -67,6 +67,8 @@ public class InMemoryCosmosClient : CosmosClient
         string id, int? throughput = null, RequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(id);
+        ArgumentException.ThrowIfNullOrEmpty(id);
         var isNew = !_databases.ContainsKey(id);
         var database = _databases.GetOrAdd(id, name => new InMemoryDatabase(name, this));
         var response = BuildDatabaseResponse(database, isNew ? HttpStatusCode.Created : HttpStatusCode.OK);
@@ -92,6 +94,8 @@ public class InMemoryCosmosClient : CosmosClient
         string id, int? throughput = null, RequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(id);
+        ArgumentException.ThrowIfNullOrEmpty(id);
         var database = new InMemoryDatabase(id, this);
         if (!_databases.TryAdd(id, database))
         {
@@ -132,6 +136,8 @@ public class InMemoryCosmosClient : CosmosClient
     /// <param name="id">The database identifier.</param>
     public override Database GetDatabase(string id)
     {
+        ArgumentNullException.ThrowIfNull(id);
+        ArgumentException.ThrowIfNullOrEmpty(id);
         return _databases.GetOrAdd(id, name => new InMemoryDatabase(name, this));
     }
 
@@ -143,6 +149,10 @@ public class InMemoryCosmosClient : CosmosClient
     /// <param name="containerId">The container identifier.</param>
     public override Container GetContainer(string databaseId, string containerId)
     {
+        ArgumentNullException.ThrowIfNull(databaseId);
+        ArgumentException.ThrowIfNullOrEmpty(databaseId);
+        ArgumentNullException.ThrowIfNull(containerId);
+        ArgumentException.ThrowIfNullOrEmpty(containerId);
         var database = _databases.GetOrAdd(databaseId, name => new InMemoryDatabase(name, this));
         return database.GetOrCreateContainer(containerId);
     }

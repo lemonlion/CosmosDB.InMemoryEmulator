@@ -34,38 +34,49 @@ public static class ServiceCollectionExtensions
         var containerLifetime = existingContainerDescriptors.FirstOrDefault()?.Lifetime
                                 ?? ServiceLifetime.Singleton;
 
-        // Remove existing registrations
+        // Always replace CosmosClient
         services.RemoveAll<CosmosClient>();
-        services.RemoveAll<Container>();
 
         // Create the InMemoryCosmosClient
         var client = new InMemoryCosmosClient();
 
-        // Determine container configs
-        var containers = options.Containers.Count > 0
-            ? options.Containers
-            : [new ContainerConfig("in-memory-container")];
-
-        // Pre-create databases and containers with correct partition key paths
-        foreach (var containerConfig in containers)
+        if (options.Containers.Count > 0)
         {
-            var dbName = containerConfig.DatabaseName ?? databaseName;
-            var db = (InMemoryDatabase)client.GetDatabase(dbName);
-            db.GetOrCreateContainer(containerConfig.ContainerName, containerConfig.PartitionKeyPath);
+            // Explicit mode: remove existing Container registrations and replace with configured ones
+            services.RemoveAll<Container>();
+
+            foreach (var containerConfig in options.Containers)
+            {
+                var dbName = containerConfig.DatabaseName ?? databaseName;
+                var db = (InMemoryDatabase)client.GetDatabase(dbName);
+                db.GetOrCreateContainer(containerConfig.ContainerName, containerConfig.PartitionKeyPath);
+            }
+
+            foreach (var containerConfig in options.Containers)
+            {
+                var dbName = containerConfig.DatabaseName ?? databaseName;
+                var container = client.GetContainer(dbName, containerConfig.ContainerName);
+                services.Add(new ServiceDescriptor(typeof(Container), _ => container, containerLifetime));
+            }
+        }
+        else if (existingContainerDescriptors.Count > 0)
+        {
+            // Auto-detect mode: keep existing Container registrations.
+            // They resolve against the new InMemoryCosmosClient via GetContainer().
+        }
+        else
+        {
+            // No existing registrations and no explicit config: create a default container
+            var db = (InMemoryDatabase)client.GetDatabase(databaseName);
+            db.GetOrCreateContainer("in-memory-container", "/id");
+            var container = client.GetContainer(databaseName, "in-memory-container");
+            services.Add(new ServiceDescriptor(typeof(Container), _ => container, ServiceLifetime.Singleton));
         }
 
         options.OnClientCreated?.Invoke(client);
 
         // Register the client
         services.AddSingleton<CosmosClient>(client);
-
-        // Register containers
-        foreach (var containerConfig in containers)
-        {
-            var dbName = containerConfig.DatabaseName ?? databaseName;
-            var container = client.GetContainer(dbName, containerConfig.ContainerName);
-            services.Add(new ServiceDescriptor(typeof(Container), _ => container, containerLifetime));
-        }
 
         if (options.RegisterFeedIteratorSetup)
             InMemoryFeedIteratorSetup.Register();

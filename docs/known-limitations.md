@@ -17,6 +17,8 @@ This document lists all known areas where the in-memory emulator differs from re
 | Throughput (RU/s) | ⚠️ Synthetic | Returns 400 RU/s; doesn't affect behaviour |
 | `FeedRange` filtering | ⚠️ Not implemented | Accepted but currently ignored |
 | `AllVersionsAndDeletes` mode | ❌ Not supported | Only `Incremental` mode is supported |
+| ChangeFeed stream handler | ⚠️ NoOp | `ChangeFeedStreamHandler` variant builds but never invokes the handler |
+| `ReplaceContainerStreamAsync` | ⚠️ Does not persist | Returns OK but does not update internal container state |
 | Users / permissions | ❌ Not implemented | Throws `NotImplementedException` |
 | Client encryption keys | ❌ Not implemented | Throws `NotImplementedException` |
 
@@ -93,6 +95,30 @@ These are areas where the emulator produces different results from real Cosmos D
 **InMemoryContainer:** Strictly returns only the latest version per item across all updates.
 
 **Impact:** None for most applications. The in-memory behaviour is actually more predictable.
+
+---
+
+### 7. ChangeFeed Stream Handler
+
+**Real Cosmos DB:** `GetChangeFeedProcessorBuilder` with a `ChangeFeedStreamHandler` delegate invokes the handler with raw `Stream` data when changes are detected, enabling low-level change processing without deserialization.
+
+**InMemoryContainer:** The `ChangeFeedStreamHandler` overload uses a `NoOpChangeFeedProcessor` internally. The processor can be built and started/stopped but the handler is never invoked. Use the typed `ChangeFeedHandler<T>` overload for functional in-memory change feed processing.
+
+**Impact:** Medium if your code uses raw stream processing for the change feed. Use the typed handler overload instead.
+
+**Test:** `ChangeFeedStreamProcessorDivergentTests5.ChangeFeedStreamHandler_IsNoOp_InMemory`
+
+---
+
+### 8. ReplaceContainerStreamAsync Does Not Persist
+
+**Real Cosmos DB:** `ReplaceContainerStreamAsync` updates the container's actual properties (partition key, indexing policy, etc.) and subsequent `ReadContainerAsync` returns the new values.
+
+**InMemoryContainer:** Returns OK with the supplied properties in the response body but does not persist changes internally. Subsequent `ReadContainerAsync` returns the original properties. Same behaviour as the non-stream `ReplaceContainerAsync`.
+
+**Impact:** Low. Only affects tests that modify then re-read container properties.
+
+**Test:** `ContainerStreamDivergentBehaviorTests5.ReplaceContainerStream_DoesNotPersistChanges`
 
 ---
 

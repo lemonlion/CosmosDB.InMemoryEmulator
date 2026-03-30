@@ -227,7 +227,8 @@ public class UseInMemoryCosmosDBTests : IDisposable
         services.AddSingleton<Container>(_ =>
             throw new InvalidOperationException("Should have been removed"));
 
-        services.UseInMemoryCosmosDB();
+        // Explicit AddContainer removes existing registrations
+        services.UseInMemoryCosmosDB(o => o.AddContainer("orders", "/pk"));
 
         var provider = services.BuildServiceProvider();
         var container = provider.GetRequiredService<Container>();
@@ -327,13 +328,14 @@ public class UseInMemoryCosmosDBTests : IDisposable
         var services = new ServiceCollection();
         services.AddSingleton<CosmosClient>(_ =>
             throw new InvalidOperationException("Should have been removed"));
-        services.AddSingleton<Container>(_ =>
-            throw new InvalidOperationException("Should have been removed"));
+        services.AddSingleton<Container>(sp =>
+            sp.GetRequiredService<CosmosClient>().GetContainer("db", "items"));
 
         services.UseInMemoryCosmosDB();
 
         var provider = services.BuildServiceProvider();
         provider.GetRequiredService<CosmosClient>().Should().BeOfType<InMemoryCosmosClient>();
+        // Auto-detect: existing factory resolves against the in-memory client
         provider.GetRequiredService<Container>().Should().BeOfType<InMemoryContainer>();
     }
 
@@ -819,5 +821,188 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
         // Cross-contamination check: bio container should not have OOB data
         var act = () => bioContainer.ReadItemAsync<TestDocument>("oob-1", new PartitionKey("pk1"));
         await act.Should().ThrowAsync<CosmosException>();
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Phase 5: Auto-Detect Mode — UseInMemoryCosmosDB() with no explicit containers
+// ════════════════════════════════════════════════════════════════════════════════
+
+/// <summary>
+/// Tests for the auto-detect behavior: when <c>UseInMemoryCosmosDB()</c> is called
+/// without explicit <c>AddContainer()</c> calls, existing <c>Container</c> factory
+/// registrations are preserved. They naturally resolve against the in-memory client.
+/// </summary>
+public class AutoDetectContainerTests
+{
+
+    [Fact]
+    public void AutoDetect_PreservesExistingContainerFactory()
+    {
+        var services = new ServiceCollection();
+
+        // Simulate production: register CosmosClient + Container factory
+        services.AddSingleton<CosmosClient>(_ =>
+            throw new InvalidOperationException("Production client should be replaced"));
+        services.AddSingleton<Container>(sp =>
+        {
+            var client = sp.GetRequiredService<CosmosClient>();
+            return client.GetContainer("ProductionDb", "orders");
+        });
+
+        // Zero-config swap — no AddContainer needed
+        services.UseInMemoryCosmosDB();
+
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<CosmosClient>();
+        client.Should().BeOfType<InMemoryCosmosClient>();
+
+        // Container resolves via the existing factory, which calls GetContainer on the in-memory client
+        var container = provider.GetRequiredService<Container>();
+        container.Should().BeOfType<InMemoryContainer>();
+        container.Id.Should().Be("orders");
+    }
+
+    [Fact]
+    public async Task AutoDetect_ContainerIsFullyFunctional()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<CosmosClient>(_ =>
+            throw new InvalidOperationException("Should be replaced"));
+        services.AddSingleton<Container>(sp =>
+            sp.GetRequiredService<CosmosClient>().GetContainer("MyDb", "items"));
+
+        services.UseInMemoryCosmosDB();
+
+        var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+
+        // CRUD works — the auto-created InMemoryContainer is fully usable
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "AutoDetected" };
+        var response = await container.CreateItemAsync(item, new PartitionKey("pk1"));
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var read = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("AutoDetected");
+    }
+
+    [Fact]
+    public void AutoDetect_MultipleContainerFactories_AllPreserved()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<CosmosClient>(_ =>
+            throw new InvalidOperationException("Should be replaced"));
+        services.AddSingleton<Container>(sp =>
+            sp.GetRequiredService<CosmosClient>().GetContainer("db", "orders"));
+        services.AddSingleton<Container>(sp =>
+            sp.GetRequiredService<CosmosClient>().GetContainer("db", "customers"));
+
+        services.UseInMemoryCosmosDB();
+
+        var provider = services.BuildServiceProvider();
+        var containers = provider.GetServices<Container>().ToList();
+        containers.Should().HaveCount(2);
+        containers.Select(c => c.Id).Should().BeEquivalentTo(["orders", "customers"]);
+    }
+
+    [Fact]
+    public void AutoDetect_ClientGetContainer_ReturnsSameInstance_AsFactory()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<CosmosClient>(_ =>
+            throw new InvalidOperationException("Should be replaced"));
+        services.AddSingleton<Container>(sp =>
+            sp.GetRequiredService<CosmosClient>().GetContainer("MyDb", "orders"));
+
+        services.UseInMemoryCosmosDB();
+
+        var provider = services.BuildServiceProvider();
+        var diContainer = provider.GetRequiredService<Container>();
+        var client = (InMemoryCosmosClient)provider.GetRequiredService<CosmosClient>();
+        var clientContainer = client.GetContainer("MyDb", "orders");
+
+        // Critical: repos that call client.GetContainer() get the same instance
+        diContainer.Should().BeSameAs(clientContainer);
+    }
+
+    [Fact]
+    public void AutoDetect_NoExistingContainers_CreatesDefault()
+    {
+        var services = new ServiceCollection();
+        // No Container registered — only CosmosClient
+        services.AddSingleton<CosmosClient>(_ =>
+            throw new InvalidOperationException("Should be replaced"));
+
+        services.UseInMemoryCosmosDB();
+
+        var provider = services.BuildServiceProvider();
+        // Default container should still be created when no existing registrations
+        var container = provider.GetRequiredService<Container>();
+        container.Should().BeOfType<InMemoryContainer>();
+        container.Id.Should().Be("in-memory-container");
+    }
+
+    [Fact]
+    public void AutoDetect_PreservesExistingLifetime()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<CosmosClient>(_ =>
+            throw new InvalidOperationException("Should be replaced"));
+        // Register as Scoped — should be preserved
+        services.AddScoped<Container>(sp =>
+            sp.GetRequiredService<CosmosClient>().GetContainer("db", "orders"));
+
+        services.UseInMemoryCosmosDB();
+
+        var descriptor = services.First(d => d.ServiceType == typeof(Container));
+        descriptor.Lifetime.Should().Be(ServiceLifetime.Scoped);
+    }
+
+    [Fact]
+    public void ExplicitContainers_StillRemovesExistingRegistrations()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<CosmosClient>(_ =>
+            throw new InvalidOperationException("Should be replaced"));
+        services.AddSingleton<Container>(_ =>
+            throw new InvalidOperationException("Should have been removed by explicit AddContainer"));
+
+        // Explicit AddContainer — should remove existing and replace
+        services.UseInMemoryCosmosDB(o => o.AddContainer("orders", "/pk"));
+
+        var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+        container.Should().BeOfType<InMemoryContainer>();
+        container.Id.Should().Be("orders");
+    }
+
+    [Fact]
+    public void AutoDetect_RegistersFeedIteratorSetup()
+    {
+        InMemoryFeedIteratorSetup.Deregister();
+        var services = new ServiceCollection();
+        services.AddSingleton<CosmosClient>(_ =>
+            throw new InvalidOperationException("Should be replaced"));
+        services.AddSingleton<Container>(sp =>
+            sp.GetRequiredService<CosmosClient>().GetContainer("db", "items"));
+
+        services.UseInMemoryCosmosDB();
+
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void AutoDetect_OnClientCreatedCallback_StillWorks()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<CosmosClient>(_ =>
+            throw new InvalidOperationException("Should be replaced"));
+        services.AddSingleton<Container>(sp =>
+            sp.GetRequiredService<CosmosClient>().GetContainer("db", "items"));
+        InMemoryCosmosClient? captured = null;
+
+        services.UseInMemoryCosmosDB(o => o.OnClientCreated = c => captured = c);
+
+        captured.Should().NotBeNull();
     }
 }

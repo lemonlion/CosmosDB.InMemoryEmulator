@@ -93,6 +93,9 @@ public sealed class InMemoryDatabase : Database
         string id, string partitionKeyPath, int? throughput = null,
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(id);
+        ArgumentException.ThrowIfNullOrEmpty(id);
+        ArgumentNullException.ThrowIfNull(partitionKeyPath);
         var container = new InMemoryContainer(id, partitionKeyPath);
         if (!_containers.TryAdd(id, container))
         {
@@ -156,7 +159,7 @@ public sealed class InMemoryDatabase : Database
     {
         return new InMemoryFeedIterator<T>(
             () => _containers.Values
-                .Select(c => (T)(object)new ContainerProperties(c.Id, "/id"))
+                .Select(c => (T)(object)new ContainerProperties(c.Id, c.PartitionKeyPaths))
                 .ToList());
     }
 

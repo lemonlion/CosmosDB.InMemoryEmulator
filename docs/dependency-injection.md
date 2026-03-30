@@ -34,7 +34,7 @@ services.AddSingleton<Container>(sp =>
 });
 ```
 
-### Test Setup
+### Test Setup — Zero-Config (Recommended)
 
 ```csharp
 public class MyAppFactory : WebApplicationFactory<Program>
@@ -43,14 +43,37 @@ public class MyAppFactory : WebApplicationFactory<Program>
     {
         builder.ConfigureTestServices(services =>
         {
-            services.UseInMemoryCosmosDB(options => options
-                .AddContainer("orders", "/customerId"));
+            services.UseInMemoryCosmosDB();
         });
     }
 }
 ```
 
-### What Happens
+That's it! The existing `Container` factory registrations are **preserved** — they'll resolve against the new `InMemoryCosmosClient` and call `GetContainer()` just like production code does, automatically creating `InMemoryContainer` instances.
+
+### What Happens (Zero-Config)
+
+1. The existing `CosmosClient` registration is removed
+2. A new `InMemoryCosmosClient` is registered as `CosmosClient` (singleton)
+3. Existing `Container` factory registrations are **kept**
+4. When `Container` is resolved, the production factory calls `client.GetContainer("MyDatabase", "orders")` on the in-memory client, which creates an `InMemoryContainer` automatically
+5. `InMemoryFeedIteratorSetup.Register()` is called so `.ToFeedIteratorOverridable()` works
+
+> **Note:** Auto-detected containers default to `/id` as the partition key path. This works for most tests since production code passes explicit `PartitionKey` values. If your tests rely on partition-key-path-based extraction (e.g. `PartitionKey.None`), use the explicit form below.
+
+### Test Setup — Explicit Containers
+
+Use `AddContainer()` when you need to control the partition key path:
+
+```csharp
+builder.ConfigureTestServices(services =>
+{
+    services.UseInMemoryCosmosDB(options => options
+        .AddContainer("orders", "/customerId"));
+});
+```
+
+### What Happens (Explicit)
 
 1. The existing `CosmosClient` registration is removed
 2. The existing `Container` registration(s) are removed
