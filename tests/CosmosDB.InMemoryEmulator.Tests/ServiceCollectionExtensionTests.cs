@@ -491,3 +491,333 @@ public class ServiceCollectionExtensionEdgeCaseTests : IDisposable
         diContainer.Should().BeSameAs(clientContainer);
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Pattern 2: Typed CosmosClient Subclasses (UseInMemoryCosmosDB<TClient>)
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Simulated PRODUCTION typed clients (extend CosmosClient, NOT InMemoryCosmosClient)
+// These mirror the real SCA.Common pattern — each domain gets its own CosmosClient subclass
+public class ProductionBiometricCosmosClient : CosmosClient
+{
+    public ProductionBiometricCosmosClient(string connectionString, CosmosClientOptions? options = null)
+        : base(connectionString, options) { }
+}
+
+public class ProductionOOBCosmosClient : CosmosClient
+{
+    public ProductionOOBCosmosClient(string connectionString, CosmosClientOptions? options = null)
+        : base(connectionString, options) { }
+}
+
+// TEST-PROJECT typed clients (extend InMemoryCosmosClient, created by test authors)
+// This is the one-liner per typed client that users must add in their test project.
+// No changes to production code — these exist only in the test assembly.
+public class BiometricCosmosClient : InMemoryCosmosClient { }
+public class OOBCosmosClient : InMemoryCosmosClient { }
+
+// Simulated repos that take typed clients — exactly as in production code.
+// In real code these would reference the production types. In this test assembly,
+// the test types shadow the production names by design.
+public class BiometricRepository
+{
+    public Container Container { get; }
+
+    public BiometricRepository(BiometricCosmosClient client)
+    {
+        Container = client.GetContainer("BiometricDb", "biometrics");
+    }
+}
+
+public class OOBRepository
+{
+    public Container Container { get; }
+
+    public OOBRepository(OOBCosmosClient client)
+    {
+        Container = client.GetContainer("OOBDb", "oob-events");
+    }
+}
+
+public class UseInMemoryTypedCosmosDBTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public void RegistersTypedClient_ResolvableFromDI()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>(o =>
+            o.AddContainer("biometrics", "/partitionKey"));
+
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<BiometricCosmosClient>();
+        client.Should().BeAssignableTo<BiometricCosmosClient>();
+    }
+
+    [Fact]
+    public void RemovesExistingTypedRegistration()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<BiometricCosmosClient>(_ =>
+            throw new InvalidOperationException("Should have been removed"));
+
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>(o =>
+            o.AddContainer("biometrics", "/partitionKey"));
+
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<BiometricCosmosClient>();
+        client.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void DefaultDatabase_IsInMemoryDb()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>();
+
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<BiometricCosmosClient>();
+        var container = client.GetContainer("in-memory-db", "in-memory-container");
+        container.Should().BeOfType<InMemoryContainer>();
+    }
+
+    [Fact]
+    public void CustomDatabaseName()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>(o =>
+        {
+            o.DatabaseName = "BiometricDb";
+            o.AddContainer("biometrics", "/pk");
+        });
+
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<BiometricCosmosClient>();
+        var container = client.GetContainer("BiometricDb", "biometrics");
+        container.Should().BeOfType<InMemoryContainer>();
+    }
+
+    [Fact]
+    public void MultipleTypedClients_Independent()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>(o =>
+        {
+            o.DatabaseName = "BiometricDb";
+            o.AddContainer("biometrics", "/pk");
+        });
+        services.UseInMemoryCosmosDB<OOBCosmosClient>(o =>
+        {
+            o.DatabaseName = "OOBDb";
+            o.AddContainer("oob-events", "/pk");
+        });
+
+        var provider = services.BuildServiceProvider();
+        var bioClient = provider.GetRequiredService<BiometricCosmosClient>();
+        var oobClient = provider.GetRequiredService<OOBCosmosClient>();
+
+        bioClient.Should().NotBeSameAs(oobClient);
+    }
+
+    [Fact]
+    public async Task TypedClient_ContainerUsableForCrud()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>(o =>
+        {
+            o.DatabaseName = "BiometricDb";
+            o.AddContainer("biometrics", "/partitionKey");
+        });
+
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<BiometricCosmosClient>();
+        var container = client.GetContainer("BiometricDb", "biometrics");
+
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Fingerprint" };
+        var createResponse = await container.CreateItemAsync(item, new PartitionKey("pk1"));
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var readResponse = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        readResponse.Resource.Name.Should().Be("Fingerprint");
+    }
+
+    [Fact]
+    public void RepositoryPattern_Constructor_ResolvesTypedClient()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>(o =>
+        {
+            o.DatabaseName = "BiometricDb";
+            o.AddContainer("biometrics", "/partitionKey");
+        });
+        services.AddTransient<BiometricRepository>();
+
+        var provider = services.BuildServiceProvider();
+        var repo = provider.GetRequiredService<BiometricRepository>();
+
+        repo.Container.Should().BeOfType<InMemoryContainer>();
+        repo.Container.Id.Should().Be("biometrics");
+    }
+
+    [Fact]
+    public void MultipleTypedClients_WithRepos_IsolatedData()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>(o =>
+        {
+            o.DatabaseName = "BiometricDb";
+            o.AddContainer("biometrics", "/partitionKey");
+        });
+        services.UseInMemoryCosmosDB<OOBCosmosClient>(o =>
+        {
+            o.DatabaseName = "OOBDb";
+            o.AddContainer("oob-events", "/partitionKey");
+        });
+        services.AddTransient<BiometricRepository>();
+        services.AddTransient<OOBRepository>();
+
+        var provider = services.BuildServiceProvider();
+        var bioRepo = provider.GetRequiredService<BiometricRepository>();
+        var oobRepo = provider.GetRequiredService<OOBRepository>();
+
+        // Each repo's container should be independent
+        bioRepo.Container.Should().NotBeSameAs(oobRepo.Container);
+        bioRepo.Container.Id.Should().Be("biometrics");
+        oobRepo.Container.Id.Should().Be("oob-events");
+    }
+
+    [Fact]
+    public void DoesNotRegisterAsBaseCosmosClient()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>();
+
+        var provider = services.BuildServiceProvider();
+        // Should NOT be resolvable as base CosmosClient unless explicitly registered
+        var baseClient = provider.GetService<CosmosClient>();
+        baseClient.Should().BeNull();
+    }
+
+    [Fact]
+    public void DoesNotRegisterContainer_InDI()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>(o => o.AddContainer("bio", "/pk"));
+
+        var provider = services.BuildServiceProvider();
+        // Pattern 2 never has Container in DI — repos call client.GetContainer()
+        var container = provider.GetService<Container>();
+        container.Should().BeNull();
+    }
+
+    [Fact]
+    public void RegistersFeedIteratorSetup()
+    {
+        InMemoryFeedIteratorSetup.Deregister();
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>();
+
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void CanDisableFeedIteratorSetup()
+    {
+        InMemoryFeedIteratorSetup.Deregister();
+        var before = CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory;
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>(o => o.RegisterFeedIteratorSetup = false);
+
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().Be(before);
+    }
+
+    [Fact]
+    public void OnClientCreatedCallback()
+    {
+        var services = new ServiceCollection();
+        InMemoryCosmosClient? captured = null;
+
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>(o => o.OnClientCreated = c => captured = c);
+
+        // The callback receives the typed InMemoryCosmosClient subclass
+        captured.Should().NotBeNull();
+        captured.Should().BeOfType<BiometricCosmosClient>();
+    }
+
+    [Fact]
+    public void MatchesExistingLifetime_Scoped()
+    {
+        var services = new ServiceCollection();
+        services.AddScoped<BiometricCosmosClient>(_ => new BiometricCosmosClient());
+
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>();
+
+        var descriptor = services.First(d => d.ServiceType == typeof(BiometricCosmosClient));
+        descriptor.Lifetime.Should().Be(ServiceLifetime.Scoped);
+    }
+
+    [Fact]
+    public void MatchesExistingLifetime_DefaultsSingleton()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>();
+
+        var descriptor = services.First(d => d.ServiceType == typeof(BiometricCosmosClient));
+        descriptor.Lifetime.Should().Be(ServiceLifetime.Singleton);
+    }
+
+    [Fact]
+    public async Task FullEndToEnd_MultipleTypedClients()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB<BiometricCosmosClient>(o =>
+        {
+            o.DatabaseName = "BiometricDb";
+            o.AddContainer("biometrics", "/partitionKey");
+        });
+        services.UseInMemoryCosmosDB<OOBCosmosClient>(o =>
+        {
+            o.DatabaseName = "OOBDb";
+            o.AddContainer("oob-events", "/partitionKey");
+        });
+        services.AddTransient<BiometricRepository>();
+        services.AddTransient<OOBRepository>();
+
+        var provider = services.BuildServiceProvider();
+
+        // Write via biometric repo
+        var bioClient = provider.GetRequiredService<BiometricCosmosClient>();
+        var bioContainer = bioClient.GetContainer("BiometricDb", "biometrics");
+        await bioContainer.CreateItemAsync(
+            new TestDocument { Id = "bio-1", PartitionKey = "pk1", Name = "Fingerprint" },
+            new PartitionKey("pk1"));
+
+        // Write via OOB repo
+        var oobClient = provider.GetRequiredService<OOBCosmosClient>();
+        var oobContainer = oobClient.GetContainer("OOBDb", "oob-events");
+        await oobContainer.CreateItemAsync(
+            new TestDocument { Id = "oob-1", PartitionKey = "pk1", Name = "SMS" },
+            new PartitionKey("pk1"));
+
+        // Read back — each client's data is isolated
+        var bioRead = await bioContainer.ReadItemAsync<TestDocument>("bio-1", new PartitionKey("pk1"));
+        bioRead.Resource.Name.Should().Be("Fingerprint");
+
+        var oobRead = await oobContainer.ReadItemAsync<TestDocument>("oob-1", new PartitionKey("pk1"));
+        oobRead.Resource.Name.Should().Be("SMS");
+
+        // Cross-contamination check: bio container should not have OOB data
+        var act = () => bioContainer.ReadItemAsync<TestDocument>("oob-1", new PartitionKey("pk1"));
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+}

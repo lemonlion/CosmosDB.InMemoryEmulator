@@ -15,7 +15,7 @@ using NSubstitute;
 
 namespace CosmosDB.InMemoryEmulator;
 
-public sealed class InMemoryCosmosClient : CosmosClient
+public class InMemoryCosmosClient : CosmosClient
 {
     private readonly ConcurrentDictionary<string, InMemoryDatabase> _databases = new();
 
