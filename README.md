@@ -39,7 +39,7 @@ var results = container
 - **Rich SQL query engine** — 100+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries
 - **LINQ support** — `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` interception
 - **Transactional batches** — atomic execution with rollback on failure
-- **Change feed** — iterators, checkpoints, and `ChangeFeedProcessor`
+- **Change feed** — iterators, checkpoints, delete tombstones, and `ChangeFeedProcessor`
 - **Patch operations** — all 5 types with deep nested paths and filter predicates
 - **ETag / optimistic concurrency** — `IfMatchEtag`, `IfNoneMatchEtag`, wildcard `*`
 - **Partition keys** — single and composite, auto-extraction from documents
@@ -49,7 +49,7 @@ var results = container
 - **State persistence** — export/import container state as JSON
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
-- **1118 tests** covering all features (25 skipped — see [Known Limitations](../../wiki/Known-Limitations))
+- **1119 tests** covering all features (23 skipped — see [Known Limitations](../../wiki/Known-Limitations))
 
 ## Installation
 
