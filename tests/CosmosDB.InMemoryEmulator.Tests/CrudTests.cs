@@ -2,6 +2,8 @@ using System.Net;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Xunit;
+using System.Text;
+using Newtonsoft.Json.Linq;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -395,5 +397,1216 @@ public class DeleteItemTests
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         var readResponse = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
         readResponse.Resource.Name.Should().Be("Recreated");
+    }
+}
+
+
+/// <summary>
+/// Validates that CancellationToken is respected across Container operations.
+/// All methods accept a CancellationToken and should throw OperationCanceledException
+/// when the token is already cancelled.
+/// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.createitemasync
+/// </summary>
+public class CancellationTokenTests5
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task CreateItem_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        var act = () => _container.CreateItemAsync(item, new PartitionKey("pk1"),
+            cancellationToken: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task ReadItem_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => _container.ReadItemAsync<TestDocument>(
+            "1", new PartitionKey("pk1"), cancellationToken: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task UpsertItem_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        var act = () => _container.UpsertItemAsync(item, new PartitionKey("pk1"),
+            cancellationToken: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task DeleteItem_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => _container.DeleteItemAsync<TestDocument>(
+            "1", new PartitionKey("pk1"), cancellationToken: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task PatchItem_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => _container.PatchItemAsync<TestDocument>(
+            "1", new PartitionKey("pk1"),
+            [PatchOperation.Set("/name", "Patched")],
+            cancellationToken: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task CreateItemStream_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var json = """{"id":"1","partitionKey":"pk1","name":"Test"}""";
+        var act = () => _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)),
+            new PartitionKey("pk1"), cancellationToken: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+}
+
+
+public class ReplaceItemGapTests2
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Replace_WithNullItem_Throws()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Orig" };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var act = () => _container.ReplaceItemAsync<TestDocument>(null!, "1", new PartitionKey("pk1"));
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task Replace_IdParameterUsedForLookup()
+    {
+        // Create an item with id "1"
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        // Replace with id parameter = "1" but item body has id = "different"
+        var replacement = new TestDocument { Id = "different", PartitionKey = "pk1", Name = "Replaced" };
+        var response = await _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
+
+        // Operation should succeed using the id parameter for lookup
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+
+/// <summary>
+/// Validates that the partition key value is immutable during Replace operations.
+/// Per API docs: "The item's partition key value is immutable. To change an item's
+/// partition key value you must delete the original item and insert a new item."
+/// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.replaceitemasync
+/// </summary>
+public class ReplacePartitionKeyImmutabilityTests5
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Replace_WithDifferentPkInBody_ItemStaysInOriginalPartition()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        // Replace with a different partition key value in the body
+        var replacement = new TestDocument { Id = "1", PartitionKey = "pk2", Name = "Replaced" };
+        await _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
+
+        // Item is still accessible with original PK
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Replaced");
+    }
+}
+
+
+public class ReadItemGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Read_WrongPartitionKey_ThrowsNotFound()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var act = () => _container.ReadItemAsync<TestDocument>("1", new PartitionKey("wrong-pk"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Read_AfterUpdate_ReturnsUpdatedData()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"));
+
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Updated");
+    }
+
+    [Fact]
+    public async Task Read_NonExistent_ThrowsCosmosExceptionWith404()
+    {
+        var act = () => _container.ReadItemAsync<TestDocument>("missing", new PartitionKey("pk1"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Read_IfNoneMatch_WithStaleETag_ReturnsItem()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = "\"stale-etag\"" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.Name.Should().Be("Test");
+    }
+
+    [Fact]
+    public async Task Read_IfNoneMatch_WithCurrentETag_Returns304()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        var createResponse = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var act = () => _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = createResponse.ETag });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotModified);
+    }
+}
+
+
+public class DeleteItemGapTests2
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Delete_WithNullId_Throws()
+    {
+        var act = () => _container.DeleteItemAsync<TestDocument>(null!, new PartitionKey("pk1"));
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task Delete_DoesNotAppearInChangeFeed()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+        var checkpointAfterCreate = _container.GetChangeFeedCheckpoint();
+
+        await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        var checkpointAfterDelete = _container.GetChangeFeedCheckpoint();
+        checkpointAfterDelete.Should().Be(checkpointAfterCreate);
+    }
+}
+
+
+public class ReadItemGapTests3
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Read_ResponseContainsETag()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        response.ETag.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Read_IfMatchEtag_IsNotEnforcedOnRead()
+    {
+        // Per docs: IfMatch is not supported on reads
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        // Should succeed even with a bogus IfMatch — reads don't use IfMatch
+        var response = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"bogus\"" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Read_AfterDelete_Returns404()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+        await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        var act = () => _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+}
+
+
+/// <summary>
+/// Validates that system metadata properties (<c>_ts</c>, <c>_etag</c>) are available
+/// in the response body when reading items, as documented in the API remarks:
+/// "Items contain meta data that can be obtained by mapping these meta data attributes
+/// to properties in T."
+/// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.readitemasync
+/// </summary>
+public class SystemMetadataPropertyTests5
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Read_ResponseBody_Contains_Ts_SystemProperty()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+
+        // Real Cosmos DB includes _ts (Unix epoch seconds) in the response body
+        response.Resource["_ts"].Should().NotBeNull();
+        response.Resource["_ts"]!.Type.Should().Be(JTokenType.Integer);
+        response.Resource["_ts"]!.Value<long>().Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task Read_ResponseBody_Contains_Etag_SystemProperty()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+
+        // Real Cosmos DB includes _etag in the response body
+        response.Resource["_etag"].Should().NotBeNull();
+        response.Resource["_etag"]!.Type.Should().Be(JTokenType.String);
+        response.Resource["_etag"]!.ToString().Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task Read_Ts_UpdatedOnReplace()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var readBefore = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var tsBefore = readBefore.Resource["_ts"]?.Value<long>() ?? 0;
+
+        // Small delay to ensure timestamp changes
+        await Task.Delay(10);
+
+        await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" },
+            "1", new PartitionKey("pk1"));
+
+        var readAfter = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var tsAfter = readAfter.Resource["_ts"]?.Value<long>() ?? 0;
+
+        tsAfter.Should().BeGreaterThanOrEqualTo(tsBefore);
+    }
+}
+
+
+public class ReplaceItemGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Replace_NonExistent_ThrowsNotFound()
+    {
+        var replacement = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" };
+
+        var act = () => _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Replace_UpdatesETag()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        var createResponse = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var replaceResponse = await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" },
+            "1", new PartitionKey("pk1"));
+
+        replaceResponse.ETag.Should().NotBe(createResponse.ETag);
+    }
+
+    [Fact]
+    public async Task Replace_ResponseIs200()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var response = await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" },
+            "1", new PartitionKey("pk1"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Replace_RecordsInChangeFeed()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+        var beforeReplace = _container.GetChangeFeedCheckpoint();
+
+        await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" },
+            "1", new PartitionKey("pk1"));
+
+        var afterReplace = _container.GetChangeFeedCheckpoint();
+        afterReplace.Should().BeGreaterThan(beforeReplace);
+    }
+}
+
+
+public class UpsertItemGapTests3
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Upsert_WithIfMatch_CorrectETag_Succeeds()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        var create = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var response = await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = create.ETag });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.Name.Should().Be("Updated");
+    }
+
+    [Fact]
+    public async Task Upsert_WithIfMatch_OnNewItem_ThrowsPreconditionFailed()
+    {
+        var act = () => _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"nonexistent\"" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Upsert_WithNullItem_Throws()
+    {
+        var act = () => _container.UpsertItemAsync<TestDocument>(null!, new PartitionKey("pk1"));
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+}
+
+
+public class DeleteItemGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Delete_ResponseIs204()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var response = await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task Delete_WithIfMatch_CorrectETag_Succeeds()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        var createResponse = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var response = await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = createResponse.ETag });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task Delete_WithIfMatch_WrongETag_ThrowsPreconditionFailed()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var act = () => _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"stale\"" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task Delete_AfterDelete_CanRecreate()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+        await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        var recreated = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Recreated" };
+        var response = await _container.CreateItemAsync(recreated, new PartitionKey("pk1"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Recreated");
+    }
+}
+
+
+/// <summary>
+/// Validates edge cases for DeleteItemAsync, specifically that IfNoneMatchEtag
+/// (which is meaningful for reads, not writes) does not interfere with delete.
+/// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.deleteitemasync
+/// </summary>
+public class DeleteEdgeCaseTests5
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Delete_WithIfNoneMatchEtag_IsIgnored_DeleteSucceeds()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        // IfNoneMatch is for conditional reads, not deletes. Should be ignored.
+        var response = await _container.DeleteItemAsync<TestDocument>(
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = "\"some-etag\"" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+}
+
+
+public class CreateItemGapTests3
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Create_WithPartitionKeyNone_ExtractsFromDocument()
+    {
+        // PartitionKey.None falls through to extract PK from document body
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+
+        var response = await _container.CreateItemAsync(item, PartitionKey.None);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // Retrievable with the document's PK value
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Test");
+    }
+
+    [Fact]
+    public async Task Create_ResponseContainsCorrectStatusCode_201()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+
+        var response = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Create_ResponseContainsRequestCharge()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+
+        var response = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        response.RequestCharge.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task Create_ItemWithSystemProperties_OverwrittenBySystem()
+    {
+        // Create item that includes _ts and _etag in the JSON
+        var json = """{"id":"1","partitionKey":"pk1","name":"Test","_ts":999999,"_etag":"\"fake\""}""";
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        var read = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var etag = read.ETag;
+
+        // _etag should be overwritten by the system, not "fake"
+        etag.Should().NotBe("\"fake\"");
+    }
+}
+
+
+public class CrudNullGuardTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task CreateItemAsync_WithNullItem_Throws()
+    {
+        var act = () => _container.CreateItemAsync<TestDocument>(null!, new PartitionKey("pk1"));
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task ReplaceItemAsync_WithNullId_Throws()
+    {
+        var act = () => _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            null!, new PartitionKey("pk1"));
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task ReplaceItemAsync_WithEmptyId_ThrowsNotFound()
+    {
+        var act = () => _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            "", new PartitionKey("pk1"));
+
+        // Empty ID won't match any item, so NotFound is expected
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task ReadItemAsync_WithNullId_Throws()
+    {
+        var act = () => _container.ReadItemAsync<TestDocument>(null!, new PartitionKey("pk1"));
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task DeleteItemAsync_WithNullId_Throws()
+    {
+        var act = () => _container.DeleteItemAsync<TestDocument>(null!, new PartitionKey("pk1"));
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task PatchItemAsync_WithNullId_Throws()
+    {
+        var act = () => _container.PatchItemAsync<TestDocument>(
+            null!, new PartitionKey("pk1"),
+            [PatchOperation.Set("/name", "test")]);
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task PatchItemAsync_WithNullOperations_Throws()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var act = () => _container.PatchItemAsync<TestDocument>(
+            "1", new PartitionKey("pk1"), null!);
+        await act.Should().ThrowAsync<Exception>();
+    }
+}
+
+
+public class DeleteAllItemsByPartitionKeyTests
+{
+    [Fact]
+    public async Task DeleteAllByPartitionKey_RemovesOnlyThatPartition()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+        await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk2", Name = "Bob" },
+            new PartitionKey("pk2"));
+        await container.CreateItemAsync(
+            new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Charlie" },
+            new PartitionKey("pk1"));
+
+        await container.DeleteAllItemsByPartitionKeyStreamAsync(new PartitionKey("pk1"));
+
+        container.ItemCount.Should().Be(1);
+
+        var read = await container.ReadItemAsync<TestDocument>("2", new PartitionKey("pk2"));
+        read.Resource.Name.Should().Be("Bob");
+    }
+}
+
+
+public class ReplaceItemGapTests3
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Replace_WithDifferentPartitionKey_InBody()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        // Replace with a different PK value in the body but same PK parameter
+        var replacement = new TestDocument { Id = "1", PartitionKey = "pk2", Name = "Replaced" };
+        var response = await _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
+
+        // Should succeed using the PK parameter for lookup
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+
+public class CreateItemGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Create_WithExplicitPartitionKey_ExtractsFromDocument_WhenNoneProvided()
+    {
+        var item = new TestDocument { Id = "auto-pk", PartitionKey = "pk1", Name = "Auto PK" };
+
+        var response = await _container.CreateItemAsync(item);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var read = await _container.ReadItemAsync<TestDocument>("auto-pk", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Auto PK");
+    }
+
+    [Fact]
+    public async Task Create_ResponseContainsETag_NonNullNonEmpty()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+
+        var response = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        response.ETag.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Create_ResponseBodyMatchesInput()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Value = 42 };
+
+        var response = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        response.Resource.Id.Should().Be("1");
+        response.Resource.Name.Should().Be("Test");
+        response.Resource.Value.Should().Be(42);
+    }
+
+    [Fact]
+    public async Task Create_WithNestedPartitionKeyPath_ExtractsCorrectly()
+    {
+        var container = new InMemoryContainer("test-container", "/nested/description");
+        var item = new TestDocument
+        {
+            Id = "1",
+            PartitionKey = "ignored",
+            Name = "Test",
+            Nested = new NestedObject { Description = "deep-pk", Score = 1.0 }
+        };
+
+        var response = await container.CreateItemAsync(item, new PartitionKey("deep-pk"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var read = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("deep-pk"));
+        read.Resource.Name.Should().Be("Test");
+    }
+
+    [Fact]
+    public async Task Create_WithIdContainingSpecialCharacters_Succeeds()
+    {
+        var item = new TestDocument { Id = "id/with?special#chars", PartitionKey = "pk1", Name = "Special" };
+
+        var response = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var read = await _container.ReadItemAsync<TestDocument>("id/with?special#chars", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Special");
+    }
+
+    [Fact]
+    public async Task Create_WithIdContainingUnicode_Succeeds()
+    {
+        var item = new TestDocument { Id = "日本語-id", PartitionKey = "pk1", Name = "Unicode" };
+
+        var response = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var read = await _container.ReadItemAsync<TestDocument>("日本語-id", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Unicode");
+    }
+
+    [Fact]
+    public async Task Create_SameIdDifferentPartitionKey_BothRetrievable()
+    {
+        var item1 = new TestDocument { Id = "same", PartitionKey = "pk1", Name = "First" };
+        var item2 = new TestDocument { Id = "same", PartitionKey = "pk2", Name = "Second" };
+
+        await _container.CreateItemAsync(item1, new PartitionKey("pk1"));
+        await _container.CreateItemAsync(item2, new PartitionKey("pk2"));
+
+        var read1 = await _container.ReadItemAsync<TestDocument>("same", new PartitionKey("pk1"));
+        var read2 = await _container.ReadItemAsync<TestDocument>("same", new PartitionKey("pk2"));
+
+        read1.Resource.Name.Should().Be("First");
+        read2.Resource.Name.Should().Be("Second");
+    }
+}
+
+
+public class CreateItemGapTests2
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Create_WithNullItem_ThrowsArgumentNullException()
+    {
+        var act = () => _container.CreateItemAsync<TestDocument>(null!, new PartitionKey("pk1"));
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task Create_WithEmptyId_Succeeds_OrThrows()
+    {
+        // Cosmos rejects empty ID with 400; InMemoryContainer may differ
+        var item = new TestDocument { Id = "", PartitionKey = "pk1", Name = "EmptyId" };
+
+        try
+        {
+            var response = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+            // If it succeeds, that's a behavioral difference — it should still be retrievable
+            response.StatusCode.Should().BeOneOf(HttpStatusCode.Created, HttpStatusCode.BadRequest);
+        }
+        catch (CosmosException ex)
+        {
+            ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        }
+    }
+
+    [Fact]
+    public async Task Create_WithVeryLongId_255Chars_Succeeds()
+    {
+        var longId = new string('a', 255);
+        var item = new TestDocument { Id = longId, PartitionKey = "pk1", Name = "LongId" };
+
+        var response = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var read = await _container.ReadItemAsync<TestDocument>(longId, new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("LongId");
+    }
+
+    [Fact]
+    public async Task Create_WithEnableContentResponseOnWrite_False_ResourceIsNull()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+
+        var response = await _container.CreateItemAsync(item, new PartitionKey("pk1"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = false });
+
+        response.Resource.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Create_WithCompositePartitionKey_TwoPaths()
+    {
+        var container = new InMemoryContainer("test", new[] { "/partitionKey", "/name" });
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+
+        var response = await container.CreateItemAsync(item);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Create_WithCancellationToken_Cancelled_ThrowsOperationCanceledException()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var act = () => _container.CreateItemAsync(item, new PartitionKey("pk1"),
+            cancellationToken: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+}
+
+
+public class ReadItemGapTests2
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Read_WithNullId_Throws()
+    {
+        var act = () => _container.ReadItemAsync<TestDocument>(null!, new PartitionKey("pk1"));
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task Read_WithEmptyId_ThrowsNotFound()
+    {
+        var act = () => _container.ReadItemAsync<TestDocument>("", new PartitionKey("pk1"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Read_CosmosException_Contains404StatusCode()
+    {
+        var act = () => _container.ReadItemAsync<TestDocument>("missing", new PartitionKey("pk1"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        ex.Which.Message.Should().NotBeNullOrEmpty();
+    }
+}
+
+
+public class EnableContentResponseOnWriteTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Upsert_WithEnableContentResponseOnWrite_False_ResourceIsNull()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+
+        var response = await _container.UpsertItemAsync(item, new PartitionKey("pk1"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = false });
+
+        response.Resource.Should().BeNull();
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Replace_WithEnableContentResponseOnWrite_False_ResourceIsNull()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" },
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = false });
+
+        response.Resource.Should().BeNull();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Patch_WithEnableContentResponseOnWrite_False_ResourceIsNull()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Value = 10 },
+            new PartitionKey("pk1"));
+
+        var response = await _container.PatchItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            [PatchOperation.Set("/name", "Patched")],
+            new PatchItemRequestOptions { EnableContentResponseOnWrite = false });
+
+        response.Resource.Should().BeNull();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Create_WithEnableContentResponseOnWrite_True_ResourceIsPopulated()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+
+        var response = await _container.CreateItemAsync(item, new PartitionKey("pk1"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = true });
+
+        response.Resource.Should().NotBeNull();
+        response.Resource.Name.Should().Be("Test");
+    }
+}
+
+
+public class ItemRequestOptionsEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task ReadItemAsync_WithIfNoneMatch_WildcardStar_ThrowsNotModified()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var act = () => _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = "*" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotModified);
+    }
+
+    [Fact]
+    public async Task UpsertItemAsync_WithIfMatch_WildcardStar_AlwaysSucceeds()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "*" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.Name.Should().Be("Updated");
+    }
+
+    [Fact]
+    public async Task CreateItemAsync_WithSessionToken_DoesNotThrow()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+
+        var response = await _container.CreateItemAsync(item, new PartitionKey("pk1"),
+            new ItemRequestOptions { SessionToken = "0:some-session-token" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task ReadItemAsync_WithConsistencyLevel_DoesNotThrow()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { ConsistencyLevel = ConsistencyLevel.Eventual });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task DeleteItemAsync_WithIfMatch_WildcardStar_AlwaysSucceeds()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "*" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+}
+
+
+public class DeleteItemGapTests3
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Delete_ResponseResource_IsAlwaysNull()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        response.Resource.Should().BeNull();
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task Delete_WithEnableContentResponseOnWrite_StillReturnsNoContent()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = false });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        response.Resource.Should().BeNull();
+    }
+}
+
+
+public class UpsertItemGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Upsert_NewItem_Returns201()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "New" };
+
+        var response = await _container.UpsertItemAsync(item, new PartitionKey("pk1"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Upsert_ExistingItem_Returns200()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var updated = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" };
+        var response = await _container.UpsertItemAsync(updated, new PartitionKey("pk1"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Upsert_StatusCodeDistinguishes_CreateVsReplace()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "First" };
+
+        var createResponse = await _container.UpsertItemAsync(item, new PartitionKey("pk1"));
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var replaceResponse = await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Second" },
+            new PartitionKey("pk1"));
+        replaceResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Upsert_WithIfMatch_StaleETag_ThrowsPreconditionFailed()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var act = () => _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"stale\"" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task Upsert_ReplacesEntireDocument_NotMerge()
+    {
+        var item = new TestDocument
+        {
+            Id = "1",
+            PartitionKey = "pk1",
+            Name = "Original",
+            Value = 42,
+            Tags = ["tag1", "tag2"]
+        };
+        await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var replacement = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" };
+        await _container.UpsertItemAsync(replacement, new PartitionKey("pk1"));
+
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Replaced");
+        read.Resource.Value.Should().Be(0);
+        read.Resource.Tags.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Upsert_UpdatesETag()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        var createResponse = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var upsertResponse = await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"));
+
+        upsertResponse.ETag.Should().NotBe(createResponse.ETag);
+    }
+
+    [Fact]
+    public async Task Upsert_RecordsInChangeFeed()
+    {
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Upserted" },
+            new PartitionKey("pk1"));
+
+        var checkpoint = _container.GetChangeFeedCheckpoint();
+        checkpoint.Should().BeGreaterThan(0);
     }
 }

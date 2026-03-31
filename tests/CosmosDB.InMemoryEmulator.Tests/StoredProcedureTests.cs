@@ -4,6 +4,8 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Scripts;
 using Newtonsoft.Json;
 using Xunit;
+using System.Text;
+using Newtonsoft.Json.Linq;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -137,5 +139,115 @@ public class StoredProcedureTests
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         response.Resource.Should().BeEmpty();
+    }
+}
+
+
+public class StoredProcGapTests3
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task StoredProc_WithPartitionKey_ExecutesInPartition()
+    {
+        _container.RegisterStoredProcedure("addItem", (pk, args) =>
+        {
+            return $"{{\"partition\":\"{pk}\"}}";
+        });
+
+        var response = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "addItem", new PartitionKey("pk1"), []);
+
+        response.Should().NotBeNull();
+    }
+}
+
+
+public class StoredProcGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task StoredProc_Register_Execute_ReturnsResult()
+    {
+        _container.RegisterStoredProcedure("addItem", (pk, args) =>
+        {
+            return "{\"status\":\"ok\"}";
+        });
+
+        var response = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "addItem", new PartitionKey("pk1"), []);
+
+        response.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Udf_NotRegistered_ThrowsOnQuery()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var act = async () =>
+        {
+            var iterator = _container.GetItemQueryIterator<JToken>(
+                "SELECT * FROM c WHERE udf.nonExistent(c.value)");
+            while (iterator.HasMoreResults)
+            {
+                await iterator.ReadNextAsync();
+            }
+        };
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+}
+
+
+public class UdfGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Udf_RegisterAndUseInQuery()
+    {
+        _container.RegisterUdf("double", args => ((double)args[0]) * 2);
+
+        await _container.CreateItemAsync(
+            new UdfDocument { Id = "1", PartitionKey = "pk1", Value = 21 },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE udf.double(c.value) FROM c");
+
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Udf_MultipleArgs()
+    {
+        _container.RegisterUdf("add", args => (double)args[0] + (double)args[1]);
+
+        await _container.CreateItemAsync(
+            new UdfDocument { Id = "1", PartitionKey = "pk1", X = 10, Y = 20 },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE udf.add(c.x, c.y) FROM c");
+
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
     }
 }

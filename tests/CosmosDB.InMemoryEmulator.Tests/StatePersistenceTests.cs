@@ -3,6 +3,8 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using System.Net;
+using System.Text;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -184,5 +186,32 @@ public class StatePersistenceTests
 
         results.Should().HaveCount(1);
         results[0].Name.Should().Be("Bob");
+    }
+}
+
+
+public class StateImportExportTests
+{
+    [Fact]
+    public async Task ExportState_ImportState_RoundTrip()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+        await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob" },
+            new PartitionKey("pk1"));
+
+        var state = container.ExportState();
+        state.Should().NotBeNullOrEmpty();
+
+        var newContainer = new InMemoryContainer("test", "/partitionKey");
+        newContainer.ImportState(state);
+
+        var read = await newContainer.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Alice");
+
+        newContainer.ItemCount.Should().Be(2);
     }
 }

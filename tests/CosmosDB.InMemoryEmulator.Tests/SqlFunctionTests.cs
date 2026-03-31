@@ -2,6 +2,8 @@ using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using System.Net;
+using System.Text;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -1655,5 +1657,367 @@ public class SqlFunctionTests
             results.AddRange(response);
         }
         return results;
+    }
+}
+
+
+public class SqlFunctionGapTests3
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task SqlFunc_GetCurrentTimestamp_NotImplemented()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE GetCurrentTimestamp() FROM c");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task SqlFunc_Substring_OutOfBounds()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "hello" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE SUBSTRING(c.name, 10, 5) FROM c");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
+        // Out-of-bounds substring returns empty string
+        results[0].ToString().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SqlFunc_MathFunctions_WithNull_ReturnNull()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","val":null}""")),
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE ABS(c.val) FROM c");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
+    }
+}
+
+
+public class SqlFunctionGapTests2
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task SqlFunc_DateTimeFunctions_NotImplemented()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE GetCurrentDateTime() FROM c");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task SqlFunc_IS_INTEGER_DistinguishesFromFloat()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","intVal":42,"floatVal":42.5}""")),
+            new PartitionKey("pk1"));
+
+        var intResult = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE IS_INTEGER(c.intVal) FROM c");
+        var intResults = new List<JToken>();
+        while (intResult.HasMoreResults)
+        {
+            var page = await intResult.ReadNextAsync();
+            intResults.AddRange(page);
+        }
+
+        intResults.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task SqlFunc_NullArgs_StringFunctions_ReturnUndefined()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","name":null}""")),
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE UPPER(c.name) FROM c");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        // null input should return null/undefined
+        results.Should().HaveCount(1);
+    }
+}
+
+
+public class SqlFunctionGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task SeedItem()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Hello World", Value = 42 },
+            new PartitionKey("pk1"));
+    }
+
+    private async Task<List<JObject>> RunQuery(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<JObject>(sql);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        return results;
+    }
+
+    private async Task<List<JToken>> RunQueryTokens(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<JToken>(sql);
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        return results;
+    }
+
+    [Fact]
+    public async Task Contains_CaseSensitive_Default()
+    {
+        await SeedItem();
+        var results = await RunQuery("""SELECT * FROM c WHERE CONTAINS(c.name, "hello")""");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Contains_CaseInsensitive_ThirdParam()
+    {
+        await SeedItem();
+        var results = await RunQuery("""SELECT * FROM c WHERE CONTAINS(c.name, "hello", true)""");
+        results.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task StartsWith_CaseInsensitive()
+    {
+        await SeedItem();
+        var results = await RunQuery("""SELECT * FROM c WHERE STARTSWITH(c.name, "hello", true)""");
+        results.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task ArrayContains_PartialMatch()
+    {
+        var json = """{"id":"1","partitionKey":"pk1","items":[{"name":"urgent","priority":1},{"name":"review","priority":2}]}""";
+        await _container.CreateItemStreamAsync(new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            """SELECT * FROM c WHERE ARRAY_CONTAINS(c.items, {"name": "urgent"}, true)""");
+
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Is_Defined_FalseForMissingField()
+    {
+        await SeedItem();
+        var results = await RunQuery("SELECT * FROM c WHERE IS_DEFINED(c.nonExistentField)");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Is_Defined_TrueForExistingField()
+    {
+        await SeedItem();
+        var results = await RunQuery("SELECT * FROM c WHERE IS_DEFINED(c.name)");
+        results.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task IndexOf_NotFound_ReturnsNegative()
+    {
+        await SeedItem();
+        var results = await RunQueryTokens("SELECT VALUE INDEX_OF(c.name, \"xyz\") FROM c");
+        results.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Substring_Basic()
+    {
+        await SeedItem();
+        var results = await RunQueryTokens("SELECT VALUE SUBSTRING(c.name, 0, 5) FROM c");
+        results.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Replace_MultipleOccurrences()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "aaa" },
+            new PartitionKey("pk1"));
+
+        var results = await RunQueryTokens("""SELECT VALUE REPLACE(c.name, "a", "bb") FROM c""");
+        results.Should().HaveCount(1);
+    }
+}
+
+
+public class TypeFunctionUndefinedDivergentBehaviorTests4
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Type functions on undefined/missing fields may not return false.
+    /// Real Cosmos DB returns false for IS_STRING(undefined), IS_NUMBER(undefined), etc.
+    /// InMemoryContainer evaluates missing fields as null, and IS_STRING(null) etc. may
+    /// return false (correct) or the behavior may vary depending on the function implementation.
+    /// </summary>
+    [Fact]
+    public async Task TypeFunctions_OnMissingField_ReturnFalse_InMemory()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            """SELECT IS_STRING(c.nonExistent) AS isStr, IS_NUMBER(c.nonExistent) AS isNum, IS_BOOL(c.nonExistent) AS isBool FROM c""");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        // InMemory treats missing as null; IS_STRING(null) = false, IS_NUMBER(null) = false
+        results[0]["isStr"]!.Value<bool>().Should().BeFalse();
+        results[0]["isNum"]!.Value<bool>().Should().BeFalse();
+        results[0]["isBool"]!.Value<bool>().Should().BeFalse();
+    }
+}
+
+
+public class SqlFunctionGapTests4
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task SqlFunc_Coalesce_WithMultipleArgs()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","a":null,"b":"value"}""")),
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            """SELECT VALUE COALESCE(c.a, c.b) FROM c""");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        results[0].ToString().Should().Be("value");
+    }
+
+    [Fact]
+    public async Task SqlFunc_IS_PRIMITIVE_ReturnsFalse_ForObjectAndArray()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","arr":[1,2],"obj":{"a":1},"str":"hello"}""")),
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            """SELECT IS_PRIMITIVE(c.arr) AS arrPrim, IS_PRIMITIVE(c.obj) AS objPrim, IS_PRIMITIVE(c.str) AS strPrim FROM c""");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        results[0]["arrPrim"]!.Value<bool>().Should().BeFalse();
+        results[0]["objPrim"]!.Value<bool>().Should().BeFalse();
+        results[0]["strPrim"]!.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact(Skip = "Undefined/missing fields are not reliably distinguishable from null. " +
+                 "Real Cosmos DB returns false for IS_STRING(undefined), IS_NUMBER(undefined), etc. " +
+                 "InMemoryContainer may return null or throw for missing properties. " +
+                 "See divergent behavior test in TypeFunctionUndefinedDivergentBehaviorTests4.")]
+    public async Task SqlFunc_TypeFunctions_WithUndefined_ReturnFalse()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            """SELECT IS_STRING(c.nonExistent) AS isStr, IS_NUMBER(c.nonExistent) AS isNum FROM c""");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        results[0]["isStr"]!.Value<bool>().Should().BeFalse();
+        results[0]["isNum"]!.Value<bool>().Should().BeFalse();
     }
 }

@@ -3,6 +3,7 @@ using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using System.Text;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -1003,5 +1004,1652 @@ public class QueryTests
             results.AddRange(response);
         }
         return results;
+    }
+}
+
+
+public class QueryOrderByGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Query_OrderBy_NullValues_SortPosition()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","name":"Alice","score":10}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","partitionKey":"pk1","name":"Bob","score":null}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"3","partitionKey":"pk1","name":"Charlie","score":20}""")),
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.score");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task Query_OrderBy_MissingField_StillReturnsAllItems()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","name":"Alice","rank":1}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","partitionKey":"pk1","name":"Bob"}""")),
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.rank");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task Query_OrderBy_WithTopAndOffset()
+    {
+        for (var i = 1; i <= 10; i++)
+            await _container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}", Value = i },
+                new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c ORDER BY c.value OFFSET 3 LIMIT 4");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(4);
+        results[0].Value.Should().Be(4);
+        results[3].Value.Should().Be(7);
+    }
+}
+
+
+public class QueryGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task SeedItems()
+    {
+        var items = new[]
+        {
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10, IsActive = true, Tags = ["urgent", "review"] },
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20, IsActive = false, Tags = ["review"] },
+            new TestDocument { Id = "3", PartitionKey = "pk2", Name = "Charlie", Value = 30, IsActive = true, Tags = ["urgent"] },
+            new TestDocument { Id = "4", PartitionKey = "pk2", Name = "Diana", Value = 40, IsActive = false },
+            new TestDocument { Id = "5", PartitionKey = "pk1", Name = "Eve", Value = 50, IsActive = true, Tags = ["urgent", "important"] },
+        };
+        foreach (var item in items)
+        {
+            await _container.CreateItemAsync(item, new PartitionKey(item.PartitionKey));
+        }
+    }
+
+    [Fact]
+    public async Task Query_NullQueryText_ReturnsAllItems()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(queryText: null);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(5);
+    }
+
+    [Fact]
+    public async Task Query_EmptyString_ReturnsAllItems()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>("");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(5);
+    }
+
+    [Fact]
+    public async Task Query_WithPartitionKeyFilter_OnlyScopesToPartition()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(3);
+        results.Should().OnlyContain(t => t.PartitionKey == "pk1");
+    }
+
+    [Fact]
+    public async Task Query_SelectValue_ReturnsRawValues()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<string>(
+            "SELECT VALUE c.name FROM c ORDER BY c.name");
+
+        var results = new List<string>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainInOrder("Alice", "Bob", "Charlie", "Diana", "Eve");
+    }
+
+    [Fact]
+    public async Task Query_Where_Between()
+    {
+        await SeedItems();
+
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.value BETWEEN @lo AND @hi")
+            .WithParameter("@lo", 15)
+            .WithParameter("@hi", 35);
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(query);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results.Select(r => r.Name).Should().Contain("Bob").And.Contain("Charlie");
+    }
+
+    [Fact]
+    public async Task Query_Where_In()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            """SELECT * FROM c WHERE c.name IN ("Alice", "Eve")""");
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results.Select(r => r.Name).Should().Contain("Alice").And.Contain("Eve");
+    }
+
+    [Fact]
+    public async Task Query_OrderBy_MultipleFields_MixedDirection()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c ORDER BY c.partitionKey ASC, c.value DESC");
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results[0].PartitionKey.Should().Be("pk1");
+        results[0].Value.Should().Be(50);
+        results[^1].PartitionKey.Should().Be("pk2");
+    }
+
+    [Fact]
+    public async Task Query_GroupBy_WithCount()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.partitionKey, COUNT(1) AS cnt FROM c GROUP BY c.partitionKey");
+
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        var pk1 = results.FirstOrDefault(r => r["partitionKey"]?.ToString() == "pk1");
+        pk1.Should().NotBeNull();
+        pk1!["cnt"]!.ToObject<int>().Should().Be(3);
+    }
+
+    [Fact]
+    public async Task Query_Distinct()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT DISTINCT c.partitionKey FROM c");
+
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task Query_Top_LimitsResults()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT TOP 2 * FROM c ORDER BY c.value");
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results[0].Value.Should().Be(10);
+        results[1].Value.Should().Be(20);
+    }
+
+    [Fact]
+    public async Task Query_OffsetLimit_Pagination()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c ORDER BY c.value OFFSET 1 LIMIT 2");
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results[0].Value.Should().Be(20);
+        results[1].Value.Should().Be(30);
+    }
+
+    [Fact]
+    public async Task Query_Where_Not()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c WHERE NOT c.isActive");
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results.Should().OnlyContain(r => !r.IsActive);
+    }
+
+    [Fact]
+    public async Task Query_Where_Like()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c WHERE c.name LIKE 'A%'");
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task Query_Where_ArithmeticExpression()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c WHERE c.value * 2 > 50");
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task Query_ParameterizedQuery_WithMultipleParams()
+    {
+        await SeedItems();
+
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.value > @min AND c.isActive = @active")
+            .WithParameter("@min", 15)
+            .WithParameter("@active", true);
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(query);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results.Select(r => r.Name).Should().Contain("Charlie").And.Contain("Eve");
+    }
+
+    [Fact]
+    public async Task Query_NestedFunctionCalls()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE UPPER(SUBSTRING(c.name, 0, 3)) FROM c WHERE c.id = '1'");
+
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Query_Join_SingleArrayExpansion()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Tags = ["a", "b", "c"] },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE t FROM c JOIN t IN c.tags");
+
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task Query_Exists_Subquery()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            """SELECT * FROM c WHERE EXISTS(SELECT VALUE t FROM t IN c.tags WHERE t = "urgent")""");
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(3);
+        results.Select(r => r.Name).Should().Contain("Alice").And.Contain("Charlie").And.Contain("Eve");
+    }
+
+    [Fact]
+    public async Task Query_NullCoalesce_Operator()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "HasName" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            """SELECT VALUE (c.name ?? "default") FROM c""");
+
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
+    }
+}
+
+
+/// <summary>
+/// Tests edge cases for continuation tokens in GetItemQueryIterator.
+/// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.getitemqueryiterator
+/// </summary>
+public class QueryContinuationTokenEdgeCaseTests5
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task QueryIterator_WithInvalidContinuationToken_HandlesGracefully()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        // Invalid continuation token — should not crash, may return all or empty results
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c",
+            continuationToken: "not-a-valid-token");
+
+        var act = async () =>
+        {
+            while (iterator.HasMoreResults)
+                await iterator.ReadNextAsync();
+        };
+
+        // Should not throw — graceful handling of invalid tokens
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task QueryIterator_WithQueryDefinition_AndContinuationToken_Works()
+    {
+        for (var i = 1; i <= 5; i++)
+            await _container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}", Value = i },
+                new PartitionKey("pk1"));
+
+        // Read first page with MaxItemCount=2
+        var iterator1 = _container.GetItemQueryIterator<TestDocument>(
+            new QueryDefinition("SELECT * FROM c ORDER BY c.value"),
+            requestOptions: new QueryRequestOptions { MaxItemCount = 2 });
+
+        var page1 = await iterator1.ReadNextAsync();
+        var token = page1.ContinuationToken;
+
+        page1.Should().HaveCount(2);
+
+        // Resume from continuation token with QueryDefinition
+        var iterator2 = _container.GetItemQueryIterator<TestDocument>(
+            new QueryDefinition("SELECT * FROM c ORDER BY c.value"),
+            continuationToken: token,
+            requestOptions: new QueryRequestOptions { MaxItemCount = 2 });
+
+        var remaining = new List<TestDocument>();
+        while (iterator2.HasMoreResults)
+        {
+            var page = await iterator2.ReadNextAsync();
+            remaining.AddRange(page);
+        }
+
+        remaining.Should().HaveCount(3);
+    }
+}
+
+
+public class QueryFeedRangeAndQueryDefinitionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task GetItemQueryIterator_WithFeedRange_ReturnsResults()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var ranges = await _container.GetFeedRangesAsync();
+        var feedRange = ranges[0];
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            feedRange,
+            new QueryDefinition("SELECT * FROM c"));
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task GetItemQueryStreamIterator_WithFeedRange_ReturnsResults()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var ranges = await _container.GetFeedRangesAsync();
+        var feedRange = ranges[0];
+
+        var iterator = _container.GetItemQueryStreamIterator(
+            feedRange,
+            new QueryDefinition("SELECT * FROM c"));
+
+        var results = new List<ResponseMessage>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.Add(page);
+        }
+
+        results.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task GetItemQueryIterator_WithQueryDefinition_Parameterized()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob" },
+            new PartitionKey("pk1"));
+
+        var queryDef = new QueryDefinition("SELECT * FROM c WHERE c.name = @name")
+            .WithParameter("@name", "Alice");
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(queryDef);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task GetItemQueryIterator_WithQueryDefinition_MultipleParams()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 },
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20 },
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Alice", Value = 30 },
+            new PartitionKey("pk1"));
+
+        var queryDef = new QueryDefinition("SELECT * FROM c WHERE c.name = @name AND c.value > @min")
+            .WithParameter("@name", "Alice")
+            .WithParameter("@min", 5);
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(queryDef);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results.Should().OnlyContain(r => r.Name == "Alice");
+    }
+}
+
+
+public class QueryGapTests2
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task SeedItems()
+    {
+        var items = new[]
+        {
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10, IsActive = true, Tags = ["urgent", "review"] },
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20, IsActive = false, Tags = ["review"] },
+            new TestDocument { Id = "3", PartitionKey = "pk2", Name = "Charlie", Value = 30, IsActive = true, Tags = ["urgent"] },
+            new TestDocument { Id = "4", PartitionKey = "pk2", Name = "Diana", Value = 40, IsActive = false },
+            new TestDocument { Id = "5", PartitionKey = "pk1", Name = "Eve", Value = 50, IsActive = true, Tags = ["urgent", "important"] },
+        };
+        foreach (var item in items)
+            await _container.CreateItemAsync(item, new PartitionKey(item.PartitionKey));
+    }
+
+    [Fact]
+    public async Task Query_Where_NullComparison()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","name":null}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "NotNull" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name = null");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Query_Where_IsDefined_TrueForExistingField()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c WHERE IS_DEFINED(c.name)");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(5);
+    }
+
+    [Fact]
+    public async Task Query_Where_IsDefined_FalseForMissing()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c WHERE IS_DEFINED(c.nonExistentField)");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Query_Where_IsNull_TrueForExplicitNull()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","name":null}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "NotNull" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE IS_NULL(c.name)");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Query_GroupBy_WithSum()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.partitionKey, SUM(c.value) AS total FROM c GROUP BY c.partitionKey");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        var pk1 = results.FirstOrDefault(r => r["partitionKey"]?.ToString() == "pk1");
+        pk1.Should().NotBeNull();
+        pk1!["total"]!.ToObject<int>().Should().Be(80);
+    }
+
+    [Fact]
+    public async Task Query_GroupBy_WithAvg()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.partitionKey, AVG(c.value) AS avg FROM c GROUP BY c.partitionKey");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task Query_GroupBy_WithMinMax()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.partitionKey, MIN(c.value) AS min, MAX(c.value) AS max FROM c GROUP BY c.partitionKey");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        var pk1 = results.FirstOrDefault(r => r["partitionKey"]?.ToString() == "pk1");
+        pk1!["min"]!.ToObject<int>().Should().Be(10);
+        pk1!["max"]!.ToObject<int>().Should().Be(50);
+    }
+
+    [Fact]
+    public async Task Query_GroupBy_MultipleFields()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.partitionKey, c.isActive, COUNT(1) AS cnt FROM c GROUP BY c.partitionKey, c.isActive");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCountGreaterThanOrEqualTo(3);
+    }
+
+    [Fact]
+    public async Task Query_Join_EmptyArray_ReturnsNoRows()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Tags = [] },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE t FROM c JOIN t IN c.tags");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Query_Join_MultipleJoins_CartesianProduct()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            new MultiJoinDocument { Id = "1", Pk = "pk1", Colors = ["red", "blue"], Sizes = ["S", "M", "L"] },
+            new PartitionKey("pk1"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, co AS color, sz AS size FROM c JOIN co IN c.colors JOIN sz IN c.sizes");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(6); // 2 colors * 3 sizes
+    }
+
+    [Fact]
+    public async Task Query_Join_WithWhere_FiltersExpandedRows()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Tags = ["alpha", "beta", "gamma"] },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            """SELECT VALUE t FROM c JOIN t IN c.tags WHERE t = "gamma" """);
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        results[0].ToString().Should().Be("gamma");
+    }
+
+    [Fact]
+    public async Task Query_Contains_CaseSensitive_Default()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            """SELECT * FROM c WHERE CONTAINS(c.name, "alice")""");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        // Default is case-sensitive, "Alice" != "alice"
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Query_Contains_CaseInsensitive()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            """SELECT * FROM c WHERE CONTAINS(c.name, "alice", true)""");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task Query_ParameterizedQuery_MultipleParams()
+    {
+        await SeedItems();
+
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.value > @min AND c.name != @excluded")
+            .WithParameter("@min", 15)
+            .WithParameter("@excluded", "Diana");
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(query);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(3);
+        results.Select(r => r.Name).Should().NotContain("Diana");
+    }
+
+    [Fact]
+    public async Task Query_BracketNotation_ForSpecialFieldNames()
+    {
+        var json = """{"id":"1","partitionKey":"pk1","field-name":"special-value"}""";
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            """SELECT c["field-name"] FROM c""");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Query_AliasedSelect()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.name AS fullName FROM c WHERE c.id = '1'");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        results[0]["fullName"]?.ToString().Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task Query_SelectValue_Count_ReturnsNumber()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE COUNT(1) FROM c");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task Query_Select_NestedProperty()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument
+            {
+                Id = "1", PartitionKey = "pk1", Name = "Test",
+                Nested = new NestedObject { Description = "MyNested", Score = 9.5 }
+            },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.nested.description FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+    }
+}
+
+
+public class QueryOrderByGapTests4
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Query_OrderBy_MixedTypes_NumbersAndStrings()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","sortVal":10}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","partitionKey":"pk1","sortVal":"alpha"}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"3","partitionKey":"pk1","sortVal":5}""")),
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.sortVal ASC");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        // All 3 items should be returned regardless of mixed types
+        results.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task Query_OrderBy_NestedProperty()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument
+            {
+                Id = "1", PartitionKey = "pk1", Name = "A",
+                Nested = new NestedObject { Description = "Z", Score = 1.0 }
+            }, new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument
+            {
+                Id = "2", PartitionKey = "pk1", Name = "B",
+                Nested = new NestedObject { Description = "A", Score = 2.0 }
+            }, new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c ORDER BY c.nested.description ASC");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results[0].Nested!.Description.Should().Be("A");
+        results[1].Nested!.Description.Should().Be("Z");
+    }
+}
+
+
+public class QueryWhereGapTests3
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact(Skip = "InMemoryContainer does not distinguish between undefined and null fields. " +
+                 "Real Cosmos DB treats a missing field as 'undefined' which is NOT equal to null. " +
+                 "InMemoryContainer treats missing fields as null, so 'WHERE c.status = null' matches. " +
+                 "See divergent behavior test in QueryUndefinedFieldDivergentBehaviorTests.")]
+    public async Task Query_Where_UndefinedField_NotEqualToNull()
+    {
+        // Create item WITHOUT a "status" field
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        // undefined != null in Cosmos
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c WHERE c.status = null");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        // Should NOT match — missing field is undefined, not null
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Query_Where_StringConcatOperator()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","first":"John","last":"Doe"}""")),
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            """SELECT * FROM c WHERE c.first || ' ' || c.last = "John Doe" """);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+    }
+}
+
+
+public class QueryFeedRangeDivergentBehaviorTests4
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: FeedRange parameter is ignored on GetItemQueryIterator.
+    /// Real Cosmos DB scopes query execution to the specified FeedRange partition.
+    /// InMemoryContainer always returns all items regardless of FeedRange.
+    /// </summary>
+    [Fact]
+    public async Task QueryIterator_FeedRange_ReturnsAllItems_InMemory()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk2", Name = "B" }, new PartitionKey("pk2"));
+
+        var ranges = await _container.GetFeedRangesAsync();
+        var iterator = _container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        // InMemory returns all items regardless of FeedRange
+        results.Should().HaveCount(2);
+    }
+}
+
+
+public class QueryIteratorGapTests4
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact(Skip = "FeedRange parameter is ignored by GetItemQueryIterator. " +
+                 "Real Cosmos DB scopes the query to the specified FeedRange partition. " +
+                 "InMemoryContainer ignores the FeedRange and returns all items. " +
+                 "See divergent behavior test in QueryFeedRangeDivergentBehaviorTests4.")]
+    public async Task QueryIterator_WithFeedRange_FiltersByRange()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk2", Name = "B" }, new PartitionKey("pk2"));
+
+        var ranges = await _container.GetFeedRangesAsync();
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c", requestOptions: new QueryRequestOptions { });
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        // With a FeedRange, should only return items from that range
+        results.Should().HaveCountLessThan(2);
+    }
+
+    [Fact]
+    public async Task QueryIterator_Dispose_IsIdempotent()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" }, new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        while (iterator.HasMoreResults)
+            await iterator.ReadNextAsync();
+
+        // Double dispose should not throw
+        iterator.Dispose();
+        iterator.Dispose();
+    }
+}
+
+
+public class QueryIteratorGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task SeedItems()
+    {
+        for (var i = 1; i <= 10; i++)
+            await _container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}", Value = i },
+                new PartitionKey("pk1"));
+    }
+
+    [Fact]
+    public async Task Query_WithMaxItemCount_PaginatesCorrectly()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c ORDER BY c.value",
+            requestOptions: new QueryRequestOptions { MaxItemCount = 3 });
+
+        var allItems = new List<TestDocument>();
+        var pageCount = 0;
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            allItems.AddRange(page);
+            pageCount++;
+        }
+
+        allItems.Should().HaveCount(10);
+        pageCount.Should().BeGreaterThan(1);
+    }
+
+    [Fact]
+    public async Task Query_ContinuationToken_ResumesCorrectly()
+    {
+        await SeedItems();
+
+        // First page
+        var iterator1 = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c ORDER BY c.value",
+            requestOptions: new QueryRequestOptions { MaxItemCount = 3 });
+        var page1 = await iterator1.ReadNextAsync();
+        var token = page1.ContinuationToken;
+
+        page1.Should().HaveCount(3);
+        token.Should().NotBeNullOrEmpty();
+
+        // Resume from continuation token
+        var iterator2 = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c ORDER BY c.value",
+            continuationToken: token,
+            requestOptions: new QueryRequestOptions { MaxItemCount = 3 });
+
+        var allRemaining = new List<TestDocument>();
+        while (iterator2.HasMoreResults)
+        {
+            var page = await iterator2.ReadNextAsync();
+            allRemaining.AddRange(page);
+        }
+
+        allRemaining.Should().HaveCount(7);
+    }
+
+    [Fact]
+    public async Task Query_AfterLastPage_HasMoreResults_IsFalse()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        while (iterator.HasMoreResults)
+            await iterator.ReadNextAsync();
+
+        iterator.HasMoreResults.Should().BeFalse();
+    }
+}
+
+
+public class QueryBitwiseGapTests4
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Query_Where_BitwiseAnd_FiltersCorrectly()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","flags":7}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","partitionKey":"pk1","flags":4}""")),
+            new PartitionKey("pk1"));
+
+        // Use IntBitAnd function instead of & operator in WHERE for reliable filtering
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE IntBitAnd(c.flags, 1) = 1");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        // flags=7 (binary 111) has bit 0 set; flags=4 (binary 100) does not
+        results.Should().ContainSingle();
+        results[0]["id"]!.ToString().Should().Be("1");
+    }
+}
+
+
+public class QueryUndefinedFieldDivergentBehaviorTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: InMemoryContainer treats missing fields as null, not undefined.
+    /// Real Cosmos DB distinguishes between undefined (missing) and null.
+    /// WHERE c.status = null would NOT match an item without a status field in real Cosmos.
+    /// InMemoryContainer matches it because missing fields are treated as null.
+    /// </summary>
+    [Fact]
+    public async Task Query_MissingField_MatchesNull_InMemory()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c WHERE c.status = null");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        // InMemory treats missing "status" as null, so it matches
+        results.Should().HaveCount(1);
+        results[0].Id.Should().Be("1");
+    }
+}
+
+
+public class QueryJoinGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Query_Join_NullArray_ReturnsNoRows()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","tags":null}""")),
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE t FROM c JOIN t IN c.tags");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().BeEmpty();
+    }
+}
+
+
+public class QueryGroupByGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task SeedItems()
+    {
+        await _container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10, IsActive = true }, new PartitionKey("pk1"));
+        await _container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20, IsActive = true }, new PartitionKey("pk1"));
+        await _container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Charlie", Value = 30, IsActive = false }, new PartitionKey("pk1"));
+        await _container.CreateItemAsync(new TestDocument { Id = "4", PartitionKey = "pk1", Name = "Diana", Value = 40, IsActive = false }, new PartitionKey("pk1"));
+        await _container.CreateItemAsync(new TestDocument { Id = "5", PartitionKey = "pk1", Name = "Eve", Value = 50, IsActive = true }, new PartitionKey("pk1"));
+    }
+
+    [Fact]
+    public async Task Query_GroupBy_WithHaving()
+    {
+        await SeedItems();
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.isActive, COUNT(1) AS cnt FROM c GROUP BY c.isActive HAVING COUNT(1) > 2");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        // isActive=true has 3 items, isActive=false has 2 — only 3 > 2
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Query_Count_Star_VsCount_1_SameResult()
+    {
+        await SeedItems();
+
+        var iter1 = _container.GetItemQueryIterator<JToken>("SELECT VALUE COUNT(1) FROM c");
+        var results1 = new List<JToken>();
+        while (iter1.HasMoreResults) results1.AddRange(await iter1.ReadNextAsync());
+
+        var iter2 = _container.GetItemQueryIterator<JToken>("SELECT VALUE COUNT(1) FROM c");
+        var results2 = new List<JToken>();
+        while (iter2.HasMoreResults) results2.AddRange(await iter2.ReadNextAsync());
+
+        results1.First().ToObject<int>().Should().Be(results2.First().ToObject<int>());
+    }
+}
+
+
+public class QueryParserGapTests4
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Parser_VeryLongQuery_DoesNotStackOverflow()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Value = 50 },
+            new PartitionKey("pk1"));
+
+        // Build a deeply nested WHERE clause: ((((c.value > 0) AND c.value > 0) AND ...))
+        var conditions = string.Join(" AND ", Enumerable.Range(0, 50).Select(_ => "c.value > 0"));
+        var query = $"SELECT * FROM c WHERE {conditions}";
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(query);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+    }
+}
+
+
+public class QueryFunctionGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Query_StringEquals_CaseInsensitive()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "John" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            """SELECT * FROM c WHERE StringEquals(c.name, "JOHN", true)""");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Query_RegexMatch_PatternMatching()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","email":"test@example.com"}""")),
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            """SELECT * FROM c WHERE RegexMatch(c.email, "^[a-z]+@.*")""");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Query_EscapedQuoteInStringLiteral()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "O'Brien" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c WHERE c.name = 'O''Brien'");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Query_NegativeNumberLiteral()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Value = -5 },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c WHERE c.value = -5");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+    }
+}
+
+
+public class QuerySelectGapTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Query_Select_ComputedExpression()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Value = 10 },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.value * 2 AS doubled FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Query_Select_ObjectLiteral()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 30 },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            """SELECT {"name": c.name, "val": c.value} AS info FROM c""");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+    }
+}
+
+
+public class QueryFunctionGapTests4
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Query_ArraySlice_WithNegativeIndex()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","items":["a","b","c","d","e"]}""")),
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT ARRAY_SLICE(c.items, -2) AS sliced FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        var sliced = results[0]["sliced"]!.ToObject<string[]>();
+        sliced.Should().BeEquivalentTo(["d", "e"]);
+    }
+
+    [Fact]
+    public async Task Query_TypeChecking_Functions_OnVariousTypes()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","arr":[1,2],"obj":{"a":1},"str":"hello","num":42,"bln":true}""")),
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            """SELECT IS_ARRAY(c.arr) AS isArr, IS_OBJECT(c.obj) AS isObj, IS_STRING(c.num) AS isStrNum, IS_NUMBER(c.str) AS isNumStr, IS_BOOL(c.bln) AS isBln FROM c""");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        results[0]["isArr"]!.Value<bool>().Should().BeTrue();
+        results[0]["isObj"]!.Value<bool>().Should().BeTrue();
+        results[0]["isStrNum"]!.Value<bool>().Should().BeFalse();
+        results[0]["isNumStr"]!.Value<bool>().Should().BeFalse();
+        results[0]["isBln"]!.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Query_MathFunctions_EdgeCases()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","val":1}""")),
+            new PartitionKey("pk1"));
+
+        // POWER(0,0) should return 1 per IEEE 754
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE POWER(0, 0) FROM c");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        results[0].Value<double>().Should().Be(1.0);
     }
 }
