@@ -1429,21 +1429,41 @@ public sealed class InMemoryContainer : Container
             return result.ToList();
         }
 
-        // Parse once for the full pipeline — all subsequent stages work with JObjects
-        var items = stringItems.Select(JsonParseHelpers.ParseJson).ToList();
+        List<JObject> items;
 
         // JOIN expansion (supports multiple JOINs) — must come before WHERE
         if (parsed.Joins is { Length: > 0 })
         {
+            items = stringItems.Select(JsonParseHelpers.ParseJson).ToList();
             items = ExpandAllJoins(items, parsed);
         }
         else if (parsed.Join is not null)
         {
+            items = stringItems.Select(JsonParseHelpers.ParseJson).ToList();
             items = ExpandJoinedItems(items, parsed);
         }
+        else if (parsed.Where is not null)
+        {
+            // Parse and filter simultaneously — non-matching items are short-lived,
+            // reducing GC pressure vs eagerly parsing all items into a list.
+            items = new List<JObject>();
+            foreach (var json in stringItems)
+            {
+                var jObj = JsonParseHelpers.ParseJson(json);
+                if (EvaluateWhereExpression(parsed.Where, jObj, parsed.FromAlias, parameters, parsed.Join))
+                {
+                    items.Add(jObj);
+                }
+            }
+        }
+        else
+        {
+            // No WHERE or JOIN — parse all items for subsequent stages (ORDER BY, GROUP BY, etc.)
+            items = stringItems.Select(JsonParseHelpers.ParseJson).ToList();
+        }
 
-        // WHERE
-        if (parsed.Where is not null)
+        // WHERE already applied above when parsed inline with parsing
+        if ((parsed.Joins is { Length: > 0 } || parsed.Join is not null) && parsed.Where is not null)
         {
             items = items.Where(jObj =>
                 EvaluateWhereExpression(parsed.Where, jObj, parsed.FromAlias, parameters, parsed.Join)
