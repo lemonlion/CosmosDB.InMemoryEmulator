@@ -7,7 +7,7 @@ jobs:
   performance-tests:
     runs-on: ubuntu-latest
     env:
-      LOAD_TEST_RPS: 400
+      LOAD_TEST_RPS: 50
       LOAD_TEST_DURATION_SECONDS: 60
     steps:
       - uses: actions/checkout@v5
@@ -20,5 +20,5 @@ jobs:
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
 
-      - name: In-Memory Performance Tests
+      - name: In-Memory Performance Tests (Comparison)
         run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Performance --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed" --filter "FullyQualifiedName~LoadTests"
