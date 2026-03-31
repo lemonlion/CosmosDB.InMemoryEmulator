@@ -110,10 +110,10 @@ public class ObjectToArrayFunctionTests
 
         var arr = results.Should().ContainSingle().Subject;
         arr.Count.Should().Be(2);
-        arr[0]["Name"]!.Value<string>().Should().Be("name");
-        arr[0]["Value"]!.Value<string>().Should().Be("Alice");
-        arr[1]["Name"]!.Value<string>().Should().Be("age");
-        arr[1]["Value"]!.Value<int>().Should().Be(30);
+        arr[0]["k"]!.Value<string>().Should().Be("name");
+        arr[0]["v"]!.Value<string>().Should().Be("Alice");
+        arr[1]["k"]!.Value<string>().Should().Be("age");
+        arr[1]["v"]!.Value<int>().Should().Be(30);
     }
 }
 

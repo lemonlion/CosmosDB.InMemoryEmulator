@@ -1749,7 +1749,23 @@ public class InMemoryContainer : Container
 
         if (!hasAggregate)
         {
-            return groups.Select(g => g.First()).ToList();
+            return groups.Select(g =>
+            {
+                var jObj = JsonParseHelpers.ParseJson(g.First());
+                var projected = new JObject();
+                foreach (var field in parsed.SelectFields)
+                {
+                    var path = field.Expression;
+                    if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                    {
+                        path = path[(fromAlias.Length + 1)..];
+                    }
+
+                    var outputName = field.Alias ?? path.Split('.').Last();
+                    projected[outputName] = jObj.SelectToken(path)?.DeepClone();
+                }
+                return projected.ToString(Formatting.None);
+            }).ToList();
         }
 
         var result = new List<string>();
@@ -1784,19 +1800,57 @@ public class InMemoryContainer : Container
 
                 if (funcName == "COUNT")
                 {
-                    resultObj[outputName] = groupItems.Count;
+                    if (innerArg is "1" or "*" or null)
+                    {
+                        resultObj[outputName] = groupItems.Count;
+                    }
+                    else
+                    {
+                        var countPath = innerArg;
+                        if (countPath.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                            countPath = countPath[(fromAlias.Length + 1)..];
+                        resultObj[outputName] = groupItems.Count(json =>
+                        {
+                            var jObj = JsonParseHelpers.ParseJson(json);
+                            return jObj.SelectToken(countPath) != null;
+                        });
+                    }
                 }
-                else if (funcName is "SUM" or "AVG" or "MIN" or "MAX" && innerArg != null)
+                else if (funcName is "SUM" or "AVG" && innerArg != null)
                 {
                     var values = ExtractNumericValues(groupItems, innerArg, fromAlias);
-                    resultObj[outputName] = funcName switch
+                    if (funcName == "SUM")
                     {
-                        "SUM" => values.Sum(),
-                        "AVG" => values.Count > 0 ? values.Average() : 0,
-                        "MIN" => values.Count > 0 ? values.Min() : 0,
-                        "MAX" => values.Count > 0 ? values.Max() : 0,
-                        _ => 0
-                    };
+                        resultObj[outputName] = values.Sum();
+                    }
+                    else // AVG
+                    {
+                        if (values.Count > 0)
+                            resultObj[outputName] = values.Average();
+                    }
+                }
+                else if (funcName is "MIN" or "MAX" && innerArg != null)
+                {
+                    var tokens = ExtractTokenValues(groupItems, innerArg, fromAlias);
+                    if (tokens.Count > 0)
+                    {
+                        var numericValues = new List<double>();
+                        var stringValues = new List<string>();
+                        foreach (var t in tokens)
+                        {
+                            if (t.Type is JTokenType.Integer or JTokenType.Float)
+                                numericValues.Add(t.Value<double>());
+                            else if (t.Type == JTokenType.String)
+                                stringValues.Add(t.Value<string>());
+                        }
+
+                        if (numericValues.Count > 0)
+                            resultObj[outputName] = funcName == "MIN" ? numericValues.Min() : numericValues.Max();
+                        else if (stringValues.Count > 0)
+                            resultObj[outputName] = funcName == "MIN"
+                                ? stringValues.OrderBy(s => s, StringComparer.Ordinal).First()
+                                : stringValues.OrderByDescending(s => s, StringComparer.Ordinal).First();
+                    }
                 }
                 else
                 {
@@ -1845,6 +1899,27 @@ public class InMemoryContainer : Container
             }
         }
         return values;
+    }
+
+    private static List<JToken> ExtractTokenValues(List<string> items, string innerArg, string fromAlias)
+    {
+        var tokens = new List<JToken>();
+        foreach (var json in items)
+        {
+            var jObj = JsonParseHelpers.ParseJson(json);
+            var path = innerArg;
+            if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+            {
+                path = path[(fromAlias.Length + 1)..];
+            }
+
+            var token = jObj.SelectToken(path);
+            if (token != null && token.Type != JTokenType.Null)
+            {
+                tokens.Add(token);
+            }
+        }
+        return tokens;
     }
 
     private static bool EvaluateHavingCondition(
@@ -2093,6 +2168,12 @@ public class InMemoryContainer : Container
         foreach (var json in items)
         {
             var jObj = JsonParseHelpers.ParseJson(json);
+            if (!jObj.HasValues)
+            {
+                // Empty object means the projected value was undefined — skip (omit from results)
+                continue;
+            }
+
             var first = jObj.Properties().FirstOrDefault();
             if (first?.Value is not null)
             {
@@ -2143,19 +2224,59 @@ public class InMemoryContainer : Container
 
             if (funcName == "COUNT")
             {
-                resultObj[outputName] = items.Count;
+                if (innerArg is "1" or "*" or null)
+                {
+                    resultObj[outputName] = items.Count;
+                }
+                else
+                {
+                    var countPath = innerArg;
+                    if (countPath.StartsWith(parsed.FromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                        countPath = countPath[(parsed.FromAlias.Length + 1)..];
+                    resultObj[outputName] = items.Count(json =>
+                    {
+                        var jObj = JsonParseHelpers.ParseJson(json);
+                        return jObj.SelectToken(countPath) != null;
+                    });
+                }
             }
-            else if (funcName is "SUM" or "AVG" or "MIN" or "MAX" && innerArg != null)
+            else if (funcName is "SUM" or "AVG" && innerArg != null)
             {
                 var values = ExtractNumericValues(items, innerArg, parsed.FromAlias);
-                resultObj[outputName] = funcName switch
+                if (funcName == "SUM")
                 {
-                    "SUM" => values.Sum(),
-                    "AVG" => values.Count > 0 ? values.Average() : 0,
-                    "MIN" => values.Count > 0 ? values.Min() : 0,
-                    "MAX" => values.Count > 0 ? values.Max() : 0,
-                    _ => 0
-                };
+                    resultObj[outputName] = values.Sum();
+                }
+                else // AVG
+                {
+                    if (values.Count > 0)
+                        resultObj[outputName] = values.Average();
+                    // else: omit field entirely (undefined)
+                }
+            }
+            else if (funcName is "MIN" or "MAX" && innerArg != null)
+            {
+                var tokens = ExtractTokenValues(items, innerArg, parsed.FromAlias);
+                if (tokens.Count > 0)
+                {
+                    // Try numeric first
+                    var numericValues = new List<double>();
+                    var stringValues = new List<string>();
+                    foreach (var t in tokens)
+                    {
+                        if (t.Type is JTokenType.Integer or JTokenType.Float)
+                            numericValues.Add(t.Value<double>());
+                        else if (t.Type == JTokenType.String)
+                            stringValues.Add(t.Value<string>());
+                    }
+
+                    if (numericValues.Count > 0)
+                        resultObj[outputName] = funcName == "MIN" ? numericValues.Min() : numericValues.Max();
+                    else if (stringValues.Count > 0)
+                        resultObj[outputName] = funcName == "MIN"
+                            ? stringValues.OrderBy(s => s, StringComparer.Ordinal).First()
+                            : stringValues.OrderByDescending(s => s, StringComparer.Ordinal).First();
+                }
             }
             else
             {
@@ -2368,7 +2489,7 @@ public class InMemoryContainer : Container
                 return Math.Abs(l - r) < 0.0001;
             }
         }
-        return string.Equals(left.ToString(), right.ToString(), StringComparison.OrdinalIgnoreCase);
+        return string.Equals(left.ToString(), right.ToString(), StringComparison.Ordinal);
     }
 
     private static int CompareValues(object left, object right)
@@ -2394,7 +2515,7 @@ public class InMemoryContainer : Container
             return l.CompareTo(r);
         }
 
-        return string.Compare(left.ToString(), right.ToString(), StringComparison.OrdinalIgnoreCase);
+        return string.Compare(left.ToString(), right.ToString(), StringComparison.Ordinal);
     }
 
     private static bool EvaluateLike(object left, object right, string escapeChar = null)
@@ -2424,11 +2545,24 @@ public class InMemoryContainer : Container
                     sb.Append(Regex.Escape(patternStr[i].ToString()));
             }
             var pattern = $"^{sb}$";
-            return GetOrCreateRegex(pattern, RegexOptions.IgnoreCase).IsMatch(left.ToString());
+            return GetOrCreateRegex(pattern, RegexOptions.None).IsMatch(left.ToString());
         }
 
-        var simplePattern = $"^{patternStr.Replace("%", ".*").Replace("_", ".")}$";
-        return GetOrCreateRegex(simplePattern, RegexOptions.IgnoreCase).IsMatch(left.ToString());
+        var simplePattern = ConvertLikeToRegex(patternStr);
+        return GetOrCreateRegex(simplePattern, RegexOptions.None).IsMatch(left.ToString());
+    }
+
+    private static string ConvertLikeToRegex(string pattern)
+    {
+        var sb = new System.Text.StringBuilder("^");
+        foreach (var ch in pattern)
+        {
+            if (ch == '%') sb.Append(".*");
+            else if (ch == '_') sb.Append('.');
+            else sb.Append(Regex.Escape(ch.ToString()));
+        }
+        sb.Append('$');
+        return sb.ToString();
     }
 
     private static Regex GetOrCreateRegex(string pattern, RegexOptions options)
@@ -2672,7 +2806,7 @@ public class InMemoryContainer : Container
         }
         catch
         {
-            return true;
+            return false;
         }
     }
 
@@ -2995,8 +3129,22 @@ public class InMemoryContainer : Container
                         return false;
                     }
 
-                    var options = args.Length >= 3 && string.Equals(args[2]?.ToString(), "i", StringComparison.OrdinalIgnoreCase)
-                        ? RegexOptions.IgnoreCase : RegexOptions.None;
+                    var options = RegexOptions.None;
+                    if (args.Length >= 3)
+                    {
+                        var modifiers = args[2]?.ToString() ?? "";
+                        foreach (var ch in modifiers)
+                        {
+                            options |= ch switch
+                            {
+                                'i' => RegexOptions.IgnoreCase,
+                                'm' => RegexOptions.Multiline,
+                                's' => RegexOptions.Singleline,
+                                'x' => RegexOptions.IgnorePatternWhitespace,
+                                _ => RegexOptions.None,
+                            };
+                        }
+                    }
                     return GetOrCreateRegex(pattern, options).IsMatch(input);
                 }
             case "REPLICATE":
@@ -3049,11 +3197,11 @@ public class InMemoryContainer : Container
                     try
                     {
                         var token = JToken.Parse(s);
-                        return token is JArray ? token : null;
+                        return token is JArray ? token : UndefinedValue.Instance;
                     }
                     catch
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
                 }
             case "STRINGTOBOOLEAN":
@@ -3068,7 +3216,7 @@ public class InMemoryContainer : Container
                     {
                         "true" => true,
                         "false" => (object)false,
-                        _ => null,
+                        _ => UndefinedValue.Instance,
                     };
                 }
             case "STRINGTONULL":
@@ -3078,7 +3226,7 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    return args[0]?.ToString()?.Trim() == "null" ? null : null;
+                    return args[0]?.ToString()?.Trim() == "null" ? null : UndefinedValue.Instance;
                 }
             case "STRINGTONUMBER":
                 {
@@ -3103,7 +3251,7 @@ public class InMemoryContainer : Container
                         return doubleVal;
                     }
 
-                    return null;
+                    return UndefinedValue.Instance;
                 }
             case "STRINGTOOBJECT":
                 {
@@ -3121,11 +3269,11 @@ public class InMemoryContainer : Container
                     try
                     {
                         var token = JToken.Parse(s);
-                        return token is JObject ? token : null;
+                        return token is JObject ? token : UndefinedValue.Instance;
                     }
                     catch
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
                 }
             case "TOSTRING" or "ToString": return args.Length > 0 ? args[0]?.ToString() : null;
@@ -3530,7 +3678,28 @@ public class InMemoryContainer : Container
                     var result = new JArray();
                     foreach (var prop in obj.Properties())
                     {
-                        result.Add(new JObject { ["Name"] = prop.Name, ["Value"] = prop.Value.DeepClone() });
+                        result.Add(new JObject { ["k"] = prop.Name, ["v"] = prop.Value.DeepClone() });
+                    }
+                    return result;
+                }
+            case "ARRAYTOOBJECT":
+                {
+                    if (args.Length < 1) return UndefinedValue.Instance;
+                    JArray arr;
+                    if (args[0] is JArray ja) arr = ja;
+                    else if (args[0] is string s) { try { arr = JArray.Parse(s); } catch { return UndefinedValue.Instance; } }
+                    else return UndefinedValue.Instance;
+                    var result = new JObject();
+                    foreach (var element in arr)
+                    {
+                        if (element is JObject kvObj && kvObj["k"] != null && kvObj["v"] != null)
+                        {
+                            result[kvObj["k"]!.Value<string>()] = kvObj["v"]!.DeepClone();
+                        }
+                        else
+                        {
+                            return UndefinedValue.Instance;
+                        }
                     }
                     return result;
                 }
@@ -3701,20 +3870,34 @@ public class InMemoryContainer : Container
                         ? o : new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
                     var bs = (int)binSize.Value;
-                    dt = part switch
+                    if (part is "year" or "yyyy" or "yy")
                     {
-                        "day" or "dd" or "d" =>
-                            origin.AddDays(Math.Floor((dt - origin).TotalDays / bs) * bs),
-                        "hour" or "hh" =>
-                            origin.AddHours(Math.Floor((dt - origin).TotalHours / bs) * bs),
-                        "minute" or "mi" or "n" =>
-                            origin.AddMinutes(Math.Floor((dt - origin).TotalMinutes / bs) * bs),
-                        "second" or "ss" or "s" =>
-                            origin.AddSeconds(Math.Floor((dt - origin).TotalSeconds / bs) * bs),
-                        "millisecond" or "ms" =>
-                            origin.AddMilliseconds(Math.Floor((dt - origin).TotalMilliseconds / bs) * bs),
-                        _ => dt,
-                    };
+                        var yearBin = (int)(Math.Floor((double)(dt.Year - origin.Year) / bs) * bs);
+                        dt = new DateTime(origin.Year + yearBin, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                    }
+                    else if (part is "month" or "mm")
+                    {
+                        var totalMonths = (dt.Year - origin.Year) * 12 + (dt.Month - origin.Month);
+                        var binned = (int)(Math.Floor((double)totalMonths / bs) * bs);
+                        dt = new DateTime(origin.Year, origin.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(binned);
+                    }
+                    else
+                    {
+                        dt = part switch
+                        {
+                            "day" or "dd" or "d" =>
+                                origin.AddDays(Math.Floor((dt - origin).TotalDays / bs) * bs),
+                            "hour" or "hh" =>
+                                origin.AddHours(Math.Floor((dt - origin).TotalHours / bs) * bs),
+                            "minute" or "mi" or "n" =>
+                                origin.AddMinutes(Math.Floor((dt - origin).TotalMinutes / bs) * bs),
+                            "second" or "ss" or "s" =>
+                                origin.AddSeconds(Math.Floor((dt - origin).TotalSeconds / bs) * bs),
+                            "millisecond" or "ms" =>
+                                origin.AddMilliseconds(Math.Floor((dt - origin).TotalMilliseconds / bs) * bs),
+                            _ => dt,
+                        };
+                    }
                     return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
                 }
             case "DATETIMETOTICKS":
