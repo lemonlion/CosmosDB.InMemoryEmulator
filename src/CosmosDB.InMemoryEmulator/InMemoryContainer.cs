@@ -164,7 +164,7 @@ public sealed class InMemoryContainer : Container
                 var importEtag = $"\"{ Guid.NewGuid()}\"";
                 _etags[key] = importEtag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
-                _items[key] = EnrichWithSystemProperties(jObj, importEtag, _timestamps[key]);
+                _items[key] = EnrichWithSystemProperties(itemJson, importEtag, _timestamps[key]);
             }
         }
     }
@@ -259,7 +259,7 @@ public sealed class InMemoryContainer : Container
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        _items[key] = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+        _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         RecordChangeFeed(itemId, pk, _items[key]);
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         return Task.FromResult(CreateItemResponse(item, HttpStatusCode.Created, etag, suppressContent));
@@ -309,7 +309,7 @@ public sealed class InMemoryContainer : Container
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        _items[key] = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+        _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         RecordChangeFeed(itemId, pk, _items[key]);
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         return Task.FromResult(CreateItemResponse(item, existed ? HttpStatusCode.OK : HttpStatusCode.Created, etag, suppressContent));
@@ -336,7 +336,7 @@ public sealed class InMemoryContainer : Container
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        _items[key] = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+        _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         RecordChangeFeed(id, pk, _items[key]);
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         return Task.FromResult(CreateItemResponse(item, HttpStatusCode.OK, etag, suppressContent));
@@ -406,11 +406,12 @@ public sealed class InMemoryContainer : Container
         }
 
         ApplyPatchOperations(jObj, patchOperations);
+        var updatedJson = jObj.ToString(Formatting.None);
+        ValidateDocumentSize(updatedJson);
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        var enrichedJson = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
-        ValidateDocumentSize(enrichedJson);
+        var enrichedJson = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
         _items[key] = enrichedJson;
         RecordChangeFeed(id, pk, enrichedJson);
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
@@ -442,7 +443,7 @@ public sealed class InMemoryContainer : Container
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        var enrichedJson = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+        var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         _items[key] = enrichedJson;
         RecordChangeFeed(itemId, pk, enrichedJson);
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created, enrichedJson, etag));
@@ -487,7 +488,7 @@ public sealed class InMemoryContainer : Container
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        var enrichedJson = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+        var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         _items[key] = enrichedJson;
         RecordChangeFeed(itemId, pk, enrichedJson);
         return Task.FromResult(CreateResponseMessage(existed ? HttpStatusCode.OK : HttpStatusCode.Created, enrichedJson, etag));
@@ -512,11 +513,10 @@ public sealed class InMemoryContainer : Container
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
         }
 
-        var jObj = JsonParseHelpers.ParseJson(json);
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        var enrichedJson = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+        var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         _items[key] = enrichedJson;
         RecordChangeFeed(id, pk, enrichedJson);
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, enrichedJson, etag));
@@ -566,11 +566,12 @@ public sealed class InMemoryContainer : Container
 
         var jObj = JsonParseHelpers.ParseJson(existingJson);
         ApplyPatchOperations(jObj, patchOperations);
-        ValidateDocumentSize(jObj.ToString(Formatting.None));
+        var updatedJson = jObj.ToString(Formatting.None);
+        ValidateDocumentSize(updatedJson);
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        var enrichedJson = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+        var enrichedJson = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
         _items[key] = enrichedJson;
         RecordChangeFeed(id, pk, enrichedJson);
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, enrichedJson, etag));
@@ -1090,8 +1091,9 @@ public sealed class InMemoryContainer : Container
 
     private static string GenerateETag() => $"\"{Guid.NewGuid()}\"";
 
-    private static string EnrichWithSystemProperties(JObject jObj, string etag, DateTimeOffset timestamp)
+    private static string EnrichWithSystemProperties(string json, string etag, DateTimeOffset timestamp)
     {
+        var jObj = JsonParseHelpers.ParseJson(json);
         jObj["_etag"] = etag;
         jObj["_ts"] = timestamp.ToUnixTimeSeconds();
         return jObj.ToString(Formatting.None);
@@ -1400,7 +1402,7 @@ public sealed class InMemoryContainer : Container
     private List<string> FilterItemsByQuery(
         string queryText, IDictionary<string, object> parameters, QueryRequestOptions requestOptions)
     {
-        var stringItems = GetAllItemsForPartition(requestOptions);
+        var items = GetAllItemsForPartition(requestOptions);
 
         if (_userDefinedFunctions.Count > 0)
         {
@@ -1409,65 +1411,24 @@ public sealed class InMemoryContainer : Container
 
         var parsed = CosmosSqlParser.Parse(queryText);
 
-        // Fast path: if no clauses need JObject processing, work directly with strings
-        var needsParsing = parsed.Where is not null ||
-                           parsed.OrderByFields is { Length: > 0 } ||
-                           parsed.OrderBy is not null ||
-                           parsed.GroupByFields is { Length: > 0 } ||
-                           (!parsed.IsSelectAll && parsed.SelectFields.Length > 0) ||
-                           parsed.Joins is { Length: > 0 } ||
-                           parsed.Join is not null ||
-                           parsed.IsValueSelect;
-
-        if (!needsParsing)
-        {
-            var result = (IEnumerable<string>)stringItems;
-            if (parsed.TopCount.HasValue) result = result.Take(parsed.TopCount.Value);
-            if (parsed.Offset.HasValue) result = result.Skip(parsed.Offset.Value);
-            if (parsed.Limit.HasValue) result = result.Take(parsed.Limit.Value);
-            if (parsed.IsDistinct) result = result.Distinct();
-            return result.ToList();
-        }
-
-        List<JObject> items;
-
         // JOIN expansion (supports multiple JOINs) — must come before WHERE
         if (parsed.Joins is { Length: > 0 })
         {
-            items = stringItems.Select(JsonParseHelpers.ParseJson).ToList();
             items = ExpandAllJoins(items, parsed);
         }
         else if (parsed.Join is not null)
         {
-            items = stringItems.Select(JsonParseHelpers.ParseJson).ToList();
             items = ExpandJoinedItems(items, parsed);
         }
-        else if (parsed.Where is not null)
+
+        // WHERE
+        if (parsed.Where is not null)
         {
-            // Parse and filter simultaneously — non-matching items are short-lived,
-            // reducing GC pressure vs eagerly parsing all items into a list.
-            items = new List<JObject>();
-            foreach (var json in stringItems)
+            items = items.Where(json =>
             {
                 var jObj = JsonParseHelpers.ParseJson(json);
-                if (EvaluateWhereExpression(parsed.Where, jObj, parsed.FromAlias, parameters, parsed.Join))
-                {
-                    items.Add(jObj);
-                }
-            }
-        }
-        else
-        {
-            // No WHERE or JOIN — parse all items for subsequent stages (ORDER BY, GROUP BY, etc.)
-            items = stringItems.Select(JsonParseHelpers.ParseJson).ToList();
-        }
-
-        // WHERE already applied above when parsed inline with parsing
-        if ((parsed.Joins is { Length: > 0 } || parsed.Join is not null) && parsed.Where is not null)
-        {
-            items = items.Where(jObj =>
-                EvaluateWhereExpression(parsed.Where, jObj, parsed.FromAlias, parameters, parsed.Join)
-            ).ToList();
+                return EvaluateWhereExpression(parsed.Where, jObj, parsed.FromAlias, parameters, parsed.Join);
+            }).ToList();
         }
 
         // GROUP BY / HAVING — also handles SELECT projection for grouped results
@@ -1514,33 +1475,33 @@ public sealed class InMemoryContainer : Container
         // DISTINCT — applied after projection so dedup works on projected shapes
         if (parsed.IsDistinct)
         {
-            items = items.GroupBy(jObj => jObj.ToString(Formatting.None)).Select(g => g.First()).ToList();
+            items = items.Distinct().ToList();
         }
 
         // VALUE SELECT — unwrap scalar values from projected JObjects
         if (parsed.IsValueSelect && parsed.SelectFields.Length == 1)
         {
-            return UnwrapValueSelect(items);
+            items = UnwrapValueSelect(items);
         }
 
-        return items.Select(jObj => jObj.ToString(Formatting.None)).ToList();
+        return items;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Query helpers — ORDER BY
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private static List<JObject> ApplyOrderBy(List<JObject> items, OrderByClause orderBy, string fromAlias)
+    private static List<string> ApplyOrderBy(List<string> items, OrderByClause orderBy, string fromAlias)
         => ApplyOrderByFields(items, new[] { new OrderByField(orderBy.Field, orderBy.Ascending) }, fromAlias);
 
-    private static List<JObject> ApplyOrderByFields(List<JObject> items, OrderByField[] orderByFields, string fromAlias)
+    private static List<string> ApplyOrderByFields(List<string> items, OrderByField[] orderByFields, string fromAlias)
     {
         if (orderByFields.Length == 0)
         {
             return items;
         }
 
-        IOrderedEnumerable<JObject> ordered = null;
+        IOrderedEnumerable<string> ordered = null;
         foreach (var field in orderByFields)
         {
             var fieldPath = field.Field;
@@ -1549,8 +1510,9 @@ public sealed class InMemoryContainer : Container
                 fieldPath = fieldPath[(fromAlias.Length + 1)..];
             }
 
-            object KeySelector(JObject jObj)
+            object KeySelector(string json)
             {
+                var jObj = JsonParseHelpers.ParseJson(json);
                 var token = jObj.SelectToken(fieldPath);
                 if (token is null)
                 {
@@ -1580,12 +1542,13 @@ public sealed class InMemoryContainer : Container
     //  Query helpers — GROUP BY / HAVING
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private List<JObject> ApplyGroupBy(List<JObject> items, CosmosSqlQuery parsed, IDictionary<string, object> parameters)
+    private List<string> ApplyGroupBy(List<string> items, CosmosSqlQuery parsed, IDictionary<string, object> parameters)
     {
         var fromAlias = parsed.FromAlias;
 
-        var groups = items.GroupBy(jObj =>
+        var groups = items.GroupBy(json =>
         {
+            var jObj = JsonParseHelpers.ParseJson(json);
             var keyParts = new List<string>();
             foreach (var field in parsed.GroupByFields)
             {
@@ -1612,7 +1575,7 @@ public sealed class InMemoryContainer : Container
             return groups.Select(g => g.First()).ToList();
         }
 
-        var result = new List<JObject>();
+        var result = new List<string>();
         foreach (var group in groups)
         {
             var groupItems = group.ToList();
@@ -1667,7 +1630,8 @@ public sealed class InMemoryContainer : Container
                     }
 
                     var fieldOutputName = field.Alias ?? path.Split('.').Last();
-                    resultObj[fieldOutputName] = groupItems[0].SelectToken(path)?.DeepClone();
+                    var jObj = JsonParseHelpers.ParseJson(groupItems[0]);
+                    resultObj[fieldOutputName] = jObj.SelectToken(path)?.DeepClone();
                 }
             }
 
@@ -1679,16 +1643,17 @@ public sealed class InMemoryContainer : Container
                 }
             }
 
-            result.Add(resultObj);
+            result.Add(resultObj.ToString(Formatting.None));
         }
         return result;
     }
 
-    private static List<double> ExtractNumericValues(List<JObject> items, string innerArg, string fromAlias)
+    private static List<double> ExtractNumericValues(List<string> items, string innerArg, string fromAlias)
     {
         var values = new List<double>();
-        foreach (var jObj in items)
+        foreach (var json in items)
         {
+            var jObj = JsonParseHelpers.ParseJson(json);
             var path = innerArg;
             if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
             {
@@ -1706,7 +1671,7 @@ public sealed class InMemoryContainer : Container
     }
 
     private static bool EvaluateHavingCondition(
-        WhereExpression having, List<JObject> groupItems, JObject resultObj,
+        WhereExpression having, List<string> groupItems, JObject resultObj,
         string fromAlias, IDictionary<string, object> parameters)
     {
         if (having is SqlExpressionCondition sec)
@@ -1718,7 +1683,7 @@ public sealed class InMemoryContainer : Container
     }
 
     private static object EvaluateHavingSqlExpression(
-        SqlExpression expr, List<JObject> groupItems, JObject resultObj,
+        SqlExpression expr, List<string> groupItems, JObject resultObj,
         string fromAlias, IDictionary<string, object> parameters)
     {
         return expr switch
@@ -1733,7 +1698,7 @@ public sealed class InMemoryContainer : Container
     }
 
     private static object EvaluateHavingBinaryExpression(
-        BinaryExpression bin, List<JObject> groupItems, JObject resultObj,
+        BinaryExpression bin, List<string> groupItems, JObject resultObj,
         string fromAlias, IDictionary<string, object> parameters)
     {
         var left = EvaluateHavingSqlExpression(bin.Left, groupItems, resultObj, fromAlias, parameters);
@@ -1753,7 +1718,7 @@ public sealed class InMemoryContainer : Container
     }
 
     private static object EvaluateHavingAggregate(
-        FunctionCallExpression func, List<JObject> groupItems, string fromAlias)
+        FunctionCallExpression func, List<string> groupItems, string fromAlias)
     {
         switch (func.FunctionName)
         {
@@ -1787,16 +1752,17 @@ public sealed class InMemoryContainer : Container
     //  Query helpers — JOIN expansion
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private static List<JObject> ExpandJoinedItems(List<JObject> items, CosmosSqlQuery parsed)
+    private static List<string> ExpandJoinedItems(List<string> items, CosmosSqlQuery parsed)
     {
         if (parsed.Join is null)
         {
             return items;
         }
 
-        var expanded = new List<JObject>();
-        foreach (var jObj in items)
+        var expanded = new List<string>();
+        foreach (var json in items)
         {
+            var jObj = JsonParseHelpers.ParseJson(json);
             var arrayToken = jObj.SelectToken(parsed.Join.ArrayField);
             if (arrayToken is JArray jArray)
             {
@@ -1806,21 +1772,22 @@ public sealed class InMemoryContainer : Container
                     {
                         [parsed.Join.Alias] = element
                     };
-                    expanded.Add(combined);
+                    expanded.Add(combined.ToString(Formatting.None));
                 }
             }
         }
         return expanded;
     }
 
-    private static List<JObject> ExpandAllJoins(List<JObject> items, CosmosSqlQuery parsed)
+    private static List<string> ExpandAllJoins(List<string> items, CosmosSqlQuery parsed)
     {
         var current = items;
         foreach (var join in parsed.Joins)
         {
-            var expanded = new List<JObject>();
-            foreach (var jObj in current)
+            var expanded = new List<string>();
+            foreach (var json in current)
             {
+                var jObj = JsonParseHelpers.ParseJson(json);
                 var arrayToken = jObj.SelectToken(join.ArrayField);
                 if (arrayToken is JArray jArray)
                 {
@@ -1830,7 +1797,7 @@ public sealed class InMemoryContainer : Container
                         {
                             [join.Alias] = element
                         };
-                        expanded.Add(combined);
+                        expanded.Add(combined.ToString(Formatting.None));
                     }
                 }
             }
@@ -1843,7 +1810,7 @@ public sealed class InMemoryContainer : Container
     //  Query helpers — SELECT projection
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private static List<JObject> ProjectFields(List<JObject> items, CosmosSqlQuery parsed, IDictionary<string, object> parameters)
+    private static List<string> ProjectFields(List<string> items, CosmosSqlQuery parsed, IDictionary<string, object> parameters)
     {
         var hasAggregate = parsed.SelectFields.Any(f =>
         {
@@ -1856,9 +1823,10 @@ public sealed class InMemoryContainer : Container
             return ProjectAggregateFields(items, parsed);
         }
 
-        var projected = new List<JObject>();
-        foreach (var jObj in items)
+        var projected = new List<string>();
+        foreach (var json in items)
         {
+            var jObj = JsonParseHelpers.ParseJson(json);
             var resultObj = new JObject();
             foreach (var field in parsed.SelectFields)
             {
@@ -1891,16 +1859,17 @@ public sealed class InMemoryContainer : Container
                     resultObj[outputName] = token?.DeepClone();
                 }
             }
-            projected.Add(resultObj);
+            projected.Add(resultObj.ToString(Formatting.None));
         }
         return projected;
     }
 
-    private static List<string> UnwrapValueSelect(List<JObject> items)
+    private static List<string> UnwrapValueSelect(List<string> items)
     {
         var unwrapped = new List<string>();
-        foreach (var jObj in items)
+        foreach (var json in items)
         {
+            var jObj = JsonParseHelpers.ParseJson(json);
             var first = jObj.Properties().FirstOrDefault();
             if (first?.Value is not null)
             {
@@ -1922,7 +1891,7 @@ public sealed class InMemoryContainer : Container
         return unwrapped;
     }
 
-    private static List<JObject> ProjectAggregateFields(List<JObject> items, CosmosSqlQuery parsed)
+    private static List<string> ProjectAggregateFields(List<string> items, CosmosSqlQuery parsed)
     {
         var resultObj = new JObject();
         foreach (var field in parsed.SelectFields)
@@ -1975,11 +1944,12 @@ public sealed class InMemoryContainer : Container
 
                 if (items.Count > 0)
                 {
-                    resultObj[outputName] = items[0].SelectToken(path)?.DeepClone();
+                    var jObj = JsonParseHelpers.ParseJson(items[0]);
+                    resultObj[outputName] = jObj.SelectToken(path)?.DeepClone();
                 }
             }
         }
-        return new List<JObject> { resultObj };
+        return new List<string> { resultObj.ToString(Formatting.None) };
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
