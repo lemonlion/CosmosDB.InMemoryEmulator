@@ -47,7 +47,7 @@ var results = container
 - **State persistence** — export/import container state as JSON
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
-- **1089 tests** covering all features (25 skipped — see [Known Limitations](../../wiki/Known-Limitations))
+- **1112 tests** covering all features (25 skipped — see [Known Limitations](../../wiki/Known-Limitations))
 
 ## Installation
 
@@ -81,6 +81,7 @@ var page = await iterator.ReadNextAsync();
 | | Direct `InMemoryContainer` | `FakeCosmosHandler` | DI Extensions |
 |---|---|---|---|
 | **Production code changes** | One token per LINQ call site¹ | **None** | None |
+| **CRUD operations** | Yes | **Yes** | Yes |
 | **Fidelity** | Good | **Highest** | Good |
 | **Fault injection** | No | **Yes** | No |
 | **Best for** | Unit tests | Component/acceptance tests | Integration tests with DI |

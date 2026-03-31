@@ -190,6 +190,23 @@ public class FakeCosmosHandler : HttpMessageHandler
             }
         }
 
+        // Document-specific routes: /docs/{id} (point read, replace, delete, patch)
+        if (path.Contains("/docs/") && HasDocumentId(path))
+        {
+            switch (method)
+            {
+                case "GET":
+                    return await HandlePointReadAsync(request, cancellationToken);
+                case "PUT":
+                    return await HandleReplaceAsync(request, cancellationToken);
+                case "DELETE":
+                    return await HandleDeleteAsync(request, cancellationToken);
+                case "PATCH":
+                    return await HandlePatchAsync(request, cancellationToken);
+            }
+        }
+
+        // POST /docs (overloaded: query plan, query, upsert, create)
         if (method == "POST" && path.Contains("/docs"))
         {
             if (request.Headers.TryGetValues("x-ms-cosmos-is-query-plan-request", out var qpValues) &&
@@ -198,7 +215,17 @@ public class FakeCosmosHandler : HttpMessageHandler
                 return await HandleQueryPlanAsync(request, cancellationToken);
             }
 
-            return await HandleQueryAsync(request, cancellationToken);
+            if (IsQueryRequest(request))
+            {
+                return await HandleQueryAsync(request, cancellationToken);
+            }
+
+            if (IsUpsertRequest(request))
+            {
+                return await HandleUpsertAsync(request, cancellationToken);
+            }
+
+            return await HandleCreateAsync(request, cancellationToken);
         }
 
         if (method == "GET" && path.Contains("/docs"))
@@ -213,6 +240,186 @@ public class FakeCosmosHandler : HttpMessageHandler
                 Encoding.UTF8,
                 "application/json")
         };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  CRUD route handlers
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    private async Task<HttpResponseMessage> HandleCreateAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+        var pk = ExtractPartitionKey(request) ?? PartitionKey.None;
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(body));
+        var result = await _container.CreateItemStreamAsync(stream, pk, BuildItemRequestOptions(request), cancellationToken);
+        return ConvertToHttpResponse(result);
+    }
+
+    private async Task<HttpResponseMessage> HandleUpsertAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+        var pk = ExtractPartitionKey(request) ?? PartitionKey.None;
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(body));
+        var result = await _container.UpsertItemStreamAsync(stream, pk, BuildItemRequestOptions(request), cancellationToken);
+        return ConvertToHttpResponse(result);
+    }
+
+    private async Task<HttpResponseMessage> HandlePointReadAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var id = ExtractDocumentId(request);
+        var pk = ExtractPartitionKey(request) ?? PartitionKey.None;
+        var result = await _container.ReadItemStreamAsync(id, pk, BuildItemRequestOptions(request), cancellationToken);
+        return ConvertToHttpResponse(result);
+    }
+
+    private async Task<HttpResponseMessage> HandleReplaceAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var id = ExtractDocumentId(request);
+        var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+        var pk = ExtractPartitionKey(request) ?? PartitionKey.None;
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(body));
+        var result = await _container.ReplaceItemStreamAsync(stream, id, pk, BuildItemRequestOptions(request), cancellationToken);
+        return ConvertToHttpResponse(result);
+    }
+
+    private async Task<HttpResponseMessage> HandleDeleteAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var id = ExtractDocumentId(request);
+        var pk = ExtractPartitionKey(request) ?? PartitionKey.None;
+        var result = await _container.DeleteItemStreamAsync(id, pk, BuildItemRequestOptions(request), cancellationToken);
+        return ConvertToHttpResponse(result);
+    }
+
+    private async Task<HttpResponseMessage> HandlePatchAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var id = ExtractDocumentId(request);
+        var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+        var pk = ExtractPartitionKey(request) ?? PartitionKey.None;
+        var (operations, condition) = ParsePatchBody(body);
+        var options = new PatchItemRequestOptions();
+        if (condition is not null)
+        {
+            options.FilterPredicate = condition;
+        }
+        if (request.Headers.IfMatch.Any())
+        {
+            options.IfMatchEtag = request.Headers.IfMatch.First().Tag;
+        }
+        var result = await _container.PatchItemStreamAsync(id, pk, operations, options, cancellationToken);
+        return ConvertToHttpResponse(result);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  CRUD helpers
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    private static HttpResponseMessage ConvertToHttpResponse(ResponseMessage cosmosResponse)
+    {
+        var httpResponse = new HttpResponseMessage(cosmosResponse.StatusCode);
+        if (cosmosResponse.Content is not null)
+        {
+            using var reader = new StreamReader(cosmosResponse.Content);
+            var json = reader.ReadToEnd();
+            if (json.Length > 0)
+            {
+                httpResponse.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            }
+        }
+
+        httpResponse.Headers.Add("x-ms-request-charge", "1");
+        httpResponse.Headers.Add("x-ms-activity-id", Guid.NewGuid().ToString());
+        httpResponse.Headers.Add("x-ms-session-token", "0:0#1");
+
+        var etag = cosmosResponse.Headers["ETag"];
+        if (etag is not null)
+        {
+            httpResponse.Headers.TryAddWithoutValidation("etag", etag);
+        }
+
+        return httpResponse;
+    }
+
+    private static string ExtractDocumentId(HttpRequestMessage request)
+    {
+        var path = request.RequestUri?.AbsolutePath ?? "";
+        var docsIndex = path.LastIndexOf("/docs/", StringComparison.OrdinalIgnoreCase);
+        if (docsIndex >= 0)
+        {
+            var id = path[(docsIndex + 6)..];
+            return Uri.UnescapeDataString(id.TrimEnd('/'));
+        }
+        return "";
+    }
+
+    private static bool HasDocumentId(string path)
+    {
+        var docsIndex = path.LastIndexOf("/docs/", StringComparison.OrdinalIgnoreCase);
+        if (docsIndex < 0) return false;
+        var afterDocs = path[(docsIndex + 6)..].TrimEnd('/');
+        return afterDocs.Length > 0;
+    }
+
+    private static ItemRequestOptions BuildItemRequestOptions(HttpRequestMessage request)
+    {
+        var options = new ItemRequestOptions();
+        if (request.Headers.IfMatch.Any())
+        {
+            options.IfMatchEtag = request.Headers.IfMatch.First().Tag;
+        }
+        if (request.Headers.IfNoneMatch.Any())
+        {
+            options.IfNoneMatchEtag = request.Headers.IfNoneMatch.First().Tag;
+        }
+        return options;
+    }
+
+    private static bool IsQueryRequest(HttpRequestMessage request)
+    {
+        var contentType = request.Content?.Headers?.ContentType?.MediaType ?? "";
+        if (contentType.Contains("query+json", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (request.Headers.TryGetValues("x-ms-documentdb-isquery", out var values) &&
+            values.Any(v => v.Equals("True", StringComparison.OrdinalIgnoreCase)))
+            return true;
+        return false;
+    }
+
+    private static bool IsUpsertRequest(HttpRequestMessage request)
+    {
+        return request.Headers.TryGetValues("x-ms-documentdb-is-upsert", out var values) &&
+               values.Any(v => v.Equals("True", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static (IReadOnlyList<PatchOperation> Operations, string? Condition) ParsePatchBody(string body)
+    {
+        var jObj = JObject.Parse(body);
+        var operations = new List<PatchOperation>();
+        var condition = jObj["condition"]?.ToString();
+
+        foreach (var op in jObj["operations"]!.ToObject<JArray>()!)
+        {
+            var opType = op["op"]!.ToString().ToLowerInvariant();
+            var opPath = op["path"]!.ToString();
+            var value = op["value"];
+
+            operations.Add(opType switch
+            {
+                "set" => PatchOperation.Set(opPath, value),
+                "replace" => PatchOperation.Set(opPath, value),
+                "add" => PatchOperation.Add(opPath, value),
+                "remove" => PatchOperation.Remove(opPath),
+                "incr" => PatchOperation.Increment(opPath, value!.Value<double>()),
+                _ => throw new InvalidOperationException($"Unknown patch operation: {opType}")
+            });
+        }
+
+        return (operations, condition);
     }
 
     private HttpResponseMessage HandlePartitionKeyRanges(HttpRequestMessage request)
@@ -1200,6 +1407,32 @@ public class FakeCosmosHandler : HttpMessageHandler
             throw new InvalidOperationException(
                 $"SDK compatibility check failed (v{sdkVersion}): no query was logged. " +
                 "The Cosmos SDK may have changed how it sends query requests.");
+        }
+
+        // CRUD roundtrip — verifies that create/read/delete HTTP routes work through the SDK
+        var crudDoc = new CompatibilityDocument { Id = "crud-test", PartitionKey = "pk", Name = "CrudTest", Value = 99 };
+        var createResponse = await cosmosContainer.CreateItemAsync(crudDoc, new PartitionKey("pk"));
+        if (createResponse.StatusCode != HttpStatusCode.Created)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): CreateItemAsync returned {createResponse.StatusCode} instead of Created. " +
+                "The Cosmos SDK may have changed its CRUD HTTP contract.");
+        }
+
+        var readResponse = await cosmosContainer.ReadItemAsync<CompatibilityDocument>("crud-test", new PartitionKey("pk"));
+        if (readResponse.Resource?.Name != "CrudTest")
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): ReadItemAsync returned unexpected resource. " +
+                "The Cosmos SDK may have changed its point-read HTTP contract.");
+        }
+
+        var deleteResponse = await cosmosContainer.DeleteItemAsync<CompatibilityDocument>("crud-test", new PartitionKey("pk"));
+        if (deleteResponse.StatusCode != HttpStatusCode.NoContent)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): DeleteItemAsync returned {deleteResponse.StatusCode} instead of NoContent. " +
+                "The Cosmos SDK may have changed its delete HTTP contract.");
         }
     }
 

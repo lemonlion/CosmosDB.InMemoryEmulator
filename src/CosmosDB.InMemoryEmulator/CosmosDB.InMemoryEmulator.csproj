@@ -9,7 +9,12 @@
 		<PackageId>CosmosDB.InMemoryEmulator</PackageId>
 		<Version>0.9.0</Version>
 		<Description>An in-memory implementation of the Azure Cosmos DB Container class for use in component and integration tests.</Description>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
 	</PropertyGroup>
+
+	<ItemGroup>
+		<None Include="README.md" Pack="true" PackagePath="\" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<InternalsVisibleTo Include="CosmosDB.InMemoryEmulator.Tests" />

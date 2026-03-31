@@ -805,7 +805,7 @@ public class RealToFeedIteratorTests : IAsyncLifetime
     public async Task FakeCosmosHandler_UnknownRoute_Returns404()
     {
         using var client = new HttpClient(_handler);
-        var response = await client.DeleteAsync("https://localhost:9999/dbs/fakeDb/colls/fakeContainer/docs/unknown");
+        var response = await client.DeleteAsync("https://localhost:9999/dbs/fakeDb/colls/fakeContainer/sprocs/unknown");
 
         response.StatusCode.Should().Be(System.Net.HttpStatusCode.NotFound);
         var body = await response.Content.ReadAsStringAsync();
