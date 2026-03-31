@@ -616,12 +616,13 @@ public static class CosmosSqlParser
                 select (Func<SqlExpression, SqlExpression>)(l => new InExpression(l, vals)))
             // NOT IN (val, val, ...)
             .Or(
-                from not in Token.EqualTo(CosmosSqlToken.Not)
+                (from not in Token.EqualTo(CosmosSqlToken.Not)
                 from kw in Token.EqualTo(CosmosSqlToken.In)
                 from open in Token.EqualTo(CosmosSqlToken.OpenParen)
                 from vals in Superpower.Parse.Ref(() => Expr).ManyDelimitedBy(Token.EqualTo(CosmosSqlToken.Comma))
                 from close in Token.EqualTo(CosmosSqlToken.CloseParen)
                 select (Func<SqlExpression, SqlExpression>)(l => new UnaryExpression(UnaryOp.Not, new InExpression(l, vals))))
+                .Try())
             // LIKE pattern ESCAPE char
             .Or(
                 (from kw in Token.EqualTo(CosmosSqlToken.Like)
@@ -629,6 +630,22 @@ public static class CosmosSqlParser
                  from esc in Token.EqualTo(CosmosSqlToken.Escape)
                  from escChar in Token.EqualTo(CosmosSqlToken.StringLiteral)
                  select (Func<SqlExpression, SqlExpression>)(l => new LikeExpression(l, pattern, escChar.Span.ToStringValue()[1..^1])))
+                .Try())
+            // NOT LIKE pattern ESCAPE char
+            .Or(
+                (from not in Token.EqualTo(CosmosSqlToken.Not)
+                 from kw in Token.EqualTo(CosmosSqlToken.Like)
+                 from pattern in StringConcatExpr
+                 from esc in Token.EqualTo(CosmosSqlToken.Escape)
+                 from escChar in Token.EqualTo(CosmosSqlToken.StringLiteral)
+                 select (Func<SqlExpression, SqlExpression>)(l => new UnaryExpression(UnaryOp.Not, new LikeExpression(l, pattern, escChar.Span.ToStringValue()[1..^1]))))
+                .Try())
+            // NOT LIKE pattern (without ESCAPE)
+            .Or(
+                (from not in Token.EqualTo(CosmosSqlToken.Not)
+                 from kw in Token.EqualTo(CosmosSqlToken.Like)
+                 from pattern in StringConcatExpr
+                 select (Func<SqlExpression, SqlExpression>)(l => new UnaryExpression(UnaryOp.Not, new BinaryExpression(l, BinaryOp.Like, pattern))))
                 .Try())
             // IS NULL
             .Or(

@@ -349,6 +349,7 @@ public sealed class InMemoryContainer : Container
         }
 
         CheckIfMatch(requestOptions, key);
+        ValidateUniqueKeys(jObj, pk, excludeItemId: id);
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
@@ -424,6 +425,7 @@ public sealed class InMemoryContainer : Container
         ApplyPatchOperations(jObj, patchOperations);
         var updatedJson = jObj.ToString(Formatting.None);
         ValidateDocumentSize(updatedJson);
+        ValidateUniqueKeys(jObj, pk, excludeItemId: id);
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
@@ -450,6 +452,11 @@ public sealed class InMemoryContainer : Container
         var itemId = jObj["id"]?.ToString() ?? Guid.NewGuid().ToString();
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(itemId, pk);
+
+        if (!ValidateUniqueKeysStream(jObj, pk))
+        {
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+        }
 
         if (!_items.TryAdd(key, json))
         {
@@ -500,6 +507,10 @@ public sealed class InMemoryContainer : Container
         {
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
         }
+        if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: itemId))
+        {
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+        }
         var existed = _items.ContainsKey(key);
         var etag = GenerateETag();
         _etags[key] = etag;
@@ -527,6 +538,12 @@ public sealed class InMemoryContainer : Container
         if (!CheckIfMatchStream(requestOptions, key))
         {
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
+        }
+
+        var jObj = JsonParseHelpers.ParseJson(json);
+        if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
+        {
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
         }
 
         var etag = GenerateETag();
@@ -685,19 +702,20 @@ public sealed class InMemoryContainer : Container
     {
         var parameters = ExtractQueryParameters(queryDefinition);
         var filtered = FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions);
-        return CreateStreamFeedIterator(filtered);
+        return CreateStreamFeedIterator(filtered, ParseContinuationToken(continuationToken), requestOptions?.MaxItemCount);
     }
 
     public override FeedIterator GetItemQueryStreamIterator(
         string queryText = null, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
     {
+        var offset = ParseContinuationToken(continuationToken);
         if (string.IsNullOrEmpty(queryText))
         {
-            return CreateStreamFeedIterator(GetAllItemsForPartition(requestOptions).ToList());
+            return CreateStreamFeedIterator(GetAllItemsForPartition(requestOptions).ToList(), offset, requestOptions?.MaxItemCount);
         }
 
-        return CreateStreamFeedIterator(FilterItemsByQuery(queryText, new Dictionary<string, object>(), requestOptions));
+        return CreateStreamFeedIterator(FilterItemsByQuery(queryText, new Dictionary<string, object>(), requestOptions), offset, requestOptions?.MaxItemCount);
     }
 
     public override FeedIterator GetItemQueryStreamIterator(
@@ -1300,6 +1318,19 @@ public sealed class InMemoryContainer : Container
         }
     }
 
+    private bool ValidateUniqueKeysStream(JObject jObj, string partitionKey, string excludeItemId = null)
+    {
+        try
+        {
+            ValidateUniqueKeys(jObj, partitionKey, excludeItemId);
+            return true;
+        }
+        catch (CosmosException)
+        {
+            return false;
+        }
+    }
+
     private bool IsExpired((string Id, string PartitionKey) key)
     {
         if (!_timestamps.TryGetValue(key, out var ts))
@@ -1449,6 +1480,11 @@ public sealed class InMemoryContainer : Container
         {
             parameters[UdfRegistryKey] = _userDefinedFunctions;
         }
+
+        // Snapshot static datetime values so they remain constant for the entire query
+        parameters["__staticDateTime"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+        parameters["__staticTicks"] = DateTime.UtcNow.Ticks;
+        parameters["__staticTimestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         var parsed = CosmosSqlParser.Parse(queryText);
 
@@ -3167,6 +3203,7 @@ public sealed class InMemoryContainer : Container
             case "SIN": return args.Length > 0 ? MathOp(args[0], Math.Sin) : null;
             case "COS": return args.Length > 0 ? MathOp(args[0], Math.Cos) : null;
             case "TAN": return args.Length > 0 ? MathOp(args[0], Math.Tan) : null;
+            case "COT": return args.Length > 0 ? MathOp(args[0], v => 1.0 / Math.Tan(v)) : null;
             case "ASIN": return args.Length > 0 ? MathOp(args[0], Math.Asin) : null;
             case "ACOS": return args.Length > 0 ? MathOp(args[0], Math.Acos) : null;
             case "ATAN": return args.Length > 0 ? MathOp(args[0], Math.Atan) : null;
@@ -3369,6 +3406,59 @@ public sealed class InMemoryContainer : Container
                     return result;
                 }
 
+            // ── Array/Object utility functions ──
+            case "CHOOSE":
+                {
+                    if (args.Length < 2) return null;
+                    var idx = ToLong(args[0]);
+                    if (!idx.HasValue || idx.Value < 1 || idx.Value >= args.Length) return null;
+                    return args[(int)idx.Value];
+                }
+            case "OBJECTTOARRAY":
+                {
+                    if (args.Length < 1) return null;
+                    JObject obj;
+                    if (args[0] is JObject jo) obj = jo;
+                    else if (args[0] is string s) { try { obj = JObject.Parse(s); } catch { return null; } }
+                    else return null;
+                    var result = new JArray();
+                    foreach (var prop in obj.Properties())
+                    {
+                        result.Add(new JObject { ["Name"] = prop.Name, ["Value"] = prop.Value.DeepClone() });
+                    }
+                    return result;
+                }
+
+            // ── String utility functions ──
+            case "STRINGJOIN":
+                {
+                    if (args.Length < 2) return null;
+                    var separator = args[0]?.ToString();
+                    if (separator is null) return null;
+                    JArray joinArr;
+                    if (args[1] is JArray ja) joinArr = ja;
+                    else if (args[1] is string s) { try { joinArr = JArray.Parse(s); } catch { return null; } }
+                    else return null;
+                    return string.Join(separator, joinArr.Select(t => t.Value<string>()));
+                }
+            case "STRINGSPLIT":
+                {
+                    if (args.Length < 2) return null;
+                    var input = args[0]?.ToString();
+                    var delimiter = args[1]?.ToString();
+                    if (input is null || delimiter is null) return null;
+                    var parts = input.Split(delimiter);
+                    return new JArray(parts.Select(p => (JToken)p));
+                }
+
+            // ── Item functions ──
+            case "DOCUMENTID":
+                {
+                    // DOCUMENTID returns the _rid system property of the current document.
+                    // The emulator synthesises from id since it doesn't generate _rid.
+                    return item["_rid"]?.Value<string>() ?? item["id"]?.Value<string>();
+                }
+
             // ── Spatial functions ──
             case "ST_DISTANCE":
                 return args.Length >= 2 ? StDistance(args[0], args[1]) : null;
@@ -3380,10 +3470,15 @@ public sealed class InMemoryContainer : Container
                 return args.Length >= 1 ? (object)StIsValid(args[0]) : false;
             case "ST_ISVALIDDETAILED":
                 return args.Length >= 1 ? StIsValidDetailed(args[0]) : null;
+            case "ST_AREA":
+                return args.Length >= 1 ? StArea(args[0]) : null;
 
             // ── Date/time functions ──
             case "GETCURRENTDATETIME": return DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
             case "GETCURRENTTIMESTAMP": return (long)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            case "GETCURRENTDATETIMESTATIC": return parameters.TryGetValue("__staticDateTime", out var sdt) ? sdt : DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+            case "GETCURRENTTICKSSTATIC": return parameters.TryGetValue("__staticTicks", out var stk) ? stk : (object)DateTime.UtcNow.Ticks;
+            case "GETCURRENTTIMESTAMPSTATIC": return parameters.TryGetValue("__staticTimestamp", out var sts) ? sts : (object)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             case "DATETIMEADD":
                 {
                     if (args.Length < 3)
@@ -4073,24 +4168,31 @@ public sealed class InMemoryContainer : Container
     //  Stream FeedIterator factory
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private static FeedIterator CreateStreamFeedIterator(List<string> items)
+    private static FeedIterator CreateStreamFeedIterator(List<string> items, int initialOffset = 0, int? maxItemCount = null)
     {
-        var documentsArray = new JArray(items.Select(JsonParseHelpers.ParseJson));
-        var envelope = new JObject
-        {
-            ["Documents"] = documentsArray,
-            ["_count"] = documentsArray.Count,
-            ["_rid"] = string.Empty
-        };
-        var stream = ToStream(envelope.ToString(Formatting.None));
-        var response = new ResponseMessage(HttpStatusCode.OK) { Content = stream };
+        var pageSize = maxItemCount ?? items.Count;
+        if (pageSize <= 0) pageSize = items.Count;
+        var offset = initialOffset;
+        var hasRead = false;
 
         var feedIterator = Substitute.For<FeedIterator>();
-        var hasMore = true;
-        feedIterator.HasMoreResults.Returns(_ => hasMore);
+        feedIterator.HasMoreResults.Returns(_ => !hasRead || offset < items.Count);
         feedIterator.ReadNextAsync(Arg.Any<CancellationToken>()).Returns(_ =>
         {
-            hasMore = false;
+            hasRead = true;
+            var page = items.Skip(offset).Take(pageSize).ToList();
+            offset += page.Count;
+            var documentsArray = new JArray(page.Select(JsonParseHelpers.ParseJson));
+            var envelope = new JObject
+            {
+                ["Documents"] = documentsArray,
+                ["_count"] = documentsArray.Count,
+                ["_rid"] = string.Empty
+            };
+            var stream = ToStream(envelope.ToString(Formatting.None));
+            var response = new ResponseMessage(HttpStatusCode.OK) { Content = stream };
+            if (offset < items.Count)
+                response.Headers.Add("x-ms-continuation", offset.ToString());
             return Task.FromResult(response);
         });
         return feedIterator;
@@ -4263,6 +4365,32 @@ public sealed class InMemoryContainer : Container
     private readonly record struct GeoPoint(double Lat, double Lon);
 
     private readonly record struct GeoCircle(GeoPoint Center, double RadiusMeters);
+
+    private static object StArea(object geo)
+    {
+        var rings = ExtractPolygonRings(geo);
+        if (rings is null || rings.Count == 0) return null;
+        // Approximate area using spherical excess formula for the outer ring, minus holes
+        var area = SphericalPolygonArea(rings[0]);
+        for (var i = 1; i < rings.Count; i++)
+            area -= SphericalPolygonArea(rings[i]);
+        return Math.Abs(area);
+    }
+
+    private static double SphericalPolygonArea(List<GeoPoint> ring)
+    {
+        // Spherical excess method (Girard's theorem) for area on a sphere
+        double sum = 0;
+        for (var i = 0; i < ring.Count - 1; i++)
+        {
+            var lon1 = ring[i].Lon * Math.PI / 180;
+            var lat1 = ring[i].Lat * Math.PI / 180;
+            var lon2 = ring[(i + 1) % (ring.Count - 1)].Lon * Math.PI / 180;
+            var lat2 = ring[(i + 1) % (ring.Count - 1)].Lat * Math.PI / 180;
+            sum += (lon2 - lon1) * (2 + Math.Sin(lat1) + Math.Sin(lat2));
+        }
+        return Math.Abs(sum * EarthRadiusMeters * EarthRadiusMeters / 2.0);
+    }
 
     private static JObject AsJObject(object value)
     {
