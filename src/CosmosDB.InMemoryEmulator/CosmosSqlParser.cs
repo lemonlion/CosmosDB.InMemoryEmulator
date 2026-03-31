@@ -1,4 +1,5 @@
 #nullable disable
+using System.Collections.Concurrent;
 using Superpower;
 using Superpower.Model;
 using Superpower.Parsers;
@@ -785,17 +786,33 @@ public static class CosmosSqlParser
     //  Public API
     // ──────────────────────────────────────────────
 
+    private const int ParseCacheMaxSize = 256;
+    private static readonly ConcurrentDictionary<string, CosmosSqlQuery> ParseCache = new();
+
     public static CosmosSqlQuery Parse(string sql)
     {
+        if (ParseCache.TryGetValue(sql, out var cached))
+        {
+            return cached;
+        }
+
+        CosmosSqlQuery parsed;
         try
         {
             var tokens = CosmosSqlTokenizer.Tokenize(sql);
-            return QueryParser.Parse(tokens);
+            parsed = QueryParser.Parse(tokens);
         }
         catch (Exception ex)
         {
             throw new NotSupportedException($"Failed to parse Cosmos SQL query: {sql}", ex);
         }
+
+        if (ParseCache.Count < ParseCacheMaxSize)
+        {
+            ParseCache.TryAdd(sql, parsed);
+        }
+
+        return parsed;
     }
 
     public static bool TryParse(string sql, out CosmosSqlQuery result)

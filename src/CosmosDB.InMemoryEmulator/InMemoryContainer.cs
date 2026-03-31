@@ -49,6 +49,9 @@ public sealed class InMemoryContainer : Container
     private static readonly HashSet<string> AggregateFunctions =
         new(StringComparer.OrdinalIgnoreCase) { "COUNT", "SUM", "AVG", "MIN", "MAX" };
 
+    private const int RegexCacheMaxSize = 256;
+    private static readonly ConcurrentDictionary<(string Pattern, RegexOptions Options), Regex> RegexCache = new();
+
     private const int MaxDocumentSizeBytes = 2 * 1024 * 1024;
     private const double SyntheticRequestCharge = 1.0;
     private const double EarthRadiusMeters = 6_371_000.0;
@@ -2170,8 +2173,25 @@ public sealed class InMemoryContainer : Container
             return false;
         }
 
-        var pattern = right.ToString().Replace("%", ".*").Replace("_", ".");
-        return Regex.IsMatch(left.ToString(), $"^{pattern}$", RegexOptions.IgnoreCase);
+        var pattern = $"^{right.ToString().Replace("%", ".*").Replace("_", ".")}$";
+        return GetOrCreateRegex(pattern, RegexOptions.IgnoreCase).IsMatch(left.ToString());
+    }
+
+    private static Regex GetOrCreateRegex(string pattern, RegexOptions options)
+    {
+        var key = (pattern, options);
+        if (RegexCache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
+        var regex = new Regex(pattern, options | RegexOptions.Compiled);
+        if (RegexCache.Count < RegexCacheMaxSize)
+        {
+            RegexCache.TryAdd(key, regex);
+        }
+
+        return regex;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2714,7 +2734,7 @@ public sealed class InMemoryContainer : Container
 
                     var options = args.Length >= 3 && string.Equals(args[2]?.ToString(), "i", StringComparison.OrdinalIgnoreCase)
                         ? RegexOptions.IgnoreCase : RegexOptions.None;
-                    return Regex.IsMatch(input, pattern, options);
+                    return GetOrCreateRegex(pattern, options).IsMatch(input);
                 }
             case "REPLICATE":
                 {
