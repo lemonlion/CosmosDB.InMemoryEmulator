@@ -1397,13 +1397,86 @@ public sealed class InMemoryContainer : Container
         return _items.Where(kvp => !IsExpired(kvp.Key)).Select(kvp => kvp.Value).ToList();
     }
 
+    /// <summary>
+    /// Fast path: detect simple <c>WHERE c.id = @param</c> or <c>WHERE c.id = 'literal'</c>
+    /// and resolve via direct dictionary lookup instead of scanning all items.
+    /// </summary>
+    private bool TryIdEqualityLookup(
+        CosmosSqlQuery parsed, IDictionary<string, object> parameters,
+        QueryRequestOptions requestOptions, out List<string> items)
+    {
+        items = null;
+
+        if (parsed.Where is not ComparisonCondition cc || cc.Operator != ComparisonOp.Equal)
+            return false;
+
+        // Determine which side is the id field and which is the value
+        string valueSide;
+        if (IsIdField(cc.Left, parsed.FromAlias))
+            valueSide = cc.Right;
+        else if (IsIdField(cc.Right, parsed.FromAlias))
+            valueSide = cc.Left;
+        else
+            return false;
+
+        // Resolve the id value from parameter or string literal
+        string idValue;
+        if (valueSide.StartsWith('@'))
+        {
+            if (parameters is null || !parameters.TryGetValue(valueSide, out var paramValue))
+                return false;
+            idValue = paramValue?.ToString();
+        }
+        else if (valueSide.StartsWith('\'') && valueSide.EndsWith('\'') && valueSide.Length >= 2)
+        {
+            idValue = valueSide[1..^1];
+        }
+        else
+        {
+            return false; // Numeric or complex expression — fall through to normal path
+        }
+
+        if (idValue is null)
+            return false;
+
+        // Direct dictionary lookup
+        if (requestOptions?.PartitionKey is not null
+            && requestOptions.PartitionKey != PartitionKey.None
+            && requestOptions.PartitionKey != PartitionKey.Null)
+        {
+            var pk = PartitionKeyToString(requestOptions.PartitionKey.Value);
+            var key = (idValue, pk);
+            items = _items.TryGetValue(key, out var json) && !IsExpired(key)
+                ? new List<string> { json }
+                : new List<string>();
+        }
+        else
+        {
+            // Cross-partition: scan keys with matching id
+            items = _items
+                .Where(kvp => kvp.Key.Id == idValue && !IsExpired(kvp.Key))
+                .Select(kvp => kvp.Value)
+                .ToList();
+        }
+
+        return true;
+    }
+
+    private static bool IsIdField(string field, string fromAlias)
+    {
+        if (string.Equals(field, "id", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (fromAlias is not null
+            && string.Equals(field, $"{fromAlias}.id", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
+    }
+
     private const string UdfRegistryKey = "__udf_registry__";
 
     private List<string> FilterItemsByQuery(
         string queryText, IDictionary<string, object> parameters, QueryRequestOptions requestOptions)
     {
-        var items = GetAllItemsForPartition(requestOptions);
-
         if (_userDefinedFunctions.Count > 0)
         {
             parameters[UdfRegistryKey] = _userDefinedFunctions;
@@ -1411,24 +1484,39 @@ public sealed class InMemoryContainer : Container
 
         var parsed = CosmosSqlParser.Parse(queryText);
 
-        // JOIN expansion (supports multiple JOINs) — must come before WHERE
-        if (parsed.Joins is { Length: > 0 })
+        // ── Fast path: simple WHERE c.id = <value> with no JOINs ──
+        // Bypasses full scan + per-item JSON parse with a direct dictionary lookup.
+        List<string> items;
+        if (parsed.Join is null
+            && (parsed.Joins is null || parsed.Joins.Length == 0)
+            && parsed.FromSource is null
+            && TryIdEqualityLookup(parsed, parameters, requestOptions, out items))
         {
-            items = ExpandAllJoins(items, parsed);
+            // items already filtered — skip to post-WHERE pipeline
         }
-        else if (parsed.Join is not null)
+        else
         {
-            items = ExpandJoinedItems(items, parsed);
-        }
+            items = GetAllItemsForPartition(requestOptions);
 
-        // WHERE
-        if (parsed.Where is not null)
-        {
-            items = items.Where(json =>
+            // JOIN expansion (supports multiple JOINs) — must come before WHERE
+            if (parsed.Joins is { Length: > 0 })
             {
-                var jObj = JsonParseHelpers.ParseJson(json);
-                return EvaluateWhereExpression(parsed.Where, jObj, parsed.FromAlias, parameters, parsed.Join);
-            }).ToList();
+                items = ExpandAllJoins(items, parsed);
+            }
+            else if (parsed.Join is not null)
+            {
+                items = ExpandJoinedItems(items, parsed);
+            }
+
+            // WHERE
+            if (parsed.Where is not null)
+            {
+                items = items.Where(json =>
+                {
+                    var jObj = JsonParseHelpers.ParseJson(json);
+                    return EvaluateWhereExpression(parsed.Where, jObj, parsed.FromAlias, parameters, parsed.Join);
+                }).ToList();
+            }
         }
 
         // GROUP BY / HAVING — also handles SELECT projection for grouped results
