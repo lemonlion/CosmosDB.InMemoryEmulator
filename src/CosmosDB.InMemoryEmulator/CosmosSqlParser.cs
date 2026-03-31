@@ -102,7 +102,7 @@ public sealed record SelectField(string Expression, string Alias, SqlExpression 
 
 public sealed record JoinClause(string Alias, string SourceAlias, string ArrayField);
 
-public sealed record OrderByField(string Field, bool Ascending);
+public sealed record OrderByField(string Field, bool Ascending, SqlExpression Expression = null);
 
 // ── Expression tree ──
 
@@ -746,11 +746,19 @@ public static class CosmosSqlParser
     // ──────────────────────────────────────────────
 
     private static readonly TokenListParser<CosmosSqlToken, OrderByField> OrderByFieldParser =
+        (from expr in Superpower.Parse.Ref(() => Expr)
+        from dir in Token.EqualTo(CosmosSqlToken.Asc).Select(_ => true)
+            .Or(Token.EqualTo(CosmosSqlToken.Desc).Select(_ => false))
+            .OptionalOrDefault(true)
+        select expr is IdentifierExpression ident
+            ? new OrderByField(ident.Name, dir)
+            : new OrderByField(null, dir, expr)).Try()
+        .Or(
         from field in DottedPathWithIndex
         from dir in Token.EqualTo(CosmosSqlToken.Asc).Select(_ => true)
             .Or(Token.EqualTo(CosmosSqlToken.Desc).Select(_ => false))
             .OptionalOrDefault(true)
-        select new OrderByField(field, dir);
+        select new OrderByField(field, dir));
 
     // ──────────────────────────────────────────────
     //  Full query parsing

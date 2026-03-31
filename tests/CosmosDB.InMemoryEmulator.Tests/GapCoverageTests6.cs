@@ -801,15 +801,10 @@ public class VectorDistanceTests
 {
     /// <summary>
     /// VECTORDISTANCE computes similarity between vectors for AI/ML workloads.
-    /// This requires a vector index on the container and supports cosine, dot product,
-    /// and Euclidean distance metrics. It is a specialized feature for embedding-based
-    /// search scenarios.
+    /// Supports cosine similarity (default), dot product, and Euclidean distance.
+    /// No vector index policy is required on the in-memory container.
     /// </summary>
-    [Fact(Skip = "VECTORDISTANCE computes similarity scores between vectors (cosine, " +
-        "dot product, Euclidean) and requires a vector index policy on the container. " +
-        "This is a specialized AI/ML feature involving high-dimensional vector math and " +
-        "approximate nearest neighbor search infrastructure. For testing vector search logic, " +
-        "compute distances in application code and use LINQ with OrderBy.")]
+    [Fact]
     public async Task VectorDistance_ShouldComputeCosineSimilarity()
     {
         var container = new InMemoryContainer("test-container", "/pk");
@@ -820,7 +815,7 @@ public class VectorDistanceTests
             JObject.FromObject(new { id = "2", pk = "a", embedding = new[] { 0.0, 1.0, 0.0 } }),
             new PartitionKey("a"));
 
-        // VectorDistance(vector1, vector2, false, {'distanceFunction':'cosine'})
+        // VectorDistance defaults to cosine similarity; ORDER BY expression is fully supported
         var iterator = container.GetItemQueryIterator<JObject>(
             "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [1.0, 0.0, 0.0])",
             requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
@@ -829,6 +824,9 @@ public class VectorDistanceTests
             results.AddRange(await iterator.ReadNextAsync());
 
         results.Should().HaveCount(2);
+        // Ascending order: orthogonal (score=0) first, then identical (score=1)
+        results[0]["score"]!.Value<double>().Should().BeApproximately(0.0, 1e-9);
+        results[1]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9);
     }
 }
 

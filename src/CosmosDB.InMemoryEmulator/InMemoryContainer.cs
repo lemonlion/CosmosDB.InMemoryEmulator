@@ -2036,7 +2036,7 @@ public class InMemoryContainer : Container
         // ORDER BY
         if (parsed.OrderByFields is { Length: > 0 })
         {
-            items = ApplyOrderByFields(items, parsed.OrderByFields, parsed.FromAlias);
+            items = ApplyOrderByFields(items, parsed.OrderByFields, parsed.FromAlias, parameters);
         }
         else if (parsed.OrderBy is not null)
         {
@@ -2112,7 +2112,9 @@ public class InMemoryContainer : Container
             .ToList();
     }
 
-    private static List<string> ApplyOrderByFields(List<string> items, OrderByField[] orderByFields, string fromAlias)
+    private static List<string> ApplyOrderByFields(
+        List<string> items, OrderByField[] orderByFields, string fromAlias,
+        IDictionary<string, object> parameters = null)
     {
         if (orderByFields.Length == 0)
         {
@@ -2122,15 +2124,30 @@ public class InMemoryContainer : Container
         IOrderedEnumerable<string> ordered = null;
         foreach (var field in orderByFields)
         {
-            var fieldPath = field.Field;
-            if (fieldPath.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
-            {
-                fieldPath = fieldPath[(fromAlias.Length + 1)..];
-            }
-
             object KeySelector(string json)
             {
                 var jObj = JsonParseHelpers.ParseJson(json);
+
+                if (field.Expression is not null)
+                {
+                    var value = EvaluateSqlExpression(field.Expression, jObj, fromAlias,
+                        parameters ?? new Dictionary<string, object>());
+                    return value switch
+                    {
+                        double d => (object)d,
+                        long l => (object)(double)l,
+                        int i => (object)(double)i,
+                        decimal dec => (object)(double)dec,
+                        _ => null
+                    };
+                }
+
+                var fieldPath = field.Field;
+                if (fieldPath.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                {
+                    fieldPath = fieldPath[(fromAlias.Length + 1)..];
+                }
+
                 var token = jObj.SelectToken(fieldPath);
                 if (token is null)
                 {
@@ -4257,6 +4274,10 @@ public class InMemoryContainer : Container
             case "ST_AREA":
                 return args.Length >= 1 ? StArea(args[0]) : null;
 
+            // ── Vector functions ──
+            case "VECTORDISTANCE":
+                return args.Length >= 2 ? VectorDistanceFunc(args) : null;
+
             // ── Date/time functions ──
             case "GETCURRENTDATETIME": return DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
             case "GETCURRENTTIMESTAMP": return (long)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -5089,6 +5110,94 @@ public class InMemoryContainer : Container
         public override string ActivityId => string.Empty;
         public override string ETag => null;
         public override IEnumerator<T> GetEnumerator() => _items.GetEnumerator();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Vector distance helpers
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    private static object VectorDistanceFunc(object[] args)
+    {
+        // VECTORDISTANCE(vector1, vector2 [, bool_bruteForce] [, {distanceFunction:'cosine'|'dotproduct'|'euclidean'})
+        var vec1 = ToDoubleArray(args[0]);
+        var vec2 = ToDoubleArray(args[1]);
+        if (vec1 is null || vec2 is null || vec1.Length != vec2.Length || vec1.Length == 0)
+            return null;
+
+        // 3rd arg (bool bruteForce) is accepted but ignored in the emulator
+        // 4th arg (object options) may contain distanceFunction override
+        var distanceFunction = "cosine";
+        if (args.Length > 3)
+        {
+            var options = args[3] switch
+            {
+                JObject jo => jo,
+                string s when s.TrimStart().StartsWith("{") => JObject.Parse(s),
+                _ => null,
+            };
+            var df = options?["distanceFunction"]?.ToString();
+            if (df is not null) distanceFunction = df;
+        }
+
+        return distanceFunction.ToLowerInvariant() switch
+        {
+            "cosine" => CosineSimilarity(vec1, vec2),
+            "dotproduct" => DotProduct(vec1, vec2),
+            "euclidean" => EuclideanDistance(vec1, vec2),
+            _ => CosineSimilarity(vec1, vec2),
+        };
+    }
+
+    private static double CosineSimilarity(double[] a, double[] b)
+    {
+        double dot = 0, magA = 0, magB = 0;
+        for (var i = 0; i < a.Length; i++)
+        {
+            dot += a[i] * b[i];
+            magA += a[i] * a[i];
+            magB += b[i] * b[i];
+        }
+        var denominator = Math.Sqrt(magA) * Math.Sqrt(magB);
+        return denominator == 0 ? 0 : dot / denominator;
+    }
+
+    private static double DotProduct(double[] a, double[] b)
+    {
+        double sum = 0;
+        for (var i = 0; i < a.Length; i++)
+            sum += a[i] * b[i];
+        return sum;
+    }
+
+    private static double EuclideanDistance(double[] a, double[] b)
+    {
+        double sum = 0;
+        for (var i = 0; i < a.Length; i++)
+        {
+            var diff = a[i] - b[i];
+            sum += diff * diff;
+        }
+        return Math.Sqrt(sum);
+    }
+
+    private static double[] ToDoubleArray(object value)
+    {
+        JArray ja = value switch
+        {
+            JArray arr => arr,
+            string s when s.TrimStart().StartsWith("[") => JArray.Parse(s),
+            _ => null,
+        };
+        if (ja is null) return null;
+
+        var result = new double[ja.Count];
+        for (var i = 0; i < ja.Count; i++)
+        {
+            if (ja[i].Type is not (JTokenType.Float or JTokenType.Integer))
+                return null;
+            result[i] = ja[i].Value<double>();
+        }
+        return result;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

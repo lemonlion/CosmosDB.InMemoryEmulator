@@ -36,7 +36,7 @@ var results = container
 
 - **Full CRUD** — typed and stream variants with proper status codes and ETags
 - **System metadata** — `_ts` and `_etag` injected into stored items, matching real Cosmos DB
-- **Rich SQL query engine** — 100+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries, full-text search
+- **Rich SQL query engine** — 100+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries, full-text search, vector search
 - **LINQ support** — `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` interception
 - **Transactional batches** — atomic execution with rollback on failure
 - **Change feed** — iterators, checkpoints, delete tombstones, and `ChangeFeedProcessor`
@@ -52,7 +52,8 @@ var results = container
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
 - **Triggers** — pre-trigger and post-trigger execution via C# handlers
 - **FeedRange support** — configurable `FeedRangeCount` with scoped queries and change feed iterators
-- **1259 tests** covering all features (23 skipped — see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations))
+- **Vector search** — `VECTORDISTANCE` with cosine, dot product, and Euclidean distance; works in `SELECT`, `WHERE`, and `ORDER BY`
+- **1274 tests** covering all features (22 skipped — see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations))
 
 ## Installation
 
