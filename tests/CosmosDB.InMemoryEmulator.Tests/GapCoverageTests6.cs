@@ -515,27 +515,22 @@ public class StreamIteratorContinuationTests
 public class TriggerExecutionTests
 {
     /// <summary>
-    /// In real Cosmos DB, pre-triggers execute server-side JavaScript before a create/update.
-    /// The emulator accepts trigger registration but does not execute trigger logic.
-    /// This test documents the expectation that a pre-trigger would modify the document.
+    /// Pre-triggers can now modify documents via C# handlers registered with RegisterTrigger.
+    /// The trigger is registered as a C# Func&lt;JObject, JObject&gt; and fires when
+    /// PreTriggers is specified in ItemRequestOptions.
     /// </summary>
-    [Fact(Skip = "Pre-triggers are accepted via CreateTriggerAsync but their logic is never " +
-        "executed. The emulator has no server-side JavaScript engine. Trigger registration " +
-        "succeeds (returns 201 Created) but the trigger body is never invoked on " +
-        "create/replace/delete operations. See sister test below.")]
+    [Fact]
     public async Task PreTrigger_ShouldModifyDocumentOnCreate()
     {
         var container = new InMemoryContainer("test-container", "/pk");
 
-        // Register a pre-trigger that adds a 'createdBy' field
-        await container.Scripts.CreateTriggerAsync(new TriggerProperties
-        {
-            Id = "addCreatedBy",
-            TriggerType = TriggerType.Pre,
-            TriggerOperation = TriggerOperation.Create,
-            Body = @"function() { var ctx = getContext(); var doc = ctx.getRequest().getBody();
-                     doc['createdBy'] = 'trigger'; ctx.getRequest().setBody(doc); }"
-        });
+        // Register a C# pre-trigger that adds a 'createdBy' field
+        container.RegisterTrigger("addCreatedBy", TriggerType.Pre, TriggerOperation.Create,
+            preHandler: doc =>
+            {
+                doc["createdBy"] = "trigger";
+                return doc;
+            });
 
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "1", pk = "a" }),
@@ -547,23 +542,24 @@ public class TriggerExecutionTests
     }
 
     /// <summary>
-    /// Sister test: demonstrates the emulator's actual behavior — triggers are registered
-    /// successfully but their body is never invoked. Documents created with PreTriggers
-    /// specified in ItemRequestOptions are not modified by the trigger.
+    /// Demonstrates that CreateTriggerAsync alone (without RegisterTrigger) stores trigger
+    /// metadata but does not cause trigger execution. JavaScript bodies are not interpreted.
+    /// To get trigger execution, use RegisterTrigger with a C# handler.
     /// </summary>
     [Fact]
-    public async Task PreTrigger_EmulatorBehavior_TriggerRegistersButNeverFires()
+    public async Task PreTrigger_CreateTriggerAsyncAlone_DoesNotFireWithoutRegisterTrigger()
     {
         // ── Divergent behavior documentation ──
         // Real Cosmos DB: trigger body is executed as server-side JavaScript.
         //   The trigger can read/modify the incoming document before it is committed.
-        // In-Memory Emulator: CreateTriggerAsync returns HttpStatusCode.Created but
-        //   the trigger body string is stored and never interpreted. There is no
-        //   JavaScript engine in the emulator. If you specify PreTriggers in
-        //   ItemRequestOptions, the emulator ignores them silently.
+        // In-Memory Emulator: CreateTriggerAsync stores trigger metadata (returns 201 Created)
+        //   but does not execute JavaScript bodies. To get trigger execution, register a
+        //   C# handler via container.RegisterTrigger(). If PreTriggers is specified in
+        //   ItemRequestOptions but no C# handler is registered, the trigger is not found
+        //   and a BadRequest (400) is thrown.
         var container = new InMemoryContainer("test-container", "/pk");
 
-        // This succeeds (201 Created) — the trigger is registered.
+        // This succeeds (201 Created) — metadata is stored.
         var triggerResponse = await container.Scripts.CreateTriggerAsync(new TriggerProperties
         {
             Id = "addCreatedBy",
@@ -573,7 +569,7 @@ public class TriggerExecutionTests
         });
         triggerResponse.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        // Create an item — the trigger will NOT fire.
+        // Create an item without specifying PreTriggers — no trigger fires.
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "1", pk = "a" }),
             new PartitionKey("a"));
@@ -581,7 +577,7 @@ public class TriggerExecutionTests
         // Verify the trigger did NOT modify the document.
         var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
         item["createdBy"].Should().BeNull(
-            "the emulator does not execute trigger bodies — it only stores them");
+            "CreateTriggerAsync alone does not enable trigger execution — use RegisterTrigger");
     }
 }
 

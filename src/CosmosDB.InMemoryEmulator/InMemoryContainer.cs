@@ -65,6 +65,14 @@ public class InMemoryContainer : Container
     private readonly Scripts _scripts;
     private readonly Dictionary<string, Func<object[], object>> _userDefinedFunctions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<PartitionKey, dynamic[], string>> _storedProcedures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, RegisteredTrigger> _triggers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, TriggerProperties> _triggerProperties = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed record RegisteredTrigger(
+        TriggerType TriggerType,
+        TriggerOperation TriggerOperation,
+        Func<JObject, JObject> PreHandler,
+        Action<JObject> PostHandler);
 
     private sealed class UndefinedValue
     {
@@ -286,6 +294,35 @@ public class InMemoryContainer : Container
     }
 
     /// <summary>
+    /// Registers a pre-trigger handler invoked when <c>ItemRequestOptions.PreTriggers</c> includes this trigger's ID.
+    /// The handler receives the document as a <see cref="JObject"/> and must return the (possibly modified) document.
+    /// </summary>
+    public void RegisterTrigger(string triggerId, TriggerType triggerType, TriggerOperation triggerOperation,
+        Func<JObject, JObject> preHandler)
+    {
+        _triggers[triggerId] = new RegisteredTrigger(triggerType, triggerOperation, preHandler, null);
+    }
+
+    /// <summary>
+    /// Registers a post-trigger handler invoked when <c>ItemRequestOptions.PostTriggers</c> includes this trigger's ID.
+    /// The handler receives the committed document as a <see cref="JObject"/>.
+    /// If the handler throws, the write is rolled back (matching real Cosmos DB transactional semantics).
+    /// </summary>
+    public void RegisterTrigger(string triggerId, TriggerType triggerType, TriggerOperation triggerOperation,
+        Action<JObject> postHandler)
+    {
+        _triggers[triggerId] = new RegisteredTrigger(triggerType, triggerOperation, null, postHandler);
+    }
+
+    /// <summary>
+    /// Removes a previously registered trigger handler.
+    /// </summary>
+    public void DeregisterTrigger(string triggerId)
+    {
+        _triggers.Remove(triggerId);
+    }
+
+    /// <summary>
     /// Returns a checkpoint value representing the current position in the change feed.
     /// Pass this to <see cref="GetChangeFeedIterator{T}(long)"/> to read changes since this point.
     /// </summary>
@@ -309,6 +346,10 @@ public class InMemoryContainer : Container
         var json = JsonConvert.SerializeObject(item, JsonSettings);
         ValidateDocumentSize(json);
         var jObj = JsonParseHelpers.ParseJson(json);
+
+        jObj = ExecutePreTriggers(requestOptions, jObj, "Create");
+        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException("Item must have an 'id' property.");
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
@@ -326,6 +367,19 @@ public class InMemoryContainer : Container
         _timestamps[key] = DateTimeOffset.UtcNow;
         _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         RecordChangeFeed(itemId, pk, _items[key]);
+
+        try
+        {
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(_items[key]), "Create");
+        }
+        catch
+        {
+            _items.TryRemove(key, out _);
+            _etags.TryRemove(key, out _);
+            _timestamps.TryRemove(key, out _);
+            throw;
+        }
+
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         return Task.FromResult(CreateItemResponse(item, HttpStatusCode.Created, etag, suppressContent));
     }
@@ -359,6 +413,10 @@ public class InMemoryContainer : Container
         var json = JsonConvert.SerializeObject(item, JsonSettings);
         ValidateDocumentSize(json);
         var jObj = JsonParseHelpers.ParseJson(json);
+
+        jObj = ExecutePreTriggers(requestOptions, jObj, "Upsert");
+        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException("Item must have an 'id' property.");
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
@@ -372,11 +430,36 @@ public class InMemoryContainer : Container
         CheckIfMatch(requestOptions, key);
         ValidateUniqueKeys(jObj, pk, excludeItemId: itemId);
         var existed = _items.ContainsKey(key);
+        var previousJson = existed ? _items[key] : null;
+        var previousEtag = existed ? _etags.GetValueOrDefault(key) : null;
+        var previousTimestamp = existed ? _timestamps.GetValueOrDefault(key) : default(DateTimeOffset?);
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
         _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         RecordChangeFeed(itemId, pk, _items[key]);
+
+        try
+        {
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(_items[key]), "Upsert");
+        }
+        catch
+        {
+            if (existed && previousJson is not null)
+            {
+                _items[key] = previousJson;
+                _etags[key] = previousEtag!;
+                if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
+            }
+            else
+            {
+                _items.TryRemove(key, out _);
+                _etags.TryRemove(key, out _);
+                _timestamps.TryRemove(key, out _);
+            }
+            throw;
+        }
+
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         return Task.FromResult(CreateItemResponse(item, existed ? HttpStatusCode.OK : HttpStatusCode.Created, etag, suppressContent));
     }
@@ -389,6 +472,10 @@ public class InMemoryContainer : Container
         var json = JsonConvert.SerializeObject(item, JsonSettings);
         ValidateDocumentSize(json);
         var jObj = JsonParseHelpers.ParseJson(json);
+
+        jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
+        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(id, pk);
 
@@ -400,11 +487,27 @@ public class InMemoryContainer : Container
 
         CheckIfMatch(requestOptions, key);
         ValidateUniqueKeys(jObj, pk, excludeItemId: id);
+        var previousJson = _items[key];
+        var previousEtag = _etags.GetValueOrDefault(key);
+        var previousTimestamp = _timestamps.GetValueOrDefault(key);
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
         _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         RecordChangeFeed(id, pk, _items[key]);
+
+        try
+        {
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(_items[key]), "Replace");
+        }
+        catch
+        {
+            _items[key] = previousJson;
+            _etags[key] = previousEtag!;
+            _timestamps[key] = previousTimestamp;
+            throw;
+        }
+
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         return Task.FromResult(CreateItemResponse(item, HttpStatusCode.OK, etag, suppressContent));
     }
@@ -500,6 +603,10 @@ public class InMemoryContainer : Container
         var json = ReadStream(streamPayload);
         ValidateDocumentSize(json);
         var jObj = JsonParseHelpers.ParseJson(json);
+
+        jObj = ExecutePreTriggers(requestOptions, jObj, "Create");
+        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+
         var itemId = jObj["id"]?.ToString() ?? Guid.NewGuid().ToString();
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(itemId, pk);
@@ -520,6 +627,19 @@ public class InMemoryContainer : Container
         var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         _items[key] = enrichedJson;
         RecordChangeFeed(itemId, pk, enrichedJson);
+
+        try
+        {
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Create");
+        }
+        catch
+        {
+            _items.TryRemove(key, out _);
+            _etags.TryRemove(key, out _);
+            _timestamps.TryRemove(key, out _);
+            throw;
+        }
+
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created, enrichedJson, etag));
     }
 
@@ -551,6 +671,10 @@ public class InMemoryContainer : Container
         var json = ReadStream(streamPayload);
         ValidateDocumentSize(json);
         var jObj = JsonParseHelpers.ParseJson(json);
+
+        jObj = ExecutePreTriggers(requestOptions, jObj, "Upsert");
+        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException(
             "Item must have an 'id' property (case-sensitive, lowercase). " +
             "If your C# model uses PascalCase 'Id', ensure CosmosClientOptions.Serializer is configured " +
@@ -572,6 +696,26 @@ public class InMemoryContainer : Container
         var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         _items[key] = enrichedJson;
         RecordChangeFeed(itemId, pk, enrichedJson);
+
+        try
+        {
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Upsert");
+        }
+        catch
+        {
+            if (existed)
+            {
+                // Stream rollback is best-effort — we don't have the previous json
+            }
+            else
+            {
+                _items.TryRemove(key, out _);
+                _etags.TryRemove(key, out _);
+                _timestamps.TryRemove(key, out _);
+            }
+            throw;
+        }
+
         return Task.FromResult(CreateResponseMessage(existed ? HttpStatusCode.OK : HttpStatusCode.Created, enrichedJson, etag));
     }
 
@@ -595,6 +739,10 @@ public class InMemoryContainer : Container
         }
 
         var jObj = JsonParseHelpers.ParseJson(json);
+
+        jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
+        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+
         if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
         {
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
@@ -606,6 +754,17 @@ public class InMemoryContainer : Container
         var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         _items[key] = enrichedJson;
         RecordChangeFeed(id, pk, enrichedJson);
+
+        try
+        {
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Replace");
+        }
+        catch
+        {
+            // Stream rollback is best-effort
+            throw;
+        }
+
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, enrichedJson, etag));
     }
 
@@ -1243,6 +1402,79 @@ public class InMemoryContainer : Container
         RecordChangeFeed(id, pk, tombstone.ToString(Newtonsoft.Json.Formatting.None), isDelete: true);
     }
 
+    private static TriggerOperation OperationNameToTriggerOp(string operationName) => operationName switch
+    {
+        "Create" => TriggerOperation.Create,
+        "Replace" => TriggerOperation.Replace,
+        "Upsert" => TriggerOperation.Upsert,
+        "Delete" => TriggerOperation.Delete,
+        _ => TriggerOperation.All
+    };
+
+    private static bool TriggerOperationMatches(TriggerOperation registered, TriggerOperation current)
+        => registered == TriggerOperation.All || registered == current;
+
+    private JObject ExecutePreTriggers(ItemRequestOptions requestOptions, JObject jObj, string operationName)
+    {
+        var triggerNames = requestOptions?.PreTriggers;
+        if (triggerNames is null) return jObj;
+
+        var currentOp = OperationNameToTriggerOp(operationName);
+
+        foreach (var name in triggerNames)
+        {
+            if (!_triggers.TryGetValue(name, out var trigger))
+            {
+                throw new CosmosException(
+                    $"Trigger '{name}' is not registered. Register it via RegisterTrigger() before referencing it in PreTriggers.",
+                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
+            }
+
+            if (trigger.TriggerType != TriggerType.Pre || trigger.PreHandler is null) continue;
+            if (!TriggerOperationMatches(trigger.TriggerOperation, currentOp)) continue;
+
+            jObj = trigger.PreHandler(jObj);
+        }
+
+        return jObj;
+    }
+
+    private void ExecutePostTriggers(ItemRequestOptions requestOptions, JObject committedDoc, string operationName)
+    {
+        var triggerNames = requestOptions?.PostTriggers;
+        if (triggerNames is null) return;
+
+        var currentOp = OperationNameToTriggerOp(operationName);
+
+        foreach (var name in triggerNames)
+        {
+            if (!_triggers.TryGetValue(name, out var trigger))
+            {
+                throw new CosmosException(
+                    $"Trigger '{name}' is not registered. Register it via RegisterTrigger() before referencing it in PostTriggers.",
+                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
+            }
+
+            if (trigger.TriggerType != TriggerType.Post || trigger.PostHandler is null) continue;
+            if (!TriggerOperationMatches(trigger.TriggerOperation, currentOp)) continue;
+
+            try
+            {
+                trigger.PostHandler(committedDoc);
+            }
+            catch (CosmosException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new CosmosException(
+                    $"Post-trigger '{name}' failed: {ex.Message}",
+                    HttpStatusCode.InternalServerError, 0, string.Empty, 0);
+            }
+        }
+    }
+
     private void CheckIfMatch(ItemRequestOptions requestOptions, (string Id, string PartitionKey) key)
     {
         if (requestOptions?.IfMatchEtag is null)
@@ -1523,9 +1755,59 @@ public class InMemoryContainer : Container
             .Returns(ci =>
             {
                 var props = ci.Arg<TriggerProperties>();
+                _triggerProperties[props.Id] = props;
                 var r = Substitute.For<TriggerResponse>();
                 r.StatusCode.Returns(HttpStatusCode.Created);
                 r.Resource.Returns(props);
+                return r;
+            });
+
+        scripts.ReadTriggerAsync(
+            Arg.Any<string>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                var triggerId = ci.ArgAt<string>(0);
+                if (!_triggerProperties.TryGetValue(triggerId, out var props))
+                {
+                    throw new CosmosException($"Trigger '{triggerId}' not found.",
+                        HttpStatusCode.NotFound, 0, string.Empty, 0);
+                }
+                var r = Substitute.For<TriggerResponse>();
+                r.StatusCode.Returns(HttpStatusCode.OK);
+                r.Resource.Returns(props);
+                return r;
+            });
+
+        scripts.ReplaceTriggerAsync(
+            Arg.Any<TriggerProperties>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                var props = ci.Arg<TriggerProperties>();
+                if (!_triggerProperties.ContainsKey(props.Id))
+                {
+                    throw new CosmosException($"Trigger '{props.Id}' not found.",
+                        HttpStatusCode.NotFound, 0, string.Empty, 0);
+                }
+                _triggerProperties[props.Id] = props;
+                var r = Substitute.For<TriggerResponse>();
+                r.StatusCode.Returns(HttpStatusCode.OK);
+                r.Resource.Returns(props);
+                return r;
+            });
+
+        scripts.DeleteTriggerAsync(
+            Arg.Any<string>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                var triggerId = ci.ArgAt<string>(0);
+                if (!_triggerProperties.Remove(triggerId))
+                {
+                    throw new CosmosException($"Trigger '{triggerId}' not found.",
+                        HttpStatusCode.NotFound, 0, string.Empty, 0);
+                }
+                _triggers.Remove(triggerId);
+                var r = Substitute.For<TriggerResponse>();
+                r.StatusCode.Returns(HttpStatusCode.NoContent);
                 return r;
             });
 
