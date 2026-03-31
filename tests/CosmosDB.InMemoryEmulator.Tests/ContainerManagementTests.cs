@@ -214,28 +214,24 @@ public class ContainerManagementEdgeCaseTests
 
 
 /// <summary>
-/// BEHAVIORAL DIFFERENCE: Real Cosmos DB ReplaceContainerStreamAsync updates the
-/// container's actual properties. InMemoryContainer returns the supplied properties
-/// in the response but does not persist them internally. Subsequent ReadContainerAsync
-/// calls return the original properties. The basic ReplaceContainerStreamAsync_ReturnsOk
-/// test is already in CosmosClientApiGapTests.cs; this covers the persistence gap.
-/// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.replacecontainerstreamasync
+/// ReplaceContainerStreamAsync should persist property changes so that
+/// subsequent ReadContainerAsync calls return the updated values.
 /// </summary>
-public class ContainerStreamDivergentBehaviorTests5
+public class ContainerStreamReplacePersistenceTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
     [Fact]
-    public async Task ReplaceContainerStream_DoesNotPersistChanges()
+    public async Task ReplaceContainerStream_PersistsPropertyChanges()
     {
-        var newProperties = new ContainerProperties("new-name", "/newPk");
+        var newProperties = new ContainerProperties("test-container", "/partitionKey")
+        {
+            DefaultTimeToLive = 600
+        };
         await _container.ReplaceContainerStreamAsync(newProperties);
 
         var readResponse = await _container.ReadContainerAsync();
-
-        // InMemoryContainer still returns original properties
-        readResponse.Resource.Id.Should().Be("test-container");
-        readResponse.Resource.PartitionKeyPath.Should().Be("/partitionKey");
+        readResponse.Resource.DefaultTimeToLive.Should().Be(600);
     }
 }
 

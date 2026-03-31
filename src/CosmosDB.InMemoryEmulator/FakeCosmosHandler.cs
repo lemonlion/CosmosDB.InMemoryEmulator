@@ -87,7 +87,7 @@ public sealed class CompatibilityDocument
     public int Value { get; set; }
 }
 
-public sealed class FakeCosmosHandler : HttpMessageHandler
+public class FakeCosmosHandler : HttpMessageHandler
 {
     private readonly InMemoryContainer _container;
     private readonly ConcurrentBag<string> _requestLog = new();

@@ -21,7 +21,7 @@ namespace CosmosDB.InMemoryEmulator;
 /// <see cref="HttpStatusCode.FailedDependency"/>, matching real Cosmos DB behaviour.
 /// </para>
 /// </remarks>
-public sealed class InMemoryTransactionalBatch : TransactionalBatch
+public class InMemoryTransactionalBatch : TransactionalBatch
 {
     private static readonly JsonSerializerSettings JsonSettings = new()
     {
@@ -41,6 +41,7 @@ public sealed class InMemoryTransactionalBatch : TransactionalBatch
     private readonly PartitionKey _partitionKey;
     private readonly List<Func<Task>> _operations = new();
     private long _estimatedBatchSize;
+    private readonly Dictionary<int, string> _readResults = new();
 
     public InMemoryTransactionalBatch(InMemoryContainer container, PartitionKey partitionKey)
     {
@@ -80,7 +81,12 @@ public sealed class InMemoryTransactionalBatch : TransactionalBatch
 
     public override TransactionalBatch ReadItem(string id, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
-        _operations.Add(async () => await _container.ReadItemAsync<object>(id, _partitionKey, ToItemRequestOptions(requestOptions)));
+        var operationIndex = _operations.Count;
+        _operations.Add(async () =>
+        {
+            var result = await _container.ReadItemAsync<object>(id, _partitionKey, ToItemRequestOptions(requestOptions));
+            _readResults[operationIndex] = JsonConvert.SerializeObject(result.Resource, JsonSettings);
+        });
         return this;
     }
 
@@ -120,7 +126,7 @@ public sealed class InMemoryTransactionalBatch : TransactionalBatch
         var itemsSnapshot = _container.SnapshotItems();
         var etagsSnapshot = _container.SnapshotEtags();
 
-        var resultItems = new List<TransactionalBatchOperationResult>();
+        var operationResults = new List<(HttpStatusCode status, bool isSuccess)>();
         var failedIndex = -1;
         HttpStatusCode failedStatusCode = default;
 
@@ -129,19 +135,14 @@ public sealed class InMemoryTransactionalBatch : TransactionalBatch
             try
             {
                 await _operations[i]();
-                var opResult = Substitute.For<TransactionalBatchOperationResult>();
-                opResult.StatusCode.Returns(HttpStatusCode.Created);
-                opResult.IsSuccessStatusCode.Returns(true);
-                resultItems.Add(opResult);
+                var statusCode = _readResults.ContainsKey(i) ? HttpStatusCode.OK : HttpStatusCode.Created;
+                operationResults.Add((statusCode, true));
             }
             catch (CosmosException ex)
             {
                 failedIndex = i;
                 failedStatusCode = ex.StatusCode;
-                var failResult = Substitute.For<TransactionalBatchOperationResult>();
-                failResult.StatusCode.Returns(ex.StatusCode);
-                failResult.IsSuccessStatusCode.Returns(false);
-                resultItems.Add(failResult);
+                operationResults.Add((ex.StatusCode, false));
                 break;
             }
         }
@@ -151,42 +152,18 @@ public sealed class InMemoryTransactionalBatch : TransactionalBatch
             _container.RestoreSnapshot(itemsSnapshot, etagsSnapshot);
             for (var i = 0; i < failedIndex; i++)
             {
-                resultItems[i].StatusCode.Returns(HttpStatusCode.FailedDependency);
-                resultItems[i].IsSuccessStatusCode.Returns(false);
+                operationResults[i] = (HttpStatusCode.FailedDependency, false);
             }
 
             for (var i = failedIndex + 1; i < _operations.Count; i++)
             {
-                var depResult = Substitute.For<TransactionalBatchOperationResult>();
-                depResult.StatusCode.Returns(HttpStatusCode.FailedDependency);
-                depResult.IsSuccessStatusCode.Returns(false);
-                resultItems.Add(depResult);
+                operationResults.Add((HttpStatusCode.FailedDependency, false));
             }
 
-            var failResponse = Substitute.For<TransactionalBatchResponse>();
-            failResponse.StatusCode.Returns(failedStatusCode);
-            failResponse.IsSuccessStatusCode.Returns(false);
-            failResponse.Count.Returns(_operations.Count);
-            failResponse.RequestCharge.Returns(1d);
-            failResponse[Arg.Any<int>()].Returns(callInfo =>
-            {
-                var idx = callInfo.Arg<int>();
-                return idx < resultItems.Count ? resultItems[idx] : null!;
-            });
-            return failResponse;
+            return new InMemoryBatchResponse(failedStatusCode, false, operationResults, _readResults);
         }
 
-        var response = Substitute.For<TransactionalBatchResponse>();
-        response.StatusCode.Returns(HttpStatusCode.OK);
-        response.IsSuccessStatusCode.Returns(true);
-        response.Count.Returns(_operations.Count);
-        response.RequestCharge.Returns(1d);
-        response[Arg.Any<int>()].Returns(callInfo =>
-        {
-            var idx = callInfo.Arg<int>();
-            return idx < resultItems.Count ? resultItems[idx] : null!;
-        });
-        return response;
+        return new InMemoryBatchResponse(HttpStatusCode.OK, true, operationResults, _readResults);
     }
 
     public override Task<TransactionalBatchResponse> ExecuteAsync(TransactionalBatchRequestOptions requestOptions, CancellationToken cancellationToken = default)
@@ -236,4 +213,59 @@ public sealed class InMemoryTransactionalBatch : TransactionalBatch
     }
 
     #endregion
+
+    private sealed class InMemoryBatchResponse : TransactionalBatchResponse
+    {
+        private readonly HttpStatusCode _statusCode;
+        private readonly bool _isSuccess;
+        private readonly List<(HttpStatusCode status, bool isSuccess)> _operationResults;
+        private readonly Dictionary<int, string> _readResults;
+
+        public InMemoryBatchResponse(
+            HttpStatusCode statusCode,
+            bool isSuccess,
+            List<(HttpStatusCode status, bool isSuccess)> operationResults,
+            Dictionary<int, string> readResults)
+        {
+            _statusCode = statusCode;
+            _isSuccess = isSuccess;
+            _operationResults = operationResults;
+            _readResults = readResults;
+        }
+
+        public override HttpStatusCode StatusCode => _statusCode;
+        public override bool IsSuccessStatusCode => _isSuccess;
+        public override int Count => _operationResults.Count;
+        public override double RequestCharge => 1d;
+
+        public override TransactionalBatchOperationResult this[int index]
+        {
+            get
+            {
+                if (index < 0 || index >= _operationResults.Count) return null!;
+                var (status, isSuccess) = _operationResults[index];
+                var result = Substitute.For<TransactionalBatchOperationResult>();
+                result.StatusCode.Returns(status);
+                result.IsSuccessStatusCode.Returns(isSuccess);
+                return result;
+            }
+        }
+
+        public override TransactionalBatchOperationResult<T> GetOperationResultAtIndex<T>(int index)
+        {
+            var (status, isSuccess) = _operationResults[index];
+            var result = Substitute.For<TransactionalBatchOperationResult<T>>();
+            result.StatusCode.Returns(status);
+            result.IsSuccessStatusCode.Returns(isSuccess);
+
+            if (_readResults.TryGetValue(index, out var json))
+            {
+                result.Resource.Returns(JsonConvert.DeserializeObject<T>(json, JsonSettings)!);
+            }
+
+            return result;
+        }
+
+        protected override void Dispose(bool disposing) { }
+    }
 }

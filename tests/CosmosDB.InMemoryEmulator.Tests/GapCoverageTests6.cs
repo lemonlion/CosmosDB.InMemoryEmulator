@@ -594,10 +594,7 @@ public class DeleteContainerParentDbTests
     /// In the emulator, DeleteContainerAsync clears internal data but does not remove itself
     /// from the parent InMemoryDatabase._containers dictionary.
     /// </summary>
-    [Fact(Skip = "DeleteContainerAsync clears the container's item data but does not remove " +
-        "itself from its parent InMemoryDatabase._containers dictionary. There is no callback " +
-        "or RemoveContainer mechanism from Container back to Database. The container remains " +
-        "listed in GetContainerQueryIterator after deletion.")]
+    [Fact]
     public async Task DeleteContainer_ShouldRemoveFromDatabase_ContainerList()
     {
         var client = new InMemoryCosmosClient();
@@ -614,45 +611,6 @@ public class DeleteContainerParentDbTests
             containers.AddRange(await iterator.ReadNextAsync());
 
         containers.Should().NotContain(c => c.Id == "ctr1");
-    }
-
-    /// <summary>
-    /// Sister test: demonstrates the emulator's actual behavior — the container's items are
-    /// cleared but it remains in the parent database's container list.
-    /// </summary>
-    [Fact]
-    public async Task DeleteContainer_EmulatorBehavior_ClearsDataButRemainsListed()
-    {
-        // ── Divergent behavior documentation ──
-        // Real Cosmos DB: DELETE on a container removes it entirely. Subsequent
-        //   GetContainer calls return a reference that throws 404 on any operation.
-        //   The container no longer appears in GetContainerQueryIterator results.
-        // In-Memory Emulator: DeleteContainerAsync clears all items, ETags, and
-        //   timestamps from the container's internal dictionaries. However, the
-        //   container object still exists in InMemoryDatabase._containers because
-        //   there is no callback mechanism for the Container to notify its parent
-        //   Database of deletion.
-        var client = new InMemoryCosmosClient();
-        var db = (InMemoryDatabase)(await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
-        await db.CreateContainerAsync("ctr1", "/pk");
-
-        var container = db.GetContainer("ctr1");
-
-        // Add an item to prove the container works
-        await container.CreateItemAsync(
-            JObject.FromObject(new { id = "1", pk = "a" }),
-            new PartitionKey("a"));
-
-        await container.DeleteContainerAsync();
-
-        // The container is still listed in the parent DB
-        var iterator = db.GetContainerQueryIterator<ContainerProperties>("SELECT * FROM c");
-        var containers = new List<ContainerProperties>();
-        while (iterator.HasMoreResults)
-            containers.AddRange(await iterator.ReadNextAsync());
-
-        containers.Should().Contain(c => c.Id == "ctr1",
-            "the emulator does not remove the container from the parent database's dictionary");
     }
 }
 

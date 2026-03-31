@@ -40,7 +40,7 @@ public class TransactionalBatchTests
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         response.Count.Should().Be(1);
-        response[0].StatusCode.Should().Be(HttpStatusCode.Created);
+        response[0].StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]
@@ -394,10 +394,7 @@ public class TransactionalBatchGapTests3
         response[2].StatusCode.Should().Be(HttpStatusCode.FailedDependency);
     }
 
-    [Fact(Skip = "InMemoryContainer batch ReadItem does not populate Resource on the operation result. " +
-                 "Real Cosmos DB returns the document data in GetOperationResultAtIndex<T>().Resource. " +
-                 "InMemoryContainer returns null for Resource on batch read results. " +
-                 "See divergent behavior test in BatchReadResultDivergentBehaviorTests.")]
+    [Fact]
     public async Task Batch_ReadResult_ContainsDocumentData()
     {
         await _container.CreateItemAsync(
@@ -610,30 +607,3 @@ public class TransactionalBatchGapTests4
 }
 
 
-public class BatchReadResultDivergentBehaviorTests
-{
-    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
-
-    /// <summary>
-    /// BEHAVIORAL DIFFERENCE: InMemoryContainer batch ReadItem returns null Resource and status code 0.
-    /// Real Cosmos DB populates GetOperationResultAtIndex&lt;T&gt;().Resource with the document data
-    /// and returns status code 200.
-    /// InMemoryContainer returns null for Resource and status code 0 on batch read operation results.
-    /// </summary>
-    [Fact]
-    public async Task Batch_ReadResult_HasNullResource_InMemory()
-    {
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
-            new PartitionKey("pk1"));
-
-        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
-        batch.ReadItem("1");
-
-        using var response = await batch.ExecuteAsync();
-
-        response.IsSuccessStatusCode.Should().BeTrue();
-        var result = response.GetOperationResultAtIndex<TestDocument>(0);
-        result.Resource.Should().BeNull();
-    }
-}

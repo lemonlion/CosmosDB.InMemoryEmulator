@@ -5,6 +5,7 @@ using System.Net;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.Azure.Cosmos;
+using Newtonsoft.Json.Linq;
 using NSubstitute;
 
 namespace CosmosDB.InMemoryEmulator;
@@ -93,6 +94,73 @@ internal sealed class InMemoryChangeFeedProcessor<T> : ChangeFeedProcessor
             {
                 _checkpoint += changes.Count;
                 await _handler(context, changes, cancellationToken);
+            }
+        }
+    }
+}
+
+internal sealed class InMemoryChangeFeedStreamProcessor : ChangeFeedProcessor
+{
+    private readonly InMemoryContainer _container;
+    private readonly Container.ChangeFeedStreamHandler _handler;
+    private CancellationTokenSource _cts;
+    private Task _pollingTask;
+    private long _checkpoint;
+
+    internal InMemoryChangeFeedStreamProcessor(
+        InMemoryContainer container,
+        Container.ChangeFeedStreamHandler handler)
+    {
+        _container = container;
+        _handler = handler;
+    }
+
+    public override Task StartAsync()
+    {
+        _checkpoint = _container.GetChangeFeedCheckpoint();
+        _cts = new CancellationTokenSource();
+        _pollingTask = PollAsync(_cts.Token);
+        return Task.CompletedTask;
+    }
+
+    public override async Task StopAsync()
+    {
+        if (_cts != null)
+        {
+            await _cts.CancelAsync();
+            try { await _pollingTask; }
+            catch (OperationCanceledException) { }
+            _cts.Dispose();
+            _cts = null;
+        }
+    }
+
+    private async Task PollAsync(CancellationToken cancellationToken)
+    {
+        var context = new InMemoryChangeFeedProcessorContext();
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+
+            var iterator = _container.GetChangeFeedIterator<JObject>(_checkpoint);
+            var changes = new List<JObject>();
+
+            while (iterator.HasMoreResults)
+            {
+                var response = await iterator.ReadNextAsync(cancellationToken);
+                if (response.StatusCode == HttpStatusCode.NotModified)
+                    break;
+                changes.AddRange(response);
+            }
+
+            if (changes.Count > 0)
+            {
+                _checkpoint += changes.Count;
+                var array = new JArray(changes);
+                var bytes = System.Text.Encoding.UTF8.GetBytes(array.ToString());
+                using var stream = new MemoryStream(bytes);
+                await _handler(context, stream, cancellationToken);
             }
         }
     }

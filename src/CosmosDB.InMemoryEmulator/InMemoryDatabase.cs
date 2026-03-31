@@ -20,7 +20,7 @@ namespace CosmosDB.InMemoryEmulator;
 /// Throughput operations return synthetic values (400 RU/s by default).
 /// User and client encryption key operations throw <see cref="System.NotImplementedException"/>.
 /// </remarks>
-public sealed class InMemoryDatabase : Database
+public class InMemoryDatabase : Database
 {
     private readonly ConcurrentDictionary<string, InMemoryContainer> _containers = new();
     private readonly InMemoryCosmosClient _client;
@@ -56,7 +56,9 @@ public sealed class InMemoryDatabase : Database
     /// <param name="partitionKeyPath">The JSON path to the partition key field (e.g. <c>/partitionKey</c>).</param>
     internal InMemoryContainer GetOrCreateContainer(string containerId, string partitionKeyPath = "/id")
     {
-        return _containers.GetOrAdd(containerId, name => new InMemoryContainer(name, partitionKeyPath));
+        var container = _containers.GetOrAdd(containerId, name => new InMemoryContainer(name, partitionKeyPath));
+        container.OnDeleted ??= () => _containers.TryRemove(containerId, out _);
+        return container;
     }
 
     // ── CreateContainerIfNotExistsAsync ─────────────────────────────────────
@@ -67,6 +69,7 @@ public sealed class InMemoryDatabase : Database
     {
         var isNew = !_containers.ContainsKey(id);
         var container = _containers.GetOrAdd(id, name => new InMemoryContainer(name, partitionKeyPath));
+        container.OnDeleted ??= () => _containers.TryRemove(id, out _);
         var response = BuildContainerResponse(container, partitionKeyPath, isNew ? HttpStatusCode.Created : HttpStatusCode.OK);
         return Task.FromResult(response);
     }
@@ -97,6 +100,7 @@ public sealed class InMemoryDatabase : Database
         ArgumentException.ThrowIfNullOrEmpty(id);
         ArgumentNullException.ThrowIfNull(partitionKeyPath);
         var container = new InMemoryContainer(id, partitionKeyPath);
+        container.OnDeleted = () => _containers.TryRemove(id, out _);
         if (!_containers.TryAdd(id, container))
         {
             throw new CosmosException("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
@@ -130,6 +134,7 @@ public sealed class InMemoryDatabase : Database
         var id = containerProperties.Id;
         var pkPath = containerProperties.PartitionKeyPath ?? "/id";
         var container = new InMemoryContainer(id, pkPath);
+        container.OnDeleted = () => _containers.TryRemove(id, out _);
         if (!_containers.TryAdd(id, container))
         {
             return Task.FromResult(new ResponseMessage(HttpStatusCode.Conflict));

@@ -209,22 +209,20 @@ public class BehavioralDifferenceTests
     // ── Replace Container ────────────────────────────────────────────────────
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB ReplaceContainerAsync updates the
-    /// container's actual properties (partition key, indexing policy, etc.).
-    /// InMemoryContainer's ReplaceContainerAsync returns the supplied properties
-    /// but does not actually update the internal container state. Subsequent
-    /// ReadContainerAsync calls return the original properties.
+    /// ReplaceContainerAsync should persist property changes so that
+    /// subsequent ReadContainerAsync calls return the updated values.
     /// </summary>
     [Fact]
-    public async Task ReplaceContainer_DoesNotPersistChanges()
+    public async Task ReplaceContainer_PersistsPropertyChanges()
     {
-        var newProperties = new ContainerProperties("new-name", "/newPk");
+        var newProperties = new ContainerProperties("test-container", "/partitionKey")
+        {
+            DefaultTimeToLive = 600
+        };
         await _container.ReplaceContainerAsync(newProperties);
 
         var readResponse = await _container.ReadContainerAsync();
-        // InMemoryContainer still returns original properties
-        readResponse.Resource.Id.Should().Be("test-container");
-        readResponse.Resource.PartitionKeyPath.Should().Be("/partitionKey");
+        readResponse.Resource.DefaultTimeToLive.Should().Be(600);
     }
 
     // ── Feed ranges ──────────────────────────────────────────────────────────

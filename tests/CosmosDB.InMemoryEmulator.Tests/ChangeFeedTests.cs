@@ -481,10 +481,7 @@ public class ChangeFeedStreamProcessorDivergentTests5
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "InMemoryContainer uses NoOpChangeFeedProcessor for the stream handler variant. " +
-                 "The handler will never be invoked. Use the typed ChangeFeedHandler<T> overload " +
-                 "for functional in-memory change feed processing. " +
-                 "See sister test: ChangeFeedStreamHandler_IsNoOp_InMemory")]
+    [Fact]
     public async Task ChangeFeedProcessorBuilder_StreamHandler_ShouldInvokeHandler()
     {
         var handlerCalled = new TaskCompletionSource<bool>();
@@ -512,39 +509,6 @@ public class ChangeFeedStreamProcessorDivergentTests5
         handlerCalled.Task.IsCompleted.Should().BeTrue();
     }
 
-    /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB invokes the ChangeFeedStreamHandler with
-    /// raw Stream data when changes are detected. InMemoryContainer uses a NoOp processor
-    /// for the stream handler variant — it builds and starts successfully but the handler
-    /// is never invoked. Use the typed <c>ChangeFeedHandler&lt;T&gt;</c> overload instead
-    /// for functional in-memory change feed processing.
-    /// </summary>
-    [Fact]
-    public async Task ChangeFeedStreamHandler_IsNoOp_InMemory()
-    {
-        var handlerInvoked = false;
-        Container.ChangeFeedStreamHandler handler =
-            (ChangeFeedProcessorContext context, Stream changes, CancellationToken token) =>
-            {
-                handlerInvoked = true;
-                return Task.CompletedTask;
-            };
-
-        var processor = _container.GetChangeFeedProcessorBuilder("test-processor", handler)
-            .WithInstanceName("instance1")
-            .WithInMemoryLeaseContainer()
-            .Build();
-
-        await processor.StartAsync();
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "StreamTest" },
-            new PartitionKey("pk1"));
-        await Task.Delay(TimeSpan.FromMilliseconds(500));
-        await processor.StopAsync();
-
-        // Handler is never called because NoOpChangeFeedProcessor is used
-        handlerInvoked.Should().BeFalse();
-    }
 }
 
 

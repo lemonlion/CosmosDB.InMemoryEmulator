@@ -1914,40 +1914,6 @@ public class SqlFunctionGapTests
 }
 
 
-public class TypeFunctionUndefinedDivergentBehaviorTests4
-{
-    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
-
-    /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Type functions on undefined/missing fields may not return false.
-    /// Real Cosmos DB returns false for IS_STRING(undefined), IS_NUMBER(undefined), etc.
-    /// InMemoryContainer evaluates missing fields as null, and IS_STRING(null) etc. may
-    /// return false (correct) or the behavior may vary depending on the function implementation.
-    /// </summary>
-    [Fact]
-    public async Task TypeFunctions_OnMissingField_ReturnFalse_InMemory()
-    {
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
-            new PartitionKey("pk1"));
-
-        var iterator = _container.GetItemQueryIterator<JObject>(
-            """SELECT IS_STRING(c.nonExistent) AS isStr, IS_NUMBER(c.nonExistent) AS isNum, IS_BOOL(c.nonExistent) AS isBool FROM c""");
-        var results = new List<JObject>();
-        while (iterator.HasMoreResults)
-        {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
-        }
-
-        results.Should().ContainSingle();
-        // InMemory treats missing as null; IS_STRING(null) = false, IS_NUMBER(null) = false
-        results[0]["isStr"]!.Value<bool>().Should().BeFalse();
-        results[0]["isNum"]!.Value<bool>().Should().BeFalse();
-        results[0]["isBool"]!.Value<bool>().Should().BeFalse();
-    }
-}
-
 
 public class SqlFunctionGapTests4
 {
@@ -1997,10 +1963,7 @@ public class SqlFunctionGapTests4
         results[0]["strPrim"]!.Value<bool>().Should().BeTrue();
     }
 
-    [Fact(Skip = "Undefined/missing fields are not reliably distinguishable from null. " +
-                 "Real Cosmos DB returns false for IS_STRING(undefined), IS_NUMBER(undefined), etc. " +
-                 "InMemoryContainer may return null or throw for missing properties. " +
-                 "See divergent behavior test in TypeFunctionUndefinedDivergentBehaviorTests4.")]
+    [Fact]
     public async Task SqlFunc_TypeFunctions_WithUndefined_ReturnFalse()
     {
         await _container.CreateItemAsync(

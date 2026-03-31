@@ -17,7 +17,7 @@ namespace CosmosDB.InMemoryEmulator;
 /// continuation tokens (offset-based), and deferred evaluation via factory delegates.
 /// </summary>
 /// <typeparam name="T">The item type returned by each page.</typeparam>
-public sealed class InMemoryFeedIterator<T> : FeedIterator<T>
+public class InMemoryFeedIterator<T> : FeedIterator<T>
 {
     private IReadOnlyList<T> _items;
     private readonly Func<IReadOnlyList<T>> _factory;

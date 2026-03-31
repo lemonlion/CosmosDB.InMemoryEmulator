@@ -2077,10 +2077,7 @@ public class QueryWhereGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "InMemoryContainer does not distinguish between undefined and null fields. " +
-                 "Real Cosmos DB treats a missing field as 'undefined' which is NOT equal to null. " +
-                 "InMemoryContainer treats missing fields as null, so 'WHERE c.status = null' matches. " +
-                 "See divergent behavior test in QueryUndefinedFieldDivergentBehaviorTests.")]
+    [Fact]
     public async Task Query_Where_UndefinedField_NotEqualToNull()
     {
         // Create item WITHOUT a "status" field
@@ -2316,38 +2313,6 @@ public class QueryBitwiseGapTests4
     }
 }
 
-
-public class QueryUndefinedFieldDivergentBehaviorTests
-{
-    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
-
-    /// <summary>
-    /// BEHAVIORAL DIFFERENCE: InMemoryContainer treats missing fields as null, not undefined.
-    /// Real Cosmos DB distinguishes between undefined (missing) and null.
-    /// WHERE c.status = null would NOT match an item without a status field in real Cosmos.
-    /// InMemoryContainer matches it because missing fields are treated as null.
-    /// </summary>
-    [Fact]
-    public async Task Query_MissingField_MatchesNull_InMemory()
-    {
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
-            new PartitionKey("pk1"));
-
-        var iterator = _container.GetItemQueryIterator<TestDocument>(
-            "SELECT * FROM c WHERE c.status = null");
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
-        {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
-        }
-
-        // InMemory treats missing "status" as null, so it matches
-        results.Should().HaveCount(1);
-        results[0].Id.Should().Be("1");
-    }
-}
 
 
 public class QueryJoinGapTests

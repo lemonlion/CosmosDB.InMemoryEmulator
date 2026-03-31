@@ -33,7 +33,7 @@ namespace CosmosDB.InMemoryEmulator;
 /// <see cref="ConcurrentDictionary{TKey,TValue}"/> collections keyed by (id, partitionKey).
 /// </para>
 /// </remarks>
-public sealed class InMemoryContainer : Container
+public class InMemoryContainer : Container
 {
     private static readonly JsonSerializerSettings JsonSettings = new()
     {
@@ -61,10 +61,19 @@ public sealed class InMemoryContainer : Container
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), DateTimeOffset> _timestamps = new();
     private readonly List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json)> _changeFeed = new();
     private readonly object _changeFeedLock = new();
-    private readonly ContainerProperties _containerProperties;
+    private ContainerProperties _containerProperties;
     private readonly Scripts _scripts;
     private readonly Dictionary<string, Func<object[], object>> _userDefinedFunctions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<PartitionKey, dynamic[], string>> _storedProcedures = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed class UndefinedValue
+    {
+        public static readonly UndefinedValue Instance = new();
+        public override string ToString() => null;
+        private UndefinedValue() { }
+    }
+
+    internal Action OnDeleted { get; set; }
 
     /// <summary>
     /// Creates a new <see cref="InMemoryContainer"/> with a single partition key path.
@@ -927,7 +936,8 @@ public sealed class InMemoryContainer : Container
 
     public override ChangeFeedProcessorBuilder GetChangeFeedProcessorBuilder(
         string processorName, Container.ChangeFeedStreamHandler onChangesDelegate)
-        => ChangeFeedProcessorBuilderFactory.Create(processorName, new NoOpChangeFeedProcessor());
+        => ChangeFeedProcessorBuilderFactory.Create(processorName,
+            new InMemoryChangeFeedStreamProcessor(this, onChangesDelegate));
 
     public override ChangeFeedProcessorBuilder GetChangeFeedProcessorBuilderWithManualCheckpoint<T>(
         string processorName, Container.ChangeFeedHandlerWithManualCheckpoint<T> onChangesDelegate)
@@ -978,6 +988,7 @@ public sealed class InMemoryContainer : Container
         ContainerProperties containerProperties, ContainerRequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
+        _containerProperties = containerProperties;
         var r = Substitute.For<ContainerResponse>();
         r.StatusCode.Returns(HttpStatusCode.OK);
         r.Resource.Returns(containerProperties);
@@ -988,7 +999,10 @@ public sealed class InMemoryContainer : Container
     public override Task<ResponseMessage> ReplaceContainerStreamAsync(
         ContainerProperties containerProperties, ContainerRequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
-        => Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, JsonConvert.SerializeObject(containerProperties, JsonSettings)));
+    {
+        _containerProperties = containerProperties;
+        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, JsonConvert.SerializeObject(containerProperties, JsonSettings)));
+    }
 
     public override Task<ContainerResponse> DeleteContainerAsync(
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -996,6 +1010,7 @@ public sealed class InMemoryContainer : Container
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
+        OnDeleted?.Invoke();
         var r = Substitute.For<ContainerResponse>();
         r.StatusCode.Returns(HttpStatusCode.NoContent);
         r.Container.Returns(this);
@@ -1008,6 +1023,7 @@ public sealed class InMemoryContainer : Container
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
+        OnDeleted?.Invoke();
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
     }
 
@@ -1955,7 +1971,8 @@ public sealed class InMemoryContainer : Container
                 if (field.SqlExpr is not null and not IdentifierExpression)
                 {
                     var value = EvaluateSqlExpression(field.SqlExpr, jObj, parsed.FromAlias, parameters);
-                    resultObj[outputName] = value is not null ? JToken.FromObject(value) : JValue.CreateNull();
+                    if (value is not UndefinedValue)
+                        resultObj[outputName] = value is not null ? JToken.FromObject(value) : JValue.CreateNull();
                 }
                 else
                 {
@@ -2173,6 +2190,8 @@ public sealed class InMemoryContainer : Container
     {
         var leftValue = ResolveValue(comparison.Left, item, fromAlias, parameters);
         var rightValue = ResolveValue(comparison.Right, item, fromAlias, parameters);
+        if (leftValue is UndefinedValue || rightValue is UndefinedValue)
+            return false;
         return comparison.Operator switch
         {
             ComparisonOp.Equal => ValuesEqual(leftValue, rightValue),
@@ -2233,7 +2252,7 @@ public sealed class InMemoryContainer : Container
         var token = item.SelectToken(jsonPath);
         if (token == null)
         {
-            return null;
+            return UndefinedValue.Instance;
         }
 
         return token.Type switch
@@ -2242,13 +2261,19 @@ public sealed class InMemoryContainer : Container
             JTokenType.Integer => token.Value<long>(),
             JTokenType.Float => token.Value<double>(),
             JTokenType.Boolean => token.Value<bool>(),
-            JTokenType.Null or JTokenType.Undefined => null,
+            JTokenType.Null => null,
+            JTokenType.Undefined => UndefinedValue.Instance,
             _ => token.ToString()
         };
     }
 
     private static bool ValuesEqual(object left, object right)
     {
+        if (left is UndefinedValue || right is UndefinedValue)
+        {
+            return false;
+        }
+
         if (left is null && right is null)
         {
             return true;
@@ -2470,7 +2495,7 @@ public sealed class InMemoryContainer : Container
                     }
 
                     var token = item.SelectToken(path);
-                    return token is null || token.Type is JTokenType.Null or JTokenType.Undefined;
+                    return token is not null && token.Type is JTokenType.Null;
                 }
             default:
                 return true;
@@ -2597,8 +2622,7 @@ public sealed class InMemoryContainer : Container
                 EvaluateSqlExpression(like.Pattern, item, fromAlias, parameters),
                 like.EscapeChar),
             ExistsExpression exists => EvaluateExists(new ExistsCondition(exists.RawSubquery), item, fromAlias, parameters, null),
-            CoalesceExpression coal => EvaluateSqlExpression(coal.Left, item, fromAlias, parameters)
-                                      ?? EvaluateSqlExpression(coal.Right, item, fromAlias, parameters),
+            CoalesceExpression coal => EvalCoalesce(coal, item, fromAlias, parameters),
             TernaryExpression tern => IsTruthy(EvaluateSqlExpression(tern.Condition, item, fromAlias, parameters))
                 ? EvaluateSqlExpression(tern.IfTrue, item, fromAlias, parameters)
                 : EvaluateSqlExpression(tern.IfFalse, item, fromAlias, parameters),
@@ -2619,6 +2643,12 @@ public sealed class InMemoryContainer : Container
         var low = EvaluateSqlExpression(b.Low, item, fromAlias, parameters);
         var high = EvaluateSqlExpression(b.High, item, fromAlias, parameters);
         return CompareValues(value, low) >= 0 && CompareValues(value, high) <= 0;
+    }
+
+    private static object EvalCoalesce(CoalesceExpression coal, JObject item, string fromAlias, IDictionary<string, object> parameters)
+    {
+        var left = EvaluateSqlExpression(coal.Left, item, fromAlias, parameters);
+        return left is not null and not UndefinedValue ? left : EvaluateSqlExpression(coal.Right, item, fromAlias, parameters);
     }
 
     private static object EvalIn(InExpression inExpr, JObject item, string fromAlias, IDictionary<string, object> parameters)
@@ -3685,6 +3715,7 @@ public sealed class InMemoryContainer : Container
     private static bool IsTruthy(object value) => value switch
     {
         null => false,
+        UndefinedValue => false,
         bool b => b,
         long l => l != 0,
         double d => d != 0,
@@ -3699,7 +3730,8 @@ public sealed class InMemoryContainer : Container
         foreach (var prop in obj.Properties)
         {
             var value = EvaluateSqlExpression(prop.Value, item, fromAlias, parameters);
-            result[prop.Key] = value is not null ? JToken.FromObject(value) : JValue.CreateNull();
+            if (value is not UndefinedValue)
+                result[prop.Key] = value is not null ? JToken.FromObject(value) : JValue.CreateNull();
         }
         return result;
     }
@@ -3711,7 +3743,7 @@ public sealed class InMemoryContainer : Container
         foreach (var element in arr.Elements)
         {
             var value = EvaluateSqlExpression(element, item, fromAlias, parameters);
-            result.Add(value is not null ? JToken.FromObject(value) : JValue.CreateNull());
+            result.Add(value is not null and not UndefinedValue ? JToken.FromObject(value) : JValue.CreateNull());
         }
         return result;
     }
@@ -3834,7 +3866,8 @@ public sealed class InMemoryContainer : Container
                     if (field.SqlExpr is not null and not IdentifierExpression)
                     {
                         var value = EvaluateSqlExpression(field.SqlExpr, sourceItem, subquery.FromAlias, parameters);
-                        projected[outputName] = value is not null ? JToken.FromObject(value) : JValue.CreateNull();
+                        if (value is not UndefinedValue)
+                            projected[outputName] = value is not null ? JToken.FromObject(value) : JValue.CreateNull();
                     }
                     else
                     {

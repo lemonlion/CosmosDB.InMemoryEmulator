@@ -968,11 +968,7 @@ public class DeleteAsyncSubsequentOperationsTests
 
 public class GetContainerQueryIteratorAfterDeleteTests
 {
-    [Fact(Skip = "InMemoryContainer.DeleteContainerAsync clears internal data but does not " +
-                 "remove itself from the parent InMemoryDatabase's container dictionary. " +
-                 "Real Cosmos DB would remove the container so it no longer appears in query results. " +
-                 "InMemoryDatabase has no RemoveContainer mechanism called by DeleteContainerAsync. " +
-                 "See divergent behavior test below.")]
+    [Fact]
     public async Task GetContainerQueryIterator_AfterContainerDelete_NoLongerListed()
     {
         var client = new InMemoryCosmosClient();
@@ -994,46 +990,6 @@ public class GetContainerQueryIteratorAfterDeleteTests
 
         // After delete, only container2 should remain
         containers.Should().ContainSingle().Which.Id.Should().Be("container2");
-    }
-
-    /// <summary>
-    /// DIVERGENT BEHAVIOR: InMemoryContainer.DeleteContainerAsync clears the container's
-    /// internal items, etags, and timestamps but does NOT remove the container from the
-    /// parent InMemoryDatabase's container dictionary.
-    /// Real Cosmos DB removes the container entirely so it no longer appears in
-    /// GetContainerQueryIterator results and subsequent operations would fail with 404.
-    /// In the emulator, the container still appears in query results after deletion,
-    /// but it will be empty.
-    /// </summary>
-    [Fact]
-    public async Task DivergentBehavior_DeletedContainer_StillAppearsInQueryIterator()
-    {
-        var client = new InMemoryCosmosClient();
-        await client.CreateDatabaseAsync("test-db");
-        var db = client.GetDatabase("test-db");
-        await db.CreateContainerAsync("container1", "/pk");
-
-        var container = db.GetContainer("container1");
-        await container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
-            new PartitionKey("pk1"));
-
-        // Delete the container
-        await container.DeleteContainerAsync();
-
-        // Container still appears in query iterator (divergent from real SDK)
-        var iterator = db.GetContainerQueryIterator<ContainerProperties>();
-        var containers = new List<ContainerProperties>();
-        while (iterator.HasMoreResults)
-        {
-            var page = await iterator.ReadNextAsync();
-            containers.AddRange(page);
-        }
-        containers.Should().ContainSingle().Which.Id.Should().Be("container1");
-
-        // But the items are gone
-        var act = () => container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
-        await act.Should().ThrowAsync<CosmosException>();
     }
 }
 
