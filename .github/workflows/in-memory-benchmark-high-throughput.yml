@@ -21,4 +21,4 @@ jobs:
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
 
       - name: In-Memory Performance Tests
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Performance --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed" --filter "FullyQualifiedName~LoadTests"
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Performance --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed" --filter "FullyQualifiedName~Performance.LoadTests."
