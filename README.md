@@ -6,11 +6,11 @@
 
 A high-fidelity, in-memory implementation of the Azure Cosmos DB SDK for .NET — purpose-built for fast, reliable component and integration testing.
 
-> **Drop-in replacement for `Microsoft.Azure.Cosmos.Container`** — no network, no emulator process, no Docker, no Azure subscription required.
+> **Drop-in replacements for `CosmosClient`, `Database`, and `Container`** — full CRUD, SQL queries, LINQ, patch, batches, change feed, and more. No network, no emulator process, no Docker, no Azure subscription required.
 
-## Zero Production Code Changes Required
+## `.ToFeedIterator()` Works — Zero Production Code Changes
 
-Using the `FakeCosmosHandler` approach, **your production code stays completely untouched** — including calls to `.ToFeedIterator()` and `GetItemLinqQueryable<T>()`. The handler intercepts HTTP traffic at the SDK level, so LINQ queries, SQL queries, and all other Cosmos operations work exactly as written.
+Using the [`FakeCosmosHandler`](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Integration-Approaches#fakecosmoshandler-high-fidelity) approach, **your production code stays completely untouched** — including calls to `.ToFeedIterator()` and `GetItemLinqQueryable<T>()`. The handler intercepts HTTP traffic at the SDK level, so LINQ queries, SQL queries, CRUD operations, and all other Cosmos operations work exactly as written.
 
 ```csharp
 // Your production code — works against real Cosmos DB AND the in-memory emulator, unmodified
@@ -19,6 +19,8 @@ var results = container
     .Where(o => o.Status == "active")
     .ToFeedIterator();  // ← works as-is, no changes needed
 ```
+
+> **How?** `FakeCosmosHandler` is a custom `HttpMessageHandler` that intercepts the Cosmos SDK's HTTP pipeline. The SDK translates your LINQ expression into Cosmos SQL, sends it over HTTP, and the handler executes that SQL against an in-memory store. Your production code never knows the difference. See the [Feed Iterator Usage Guide](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feed-Iterator-Usage-Guide) for details.
 
 ## Why This Exists
 
@@ -47,7 +49,7 @@ var results = container
 - **State persistence** — export/import container state as JSON
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
-- **1112 tests** covering all features (25 skipped — see [Known Limitations](../../wiki/Known-Limitations))
+- **1116 tests** covering all features (25 skipped — see [Known Limitations](../../wiki/Known-Limitations))
 
 ## Installation
 

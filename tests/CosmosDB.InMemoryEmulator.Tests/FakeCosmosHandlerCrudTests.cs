@@ -423,4 +423,82 @@ public class FakeCosmosHandlerCrudTests : IDisposable
 
         await act.Should().NotThrowAsync();
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  1I. Edge Cases
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_FaultInjection_ThrottlesCreateRequest()
+    {
+        _handler.FaultInjector = _ =>
+            new HttpResponseMessage((HttpStatusCode)429)
+            {
+                Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMilliseconds(1)) }
+            };
+        _handler.FaultInjectorIncludesMetadata = false;
+
+        var doc = new TestDocument { Id = "fi1", PartitionKey = "pk1", Name = "Throttled" };
+        var act = () => _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be((HttpStatusCode)429);
+    }
+
+    [Fact]
+    public async Task Handler_PatchItem_WithFilterPredicate_NonMatchingCondition_ThrowsPreconditionFailed()
+    {
+        var doc = new TestDocument { Id = "p5", PartitionKey = "pk1", Name = "Conditional", Value = 50 };
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var act = () => _container.PatchItemAsync<TestDocument>("p5", new PartitionKey("pk1"),
+            [PatchOperation.Set("/name", "Updated")],
+            new PatchItemRequestOptions { FilterPredicate = "FROM c WHERE c.value > 100" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task Handler_ReadItem_WithUrlEncodedId_Succeeds()
+    {
+        var id = "doc with spaces";
+        var doc = new TestDocument { Id = id, PartitionKey = "pk1", Name = "Encoded" };
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemAsync<TestDocument>(id, new PartitionKey("pk1"));
+
+        response.Resource.Name.Should().Be("Encoded");
+        response.Resource.Id.Should().Be(id);
+    }
+
+    [Fact]
+    public async Task Handler_Crud_WithCompositePartitionKey_RoundTrip()
+    {
+        var compositeContainer = new InMemoryContainer("composite-test", ["/tenantId", "/userId"]);
+        using var compositeHandler = new FakeCosmosHandler(compositeContainer);
+        using var compositeClient = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(compositeHandler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+        var container = compositeClient.GetContainer("db", "composite-test");
+
+        var pk = new PartitionKeyBuilder().Add("t1").Add("u1").Build();
+        var doc = new { id = "cpk1", tenantId = "t1", userId = "u1", name = "Composite" };
+        var createResponse = await container.CreateItemAsync(doc, pk);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var readResponse = await container.ReadItemAsync<dynamic>("cpk1", pk);
+        ((string)readResponse.Resource.name).Should().Be("Composite");
+
+        await container.DeleteItemAsync<dynamic>("cpk1", pk);
+        var act = () => container.ReadItemAsync<dynamic>("cpk1", pk);
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
 }

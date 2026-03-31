@@ -607,6 +607,22 @@ public class InMemoryContainer : Container
         }
 
         var jObj = JsonParseHelpers.ParseJson(existingJson);
+
+        if (requestOptions?.FilterPredicate is not null)
+        {
+            var predicateSql = $"SELECT * {requestOptions.FilterPredicate}";
+            var predicateParsed = CosmosSqlParser.Parse(predicateSql);
+            if (predicateParsed.Where is not null)
+            {
+                var matches = EvaluateWhereExpression(predicateParsed.Where, jObj, predicateParsed.FromAlias,
+                    new Dictionary<string, object>(), null);
+                if (!matches)
+                {
+                    return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
+                }
+            }
+        }
+
         ApplyPatchOperations(jObj, patchOperations);
         var updatedJson = jObj.ToString(Formatting.None);
         ValidateDocumentSize(updatedJson);

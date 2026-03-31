@@ -216,6 +216,7 @@ public class TestAppHost : IAsyncDisposable
 // Phase 4: Integration Tests
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Collection("FeedIteratorSetup")]
 public class WebApplicationFactoryIntegrationTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new()

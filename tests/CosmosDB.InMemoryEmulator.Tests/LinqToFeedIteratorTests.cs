@@ -14,6 +14,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// covering both the official <c>CosmosLinqExtensions.ToFeedIterator()</c> and
 /// the <c>ToFeedIteratorOverridable()</c> workaround.
 /// </summary>
+[Collection("FeedIteratorSetup")]
 public class LinqToFeedIteratorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");

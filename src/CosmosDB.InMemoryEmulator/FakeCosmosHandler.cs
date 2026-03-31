@@ -1124,6 +1124,18 @@ public class FakeCosmosHandler : HttpMessageHandler
                             ? new PartitionKey(arr[0].Value<string>())
                             : new PartitionKey(arr[0].ToString());
                     }
+
+                    if (arr.Count > 1)
+                    {
+                        var builder = new PartitionKeyBuilder();
+                        foreach (var token in arr)
+                        {
+                            builder.Add(token.Type == JTokenType.String
+                                ? token.Value<string>()
+                                : token.ToString());
+                        }
+                        return builder.Build();
+                    }
                 }
                 catch
                 {

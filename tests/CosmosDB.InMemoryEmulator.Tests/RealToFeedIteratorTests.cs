@@ -14,6 +14,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// <see cref="CosmosClient"/> backed by a fake HTTP handler that delegates query
 /// execution to the in-memory container.
 /// </summary>
+[Collection("FeedIteratorSetup")]
 public class RealToFeedIteratorTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");

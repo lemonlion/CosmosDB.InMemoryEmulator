@@ -12,6 +12,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 // Phase 1: UseInMemoryCosmosContainers
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Collection("FeedIteratorSetup")]
 public class UseInMemoryCosmosContainersTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -177,6 +178,7 @@ public class UseInMemoryCosmosContainersTests : IDisposable
 // Phase 2: UseInMemoryCosmosDB
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Collection("FeedIteratorSetup")]
 public class UseInMemoryCosmosDBTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -380,6 +382,7 @@ public class UseInMemoryCosmosDBTests : IDisposable
 // Phase 3: Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Collection("FeedIteratorSetup")]
 public class ServiceCollectionExtensionEdgeCaseTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -541,6 +544,7 @@ public class OOBRepository
     }
 }
 
+[Collection("FeedIteratorSetup")]
 public class UseInMemoryTypedCosmosDBTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();

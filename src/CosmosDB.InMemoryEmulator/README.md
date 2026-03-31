@@ -2,7 +2,7 @@
 
 A high-fidelity, in-memory implementation of the Azure Cosmos DB SDK for .NET — purpose-built for fast, reliable component and integration testing.
 
-**Drop-in replacement for `Microsoft.Azure.Cosmos.Container`** — no network, no emulator process, no Docker, no Azure subscription required.
+**Drop-in replacements for `CosmosClient`, `Database`, and `Container`** — full CRUD, SQL queries, LINQ, patch, batches, change feed, and more. No network, no emulator process, no Docker, no Azure subscription required.
 
 ## Core Types
 
