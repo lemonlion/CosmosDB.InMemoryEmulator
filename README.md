@@ -34,7 +34,7 @@ var results = container
 
 - **Full CRUD** — typed and stream variants with proper status codes and ETags
 - **System metadata** — `_ts` and `_etag` injected into stored items, matching real Cosmos DB
-- **Rich SQL query engine** — 40+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries
+- **Rich SQL query engine** — 100+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries
 - **LINQ support** — `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` interception
 - **Transactional batches** — atomic execution with rollback on failure
 - **Change feed** — iterators, checkpoints, and `ChangeFeedProcessor`
@@ -46,7 +46,8 @@ var results = container
 - **DI integration** — `UseInMemoryCosmosDB()` extension methods for `IServiceCollection`
 - **State persistence** — export/import container state as JSON
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
-- **950+ tests** covering all features
+- **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
+- **1089 tests** covering all features
 
 ## Installation
 
@@ -94,7 +95,7 @@ var page = await iterator.ReadNextAsync();
 | **[Integration Approaches](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Integration-Approaches)** | Detailed comparison of all three approaches with pros/cons |
 | **[Dependency Injection](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Dependency-Injection)** | Step-by-step DI setup for all patterns |
 | **[Feed Iterator Usage](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feed-Iterator-Usage-Guide)** | Making `.ToFeedIterator()` work — `FakeCosmosHandler` vs `ToFeedIteratorOverridable()` |
-| **[SQL Queries](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/SQL-Queries)** | Full SQL reference — clauses, operators, 40+ functions |
+| **[SQL Queries](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/SQL-Queries)** | Full SQL reference — clauses, operators, 100+ functions |
 | **[Features](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Features)** | Patch, batches, change feed, ETags, TTL, stored procs, state persistence |
 | **[API Reference](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/API-Reference)** | Complete class and method reference |
 | **[Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)** | Behavioural differences from real Cosmos DB |
