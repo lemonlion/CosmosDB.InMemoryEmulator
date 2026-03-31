@@ -59,7 +59,7 @@ public class InMemoryContainer : Container
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), string> _items = new();
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), string> _etags = new();
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), DateTimeOffset> _timestamps = new();
-    private readonly List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json)> _changeFeed = new();
+    private readonly List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> _changeFeed = new();
     private readonly object _changeFeedLock = new();
     private ContainerProperties _containerProperties;
     private readonly Scripts _scripts;
@@ -386,6 +386,7 @@ public class InMemoryContainer : Container
         _items.TryRemove(key, out _);
         _etags.TryRemove(key, out _);
         _timestamps.TryRemove(key, out _);
+        RecordDeleteTombstone(id, pk);
         return Task.FromResult(CreateItemResponse(default(T), HttpStatusCode.NoContent));
     }
 
@@ -512,7 +513,7 @@ public class InMemoryContainer : Container
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException(
             "Item must have an 'id' property (case-sensitive, lowercase). " +
             "If your C# model uses PascalCase 'Id', ensure CosmosClientOptions.Serializer is configured " +
-            "with camelCase naming (e.g. CosmosJsonNetSerializer with CamelCasePropertyNamesContractResolver).");
+            "with camelCase naming (e.g. CosmosJsonDotNetSerializer with CamelCasePropertyNamesContractResolver).");
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(itemId, pk);
         if (!CheckIfMatchStream(requestOptions, key))
@@ -588,6 +589,7 @@ public class InMemoryContainer : Container
 
         _etags.TryRemove(key, out _);
         _timestamps.TryRemove(key, out _);
+        RecordDeleteTombstone(id, pk);
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
     }
 
@@ -824,6 +826,7 @@ public class InMemoryContainer : Container
                         entries = entries
                             .GroupBy(entry => (entry.Id, entry.PartitionKey))
                             .Select(group => group.Last())
+                            .Where(entry => !entry.IsDelete)
                             .ToList();
                     }
 
@@ -835,7 +838,7 @@ public class InMemoryContainer : Container
         }
 
         // "Beginning" and other start types — eager evaluation is fine
-        List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json)> eagerEntries;
+        List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> eagerEntries;
         lock (_changeFeedLock)
         {
             eagerEntries = _changeFeed.ToList();
@@ -846,6 +849,7 @@ public class InMemoryContainer : Container
             eagerEntries = eagerEntries
                 .GroupBy(entry => (entry.Id, entry.PartitionKey))
                 .Select(group => group.Last())
+                .Where(entry => !entry.IsDelete)
                 .ToList();
         }
 
@@ -886,6 +890,7 @@ public class InMemoryContainer : Container
                 entries = entries
                     .GroupBy(entry => (entry.Id, entry.PartitionKey))
                     .Select(group => group.Last())
+                    .Where(entry => !entry.IsDelete)
                     .ToList();
             }
 
@@ -894,7 +899,7 @@ public class InMemoryContainer : Container
         return CreateStreamFeedIterator(items);
     }
 
-    private List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json)> FilterChangeFeedByStartFrom(
+    private List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> FilterChangeFeedByStartFrom(
         ChangeFeedStartFrom startFrom)
     {
         var typeName = startFrom.GetType().Name;
@@ -1178,12 +1183,23 @@ public class InMemoryContainer : Container
         return 0;
     }
 
-    private void RecordChangeFeed(string id, string partitionKey, string json)
+    private void RecordChangeFeed(string id, string partitionKey, string json, bool isDelete = false)
     {
         lock (_changeFeedLock)
         {
-            _changeFeed.Add((DateTimeOffset.UtcNow, id, partitionKey, json));
+            _changeFeed.Add((DateTimeOffset.UtcNow, id, partitionKey, json, isDelete));
         }
+    }
+
+    private void RecordDeleteTombstone(string id, string pk)
+    {
+        var tombstone = new JObject { ["id"] = id, ["_deleted"] = true, ["_ts"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds() };
+        var pkValues = pk.Split('|');
+        for (var i = 0; i < PartitionKeyPaths.Count; i++)
+        {
+            tombstone[PartitionKeyPaths[i].TrimStart('/')] = i < pkValues.Length ? pkValues[i] : null;
+        }
+        RecordChangeFeed(id, pk, tombstone.ToString(Newtonsoft.Json.Formatting.None), isDelete: true);
     }
 
     private void CheckIfMatch(ItemRequestOptions requestOptions, (string Id, string PartitionKey) key)

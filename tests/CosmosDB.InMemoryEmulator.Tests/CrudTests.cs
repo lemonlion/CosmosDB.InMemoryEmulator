@@ -643,7 +643,7 @@ public class DeleteItemGapTests2
     }
 
     [Fact]
-    public async Task Delete_DoesNotAppearInChangeFeed()
+    public async Task Delete_RecordsTombstoneInChangeFeed()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
@@ -653,7 +653,7 @@ public class DeleteItemGapTests2
         await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
 
         var checkpointAfterDelete = _container.GetChangeFeedCheckpoint();
-        checkpointAfterDelete.Should().Be(checkpointAfterCreate);
+        checkpointAfterDelete.Should().Be(checkpointAfterCreate + 1);
     }
 }
 

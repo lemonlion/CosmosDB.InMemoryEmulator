@@ -299,13 +299,11 @@ public class BehavioralDifferenceGapTests
     }
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB deletes appear as tombstone entries in
-    /// the change feed (FullFidelity mode) or cause the document to disappear from
-    /// incremental reads. InMemoryContainer does not record deletes in the change feed
-    /// at all — they are simply absent. This is documented as a known limitation.
+    /// Deletes are now recorded in the change feed as tombstone entries.
+    /// The checkpoint advances after a delete, and the tombstone contains _deleted: true.
     /// </summary>
     [Fact]
-    public async Task ChangeFeed_DeletesNotRecorded()
+    public async Task ChangeFeed_DeletesRecordedAsTombstone()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "ToDelete" },
@@ -315,8 +313,8 @@ public class BehavioralDifferenceGapTests
         await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
         var checkpointAfterDelete = _container.GetChangeFeedCheckpoint();
 
-        // Delete does not add to change feed
-        checkpointAfterDelete.Should().Be(checkpointAfterCreate);
+        // Delete adds a tombstone entry to the change feed
+        checkpointAfterDelete.Should().Be(checkpointAfterCreate + 1);
     }
 
     /// <summary>

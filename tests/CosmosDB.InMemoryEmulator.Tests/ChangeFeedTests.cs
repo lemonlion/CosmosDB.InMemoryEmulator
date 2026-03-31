@@ -209,7 +209,7 @@ public class ChangeFeedTests
     }
 
     [Fact]
-    public async Task ChangeFeed_Delete_DoesNotAppearInFeed()
+    public async Task ChangeFeed_Incremental_DeletedItem_IsFilteredOut()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "ToDelete" },
@@ -218,7 +218,8 @@ public class ChangeFeedTests
 
         var results = await ReadAllChangeFeed<TestDocument>();
 
-        results.Should().ContainSingle().Which.Name.Should().Be("ToDelete");
+        // Incremental mode filters out items whose last change is a delete
+        results.Should().BeEmpty();
     }
 
     [Fact]
@@ -667,7 +668,7 @@ public class ChangeFeedGapTests
     }
 
     [Fact]
-    public async Task ChangeFeed_Delete_DoesNotAppearInFeed()
+    public async Task ChangeFeed_Delete_AppearsTombstoneViaCheckpoint()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "ToDelete" },
@@ -676,15 +677,17 @@ public class ChangeFeedGapTests
 
         await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
 
-        var iterator = _container.GetChangeFeedIterator<TestDocument>(checkpointAfterCreate);
-        var results = new List<TestDocument>();
+        var iterator = _container.GetChangeFeedIterator<JObject>(checkpointAfterCreate);
+        var results = new List<JObject>();
         while (iterator.HasMoreResults)
         {
             var page = await iterator.ReadNextAsync();
             results.AddRange(page);
         }
 
-        results.Should().BeEmpty();
+        results.Should().ContainSingle();
+        results[0]["id"]!.Value<string>().Should().Be("1");
+        results[0]["_deleted"]!.Value<bool>().Should().BeTrue();
     }
 
     [Fact]
@@ -838,11 +841,8 @@ public class ChangeFeedGapTests3
         results.Should().ContainSingle().Which.Name.Should().Be("V3");
     }
 
-    [Fact(Skip = "ChangeFeedMode.AllVersionsAndDeletes is not available in SDK v3.47.0. " +
-                 "Real Cosmos DB with newer SDKs supports FullFidelity mode for all intermediate versions. " +
-                 "InMemoryContainer only supports ChangeFeedMode.Incremental. " +
-                 "See divergent behavior test in ChangeFeedModeDivergentBehaviorTests.")]
-    public async Task ChangeFeed_FullFidelityMode_AllVersions()
+    [Fact]
+    public async Task ChangeFeed_AllVersions_ViaCheckpoint()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V1" },
@@ -851,8 +851,8 @@ public class ChangeFeedGapTests3
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V2" },
             new PartitionKey("pk1"));
 
-        var iterator = _container.GetChangeFeedIterator<TestDocument>(
-            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+        // Checkpoint-based iterator returns all versions (including intermediates)
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(0);
         var results = new List<TestDocument>();
         while (iterator.HasMoreResults)
         {
@@ -861,22 +861,21 @@ public class ChangeFeedGapTests3
         }
 
         results.Should().HaveCount(2);
+        results[0].Name.Should().Be("V1");
+        results[1].Name.Should().Be("V2");
     }
 
-    [Fact(Skip = "Delete tombstones in change feed are not supported. " +
-                 "Real Cosmos DB includes delete operations in AllVersionsAndDeletes mode. " +
-                 "InMemoryContainer does not record deletes in the change feed at all, " +
-                 "and AllVersionsAndDeletes mode is not available in SDK v3.47.0. " +
-                 "See divergent behavior test in ChangeFeedModeDivergentBehaviorTests.")]
+    [Fact]
     public async Task ChangeFeed_DeletedItems_InFullFidelity_ShowsTombstone()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
             new PartitionKey("pk1"));
+        var checkpoint = _container.GetChangeFeedCheckpoint();
+
         await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
 
-        var iterator = _container.GetChangeFeedIterator<JObject>(
-            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+        var iterator = _container.GetChangeFeedIterator<JObject>(checkpoint);
         var results = new List<JObject>();
         while (iterator.HasMoreResults)
         {
@@ -884,8 +883,11 @@ public class ChangeFeedGapTests3
             results.AddRange(page);
         }
 
-        // Should include delete tombstone
-        results.Should().HaveCountGreaterThan(1);
+        // Checkpoint-based iterator includes delete tombstones
+        results.Should().ContainSingle();
+        var tombstone = results[0];
+        tombstone["id"]!.Value<string>().Should().Be("1");
+        tombstone["_deleted"]!.Value<bool>().Should().BeTrue();
     }
 
     [Fact]
@@ -994,37 +996,7 @@ public class ChangeFeedGapTests4
 }
 
 
-public class ChangeFeedModeDivergentBehaviorTests
-{
-    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Deletes do not appear in change feed regardless of mode.
-    /// Real Cosmos DB includes delete tombstones in FullFidelity mode.
-    /// InMemoryContainer does not record deletes in the change feed.
-    /// </summary>
-    [Fact]
-    public async Task ChangeFeed_DeletesNotInFeed_EvenInFullFidelity()
-    {
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
-            new PartitionKey("pk1"));
-        var checkpointAfterCreate = _container.GetChangeFeedCheckpoint();
-
-        await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
-
-        var iterator = _container.GetChangeFeedIterator<JObject>(checkpointAfterCreate);
-        var results = new List<JObject>();
-        while (iterator.HasMoreResults)
-        {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
-        }
-
-        // No delete tombstone in feed (diverges from real Cosmos FullFidelity)
-        results.Should().BeEmpty();
-    }
-}
 
 
 public class ChangeFeedGapTests2

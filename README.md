@@ -102,6 +102,7 @@ var page = await iterator.ReadNextAsync();
 | **[Features](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Features)** | Patch, batches, change feed, ETags, TTL, stored procs, state persistence |
 | **[API Reference](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/API-Reference)** | Complete class and method reference |
 | **[Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)** | Behavioural differences from real Cosmos DB |
+| **[Troubleshooting](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Troubleshooting)** | Common errors and how to fix them |
 | **[Comparison](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Comparison)** | vs Official Emulator, vs community alternatives |
 
 ## Dependencies
