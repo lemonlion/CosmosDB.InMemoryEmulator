@@ -2655,169 +2655,16 @@ public class QueryFunctionGapTests4
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Id-equality fast path tests
+//  FROM alias IN c.field — top-level array iteration tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-public class IdEqualityFastPathTests
+public class FromSourceArrayIterationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    private async Task SeedItems()
-    {
-        var items = new[]
-        {
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 },
-            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20 },
-            new TestDocument { Id = "3", PartitionKey = "pk2", Name = "Charlie", Value = 30 },
-        };
-        foreach (var item in items)
-        {
-            await _container.CreateItemAsync(item, new PartitionKey(item.PartitionKey));
-        }
-    }
-
     [Fact]
-    public async Task WhereIdEquals_WithParameter_ReturnsSingleItem()
+    public async Task FromSource_WithWhere_IteratesArrayNotTopLevelDocs()
     {
-        await SeedItems();
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.id = @id")
-            .WithParameter("@id", "2");
-
-        var iterator = _container.GetItemQueryIterator<TestDocument>(query,
-            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
-            results.AddRange(await iterator.ReadNextAsync());
-
-        results.Should().ContainSingle().Which.Name.Should().Be("Bob");
-    }
-
-    [Fact]
-    public async Task WhereIdEquals_WithStringLiteral_ReturnsSingleItem()
-    {
-        await SeedItems();
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.id = '1'");
-
-        var iterator = _container.GetItemQueryIterator<TestDocument>(query,
-            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
-            results.AddRange(await iterator.ReadNextAsync());
-
-        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
-    }
-
-    [Fact]
-    public async Task WhereIdEquals_NonExistentId_ReturnsEmpty()
-    {
-        await SeedItems();
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.id = @id")
-            .WithParameter("@id", "999");
-
-        var iterator = _container.GetItemQueryIterator<TestDocument>(query,
-            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
-            results.AddRange(await iterator.ReadNextAsync());
-
-        results.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task WhereIdEquals_CrossPartition_ReturnsFromCorrectPartition()
-    {
-        await SeedItems();
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.id = @id")
-            .WithParameter("@id", "3");
-
-        // No partition key — cross-partition query
-        var iterator = _container.GetItemQueryIterator<TestDocument>(query);
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
-            results.AddRange(await iterator.ReadNextAsync());
-
-        results.Should().ContainSingle().Which.Name.Should().Be("Charlie");
-    }
-
-    [Fact]
-    public async Task WhereIdEquals_WithProjection_ProjectsCorrectly()
-    {
-        await SeedItems();
-        var query = new QueryDefinition("SELECT c.name FROM c WHERE c.id = @id")
-            .WithParameter("@id", "1");
-
-        var iterator = _container.GetItemQueryIterator<JObject>(query,
-            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
-        var results = new List<JObject>();
-        while (iterator.HasMoreResults)
-            results.AddRange(await iterator.ReadNextAsync());
-
-        results.Should().ContainSingle();
-        results[0].Properties().Select(p => p.Name).Should().BeEquivalentTo("name");
-        results[0]["name"]!.Value<string>().Should().Be("Alice");
-    }
-
-    [Fact]
-    public async Task WhereIdEquals_ReversedOperands_StillWorks()
-    {
-        await SeedItems();
-        // Value on left, field on right: @id = c.id
-        var query = new QueryDefinition("SELECT * FROM c WHERE @id = c.id")
-            .WithParameter("@id", "2");
-
-        var iterator = _container.GetItemQueryIterator<TestDocument>(query,
-            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
-            results.AddRange(await iterator.ReadNextAsync());
-
-        results.Should().ContainSingle().Which.Name.Should().Be("Bob");
-    }
-
-    [Fact]
-    public async Task WhereIdEqualsAndOtherCondition_FallsBackToNormalPath()
-    {
-        await SeedItems();
-        // Compound WHERE — should NOT use fast path, but still return correct results
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.id = @id AND c.name = @name")
-            .WithParameter("@id", "1")
-            .WithParameter("@name", "Alice");
-
-        var iterator = _container.GetItemQueryIterator<TestDocument>(query,
-            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
-            results.AddRange(await iterator.ReadNextAsync());
-
-        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
-    }
-
-    [Fact]
-    public async Task WhereIdEquals_WithTop_RespectsTop()
-    {
-        // Seed two items with the same id across partitions
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "dup", PartitionKey = "pk1", Name = "A" },
-            new PartitionKey("pk1"));
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "dup", PartitionKey = "pk2", Name = "B" },
-            new PartitionKey("pk2"));
-
-        var query = new QueryDefinition("SELECT TOP 1 * FROM c WHERE c.id = @id")
-            .WithParameter("@id", "dup");
-
-        var iterator = _container.GetItemQueryIterator<TestDocument>(query);
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
-            results.AddRange(await iterator.ReadNextAsync());
-
-        results.Should().ContainSingle();
-    }
-
-    [Fact]
-    public async Task WhereIdEquals_WithFromSource_DoesNotUseFastPath()
-    {
-        // Setup: doc with id="parent" has nested items; another doc has id="child1"
         var parent = JObject.FromObject(new
         {
             id = "parent",
@@ -2832,12 +2679,7 @@ public class IdEqualityFastPathTests
         await _container.CreateItemAsync(parent, new PartitionKey("pk1"));
         await _container.CreateItemAsync(child, new PartitionKey("pk1"));
 
-        // Query uses FROM alias IN source — this sets parsed.FromSource, which must
-        // prevent the fast path from firing. Today the normal path also doesn't expand
-        // arrays from FromSource, so results come from standard WHERE evaluation against
-        // top-level documents. The guard is defense-in-depth for when array expansion
-        // from FromSource is implemented — at that point this assertion should be updated
-        // to expect the array element {id:"child1", value:100} instead.
+        // FROM item IN c.children iterates array elements, not top-level docs
         var query = new QueryDefinition("SELECT * FROM item IN c.children WHERE item.id = @id")
             .WithParameter("@id", "child1");
 
@@ -2847,9 +2689,143 @@ public class IdEqualityFastPathTests
         while (iterator.HasMoreResults)
             results.AddRange(await iterator.ReadNextAsync());
 
-        // Normal WHERE evaluation matches the top-level doc with id="child1"
+        // Array expansion returns the nested element, not the top-level doc with id="child1"
         results.Should().ContainSingle();
-        results[0]["id"]!.Value<string>().Should().Be("child1");
-        results[0]["value"]!.Value<int>().Should().Be(999);
+        results[0]["item"]!["id"]!.Value<string>().Should().Be("child1");
+        results[0]["item"]!["value"]!.Value<int>().Should().Be(100);
+    }
+
+    [Fact]
+    public async Task FromSource_SelectAll_ReturnsAllArrayElements()
+    {
+        var doc = JObject.FromObject(new
+        {
+            id = "doc1",
+            partitionKey = "pk1",
+            tags = new[] { "alpha", "beta", "gamma" }
+        });
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var query = new QueryDefinition("SELECT * FROM t IN c.tags");
+        var iterator = _container.GetItemQueryIterator<JObject>(query,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task FromSource_ValueSelect_ReturnsScalarElements()
+    {
+        var doc = JObject.FromObject(new
+        {
+            id = "doc1",
+            partitionKey = "pk1",
+            tags = new[] { "alpha", "beta", "gamma" }
+        });
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var query = new QueryDefinition("SELECT VALUE t FROM t IN c.tags");
+        var iterator = _container.GetItemQueryIterator<string>(query,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEquivalentTo(["alpha", "beta", "gamma"]);
+    }
+
+    [Fact]
+    public async Task FromSource_WithWhere_FiltersArrayElements()
+    {
+        var doc = JObject.FromObject(new
+        {
+            id = "doc1",
+            partitionKey = "pk1",
+            scores = new[] { 10, 25, 30, 5 }
+        });
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var query = new QueryDefinition("SELECT VALUE s FROM s IN c.scores WHERE s > @min")
+            .WithParameter("@min", 15);
+        var iterator = _container.GetItemQueryIterator<int>(query,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
+        var results = new List<int>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEquivalentTo([25, 30]);
+    }
+
+    [Fact]
+    public async Task FromSource_ObjectElements_WithWhereAndProjection()
+    {
+        var doc = JObject.FromObject(new
+        {
+            id = "doc1",
+            partitionKey = "pk1",
+            items = new[]
+            {
+                new { name = "Widget", price = 10 },
+                new { name = "Gadget", price = 50 },
+                new { name = "Gizmo", price = 30 },
+            }
+        });
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var query = new QueryDefinition(
+            "SELECT item.name FROM item IN c.items WHERE item.price > @min")
+            .WithParameter("@min", 20);
+        var iterator = _container.GetItemQueryIterator<JObject>(query,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+        results.Select(r => r["name"]!.Value<string>()).Should().BeEquivalentTo(["Gadget", "Gizmo"]);
+    }
+
+    [Fact]
+    public async Task FromSource_EmptyArray_ReturnsNoResults()
+    {
+        var doc = JObject.FromObject(new
+        {
+            id = "doc1",
+            partitionKey = "pk1",
+            tags = Array.Empty<string>()
+        });
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var query = new QueryDefinition("SELECT VALUE t FROM t IN c.tags");
+        var iterator = _container.GetItemQueryIterator<string>(query,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FromSource_MissingField_ReturnsNoResults()
+    {
+        var doc = JObject.FromObject(new
+        {
+            id = "doc1",
+            partitionKey = "pk1",
+        });
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var query = new QueryDefinition("SELECT VALUE t FROM t IN c.nonexistent");
+        var iterator = _container.GetItemQueryIterator<string>(query,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk1") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty();
     }
 }

@@ -92,6 +92,19 @@ public sealed class InMemoryContainer : Container
         _scripts = ConfigureScripts();
     }
 
+    /// <summary>
+    /// Creates a new <see cref="InMemoryContainer"/> from a <see cref="ContainerProperties"/> instance.
+    /// This allows specifying advanced settings such as <see cref="UniqueKeyPolicy"/>.
+    /// </summary>
+    /// <param name="containerProperties">The container properties to use.</param>
+    public InMemoryContainer(ContainerProperties containerProperties)
+    {
+        _containerProperties = containerProperties;
+        Id = containerProperties.Id;
+        PartitionKeyPaths = containerProperties.PartitionKeyPaths ?? new[] { containerProperties.PartitionKeyPath };
+        _scripts = ConfigureScripts();
+    }
+
     // ─── Properties ───────────────────────────────────────────────────────────
 
     /// <summary>The container identifier.</summary>
@@ -250,6 +263,8 @@ public sealed class InMemoryContainer : Container
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
 
+        ValidateUniqueKeys(jObj, pk);
+
         if (!_items.TryAdd(key, json))
         {
             throw new CosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
@@ -305,6 +320,7 @@ public sealed class InMemoryContainer : Container
         }
 
         CheckIfMatch(requestOptions, key);
+        ValidateUniqueKeys(jObj, pk, excludeItemId: itemId);
         var existed = _items.ContainsKey(key);
         var etag = GenerateETag();
         _etags[key] = etag;
@@ -1257,6 +1273,33 @@ public sealed class InMemoryContainer : Container
         }
     }
 
+    private void ValidateUniqueKeys(JObject jObj, string partitionKey, string excludeItemId = null)
+    {
+        var policy = _containerProperties.UniqueKeyPolicy;
+        if (policy == null || policy.UniqueKeys.Count == 0) return;
+
+        foreach (var uniqueKey in policy.UniqueKeys)
+        {
+            var newValues = uniqueKey.Paths.Select(p => jObj.SelectToken(p.TrimStart('/'))?.ToString()).ToList();
+
+            foreach (var (existingKey, existingJson) in _items)
+            {
+                if (existingKey.PartitionKey != partitionKey) continue;
+                if (excludeItemId != null && existingKey.Id == excludeItemId) continue;
+
+                var existingObj = JsonParseHelpers.ParseJson(existingJson);
+                var existingValues = uniqueKey.Paths.Select(p => existingObj.SelectToken(p.TrimStart('/'))?.ToString()).ToList();
+
+                if (newValues.SequenceEqual(existingValues))
+                {
+                    throw new CosmosException(
+                        "Unique index constraint violation.",
+                        HttpStatusCode.Conflict, 0, string.Empty, 0);
+                }
+            }
+        }
+    }
+
     private bool IsExpired((string Id, string PartitionKey) key)
     {
         if (!_timestamps.TryGetValue(key, out var ts))
@@ -1397,81 +1440,6 @@ public sealed class InMemoryContainer : Container
         return _items.Where(kvp => !IsExpired(kvp.Key)).Select(kvp => kvp.Value).ToList();
     }
 
-    /// <summary>
-    /// Fast path: detect simple <c>WHERE c.id = @param</c> or <c>WHERE c.id = 'literal'</c>
-    /// and resolve via direct dictionary lookup instead of scanning all items.
-    /// </summary>
-    private bool TryIdEqualityLookup(
-        CosmosSqlQuery parsed, IDictionary<string, object> parameters,
-        QueryRequestOptions requestOptions, out List<string> items)
-    {
-        items = null;
-
-        if (parsed.Where is not ComparisonCondition cc || cc.Operator != ComparisonOp.Equal)
-            return false;
-
-        // Determine which side is the id field and which is the value
-        string valueSide;
-        if (IsIdField(cc.Left, parsed.FromAlias))
-            valueSide = cc.Right;
-        else if (IsIdField(cc.Right, parsed.FromAlias))
-            valueSide = cc.Left;
-        else
-            return false;
-
-        // Resolve the id value from parameter or string literal
-        string idValue;
-        if (valueSide.StartsWith('@'))
-        {
-            if (parameters is null || !parameters.TryGetValue(valueSide, out var paramValue))
-                return false;
-            idValue = paramValue?.ToString();
-        }
-        else if (valueSide.StartsWith('\'') && valueSide.EndsWith('\'') && valueSide.Length >= 2)
-        {
-            idValue = valueSide[1..^1];
-        }
-        else
-        {
-            return false; // Numeric or complex expression — fall through to normal path
-        }
-
-        if (idValue is null)
-            return false;
-
-        // Direct dictionary lookup
-        if (requestOptions?.PartitionKey is not null
-            && requestOptions.PartitionKey != PartitionKey.None
-            && requestOptions.PartitionKey != PartitionKey.Null)
-        {
-            var pk = PartitionKeyToString(requestOptions.PartitionKey.Value);
-            var key = (idValue, pk);
-            items = _items.TryGetValue(key, out var json) && !IsExpired(key)
-                ? new List<string> { json }
-                : new List<string>();
-        }
-        else
-        {
-            // Cross-partition: scan keys with matching id
-            items = _items
-                .Where(kvp => kvp.Key.Id == idValue && !IsExpired(kvp.Key))
-                .Select(kvp => kvp.Value)
-                .ToList();
-        }
-
-        return true;
-    }
-
-    private static bool IsIdField(string field, string fromAlias)
-    {
-        if (string.Equals(field, "id", StringComparison.OrdinalIgnoreCase))
-            return true;
-        if (fromAlias is not null
-            && string.Equals(field, $"{fromAlias}.id", StringComparison.OrdinalIgnoreCase))
-            return true;
-        return false;
-    }
-
     private const string UdfRegistryKey = "__udf_registry__";
 
     private List<string> FilterItemsByQuery(
@@ -1484,39 +1452,32 @@ public sealed class InMemoryContainer : Container
 
         var parsed = CosmosSqlParser.Parse(queryText);
 
-        // ── Fast path: simple WHERE c.id = <value> with no JOINs ──
-        // Bypasses full scan + per-item JSON parse with a direct dictionary lookup.
-        List<string> items;
-        if (parsed.Join is null
-            && (parsed.Joins is null || parsed.Joins.Length == 0)
-            && parsed.FromSource is null
-            && TryIdEqualityLookup(parsed, parameters, requestOptions, out items))
+        var items = GetAllItemsForPartition(requestOptions);
+
+        // FROM alias IN c.field — top-level array iteration (must come before JOINs/WHERE)
+        if (parsed.FromSource is not null)
         {
-            // items already filtered — skip to post-WHERE pipeline
+            items = ExpandFromSource(items, parsed);
         }
-        else
+
+        // JOIN expansion (supports multiple JOINs) — must come before WHERE
+        if (parsed.Joins is { Length: > 0 })
         {
-            items = GetAllItemsForPartition(requestOptions);
+            items = ExpandAllJoins(items, parsed);
+        }
+        else if (parsed.Join is not null)
+        {
+            items = ExpandJoinedItems(items, parsed);
+        }
 
-            // JOIN expansion (supports multiple JOINs) — must come before WHERE
-            if (parsed.Joins is { Length: > 0 })
+        // WHERE
+        if (parsed.Where is not null)
+        {
+            items = items.Where(json =>
             {
-                items = ExpandAllJoins(items, parsed);
-            }
-            else if (parsed.Join is not null)
-            {
-                items = ExpandJoinedItems(items, parsed);
-            }
-
-            // WHERE
-            if (parsed.Where is not null)
-            {
-                items = items.Where(json =>
-                {
-                    var jObj = JsonParseHelpers.ParseJson(json);
-                    return EvaluateWhereExpression(parsed.Where, jObj, parsed.FromAlias, parameters, parsed.Join);
-                }).ToList();
-            }
+                var jObj = JsonParseHelpers.ParseJson(json);
+                return EvaluateWhereExpression(parsed.Where, jObj, parsed.FromAlias, parameters, parsed.Join);
+            }).ToList();
         }
 
         // GROUP BY / HAVING — also handles SELECT projection for grouped results
@@ -1894,6 +1855,41 @@ public sealed class InMemoryContainer : Container
         return current;
     }
 
+    /// <summary>
+    /// Expands top-level <c>FROM alias IN c.field</c> — each array element becomes a result row.
+    /// </summary>
+    private static List<string> ExpandFromSource(List<string> items, CosmosSqlQuery parsed)
+    {
+        var sourcePath = parsed.FromSource;
+        // The FromSource is the full dotted path (e.g. "c.tags"). We need to resolve it
+        // relative to each document, but the outer alias isn't available here (the FROM clause
+        // redefines the alias). Use a simple heuristic: strip the first segment if it looks
+        // like an alias (contains a dot).
+        var dotIndex = sourcePath.IndexOf('.');
+        var arrayPath = dotIndex >= 0 ? sourcePath[(dotIndex + 1)..] : sourcePath;
+
+        var expanded = new List<string>();
+        foreach (var json in items)
+        {
+            var jObj = JsonParseHelpers.ParseJson(json);
+            var arrayToken = jObj.SelectToken(arrayPath);
+            if (arrayToken is not JArray jArray)
+                continue;
+
+            foreach (var element in jArray)
+            {
+                // The alias is the range variable (e.g. "item" in FROM item IN c.items).
+                // - For object elements: spread properties at root so "item.price" → strip alias → "price" resolves.
+                // - Also keep the element under the alias for "SELECT item" / "SELECT VALUE item".
+                var combined = element is JObject elementObj
+                    ? new JObject(elementObj.Properties()) { [parsed.FromAlias] = element.DeepClone() }
+                    : new JObject { [parsed.FromAlias] = element };
+                expanded.Add(combined.ToString(Formatting.None));
+            }
+        }
+        return expanded;
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  Query helpers — SELECT projection
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1931,9 +1927,19 @@ public sealed class InMemoryContainer : Container
 
                     // When the expression is exactly the FROM alias (e.g., SELECT VALUE root),
                     // return the entire document rather than looking for a property named "root".
+                    // Exception: for FROM alias IN c.field, the alias is a property on the expanded
+                    // JObject — use the alias value (the array element) instead of the whole doc.
                     if (string.Equals(path, parsed.FromAlias, StringComparison.OrdinalIgnoreCase))
                     {
-                        resultObj[outputName] = jObj.DeepClone();
+                        var aliasToken = jObj[parsed.FromAlias];
+                        if (parsed.FromSource is not null && aliasToken is not null)
+                        {
+                            resultObj[outputName] = aliasToken.DeepClone();
+                        }
+                        else
+                        {
+                            resultObj[outputName] = jObj.DeepClone();
+                        }
                         continue;
                     }
 
@@ -2254,15 +2260,38 @@ public sealed class InMemoryContainer : Container
         return string.Compare(left.ToString(), right.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool EvaluateLike(object left, object right)
+    private static bool EvaluateLike(object left, object right, string escapeChar = null)
     {
         if (left is null || right is null)
         {
             return false;
         }
 
-        var pattern = $"^{right.ToString().Replace("%", ".*").Replace("_", ".")}$";
-        return GetOrCreateRegex(pattern, RegexOptions.IgnoreCase).IsMatch(left.ToString());
+        var patternStr = right.ToString();
+        if (escapeChar is { Length: > 0 })
+        {
+            var esc = escapeChar[0];
+            var sb = new System.Text.StringBuilder();
+            for (var i = 0; i < patternStr.Length; i++)
+            {
+                if (patternStr[i] == esc && i + 1 < patternStr.Length)
+                {
+                    sb.Append(Regex.Escape(patternStr[i + 1].ToString()));
+                    i++;
+                }
+                else if (patternStr[i] == '%')
+                    sb.Append(".*");
+                else if (patternStr[i] == '_')
+                    sb.Append('.');
+                else
+                    sb.Append(Regex.Escape(patternStr[i].ToString()));
+            }
+            var pattern = $"^{sb}$";
+            return GetOrCreateRegex(pattern, RegexOptions.IgnoreCase).IsMatch(left.ToString());
+        }
+
+        var simplePattern = $"^{patternStr.Replace("%", ".*").Replace("_", ".")}$";
+        return GetOrCreateRegex(simplePattern, RegexOptions.IgnoreCase).IsMatch(left.ToString());
     }
 
     private static Regex GetOrCreateRegex(string pattern, RegexOptions options)
@@ -2527,6 +2556,10 @@ public sealed class InMemoryContainer : Container
             UnaryExpression unary => EvaluateUnaryExpression(unary, item, fromAlias, parameters),
             BetweenExpression between => EvalBetween(between, item, fromAlias, parameters),
             InExpression inExpr => EvalIn(inExpr, item, fromAlias, parameters),
+            LikeExpression like => EvaluateLike(
+                EvaluateSqlExpression(like.Value, item, fromAlias, parameters),
+                EvaluateSqlExpression(like.Pattern, item, fromAlias, parameters),
+                like.EscapeChar),
             ExistsExpression exists => EvaluateExists(new ExistsCondition(exists.RawSubquery), item, fromAlias, parameters, null),
             CoalesceExpression coal => EvaluateSqlExpression(coal.Left, item, fromAlias, parameters)
                                       ?? EvaluateSqlExpression(coal.Right, item, fromAlias, parameters),
@@ -3416,6 +3449,106 @@ public sealed class InMemoryContainer : Container
                         _ => null,
                     };
                 }
+            case "DATETIMEDIFF":
+                {
+                    if (args.Length < 3) return null;
+                    var part = args[0]?.ToString()?.ToLowerInvariant();
+                    var startStr = args[1]?.ToString();
+                    var endStr = args[2]?.ToString();
+                    if (part is null || startStr is null || endStr is null) return null;
+                    if (!DateTime.TryParse(startStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dtStart)) return null;
+                    if (!DateTime.TryParse(endStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dtEnd)) return null;
+
+                    return part switch
+                    {
+                        "year" or "yyyy" or "yy" => (object)(long)(dtEnd.Year - dtStart.Year),
+                        "month" or "mm" or "m" => (long)((dtEnd.Year - dtStart.Year) * 12 + dtEnd.Month - dtStart.Month),
+                        "day" or "dd" or "d" => (long)(dtEnd.Date - dtStart.Date).TotalDays,
+                        "hour" or "hh" => (long)(dtEnd - dtStart).TotalHours,
+                        "minute" or "mi" or "n" => (long)(dtEnd - dtStart).TotalMinutes,
+                        "second" or "ss" or "s" => (long)(dtEnd - dtStart).TotalSeconds,
+                        "millisecond" or "ms" => (long)(dtEnd - dtStart).TotalMilliseconds,
+                        _ => null,
+                    };
+                }
+            case "DATETIMEFROMPARTS":
+                {
+                    if (args.Length < 7) return null;
+                    var y = ToLong(args[0]);
+                    var mo = ToLong(args[1]);
+                    var d = ToLong(args[2]);
+                    var h = ToLong(args[3]);
+                    var mi = ToLong(args[4]);
+                    var s = ToLong(args[5]);
+                    var ms = ToLong(args[6]);
+                    if (!y.HasValue || !mo.HasValue || !d.HasValue || !h.HasValue || !mi.HasValue || !s.HasValue || !ms.HasValue) return null;
+                    var dt = new DateTime((int)y.Value, (int)mo.Value, (int)d.Value,
+                        (int)h.Value, (int)mi.Value, (int)s.Value, (int)ms.Value, DateTimeKind.Utc);
+                    return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+                }
+            case "DATETIMEBIN":
+                {
+                    if (args.Length < 3) return null;
+                    var dtStr = args[0]?.ToString();
+                    var part = args[1]?.ToString()?.ToLowerInvariant();
+                    var binSize = ToLong(args[2]);
+                    if (dtStr is null || part is null || !binSize.HasValue) return null;
+                    if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return null;
+
+                    var origin = args.Length >= 4 && args[3] is string originStr
+                        && DateTime.TryParse(originStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var o)
+                        ? o : new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+                    var bs = (int)binSize.Value;
+                    dt = part switch
+                    {
+                        "day" or "dd" or "d" =>
+                            origin.AddDays(Math.Floor((dt - origin).TotalDays / bs) * bs),
+                        "hour" or "hh" =>
+                            origin.AddHours(Math.Floor((dt - origin).TotalHours / bs) * bs),
+                        "minute" or "mi" or "n" =>
+                            origin.AddMinutes(Math.Floor((dt - origin).TotalMinutes / bs) * bs),
+                        "second" or "ss" or "s" =>
+                            origin.AddSeconds(Math.Floor((dt - origin).TotalSeconds / bs) * bs),
+                        "millisecond" or "ms" =>
+                            origin.AddMilliseconds(Math.Floor((dt - origin).TotalMilliseconds / bs) * bs),
+                        _ => dt,
+                    };
+                    return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+                }
+            case "DATETIMETOTICKS":
+                {
+                    if (args.Length < 1) return null;
+                    var dtStr = args[0]?.ToString();
+                    if (dtStr is null) return null;
+                    if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return null;
+                    return (object)dt.ToUniversalTime().Ticks;
+                }
+            case "TICKSTODATETIME":
+                {
+                    if (args.Length < 1) return null;
+                    var ticks = ToLong(args[0]);
+                    if (!ticks.HasValue) return null;
+                    var dt = new DateTime(ticks.Value, DateTimeKind.Utc);
+                    return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+                }
+            case "DATETIMETOTIMESTAMP":
+                {
+                    if (args.Length < 1) return null;
+                    var dtStr = args[0]?.ToString();
+                    if (dtStr is null) return null;
+                    if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return null;
+                    return (object)new DateTimeOffset(dt.ToUniversalTime()).ToUnixTimeMilliseconds();
+                }
+            case "TIMESTAMPTODATETIME":
+                {
+                    if (args.Length < 1) return null;
+                    var ms = ToLong(args[0]);
+                    if (!ms.HasValue) return null;
+                    var dt = DateTimeOffset.FromUnixTimeMilliseconds(ms.Value).UtcDateTime;
+                    return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+                }
+            case "GETCURRENTTICKS": return (object)DateTime.UtcNow.Ticks;
 
             // ── COALESCE function ──
             case "COALESCE":

@@ -44,6 +44,7 @@ public enum CosmosSqlToken
     Offset,
     Limit,
     Array,
+    Escape,
 
     // Literals & identifiers
     Identifier,
@@ -126,6 +127,8 @@ public sealed record FunctionCallExpression(string FunctionName, SqlExpression[]
 public sealed record BetweenExpression(SqlExpression Value, SqlExpression Low, SqlExpression High) : SqlExpression;
 
 public sealed record InExpression(SqlExpression Value, SqlExpression[] List) : SqlExpression;
+
+public sealed record LikeExpression(SqlExpression Value, SqlExpression Pattern, string EscapeChar) : SqlExpression;
 
 public sealed record ExistsExpression(string RawSubquery) : SqlExpression;
 
@@ -266,6 +269,7 @@ public static class CosmosSqlTokenizer
         ["OFFSET"] = CosmosSqlToken.Offset,
         ["LIMIT"] = CosmosSqlToken.Limit,
         ["ARRAY"] = CosmosSqlToken.Array,
+        ["ESCAPE"] = CosmosSqlToken.Escape,
     };
 
     private static readonly Tokenizer<CosmosSqlToken> Inner = new TokenizerBuilder<CosmosSqlToken>()
@@ -618,6 +622,14 @@ public static class CosmosSqlParser
                 from vals in Superpower.Parse.Ref(() => Expr).ManyDelimitedBy(Token.EqualTo(CosmosSqlToken.Comma))
                 from close in Token.EqualTo(CosmosSqlToken.CloseParen)
                 select (Func<SqlExpression, SqlExpression>)(l => new UnaryExpression(UnaryOp.Not, new InExpression(l, vals))))
+            // LIKE pattern ESCAPE char
+            .Or(
+                (from kw in Token.EqualTo(CosmosSqlToken.Like)
+                 from pattern in StringConcatExpr
+                 from esc in Token.EqualTo(CosmosSqlToken.Escape)
+                 from escChar in Token.EqualTo(CosmosSqlToken.StringLiteral)
+                 select (Func<SqlExpression, SqlExpression>)(l => new LikeExpression(l, pattern, escChar.Span.ToStringValue()[1..^1])))
+                .Try())
             // IS NULL
             .Or(
                 from is_ in Token.EqualTo(CosmosSqlToken.Is)
@@ -1132,6 +1144,9 @@ public static class CosmosSqlParser
             UnaryExpression unary => $"{UnaryOpToString(unary.Operator)} {ExprToString(unary.Operand)}",
             BetweenExpression betw => $"{ExprToString(betw.Value)} BETWEEN {ExprToString(betw.Low)} AND {ExprToString(betw.High)}",
             InExpression inExpr => $"{ExprToString(inExpr.Value)} IN ({string.Join(", ", inExpr.List.Select(ExprToString))})",
+            LikeExpression like => like.EscapeChar is not null
+                ? $"{ExprToString(like.Value)} LIKE {ExprToString(like.Pattern)} ESCAPE '{like.EscapeChar}'"
+                : $"{ExprToString(like.Value)} LIKE {ExprToString(like.Pattern)}",
             ExistsExpression exists => $"EXISTS({exists.RawSubquery})",
             SubqueryExpression sub => $"({SubqueryToString(sub.Subquery)})",
             TernaryExpression tern => $"{ExprToString(tern.Condition)} ? {ExprToString(tern.IfTrue)} : {ExprToString(tern.IfFalse)}",

@@ -507,6 +507,7 @@ public class LoadTests(ITestOutputHelper output)
         output.WriteLine($"║  Expected 404s     : {stats.NotFound,8:N0}{"",-18}║");
         output.WriteLine($"║  Unexpected errors : {stats.Errors,8:N0}{"",-18}║");
         output.WriteLine($"╠══════════════════════════════════════════════════╣");
+        output.WriteLine($"║  Mean latency      : {stats.MeanLatency,8:F3}ms{"",-15}║");
         output.WriteLine($"║  P50 latency       : {stats.GetPercentile(50),8:F3}ms{"",-15}║");
         output.WriteLine($"║  P95 latency       : {stats.GetPercentile(95),8:F3}ms{"",-15}║");
         output.WriteLine($"║  P99 latency       : {stats.GetPercentile(99),8:F3}ms{"",-15}║");
@@ -568,6 +569,8 @@ public class LoadStats
     private readonly ConcurrentBag<double> _latenciesMs = [];
 
     public void RecordLatency(TimeSpan latency) => _latenciesMs.Add(latency.TotalMilliseconds);
+
+    public double MeanLatency => _latenciesMs.Count > 0 ? _latenciesMs.Average() : 0;
 
     public double GetPercentile(int percentile)
     {
