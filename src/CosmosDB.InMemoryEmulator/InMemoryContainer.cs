@@ -146,6 +146,13 @@ public class InMemoryContainer : Container
     /// <summary>The partition key path(s) for this container.</summary>
     public IReadOnlyList<string> PartitionKeyPaths { get; }
 
+    /// <summary>
+    /// Number of feed ranges returned by <see cref="GetFeedRangesAsync"/>. Defaults to 1.
+    /// Set to a higher value to simulate multiple physical partitions so that
+    /// FeedRange-scoped queries and change feed iterators return subsets of data.
+    /// </summary>
+    public int FeedRangeCount { get; set; } = 1;
+
     // ─── Public helpers for test infrastructure ───────────────────────────────
 
     /// <summary>
@@ -920,7 +927,14 @@ public class InMemoryContainer : Container
     public override FeedIterator<T> GetItemQueryIterator<T>(
         FeedRange feedRange, QueryDefinition queryDefinition, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
-        => GetItemQueryIterator<T>(queryDefinition, continuationToken, requestOptions);
+    {
+        var parameters = ExtractQueryParameters(queryDefinition);
+        var filtered = FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions);
+        filtered = FilterByFeedRange(filtered, feedRange);
+        var items = filtered.Select(json => JsonConvert.DeserializeObject<T>(json, JsonSettings)).ToList();
+        var initialOffset = ParseContinuationToken(continuationToken);
+        return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, initialOffset);
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Query — Stream FeedIterator
@@ -951,7 +965,12 @@ public class InMemoryContainer : Container
     public override FeedIterator GetItemQueryStreamIterator(
         FeedRange feedRange, QueryDefinition queryDefinition, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
-        => GetItemQueryStreamIterator(queryDefinition, continuationToken, requestOptions);
+    {
+        var parameters = ExtractQueryParameters(queryDefinition);
+        var filtered = FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions);
+        filtered = FilterByFeedRange(filtered, feedRange);
+        return CreateStreamFeedIterator(filtered, ParseContinuationToken(continuationToken), requestOptions?.MaxItemCount);
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  LINQ
@@ -984,6 +1003,7 @@ public class InMemoryContainer : Container
     {
         var pageSize = changeFeedRequestOptions?.PageSizeHint;
         var typeName = changeFeedStartFrom.GetType().Name;
+        var feedRange = ExtractFeedRangeFromStartFrom(changeFeedStartFrom);
 
         // "Now" and "Time" start types use lazy evaluation so items added
         // after iterator creation are included when ReadNextAsync is called.
@@ -1011,6 +1031,7 @@ public class InMemoryContainer : Container
 
             var isNowStart = typeName.Contains("Now", StringComparison.OrdinalIgnoreCase);
             var ts = capturedTimestamp;
+            var capturedRange = feedRange;
             return new InMemoryFeedIterator<T>(() =>
             {
                 lock (_changeFeedLock)
@@ -1020,6 +1041,8 @@ public class InMemoryContainer : Container
                             ? entry.Timestamp > ts.Value
                             : entry.Timestamp >= ts.Value).ToList()
                         : _changeFeed.ToList();
+
+                    entries = FilterChangeFeedEntriesByFeedRange(entries, capturedRange);
 
                     if (changeFeedMode == ChangeFeedMode.Incremental)
                     {
@@ -1043,6 +1066,8 @@ public class InMemoryContainer : Container
         {
             eagerEntries = _changeFeed.ToList();
         }
+
+        eagerEntries = FilterChangeFeedEntriesByFeedRange(eagerEntries, feedRange);
 
         if (changeFeedMode == ChangeFeedMode.Incremental)
         {
@@ -1080,10 +1105,12 @@ public class InMemoryContainer : Container
         ChangeFeedStartFrom changeFeedStartFrom, ChangeFeedMode changeFeedMode,
         ChangeFeedRequestOptions changeFeedRequestOptions = null)
     {
+        var feedRange = ExtractFeedRangeFromStartFrom(changeFeedStartFrom);
         List<string> items;
         lock (_changeFeedLock)
         {
             var entries = FilterChangeFeedByStartFrom(changeFeedStartFrom);
+            entries = FilterChangeFeedEntriesByFeedRange(entries, feedRange);
 
             if (changeFeedMode == ChangeFeedMode.Incremental)
             {
@@ -1145,6 +1172,104 @@ public class InMemoryContainer : Container
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    //  FeedRange Filtering Helpers
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    private static FeedRange ExtractFeedRangeFromStartFrom(ChangeFeedStartFrom startFrom)
+    {
+        // ChangeFeedStartFrom subtypes (Beginning, Now, Time, ContinuationAndFeedRange)
+        // store the FeedRange in an internal property. Use reflection to extract it.
+        foreach (var prop in startFrom.GetType().GetProperties(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (typeof(FeedRange).IsAssignableFrom(prop.PropertyType) && prop.GetValue(startFrom) is FeedRange fr)
+                return fr;
+        }
+
+        foreach (var field in startFrom.GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance))
+        {
+            if (typeof(FeedRange).IsAssignableFrom(field.FieldType) && field.GetValue(startFrom) is FeedRange fr)
+                return fr;
+        }
+
+        return null;
+    }
+
+    private List<string> FilterByFeedRange(List<string> items, FeedRange feedRange)
+    {
+        var (min, max) = ParseFeedRangeBoundaries(feedRange);
+        if (min == null) return items;
+
+        return items.Where(json =>
+        {
+            var pkValue = ExtractPartitionKeyValueFromJson(json);
+            var hash = PartitionKeyHash.MurmurHash3(pkValue);
+            return IsHashInRange(hash, min.Value, max.Value);
+        }).ToList();
+    }
+
+    private List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)>
+        FilterChangeFeedEntriesByFeedRange(
+            List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> entries,
+            FeedRange feedRange)
+    {
+        var (min, max) = ParseFeedRangeBoundaries(feedRange);
+        if (min == null) return entries;
+
+        return entries.Where(entry =>
+        {
+            var hash = PartitionKeyHash.MurmurHash3(entry.PartitionKey);
+            return IsHashInRange(hash, min.Value, max.Value);
+        }).ToList();
+    }
+
+    private static (uint? Min, uint? Max) ParseFeedRangeBoundaries(FeedRange feedRange)
+    {
+        if (feedRange == null) return (null, null);
+
+        try
+        {
+            var json = feedRange.ToJsonString();
+            var obj = JObject.Parse(json);
+            var rangeObj = obj["Range"];
+            if (rangeObj == null) return (null, null);
+
+            var minStr = rangeObj["min"]?.ToString() ?? "";
+            var maxStr = rangeObj["max"]?.ToString() ?? "";
+
+            var minVal = string.IsNullOrEmpty(minStr) ? 0u : Convert.ToUInt32(minStr, 16);
+            var maxVal = string.Equals(maxStr, "FF", StringComparison.OrdinalIgnoreCase)
+                ? uint.MaxValue
+                : Convert.ToUInt32(maxStr, 16);
+
+            return (minVal, maxVal);
+        }
+        catch
+        {
+            return (null, null);
+        }
+    }
+
+    private static bool IsHashInRange(uint hash, uint min, uint max)
+    {
+        return hash >= min && (max == uint.MaxValue || hash < max);
+    }
+
+    private string ExtractPartitionKeyValueFromJson(string json)
+    {
+        var jObj = JsonConvert.DeserializeObject<JObject>(json, JsonSettings);
+        if (jObj == null) return "";
+
+        if (PartitionKeyPaths is { Count: > 0 })
+        {
+            var parts = PartitionKeyPaths.Select(path => jObj.SelectToken(path.TrimStart('/'))?.ToString()).ToList();
+            if (parts.Count == 1) return parts[0] ?? "";
+            return string.Join("|", parts.Select(p => p ?? ""));
+        }
+
+        return "";
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     //  Change Feed — Processor Builders
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1186,8 +1311,18 @@ public class InMemoryContainer : Container
 
     public override Task<IReadOnlyList<FeedRange>> GetFeedRangesAsync(CancellationToken cancellationToken = default)
     {
-        IReadOnlyList<FeedRange> ranges = new List<FeedRange> { Substitute.For<FeedRange>() };
-        return Task.FromResult(ranges);
+        var count = Math.Max(1, FeedRangeCount);
+        var ranges = new List<FeedRange>(count);
+        var step = 0x1_0000_0000L / count;
+
+        for (var i = 0; i < count; i++)
+        {
+            var min = PartitionKeyHash.RangeBoundaryToHex(i * step);
+            var max = (i == count - 1) ? "FF" : PartitionKeyHash.RangeBoundaryToHex((i + 1) * step);
+            ranges.Add(FeedRange.FromJsonString($"{{\"Range\":{{\"min\":\"{min}\",\"max\":\"{max}\"}}}}"));
+        }
+
+        return Task.FromResult<IReadOnlyList<FeedRange>>(ranges);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

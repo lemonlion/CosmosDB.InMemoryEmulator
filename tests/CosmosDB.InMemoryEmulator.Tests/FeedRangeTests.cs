@@ -10,13 +10,10 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 
 public class FeedRangeGapTests3
 {
-    [Fact(Skip = "InMemoryContainer always returns 1 FeedRange regardless of data distribution. " +
-                 "FakeCosmosHandler can simulate multiple partition key ranges but InMemoryContainer " +
-                 "does not propagate that to GetFeedRangesAsync. " +
-                 "Use FakeCosmosHandler for multi-range testing.")]
+    [Fact]
     public async Task GetFeedRanges_WithMultipleRanges_ReturnsMultiple()
     {
-        var container = new InMemoryContainer("test", "/partitionKey");
+        var container = new InMemoryContainer("test", "/partitionKey") { FeedRangeCount = 4 };
         for (var i = 0; i < 100; i++)
             await container.CreateItemAsync(
                 new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"Item{i}" },
@@ -68,12 +65,9 @@ public class FeedRangeGapTests
 
 public class FeedRangeGapTests4
 {
-    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey") { FeedRangeCount = 4 };
 
-    [Fact(Skip = "FeedRange parameter is ignored by GetChangeFeedIterator. " +
-                 "Real Cosmos DB scopes the change feed to the specified FeedRange. " +
-                 "InMemoryContainer ignores the FeedRange and returns all changes. " +
-                 "See divergent behavior test in ChangeFeedFeedRangeDivergentBehaviorTests4.")]
+    [Fact]
     public async Task FeedRange_UsableWithChangeFeedIterator()
     {
         await _container.CreateItemAsync(
@@ -82,18 +76,21 @@ public class FeedRangeGapTests4
             new TestDocument { Id = "2", PartitionKey = "pk2", Name = "B" }, new PartitionKey("pk2"));
 
         var ranges = await _container.GetFeedRangesAsync();
-        var iterator = _container.GetChangeFeedIterator<TestDocument>(
-            ChangeFeedStartFrom.Beginning(ranges[0]),
-            ChangeFeedMode.Incremental);
-
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
+        var allResults = new List<TestDocument>();
+        foreach (var range in ranges)
         {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
+            var iterator = _container.GetChangeFeedIterator<TestDocument>(
+                ChangeFeedStartFrom.Beginning(range),
+                ChangeFeedMode.Incremental);
+            while (iterator.HasMoreResults)
+            {
+                var page = await iterator.ReadNextAsync();
+                allResults.AddRange(page);
+            }
         }
 
-        results.Should().HaveCountLessThan(2);
+        // Union of all ranges covers both items
+        allResults.Should().HaveCount(2);
     }
 }
 
@@ -122,12 +119,13 @@ public class FeedRangeGapTests2
 public class FeedRangeDivergentBehaviorTests
 {
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: InMemoryContainer always returns exactly 1 FeedRange.
-    /// Real Cosmos DB returns multiple ranges based on physical partition distribution.
-    /// For multi-range simulation, use FakeCosmosHandler with PartitionKeyRangeCount.
+    /// InMemoryContainer defaults to FeedRangeCount=1 (single range covering the full hash space).
+    /// Real Cosmos DB dynamically creates partition ranges based on data volume and throughput.
+    /// Set FeedRangeCount > 1 to simulate multiple physical partitions for FeedRange-scoped
+    /// queries and change feed iterators.
     /// </summary>
     [Fact]
-    public async Task GetFeedRanges_AlwaysReturnsSingle_RegardlessOfData()
+    public async Task GetFeedRanges_DefaultsSingle_SetFeedRangeCountForMultiple()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
         for (var i = 0; i < 100; i++)
@@ -135,7 +133,13 @@ public class FeedRangeDivergentBehaviorTests
                 new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"Item{i}" },
                 new PartitionKey($"pk-{i}"));
 
+        // Default: 1 range (unlike real Cosmos DB which may auto-split)
         var ranges = await container.GetFeedRangesAsync();
         ranges.Should().HaveCount(1);
+
+        // Opt-in: set FeedRangeCount for multi-range simulation
+        container.FeedRangeCount = 4;
+        var multiRanges = await container.GetFeedRangesAsync();
+        multiRanges.Should().HaveCount(4);
     }
 }

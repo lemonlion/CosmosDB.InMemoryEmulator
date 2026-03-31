@@ -53,7 +53,8 @@ var results = container
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
 - **Triggers** — pre-trigger and post-trigger execution via C# handlers
-- **1237 tests** covering all features (28 skipped — see [Known Limitations](../../wiki/Known-Limitations))
+- **FeedRange support** — configurable `FeedRangeCount` with scoped queries and change feed iterators
+- **1253 tests** covering all features (24 skipped — see [Known Limitations](../../wiki/Known-Limitations))
 
 ## Installation
 

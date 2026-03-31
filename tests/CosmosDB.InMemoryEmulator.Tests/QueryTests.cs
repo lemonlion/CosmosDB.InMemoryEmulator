@@ -2123,15 +2123,15 @@ public class QueryWhereGapTests3
 
 public class QueryFeedRangeDivergentBehaviorTests4
 {
-    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey") { FeedRangeCount = 4 };
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: FeedRange parameter is ignored on GetItemQueryIterator.
-    /// Real Cosmos DB scopes query execution to the specified FeedRange partition.
-    /// InMemoryContainer always returns all items regardless of FeedRange.
+    /// FeedRange parameter now scopes query results. When FeedRangeCount > 1,
+    /// querying through each range and unioning the results yields the full dataset.
+    /// With the default FeedRangeCount=1, the single range covers the entire hash space.
     /// </summary>
     [Fact]
-    public async Task QueryIterator_FeedRange_ReturnsAllItems_InMemory()
+    public async Task QueryIterator_FeedRange_ScopesResultsByRange()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
@@ -2139,28 +2139,29 @@ public class QueryFeedRangeDivergentBehaviorTests4
             new TestDocument { Id = "2", PartitionKey = "pk2", Name = "B" }, new PartitionKey("pk2"));
 
         var ranges = await _container.GetFeedRangesAsync();
-        var iterator = _container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
+        var allResults = new List<TestDocument>();
+        foreach (var range in ranges)
         {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
+            var iterator = _container.GetItemQueryIterator<TestDocument>(
+                range, new QueryDefinition("SELECT * FROM c"));
+            while (iterator.HasMoreResults)
+            {
+                var page = await iterator.ReadNextAsync();
+                allResults.AddRange(page);
+            }
         }
 
-        // InMemory returns all items regardless of FeedRange
-        results.Should().HaveCount(2);
+        // Union of all ranges returns all items
+        allResults.Should().HaveCount(2);
     }
 }
 
 
 public class QueryIteratorGapTests4
 {
-    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey") { FeedRangeCount = 4 };
 
-    [Fact(Skip = "FeedRange parameter is ignored by GetItemQueryIterator. " +
-                 "Real Cosmos DB scopes the query to the specified FeedRange partition. " +
-                 "InMemoryContainer ignores the FeedRange and returns all items. " +
-                 "See divergent behavior test in QueryFeedRangeDivergentBehaviorTests4.")]
+    [Fact]
     public async Task QueryIterator_WithFeedRange_FiltersByRange()
     {
         await _container.CreateItemAsync(
@@ -2169,18 +2170,20 @@ public class QueryIteratorGapTests4
             new TestDocument { Id = "2", PartitionKey = "pk2", Name = "B" }, new PartitionKey("pk2"));
 
         var ranges = await _container.GetFeedRangesAsync();
-        var iterator = _container.GetItemQueryIterator<TestDocument>(
-            "SELECT * FROM c", requestOptions: new QueryRequestOptions { });
-
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
+        var allResults = new List<TestDocument>();
+        foreach (var range in ranges)
         {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
+            var iterator = _container.GetItemQueryIterator<TestDocument>(
+                range, new QueryDefinition("SELECT * FROM c"));
+            while (iterator.HasMoreResults)
+            {
+                var page = await iterator.ReadNextAsync();
+                allResults.AddRange(page);
+            }
         }
 
-        // With a FeedRange, should only return items from that range
-        results.Should().HaveCountLessThan(2);
+        // Union of all feed ranges returns all items
+        allResults.Should().HaveCount(2);
     }
 
     [Fact]

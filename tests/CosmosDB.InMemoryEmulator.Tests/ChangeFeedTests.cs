@@ -515,36 +515,39 @@ public class ChangeFeedStreamProcessorDivergentTests5
 
 public class ChangeFeedFeedRangeDivergentBehaviorTests4
 {
-    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey") { FeedRangeCount = 4 };
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: ChangeFeedStartFrom with FeedRange is not scoped.
-    /// Real Cosmos DB scopes the change feed to the specified FeedRange partition.
-    /// InMemoryContainer ignores the FeedRange and returns all changes.
-    /// The FeedRange from GetFeedRangesAsync cannot be passed to ChangeFeedStartFrom.Beginning
-    /// because it requires a FeedRangeInternal type, so we test via the basic change feed iterator.
+    /// FeedRange filtering is now supported. When FeedRangeCount > 1,
+    /// ChangeFeedStartFrom.Beginning(feedRange) scopes the change feed to the specified range.
+    /// Iterating all ranges and unioning results yields the full dataset.
+    /// With the default FeedRangeCount=1, the single range covers the entire hash space and
+    /// Beginning() without a FeedRange returns all changes.
     /// </summary>
     [Fact]
-    public async Task ChangeFeed_FeedRange_NotScopeable_AllChangesReturned_InMemory()
+    public async Task ChangeFeed_FeedRange_ScopesCorrectly()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
         await _container.CreateItemAsync(
             new TestDocument { Id = "2", PartitionKey = "pk2", Name = "B" }, new PartitionKey("pk2"));
 
-        // Change feed from beginning always returns all items regardless of partition
-        var iterator = _container.GetChangeFeedIterator<TestDocument>(
-            ChangeFeedStartFrom.Beginning(),
-            ChangeFeedMode.Incremental);
-
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
+        var ranges = await _container.GetFeedRangesAsync();
+        var allResults = new List<TestDocument>();
+        foreach (var range in ranges)
         {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
+            var iterator = _container.GetChangeFeedIterator<TestDocument>(
+                ChangeFeedStartFrom.Beginning(range),
+                ChangeFeedMode.Incremental);
+            while (iterator.HasMoreResults)
+            {
+                var page = await iterator.ReadNextAsync();
+                allResults.AddRange(page);
+            }
         }
 
-        results.Should().HaveCount(2);
+        // Union of all ranges returns all items
+        allResults.Should().HaveCount(2);
     }
 }
 

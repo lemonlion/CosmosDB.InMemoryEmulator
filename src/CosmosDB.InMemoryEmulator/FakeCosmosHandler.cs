@@ -143,7 +143,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         // even if containers share the same name. Collection portion uses MurmurHash3 of the ID.
         var instanceId = (uint)Interlocked.Increment(ref _ridCounter);
         var dbBytes = BitConverter.GetBytes(instanceId);
-        var containerHash = MurmurHash3(containerId);
+        var containerHash = PartitionKeyHash.MurmurHash3(containerId);
         var collBytes = new byte[8];
         Buffer.BlockCopy(dbBytes, 0, collBytes, 0, 4);
         Buffer.BlockCopy(BitConverter.GetBytes(containerHash), 0, collBytes, 4, 4);
@@ -938,61 +938,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         var targetDoc = payloadPropertyName is not null && obj[payloadPropertyName] is JObject payload
             ? payload : obj;
         var pkValue = targetDoc.SelectToken(_partitionKeyPath)?.ToString() ?? "";
-        var hash = MurmurHash3(pkValue);
-        return (int)(hash % (uint)_partitionKeyRangeCount);
-    }
-
-    private static uint MurmurHash3(string value)
-    {
-        var data = Encoding.UTF8.GetBytes(value);
-        const uint seed = 0;
-        const uint c1 = 0xcc9e2d51;
-        const uint c2 = 0x1b873593;
-
-        var hash = seed;
-        var nblocks = data.Length / 4;
-
-        for (var i = 0; i < nblocks; i++)
-        {
-            var k = BitConverter.ToUInt32(data, i * 4);
-            k *= c1;
-            k = RotateLeft(k, 15);
-            k *= c2;
-            hash ^= k;
-            hash = RotateLeft(hash, 13);
-            hash = hash * 5 + 0xe6546b64;
-        }
-
-        uint tail = 0;
-        var tailStart = nblocks * 4;
-        switch (data.Length & 3)
-        {
-            case 3: tail ^= (uint)data[tailStart + 2] << 16; goto case 2;
-            case 2: tail ^= (uint)data[tailStart + 1] << 8; goto case 1;
-            case 1:
-                tail ^= data[tailStart];
-                tail *= c1;
-                tail = RotateLeft(tail, 15);
-                tail *= c2;
-                hash ^= tail;
-                break;
-        }
-
-        hash ^= (uint)data.Length;
-        hash = FMix(hash);
-        return hash;
-    }
-
-    private static uint RotateLeft(uint x, int r) => (x << r) | (x >> (32 - r));
-
-    private static uint FMix(uint h)
-    {
-        h ^= h >> 16;
-        h *= 0x85ebca6b;
-        h ^= h >> 13;
-        h *= 0xc2b2ae35;
-        h ^= h >> 16;
-        return h;
+        return PartitionKeyHash.GetRangeIndex(pkValue, _partitionKeyRangeCount);
     }
 
     private async Task<HttpResponseMessage> HandleReadFeedAsync(
