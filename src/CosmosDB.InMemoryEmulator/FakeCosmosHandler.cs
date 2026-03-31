@@ -1492,9 +1492,26 @@ public class FakeCosmosHandler : HttpMessageHandler
             }
 
             var match = Regex.Match(path, @"/dbs/[^/]+/colls/([^/]+)");
-            if (match.Success && _handlers.TryGetValue(match.Groups[1].Value, out var handler))
+            if (match.Success)
             {
-                return InvokeHandlerAsync(handler, request, cancellationToken);
+                var containerName = match.Groups[1].Value;
+                if (_handlers.TryGetValue(containerName, out var handler))
+                {
+                    return InvokeHandlerAsync(handler, request, cancellationToken);
+                }
+
+                // SDK internal routes use base64-encoded RIDs (e.g. "AQAAAA==") for
+                // partition key range and other metadata requests. Fall back to the
+                // default handler for these rather than throwing.
+                if (containerName.Contains('=') || path.Contains("/pkranges"))
+                {
+                    return InvokeHandlerAsync(_default, request, cancellationToken);
+                }
+
+                throw new InvalidOperationException(
+                    $"Container '{containerName}' is not registered with CreateRouter(). " +
+                    $"Registered containers: {string.Join(", ", _handlers.Keys.OrderBy(k => k))}. " +
+                    $"Add it to the dictionary passed to FakeCosmosHandler.CreateRouter().");
             }
 
             return InvokeHandlerAsync(_default, request, cancellationToken);

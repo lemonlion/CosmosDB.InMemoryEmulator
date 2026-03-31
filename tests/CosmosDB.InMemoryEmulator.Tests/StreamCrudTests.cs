@@ -143,6 +143,17 @@ public class StreamCrudTests
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
+
+    [Fact]
+    public async Task UpsertItemStreamAsync_MissingLowercaseId_ThrowsWithSerializerHint()
+    {
+        var json = """{"Id":"1","partitionKey":"pk1","name":"PascalCase"}""";
+
+        var act = () => _container.UpsertItemStreamAsync(ToStream(json), new PartitionKey("pk1"));
+
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.Which.Message.Should().Contain("camelCase");
+    }
 }
 
 

@@ -546,6 +546,42 @@ public class FakeCosmosHandlerTests
     }
 
     [Fact]
+    public async Task Handler_Router_UnregisteredContainer_ThrowsDescriptiveError()
+    {
+        var orders = new InMemoryContainer("orders", "/customerId");
+        var customers = new InMemoryContainer("customers", "/id");
+
+        using var handler1 = new FakeCosmosHandler(orders);
+        using var handler2 = new FakeCosmosHandler(customers);
+
+        var router = FakeCosmosHandler.CreateRouter(new Dictionary<string, FakeCosmosHandler>
+        {
+            ["orders"] = handler1,
+            ["customers"] = handler2,
+        });
+
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(router) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+
+        var unknown = client.GetContainer("db", "unknown-container");
+
+        var act = () => unknown.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.Which.Message.Should().Contain("unknown-container");
+        ex.Which.Message.Should().Contain("CreateRouter");
+        ex.Which.Message.Should().Contain("customers");
+        ex.Which.Message.Should().Contain("orders");
+    }
+
+    [Fact]
     public async Task Handler_CountAsync_ReturnsCorrectCount()
     {
         var container = new InMemoryContainer("test", "/partitionKey");

@@ -49,7 +49,7 @@ var results = container
 - **State persistence** — export/import container state as JSON
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
-- **1116 tests** covering all features (25 skipped — see [Known Limitations](../../wiki/Known-Limitations))
+- **1118 tests** covering all features (25 skipped — see [Known Limitations](../../wiki/Known-Limitations))
 
 ## Installation
 

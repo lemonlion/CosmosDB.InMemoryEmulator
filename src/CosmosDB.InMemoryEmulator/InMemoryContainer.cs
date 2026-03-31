@@ -509,7 +509,10 @@ public class InMemoryContainer : Container
         var json = ReadStream(streamPayload);
         ValidateDocumentSize(json);
         var jObj = JsonParseHelpers.ParseJson(json);
-        var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException("Item must have an 'id' property.");
+        var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException(
+            "Item must have an 'id' property (case-sensitive, lowercase). " +
+            "If your C# model uses PascalCase 'Id', ensure CosmosClientOptions.Serializer is configured " +
+            "with camelCase naming (e.g. CosmosJsonNetSerializer with CamelCasePropertyNamesContractResolver).");
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(itemId, pk);
         if (!CheckIfMatchStream(requestOptions, key))
