@@ -207,6 +207,47 @@ public class InMemoryContainer : Container
         ImportState(File.ReadAllText(filePath));
     }
 
+    // ─── Point-in-time restore ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Restores the container to its state at the specified point in time by replaying
+    /// the change feed. All current data is replaced with the reconstructed state.
+    /// </summary>
+    /// <param name="pointInTime">The timestamp to restore to. Only changes recorded
+    /// at or before this time are included.</param>
+    public void RestoreToPointInTime(DateTimeOffset pointInTime)
+    {
+        List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> feedSnapshot;
+        lock (_changeFeedLock)
+        {
+            feedSnapshot = _changeFeed
+                .Where(e => e.Timestamp <= pointInTime)
+                .ToList();
+        }
+
+        // Replay: keep the last entry per (Id, PartitionKey), skip if it was a delete
+        var lastPerKey = new Dictionary<(string Id, string PartitionKey), (string Json, bool IsDelete)>();
+        foreach (var entry in feedSnapshot)
+        {
+            lastPerKey[(entry.Id, entry.PartitionKey)] = (entry.Json, entry.IsDelete);
+        }
+
+        _items.Clear();
+        _etags.Clear();
+        _timestamps.Clear();
+
+        foreach (var kvp in lastPerKey)
+        {
+            if (kvp.Value.IsDelete) continue;
+
+            var key = kvp.Key;
+            var etag = $"\"{Guid.NewGuid()}\"";
+            _items[key] = kvp.Value.Json;
+            _etags[key] = etag;
+            _timestamps[key] = pointInTime;
+        }
+    }
+
     // ─── IndexingPolicy ───────────────────────────────────────────────────────
 
     /// <summary>

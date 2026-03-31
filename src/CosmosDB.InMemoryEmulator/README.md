@@ -54,7 +54,7 @@ var query = container.GetItemLinqQueryable<Order>()
 
 ## Features
 
-Full CRUD, 100+ SQL functions, LINQ, transactional batches, change feed, patch operations, ETag concurrency, partition keys, TTL, fault injection, DI integration, state persistence, unique key policies.
+Full CRUD, 100+ SQL functions, LINQ, transactional batches, change feed, patch operations, ETag concurrency, partition keys, TTL, fault injection, DI integration, state persistence, point-in-time restore, unique key policies.
 
 ## Documentation
 

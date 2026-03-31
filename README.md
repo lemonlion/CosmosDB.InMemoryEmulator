@@ -47,9 +47,10 @@ var results = container
 - **Fault injection** — simulate 429 throttling, 503 errors, timeouts
 - **DI integration** — `UseInMemoryCosmosDB()` extension methods for `IServiceCollection`
 - **State persistence** — export/import container state as JSON
+- **Point-in-time restore** — restore a container to any previous point in time via change feed replay
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
-- **1119 tests** covering all features (23 skipped — see [Known Limitations](../../wiki/Known-Limitations))
+- **1128 tests** covering all features (23 skipped — see [Known Limitations](../../wiki/Known-Limitations))
 
 ## Installation
 
@@ -99,7 +100,7 @@ var page = await iterator.ReadNextAsync();
 | **[Dependency Injection](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Dependency-Injection)** | Step-by-step DI setup for all patterns |
 | **[Feed Iterator Usage](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feed-Iterator-Usage-Guide)** | Making `.ToFeedIterator()` work — `FakeCosmosHandler` vs `ToFeedIteratorOverridable()` |
 | **[SQL Queries](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/SQL-Queries)** | Full SQL reference — clauses, operators, 100+ functions |
-| **[Features](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Features)** | Patch, batches, change feed, ETags, TTL, stored procs, state persistence |
+| **[Features](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Features)** | Patch, batches, change feed, ETags, TTL, stored procs, state persistence, PITR |
 | **[API Reference](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/API-Reference)** | Complete class and method reference |
 | **[Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)** | Behavioural differences from real Cosmos DB |
 | **[Troubleshooting](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Troubleshooting)** | Common errors and how to fix them |
