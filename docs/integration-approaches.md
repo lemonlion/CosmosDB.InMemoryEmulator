@@ -18,6 +18,8 @@ There are three ways to integrate CosmosDB.InMemoryEmulator into your tests. Eac
 
 ¹ `.ToFeedIterator()` → `.ToFeedIteratorOverridable()`. Not needed if you don't use LINQ `.ToFeedIterator()`.
 
+² **Why LINQ execution differs by approach:** In Approaches 1 and 3, `GetItemLinqQueryable<T>()` returns a standard LINQ-to-Objects queryable — your `.Where()` and `.OrderBy()` execute as normal C# delegates against in-memory data. In Approach 2, the real SDK's `CosmosLinqQueryProvider` translates your LINQ expression tree into Cosmos DB SQL, sends it over HTTP, and `FakeCosmosHandler` executes that SQL through `CosmosSqlParser`. This means Approach 2 is the only one that tests the SDK's LINQ-to-SQL translation. Building a custom LINQ-to-SQL translator for Approaches 1/3 would be enormous effort and would only test our own translation — not the real SDK's — so there's no practical benefit.
+
 ² All approaches run entirely in-process — nothing goes over the network. With `FakeCosmosHandler`, the SDK's HTTP pipeline executes but the handler intercepts requests before they leave the process.
 
 ---

@@ -337,11 +337,10 @@ public sealed class FakeCosmosHandler : HttpMessageHandler
 
             // Rewritten query — on non-Windows platforms the SDK uses this verbatim.
             // For ORDER BY queries the SDK expects documents wrapped with
-            // orderByItems + payload, so the rewritten query must use that form.
+            // orderByItems + payload as separate SELECT fields (not SELECT VALUE).
             if (parsed.OrderByFields is { Length: > 0 })
             {
                 queryInfo["rewrittenQuery"] = BuildOrderByRewrittenQuery(parsed);
-                queryInfo["hasSelectValue"] = true;
             }
             else
             {
@@ -409,6 +408,33 @@ public sealed class FakeCosmosHandler : HttpMessageHandler
         }
     }
 
+    private static bool HasAggregateInSelect(CosmosSqlQuery parsed)
+    {
+        return parsed.SelectFields.Any(field => ContainsAggregate(field.SqlExpr));
+    }
+
+    private static bool ContainsAggregate(SqlExpression? expr)
+    {
+        return expr switch
+        {
+            FunctionCallExpression func => func.FunctionName.ToUpperInvariant() is "COUNT" or "SUM" or "MIN" or "MAX" or "AVG",
+            BinaryExpression bin => ContainsAggregate(bin.Left) || ContainsAggregate(bin.Right),
+            UnaryExpression unary => ContainsAggregate(unary.Operand),
+            _ => false
+        };
+    }
+
+    private static bool ContainsAvg(SqlExpression? expr)
+    {
+        return expr switch
+        {
+            FunctionCallExpression func => func.FunctionName.Equals("AVG", StringComparison.OrdinalIgnoreCase),
+            BinaryExpression bin => ContainsAvg(bin.Left) || ContainsAvg(bin.Right),
+            UnaryExpression unary => ContainsAvg(unary.Operand),
+            _ => false
+        };
+    }
+
     private async Task<HttpResponseMessage> HandleQueryAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -447,7 +473,9 @@ public sealed class FakeCosmosHandler : HttpMessageHandler
                 if (isOrderByQuery)
                 {
                     var payloadField = parsed.SelectFields
-                        .FirstOrDefault(field => field != orderByItemsField);
+                        .FirstOrDefault(field => string.Equals(field.Alias, "payload", StringComparison.OrdinalIgnoreCase))
+                        ?? parsed.SelectFields
+                            .FirstOrDefault(field => field != orderByItemsField);
                     var orderByAlias = orderByItemsField!.Alias ?? "orderByItems";
                     payloadPropertyName = payloadField?.Alias ?? "payload";
 
@@ -464,6 +492,23 @@ public sealed class FakeCosmosHandler : HttpMessageHandler
                     allDocuments = await DrainIterator(
                         _container.GetItemQueryIterator<JToken>(queryDef, requestOptions: requestOptions),
                         cancellationToken);
+
+                    // On non-Windows platforms, the SDK's AggregateQueryPipelineStage
+                    // expects each document to be a CosmosArray containing an object
+                    // with an "item" field. AVG additionally needs {"sum", "count"} form
+                    // since the SDK computes weighted averages across partitions.
+                    if (parsed.IsValueSelect && HasAggregateInSelect(parsed)
+                        && allDocuments.Count > 0 && allDocuments[0] is not JArray)
+                    {
+                        var isAvg = ContainsAvg(parsed.SelectFields[0].SqlExpr);
+                        allDocuments = allDocuments.Select(d =>
+                        {
+                            JToken itemValue = isAvg
+                                ? new JObject { ["sum"] = d, ["count"] = 1 }
+                                : d.DeepClone();
+                            return (JToken)new JArray(new JObject { ["item"] = itemValue });
+                        }).ToList();
+                    }
                 }
             }
             else
@@ -547,7 +592,7 @@ public sealed class FakeCosmosHandler : HttpMessageHandler
 
     /// <summary>
     /// Builds the ORDER BY rewritten query in the format the SDK expects:
-    /// <c>SELECT VALUE {"orderByItems": [{"item": c.field}], "payload": c} FROM c ... ORDER BY c.field ASC</c>
+    /// <c>SELECT c._rid, [{"item": c.field}] AS orderByItems, c AS payload FROM c ... ORDER BY c.field ASC</c>
     /// </summary>
     private static string BuildOrderByRewrittenQuery(CosmosSqlQuery parsed)
     {
@@ -559,10 +604,11 @@ public sealed class FakeCosmosHandler : HttpMessageHandler
             .ToList();
         var orderByItemsArray = $"[{string.Join(", ", orderByItemsParts)}]";
 
-        // Build SELECT VALUE {orderByItems, payload}
-        var sb = new StringBuilder("SELECT VALUE {\"orderByItems\": ");
+        // Build SELECT with top-level fields: _rid, orderByItems, payload
+        var sb = new StringBuilder($"SELECT {alias}._rid, ");
         sb.Append(orderByItemsArray);
-        sb.Append($", \"payload\": {alias}}}");
+        sb.Append(" AS orderByItems, ");
+        sb.Append($"{alias} AS payload");
 
         // FROM clause
         sb.Append($" FROM {alias}");
