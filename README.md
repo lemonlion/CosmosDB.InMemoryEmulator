@@ -90,15 +90,15 @@ var page = await iterator.ReadNextAsync();
 
 | Guide | Description |
 |-------|-------------|
-| **[Getting Started](docs/getting-started.md)** | Installation, quick start, first test |
-| **[Integration Approaches](docs/integration-approaches.md)** | Detailed comparison of all three approaches with pros/cons |
-| **[Dependency Injection](docs/dependency-injection.md)** | Step-by-step DI setup for all patterns |
-| **[Feed Iterator Usage](docs/feed-iterator-usage-guide.md)** | Making `.ToFeedIterator()` work — `FakeCosmosHandler` vs `ToFeedIteratorOverridable()` |
-| **[SQL Queries](docs/sql-queries.md)** | Full SQL reference — clauses, operators, 40+ functions |
-| **[Features](docs/features.md)** | Patch, batches, change feed, ETags, TTL, stored procs, state persistence |
-| **[API Reference](docs/api-reference.md)** | Complete class and method reference |
-| **[Known Limitations](docs/known-limitations.md)** | Behavioural differences from real Cosmos DB |
-| **[Comparison](docs/comparison.md)** | vs Official Emulator, vs community alternatives |
+| **[Getting Started](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Getting-Started)** | Installation, quick start, first test |
+| **[Integration Approaches](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Integration-Approaches)** | Detailed comparison of all three approaches with pros/cons |
+| **[Dependency Injection](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Dependency-Injection)** | Step-by-step DI setup for all patterns |
+| **[Feed Iterator Usage](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feed-Iterator-Usage-Guide)** | Making `.ToFeedIterator()` work — `FakeCosmosHandler` vs `ToFeedIteratorOverridable()` |
+| **[SQL Queries](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/SQL-Queries)** | Full SQL reference — clauses, operators, 40+ functions |
+| **[Features](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Features)** | Patch, batches, change feed, ETags, TTL, stored procs, state persistence |
+| **[API Reference](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/API-Reference)** | Complete class and method reference |
+| **[Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)** | Behavioural differences from real Cosmos DB |
+| **[Comparison](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Comparison)** | vs Official Emulator, vs community alternatives |
 
 ## Dependencies
 
