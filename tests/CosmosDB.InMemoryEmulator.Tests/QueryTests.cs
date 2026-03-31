@@ -836,6 +836,101 @@ public class QueryTests
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    //  Subquery ORDER BY / OFFSET / LIMIT
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ArraySubquery_WithOrderByDesc_ReturnsSorted()
+    {
+        var container = new InMemoryContainer("subq-order", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", scores = new[] { 30, 10, 50, 20, 40 } }), new PartitionKey("a"));
+
+        var query = new QueryDefinition(
+            "SELECT ARRAY(SELECT VALUE s FROM s IN c.scores ORDER BY s DESC) AS sorted FROM c WHERE c.id = '1'");
+
+        var results = await RunQuery<JObject>(container, query);
+        results.Should().ContainSingle();
+        var sorted = results[0]["sorted"]!.ToObject<int[]>();
+        sorted.Should().Equal(50, 40, 30, 20, 10);
+    }
+
+    [Fact]
+    public async Task ArraySubquery_WithOrderByAsc_ReturnsSortedAscending()
+    {
+        var container = new InMemoryContainer("subq-order-asc", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", scores = new[] { 30, 10, 50, 20, 40 } }), new PartitionKey("a"));
+
+        var query = new QueryDefinition(
+            "SELECT ARRAY(SELECT VALUE s FROM s IN c.scores ORDER BY s ASC) AS sorted FROM c WHERE c.id = '1'");
+
+        var results = await RunQuery<JObject>(container, query);
+        results.Should().ContainSingle();
+        var sorted = results[0]["sorted"]!.ToObject<int[]>();
+        sorted.Should().Equal(10, 20, 30, 40, 50);
+    }
+
+    [Fact]
+    public async Task ArraySubquery_WithOffsetLimit_ReturnsPage()
+    {
+        var container = new InMemoryContainer("subq-offset", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", items = new[] { "a", "b", "c", "d", "e" } }), new PartitionKey("a"));
+
+        var query = new QueryDefinition(
+            "SELECT ARRAY(SELECT VALUE t FROM t IN c.items OFFSET 1 LIMIT 2) AS page FROM c WHERE c.id = '1'");
+
+        var results = await RunQuery<JObject>(container, query);
+        results.Should().ContainSingle();
+        var page = results[0]["page"]!.ToObject<string[]>();
+        page.Should().Equal("b", "c");
+    }
+
+    [Fact]
+    public async Task ArraySubquery_WithOrderByAndOffsetLimit_ReturnsSortedPage()
+    {
+        var container = new InMemoryContainer("subq-combo", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", scores = new[] { 30, 10, 50, 20, 40 } }), new PartitionKey("a"));
+
+        // ORDER BY s ASC → [10, 20, 30, 40, 50] → OFFSET 1 LIMIT 2 → [20, 30]
+        var query = new QueryDefinition(
+            "SELECT ARRAY(SELECT VALUE s FROM s IN c.scores ORDER BY s ASC OFFSET 1 LIMIT 2) AS page FROM c WHERE c.id = '1'");
+
+        var results = await RunQuery<JObject>(container, query);
+        results.Should().ContainSingle();
+        var page = results[0]["page"]!.ToObject<int[]>();
+        page.Should().Equal(20, 30);
+    }
+
+    [Fact]
+    public async Task ScalarSubquery_WithOrderByDesc_ReturnsFirstSorted()
+    {
+        var container = new InMemoryContainer("subq-scalar-order", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", scores = new[] { 30, 10, 50, 20 } }), new PartitionKey("a"));
+
+        // Scalar subquery returns the first result after sorting — should be 50 (DESC)
+        var query = new QueryDefinition(
+            "SELECT (SELECT VALUE s FROM s IN c.scores ORDER BY s DESC) AS top FROM c WHERE c.id = '1'");
+
+        var results = await RunQuery<JObject>(container, query);
+        results.Should().ContainSingle();
+        results[0]["top"]!.Value<int>().Should().Be(50);
+    }
+
+    [Fact]
+    public async Task ArraySubquery_WithOrderBy_EmptyArray_ReturnsEmpty()
+    {
+        var container = new InMemoryContainer("subq-empty", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", scores = Array.Empty<int>() }), new PartitionKey("a"));
+
+        var query = new QueryDefinition(
+            "SELECT ARRAY(SELECT VALUE s FROM s IN c.scores ORDER BY s DESC OFFSET 0 LIMIT 3) AS sorted FROM c WHERE c.id = '1'");
+
+        var results = await RunQuery<JObject>(container, query);
+        results.Should().ContainSingle();
+        var sorted = results[0]["sorted"]!.ToObject<int[]>();
+        sorted.Should().BeEmpty();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     //  Multiple JOINs
     // ═══════════════════════════════════════════════════════════════════════════
 

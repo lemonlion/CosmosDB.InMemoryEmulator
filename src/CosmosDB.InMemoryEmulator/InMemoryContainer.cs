@@ -4700,6 +4700,63 @@ public class InMemoryContainer : Container
             results = results.Take(subquery.TopCount.Value).ToList();
         }
 
+        // Apply ORDER BY
+        if (subquery.OrderByFields is { Length: > 0 })
+        {
+            IOrderedEnumerable<string> ordered = null;
+            foreach (var field in subquery.OrderByFields)
+            {
+                var fieldPath = field.Field;
+                if (fieldPath.StartsWith(subquery.FromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                    fieldPath = fieldPath[(subquery.FromAlias.Length + 1)..];
+
+                object KeySelector(string json)
+                {
+                    var token = JsonParseHelpers.ParseJsonToken(json);
+                    // For SELECT VALUE results, the token is the scalar value itself
+                    if (token is not JObject obj)
+                    {
+                        // If the ORDER BY field matches the FROM alias, use the raw value
+                        return token.Type switch
+                        {
+                            JTokenType.Integer => token.Value<long>(),
+                            JTokenType.Float => token.Value<double>(),
+                            _ => (object)token.ToString()
+                        };
+                    }
+                    var selected = obj.SelectToken(fieldPath);
+                    if (selected is null) return null;
+                    return selected.Type switch
+                    {
+                        JTokenType.Integer => selected.Value<long>(),
+                        JTokenType.Float => selected.Value<double>(),
+                        _ => (object)selected.ToString()
+                    };
+                }
+
+                var asc = field.Ascending;
+                var comparer = Comparer<object>.Create((l, r) =>
+                {
+                    var result = CompareValues(l, r);
+                    return asc ? result : -result;
+                });
+                ordered = ordered == null ? results.OrderBy(KeySelector, comparer) : ordered.ThenBy(KeySelector, comparer);
+            }
+            results = ordered?.ToList() ?? results;
+        }
+
+        // Apply OFFSET
+        if (subquery.Offset.HasValue)
+        {
+            results = results.Skip(subquery.Offset.Value).ToList();
+        }
+
+        // Apply LIMIT
+        if (subquery.Limit.HasValue)
+        {
+            results = results.Take(subquery.Limit.Value).ToList();
+        }
+
         return results;
     }
 

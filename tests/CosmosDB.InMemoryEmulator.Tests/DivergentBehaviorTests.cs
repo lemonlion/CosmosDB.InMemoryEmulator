@@ -36,22 +36,33 @@ public class CrossPartitionAggregateTests
     }
 }
 
-// ─── M9: Subqueries ignore ORDER BY and OFFSET/LIMIT ────────────────────
+// ─── M9: Subquery ORDER BY and OFFSET/LIMIT — RESOLVED ──────────────────
 
 public class SubqueryOrderByTests
 {
-    // DIVERGENT: Subqueries in the emulator do not support ORDER BY or OFFSET/LIMIT.
-    // Real Cosmos DB evaluates these clauses within the subquery scope.
-    [Fact(Skip = "M9: Subquery ORDER BY and OFFSET/LIMIT are not evaluated. " +
-                  "The CosmosSqlParser parses these clauses for top-level queries but " +
-                  "the subquery evaluation path (EvaluateSubquery/EvaluateExists) only " +
-                  "applies WHERE filtering. Supporting this requires significant expansion " +
-                  "of the subquery evaluation pipeline to include sorting and pagination.")]
-    public void Subquery_WithOrderByAndLimit_ShouldReturnOrderedSubset()
+    [Fact]
+    public async Task Subquery_WithOrderByAndLimit_ShouldReturnOrderedSubset()
     {
-        // Expected real Cosmos behavior:
-        // SELECT * FROM c WHERE c.id IN (SELECT VALUE c2.id FROM c2 ORDER BY c2.score OFFSET 0 LIMIT 5)
-        // should return only the top 5 items by score.
+        var container = new InMemoryContainer("subq-m9", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", scores = new[] { 30, 10, 50, 20, 40 } }),
+            new PartitionKey("a"));
+
+        // Subquery ORDER BY + OFFSET/LIMIT: sort ascending, skip first, take 3 → [20, 30, 40]
+        var query = new QueryDefinition(
+            "SELECT ARRAY(SELECT VALUE s FROM s IN c.scores ORDER BY s ASC OFFSET 1 LIMIT 3) AS result FROM c WHERE c.id = '1'");
+
+        var iterator = container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        var result = results[0]["result"]!.ToObject<int[]>();
+        result.Should().Equal(20, 30, 40);
     }
 }
 
