@@ -1907,6 +1907,10 @@ public class InMemoryContainer : Container
         {
             items = ApplyOrderBy(items, parsed.OrderBy, parsed.FromAlias);
         }
+        else if (parsed.RankExpression is not null)
+        {
+            items = ApplyOrderByRank(items, parsed.RankExpression, parsed.FromAlias, parameters);
+        }
 
         // TOP
         if (parsed.TopCount.HasValue)
@@ -1952,6 +1956,26 @@ public class InMemoryContainer : Container
 
     private static List<string> ApplyOrderBy(List<string> items, OrderByClause orderBy, string fromAlias)
         => ApplyOrderByFields(items, new[] { new OrderByField(orderBy.Field, orderBy.Ascending) }, fromAlias);
+
+    private static List<string> ApplyOrderByRank(
+        List<string> items, SqlExpression rankExpr, string fromAlias, IDictionary<string, object> parameters)
+    {
+        // ORDER BY RANK sorts by the evaluated expression descending (highest score first).
+        return items
+            .OrderByDescending(json =>
+            {
+                var jObj = JsonParseHelpers.ParseJson(json);
+                var score = EvaluateSqlExpression(rankExpr, jObj, fromAlias, parameters);
+                return score switch
+                {
+                    double d => d,
+                    long l => (double)l,
+                    int i => (double)i,
+                    _ => 0.0
+                };
+            })
+            .ToList();
+    }
 
     private static List<string> ApplyOrderByFields(List<string> items, OrderByField[] orderByFields, string fromAlias)
     {
@@ -4016,6 +4040,74 @@ public class InMemoryContainer : Container
                     return item["_rid"]?.Value<string>() ?? item["id"]?.Value<string>();
                 }
 
+            // ── Full-text search functions (approximate) ──
+            // These use case-insensitive substring matching instead of real NLP tokenization.
+            case "FULLTEXTCONTAINS":
+                {
+                    if (args.Length < 2) return false;
+                    var text = args[0]?.ToString();
+                    var term = args[1]?.ToString();
+                    if (text is null || term is null) return false;
+                    return text.Contains(term, StringComparison.OrdinalIgnoreCase);
+                }
+            case "FULLTEXTCONTAINSALL":
+                {
+                    if (args.Length < 2) return false;
+                    var text = args[0]?.ToString();
+                    if (text is null) return false;
+                    for (var i = 1; i < args.Length; i++)
+                    {
+                        var term = args[i]?.ToString();
+                        if (term is null || !text.Contains(term, StringComparison.OrdinalIgnoreCase))
+                            return false;
+                    }
+                    return true;
+                }
+            case "FULLTEXTCONTAINSANY":
+                {
+                    if (args.Length < 2) return false;
+                    var text = args[0]?.ToString();
+                    if (text is null) return false;
+                    for (var i = 1; i < args.Length; i++)
+                    {
+                        var term = args[i]?.ToString();
+                        if (term is not null && text.Contains(term, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
+                    return false;
+                }
+            case "FULLTEXTSCORE":
+                {
+                    // Naive term-frequency scoring: count occurrences of each search term
+                    // in the field text. Returns the total count as a double.
+                    // Real Cosmos DB uses BM25 with IDF and length normalization.
+                    if (args.Length < 2) return 0.0;
+                    var text = args[0]?.ToString();
+                    if (text is null) return 0.0;
+
+                    var score = 0.0;
+                    // arg[1] may be a JArray (from [...] literal) or individual terms
+                    if (args[1] is JArray searchTerms)
+                    {
+                        foreach (var termToken in searchTerms)
+                        {
+                            var term = termToken.Value<string>();
+                            if (term is not null)
+                                score += CountOccurrences(text, term);
+                        }
+                    }
+                    else
+                    {
+                        for (var i = 1; i < args.Length; i++)
+                        {
+                            var term = args[i]?.ToString();
+                            if (term is not null)
+                                score += CountOccurrences(text, term);
+                        }
+                    }
+                    return score;
+                }
+
             // ── Spatial functions ──
             case "ST_DISTANCE":
                 return args.Length >= 2 ? StDistance(args[0], args[1]) : null;
@@ -4263,6 +4355,18 @@ public class InMemoryContainer : Container
         string s => s.Length > 0,
         _ => true
     };
+
+    private static int CountOccurrences(string text, string term)
+    {
+        var count = 0;
+        var idx = 0;
+        while ((idx = text.IndexOf(term, idx, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+            count++;
+            idx += term.Length;
+        }
+        return count;
+    }
 
     private static JObject EvaluateObjectLiteral(
         ObjectLiteralExpression obj, JObject item, string fromAlias, IDictionary<string, object> parameters)

@@ -36,7 +36,7 @@ var results = container
 
 - **Full CRUD** — typed and stream variants with proper status codes and ETags
 - **System metadata** — `_ts` and `_etag` injected into stored items, matching real Cosmos DB
-- **Rich SQL query engine** — 100+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries
+- **Rich SQL query engine** — 100+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries, full-text search
 - **LINQ support** — `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` interception
 - **Transactional batches** — atomic execution with rollback on failure
 - **Change feed** — iterators, checkpoints, delete tombstones, and `ChangeFeedProcessor`
@@ -51,7 +51,7 @@ var results = container
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
 - **Triggers** — pre-trigger and post-trigger execution via C# handlers
-- **1212 tests** covering all features (28 skipped — see [Known Limitations](../../wiki/Known-Limitations))
+- **1237 tests** covering all features (28 skipped — see [Known Limitations](../../wiki/Known-Limitations))
 
 ## Installation
 

@@ -195,7 +195,8 @@ public sealed record CosmosSqlQuery(
     WhereExpression Having = null,
     SqlExpression WhereExpr = null,
     SqlExpression HavingExpr = null,
-    string FromSource = null);
+    string FromSource = null,
+    SqlExpression RankExpression = null);
 
 public sealed record OrderByClause(string Field, bool Ascending);
 
@@ -789,12 +790,20 @@ public static class CosmosSqlParser
             from expr in Expr
             select expr
         ).OptionalOrDefault(null)
-        from orderBy in (
+        from orderByResult in (
             from orderKw in Token.EqualTo(CosmosSqlToken.Order)
             from byKw in Token.EqualTo(CosmosSqlToken.By)
-            from orderFields in OrderByFieldParser.ManyDelimitedBy(Token.EqualTo(CosmosSqlToken.Comma))
-            select orderFields
-        ).OptionalOrDefault(null)
+            from result in (
+                from rankKw in Token.EqualTo(CosmosSqlToken.Identifier)
+                    .Where(t => string.Equals(t.Span.ToStringValue(), "RANK", StringComparison.OrdinalIgnoreCase))
+                from expr in Expr
+                select (Fields: (OrderByField[])null, RankExpr: (SqlExpression)expr)
+            ).Try().Or(
+                from orderFields in OrderByFieldParser.ManyDelimitedBy(Token.EqualTo(CosmosSqlToken.Comma))
+                select (Fields: orderFields, RankExpr: (SqlExpression)null)
+            )
+            select result
+        ).OptionalOrDefault(default)
         from offset in (
             from offsetKw in Token.EqualTo(CosmosSqlToken.Offset)
             from n in Token.EqualTo(CosmosSqlToken.NumberLiteral).Select(t => int.Parse(t.Span.ToStringValue()))
@@ -809,7 +818,7 @@ public static class CosmosSqlParser
             distinct.HasValue, top, value_.HasValue, fields,
             fromAlias, fromSource, joins, where_,
             groupBy?.Select(ExprToString).ToArray(),
-            having, orderBy, offset, limit);
+            having, orderByResult.Fields, offset, limit, orderByResult.RankExpr);
 
     // ──────────────────────────────────────────────
     //  Public API
@@ -1094,6 +1103,10 @@ public static class CosmosSqlParser
                 $"{field.Field} {(field.Ascending ? "ASC" : "DESC")}"));
             sb.Append($" ORDER BY {orderByStr}");
         }
+        else if (parsed.RankExpression is not null)
+        {
+            sb.Append($" ORDER BY RANK {ExprToString(parsed.RankExpression)}");
+        }
 
         // OFFSET / LIMIT
         if (parsed.Offset.HasValue)
@@ -1303,7 +1316,7 @@ public static class CosmosSqlParser
         JoinClause[] joins, SqlExpression whereExpr,
         string[] groupBy, SqlExpression havingExpr,
         OrderByField[] orderByFields,
-        int? offset, int? limit)
+        int? offset, int? limit, SqlExpression rankExpr = null)
     {
         var isSelectAll = fields.Length == 1 && fields[0].Expression == "*";
         var where = whereExpr != null ? ToWhereExpression(whereExpr) : null;
@@ -1336,7 +1349,8 @@ public static class CosmosSqlParser
             Having: having,
             WhereExpr: whereExpr,
             HavingExpr: rawHavingExpr,
-            FromSource: fromSource);
+            FromSource: fromSource,
+            RankExpression: rankExpr);
     }
 
     // Captures tokens inside balanced parentheses as a raw string
