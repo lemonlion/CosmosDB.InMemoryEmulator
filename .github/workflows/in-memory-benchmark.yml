@@ -1,0 +1,24 @@
+name: In-Memory Benchmark
+
+on:
+  workflow_dispatch:
+
+jobs:
+  performance-tests:
+    runs-on: ubuntu-latest
+    env:
+      LOAD_TEST_RPS: 400
+      LOAD_TEST_DURATION_SECONDS: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build
+        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
+
+      - name: In-Memory Performance Tests
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Performance --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed" --filter "FullyQualifiedName~LoadTests"
