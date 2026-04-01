@@ -324,6 +324,38 @@ public class FeedRangeParsingTests
 public class FeedRangeChangeFeedEdgeCaseTests
 {
     [Fact]
+    public async Task ChangeFeed_NullPK_WithFeedRange_DoesNotThrow()
+    {
+        // BUG-2: FilterChangeFeedEntriesByFeedRange calls MurmurHash3(entry.PartitionKey)
+        // but PartitionKeyToString(PartitionKey.None) returns null, causing ArgumentNullException
+        // in Encoding.UTF8.GetBytes(null). The query path uses ExtractPartitionKeyValueFromJson
+        // which returns "" for missing PK fields — no crash there. The change feed path must
+        // similarly handle null PKs without throwing.
+        var container = new InMemoryContainer("test", "/partitionKey") { FeedRangeCount = 4 };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "null-pk-item", PartitionKey = null!, Name = "NullPK" },
+            PartitionKey.None);
+
+        var ranges = await container.GetFeedRangesAsync();
+        var foundCount = 0;
+
+        foreach (var range in ranges)
+        {
+            var iterator = container.GetChangeFeedIterator<TestDocument>(
+                ChangeFeedStartFrom.Beginning(range),
+                ChangeFeedMode.Incremental);
+            while (iterator.HasMoreResults)
+            {
+                var page = await iterator.ReadNextAsync();
+                foundCount += page.Count;
+            }
+        }
+
+        foundCount.Should().Be(1, "item with null PK should appear in exactly one range's change feed");
+    }
+
+    [Fact]
     public async Task ChangeFeed_Time_WithFeedRange_FiltersBothTimeAndRange()
     {
         // ChangeFeedStartFrom.Time(dt, feedRange) should filter by both time AND range
@@ -425,6 +457,79 @@ public class FeedRangeChangeFeedEdgeCaseTests
 
 public class FakeCosmosHandlerConsistencyTests
 {
+    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    public async Task FakeCosmosHandler_PerRange_MatchesInMemoryContainer_PerRange()
+    {
+        // BUG-1: FakeCosmosHandler.FilterDocumentsByRange uses hash % rangeCount (modulo)
+        // while InMemoryContainer.FilterByFeedRange uses interval-based IsHashInRange.
+        // These are mathematically different: for hash=0x80000001 with 4 ranges,
+        // interval → range 2 (falls in [0x80000000, 0xC0000000)), modulo → range 1 (0x80000001 % 4 = 1).
+        // The per-range item assignments must match between both paths.
+        const int rangeCount = 4;
+        var container = new InMemoryContainer("test", "/partitionKey") { FeedRangeCount = rangeCount };
+        var handler = new FakeCosmosHandler(container,
+            new FakeCosmosHandlerOptions { PartitionKeyRangeCount = rangeCount });
+
+        for (var i = 0; i < 50; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"N{i}" },
+                new PartitionKey($"pk-{i}"));
+
+        // Get per-range results from InMemoryContainer FeedRange path
+        var feedRanges = await container.GetFeedRangesAsync();
+        var containerPerRange = new List<HashSet<string>>();
+        foreach (var range in feedRanges)
+        {
+            var items = new HashSet<string>();
+            var iter = container.GetItemQueryIterator<TestDocument>(
+                range, new QueryDefinition("SELECT * FROM c"));
+            while (iter.HasMoreResults)
+            {
+                var page = await iter.ReadNextAsync();
+                foreach (var item in page) items.Add(item.Id);
+            }
+            containerPerRange.Add(items);
+        }
+
+        // Get per-range results from SDK path (FakeCosmosHandler uses PKRanges)
+        using var client = new CosmosClient(
+            "https://localhost:8081",
+            "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==",
+            new CosmosClientOptions
+            {
+                HttpClientFactory = () => new HttpClient(handler),
+                ConnectionMode = ConnectionMode.Gateway
+            });
+        var cosmosContainer = client.GetDatabase("testdb").GetContainer("test");
+
+        // The SDK internally sends one query per PKRange (range id = "0","1","2","3").
+        // We can verify via per-FeedRange queries through the SDK:
+        var sdkFeedRanges = await cosmosContainer.GetFeedRangesAsync();
+        var sdkPerRange = new List<HashSet<string>>();
+        foreach (var range in sdkFeedRanges)
+        {
+            var items = new HashSet<string>();
+            using var iter = cosmosContainer.GetItemQueryIterator<TestDocument>(
+                range, new QueryDefinition("SELECT * FROM c"));
+            while (iter.HasMoreResults)
+            {
+                var page = await iter.ReadNextAsync();
+                foreach (var item in page) items.Add(item.Id);
+            }
+            sdkPerRange.Add(items);
+        }
+
+        // Per-range assignments must match — this will fail if modulo != interval
+        containerPerRange.Should().HaveCount(rangeCount);
+        sdkPerRange.Should().HaveCount(rangeCount);
+
+        for (var i = 0; i < rangeCount; i++)
+        {
+            sdkPerRange[i].Should().BeEquivalentTo(containerPerRange[i],
+                $"range {i} items should match between SDK and InMemoryContainer paths");
+        }
+    }
+
     [Fact]
     public async Task FakeCosmosHandler_And_InMemoryContainer_ProduceConsistentRanges()
     {

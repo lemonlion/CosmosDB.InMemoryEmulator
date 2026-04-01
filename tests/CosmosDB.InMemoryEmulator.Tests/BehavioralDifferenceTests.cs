@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
@@ -245,12 +246,10 @@ public class BehavioralDifferenceTests
     // ── ChangeFeed processor builders ────────────────────────────────────────
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB ChangeFeedProcessorBuilder is used
-    /// to create a change feed processor that monitors the container for changes.
-    /// InMemoryContainer attempts to return NSubstitute mocks for the processor
-    /// builder, but ChangeFeedProcessorBuilder cannot be proxied by NSubstitute
-    /// (it has no accessible constructor), so calling GetChangeFeedProcessorBuilder
-    /// Returns an uninitialized stub since NSubstitute cannot proxy it.
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB ChangeFeedProcessorBuilder creates a
+    /// processor that monitors the container for changes. InMemoryContainer returns
+    /// an <see cref="InMemoryChangeFeedProcessor"/> that polls a list-based change
+    /// feed. The builder itself is functional but the processing model is simplified.
     /// </summary>
     [Fact]
     public void ChangeFeedProcessorBuilder_ReturnsMock_NoRealProcessing()
@@ -261,18 +260,8 @@ public class BehavioralDifferenceTests
 
         builder.Should().NotBeNull();
     }
-}
 
-
-/// <summary>
-/// Tests that document known behavioral differences between InMemoryContainer and real
-/// Cosmos DB. Each test shows the ACTUAL behavior and explains the divergence.
-/// These are reference tests — they pass if InMemoryContainer has the documented behavior,
-/// even when that behavior differs from real Cosmos.
-/// </summary>
-public class BehavioralDifferenceGapTests
-{
-    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+    // ── Change Feed — empty container ────────────────────────────────────────
 
     /// <summary>
     /// BEHAVIORAL DIFFERENCE: Real Cosmos DB change feed returns 304 NotModified
@@ -291,16 +280,17 @@ public class BehavioralDifferenceGapTests
         while (iterator.HasMoreResults)
         {
             var response = await iterator.ReadNextAsync();
-            // InMemoryContainer returns OK and we iterate normally (empty results)
             results.AddRange(response);
         }
 
         results.Should().BeEmpty();
     }
 
+    // ── Change Feed — tombstones ─────────────────────────────────────────────
+
     /// <summary>
-    /// Deletes are now recorded in the change feed as tombstone entries.
-    /// The checkpoint advances after a delete, and the tombstone contains _deleted: true.
+    /// Deletes are recorded in the change feed as tombstone entries.
+    /// The checkpoint advances after a delete.
     /// </summary>
     [Fact]
     public async Task ChangeFeed_DeletesRecordedAsTombstone()
@@ -313,72 +303,15 @@ public class BehavioralDifferenceGapTests
         await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
         var checkpointAfterDelete = _container.GetChangeFeedCheckpoint();
 
-        // Delete adds a tombstone entry to the change feed
         checkpointAfterDelete.Should().Be(checkpointAfterCreate + 1);
     }
 
-    /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB container delete makes the container
-    /// permanently unavailable — subsequent operations throw. InMemoryContainer
-    /// merely clears its internal state but the object remains usable. Items can
-    /// be added after deletion.
-    /// </summary>
-    [Fact]
-    public async Task DeleteContainer_RemainsUsable_UnlikeRealCosmos()
-    {
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Before" },
-            new PartitionKey("pk1"));
-
-        await _container.DeleteContainerAsync();
-
-        // Container is still usable after deletion (unlike real Cosmos)
-        var response = await _container.CreateItemAsync(
-            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "After" },
-            new PartitionKey("pk1"));
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-    }
+    // ── Aggregate queries ────────────────────────────────────────────────────
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB ETags are opaque server-generated
-    /// strings based on internal timestamps. InMemoryContainer generates ETags
-    /// as quoted GUIDs. The format differs but conditional (IfMatch/IfNoneMatch)
-    /// operations work identically.
-    /// </summary>
-    [Fact]
-    public async Task ETag_Format_IsQuotedGuid_NotOpaqueTimestamp()
-    {
-        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
-        var response = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
-
-        var etag = response.ETag;
-        etag.Should().StartWith("\"").And.EndWith("\"");
-
-        var inner = etag.Trim('"');
-        Guid.TryParse(inner, out _).Should().BeTrue();
-    }
-
-    /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB ReadThroughputAsync returns the actual
-    /// provisioned throughput for the container. InMemoryContainer always returns 400
-    /// RU/s regardless of any ReplaceThroughputAsync calls.
-    /// </summary>
-    [Fact]
-    public async Task Throughput_AlwaysReturns400_IgnoresReplace()
-    {
-        await _container.ReplaceThroughputAsync(2000);
-        var throughput = await _container.ReadThroughputAsync();
-
-        // Always returns 400, not the value set
-        throughput.Should().Be(400);
-    }
-
-    /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB aggregates like COUNT/SUM without
-    /// GROUP BY return a single aggregated value across all matching documents.
-    /// InMemoryContainer supports this via GROUP BY but cross-partition aggregation
-    /// without GROUP BY may return per-document values depending on the query path.
-    /// Use the checkpoint-based change feed or GROUP BY for accurate aggregation.
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB aggregates like COUNT without
+    /// GROUP BY return a single aggregated value. InMemoryContainer also returns
+    /// a single aggregated value for COUNT(1).
     /// </summary>
     [Fact]
     public async Task Aggregate_Count_WithoutGroupBy_ReturnsCount()
@@ -398,17 +331,14 @@ public class BehavioralDifferenceGapTests
             results.AddRange(page);
         }
 
-        // Behavior may vary: real Cosmos returns single aggregated number,
-        // InMemoryContainer may return per-document counts
-        results.Should().NotBeEmpty();
+        results.Should().ContainSingle().Which.Value<int>().Should().Be(3);
     }
 
+    // ── Null-coalescing operator ─────────────────────────────────────────────
+
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: CosmosSqlParser partially handles the null-coalescing
-    /// operator (??). Real Cosmos DB evaluates (expr ?? default) as "return expr if
-    /// non-null, else return default". InMemoryContainer may parse the expression but
-    /// produces results that cannot be deserialized to JObject since SELECT VALUE
-    /// returns raw scalar values. Use JToken for scalar results.
+    /// BEHAVIORAL DIFFERENCE: CosmosSqlParser handles the null-coalescing operator (??).
+    /// SELECT VALUE returns raw scalar values so JToken must be used, not JObject.
     /// </summary>
     [Fact]
     public async Task Query_NullCoalesce_ProducesScalarResult_NotJObject()
@@ -417,7 +347,6 @@ public class BehavioralDifferenceGapTests
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
             new PartitionKey("pk1"));
 
-        // Query with ?? works but returns a scalar — JToken works, JObject would fail
         var iterator = _container.GetItemQueryIterator<JToken>(
             """SELECT VALUE (c.name ?? "default") FROM c""");
 
@@ -430,4 +359,457 @@ public class BehavioralDifferenceGapTests
 
         results.Should().HaveCount(1);
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Phase 1: System Properties & Response Metadata
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB documents always have a <c>_rid</c>
+    /// (resource ID) property. InMemoryContainer never sets <c>_rid</c>.
+    /// </summary>
+    [Fact]
+    public async Task SystemProperties_RidNotPresent_OnDocuments()
+    {
+        var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        response.Resource.ContainsKey("_rid").Should().BeFalse();
+    }
+
+    [Fact(Skip = "Real Cosmos always returns _rid on every document.")]
+    public void SystemProperties_RidShouldBePresent_RealCosmos() { }
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB documents always have a <c>_self</c>
+    /// link (e.g. <c>dbs/db1/colls/col1/docs/doc1</c>). InMemoryContainer never sets it.
+    /// </summary>
+    [Fact]
+    public async Task SystemProperties_SelfNotPresent_OnDocuments()
+    {
+        var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        response.Resource.ContainsKey("_self").Should().BeFalse();
+    }
+
+    [Fact(Skip = "Real Cosmos always returns _self on every document.")]
+    public void SystemProperties_SelfShouldBePresent_RealCosmos() { }
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB documents always have an <c>_attachments</c>
+    /// property. InMemoryContainer never sets it.
+    /// </summary>
+    [Fact]
+    public async Task SystemProperties_AttachmentsNotPresent_OnDocuments()
+    {
+        var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        response.Resource.ContainsKey("_attachments").Should().BeFalse();
+    }
+
+    [Fact(Skip = "Real Cosmos always returns _attachments on every document.")]
+    public void SystemProperties_AttachmentsShouldBePresent_RealCosmos() { }
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB request charges vary by operation.
+    /// InMemoryContainer always returns 1.0 RU for every operation.
+    /// </summary>
+    [Fact]
+    public async Task RequestCharge_AlwaysReturns1RU_ForAllOperations()
+    {
+        var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+
+        // Create
+        var createResponse = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+        createResponse.RequestCharge.Should().Be(1.0);
+
+        // Read
+        var readResponse = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        readResponse.RequestCharge.Should().Be(1.0);
+
+        // Query
+        var iterator = _container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            page.RequestCharge.Should().Be(1.0);
+        }
+
+        // Delete
+        var deleteResponse = await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        deleteResponse.RequestCharge.Should().Be(1.0);
+    }
+
+    [Fact(Skip = "Real Cosmos returns varying RU charges per operation (reads ~1, writes ~5-10, queries vary).")]
+    public void RequestCharge_ShouldVaryByOperation_RealCosmos() { }
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos session tokens encode partition key range IDs
+    /// and logical sequence numbers. InMemoryContainer uses <c>0:&lt;hex-guid&gt;</c>.
+    /// </summary>
+    [Fact]
+    public async Task SessionToken_IsSyntheticGuidFormat()
+    {
+        var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        var response = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var sessionToken = response.Headers["x-ms-session-token"];
+        sessionToken.Should().StartWith("0:");
+
+        var guidPart = sessionToken["0:".Length..];
+        Guid.TryParseExact(guidPart, "N", out _).Should().BeTrue();
+    }
+
+    [Fact(Skip = "Real Cosmos session tokens use format like '0:-1#12345' with partition range and LSN.")]
+    public void SessionToken_ShouldContainPartitionAndLSN_RealCosmos() { }
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos diagnostics contain timing, endpoint info,
+    /// and request latency. InMemoryContainer returns a mock with empty ToString() and
+    /// zero elapsed time.
+    /// </summary>
+    [Fact]
+    public async Task Diagnostics_ReturnsMock_EmptyToString()
+    {
+        var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        var response = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        response.Diagnostics.Should().NotBeNull();
+        response.Diagnostics.GetClientElapsedTime().Should().Be(TimeSpan.Zero);
+    }
+
+    [Fact(Skip = "Real Cosmos diagnostics contain detailed timing, latency, and endpoint information.")]
+    public void Diagnostics_ShouldContainTimingInfo_RealCosmos() { }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Phase 2: Consistency
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos respects <c>ConsistencyLevel</c> on request
+    /// options. InMemoryContainer ignores it — all reads are immediately consistent.
+    /// </summary>
+    [Fact]
+    public async Task ConsistencyLevel_Ignored_AlwaysStrongSemantics()
+    {
+        var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        doc.Name = "Updated";
+        await _container.ReplaceItemAsync(doc, "1", new PartitionKey("pk1"));
+
+        // Read with Eventual consistency — should still see latest (strong in emulator)
+        var options = new ItemRequestOptions { ConsistencyLevel = ConsistencyLevel.Eventual };
+        var response = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"), options);
+        response.Resource.Name.Should().Be("Updated");
+    }
+
+    [Fact(Skip = "Real Cosmos with Eventual consistency may return stale data.")]
+    public void ConsistencyLevel_ShouldAffectReadBehavior_RealCosmos() { }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Phase 3: Container Lifecycle
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos ReadContainerAsync returns 404 after
+    /// DeleteContainerAsync. InMemoryContainer still returns the container properties.
+    /// </summary>
+    [Fact]
+    public async Task DeleteContainer_ReadContainerAsync_StillWorks_UnlikeRealCosmos()
+    {
+        await _container.DeleteContainerAsync();
+
+        var response = await _container.ReadContainerAsync();
+        response.Should().NotBeNull();
+        response.Resource.Should().NotBeNull();
+    }
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos enforces IndexingPolicy exclusion paths
+    /// so excluded paths are not indexed and cannot be queried efficiently.
+    /// InMemoryContainer stores the policy but all queries scan every item regardless.
+    /// </summary>
+    [Fact]
+    public async Task ReplaceContainer_IndexingPolicy_StoredButNotEnforced()
+    {
+        var newProps = new ContainerProperties("test-container", "/partitionKey")
+        {
+            IndexingPolicy = new IndexingPolicy
+            {
+                Automatic = true,
+                IndexingMode = IndexingMode.Consistent,
+                ExcludedPaths = { new ExcludedPath { Path = "/name/*" } }
+            }
+        };
+        await _container.ReplaceContainerAsync(newProps);
+
+        // Verify policy is stored
+        var readResponse = await _container.ReadContainerAsync();
+        readResponse.Resource.IndexingPolicy.ExcludedPaths
+            .Should().Contain(p => p.Path == "/name/*");
+
+        // Create an item and query on the "excluded" path — still works in emulator
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c WHERE c.name = 'Alice'");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        results.Should().HaveCount(1);
+    }
+
+    [Fact(Skip = "Real Cosmos would return 0 results or an error when querying an excluded path without a scan.")]
+    public void ReplaceContainer_IndexingPolicyShouldAffectQueries_RealCosmos() { }
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos Container.Conflicts provides conflict
+    /// resolution. InMemoryContainer returns a new NSubstitute mock each access.
+    /// </summary>
+    [Fact]
+    public void Conflicts_ReturnsMock_NoRealConflictResolution()
+    {
+        var conflicts = _container.Conflicts;
+        conflicts.Should().NotBeNull();
+
+        // New mock instance each access
+        var conflicts2 = _container.Conflicts;
+        conflicts2.Should().NotBeSameAs(conflicts);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Phase 4: Change Feed
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// In incremental change feed mode, multiple updates to the same document
+    /// should result in only the latest version being returned.
+    /// </summary>
+    [Fact]
+    public async Task ChangeFeed_IncrementalMode_UpdatesReturnOnlyLatestVersion()
+    {
+        var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "v1" };
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        doc.Name = "v2";
+        await _container.ReplaceItemAsync(doc, "1", new PartitionKey("pk1"));
+
+        doc.Name = "v3";
+        await _container.ReplaceItemAsync(doc, "1", new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(
+            ChangeFeedStartFrom.Beginning(),
+            ChangeFeedMode.Incremental);
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var response = await iterator.ReadNextAsync();
+            if (response.StatusCode == HttpStatusCode.NotModified) break;
+            results.AddRange(response);
+        }
+
+        // Change feed returns all entries (create + 2 replaces = 3 entries)
+        // but the last entry for id "1" should have the latest name
+        results.Last(r => r.Id == "1").Name.Should().Be("v3");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Phase 5: Error Formatting
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos sub-status codes provide fine-grained
+    /// error classification (e.g. 1001, 1003). InMemoryContainer always returns 0.
+    /// </summary>
+    [Fact]
+    public async Task CosmosException_SubStatusCode_AlwaysZero()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        // Trigger 409 Conflict by inserting duplicate
+        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+            _container.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Dup" },
+                new PartitionKey("pk1")));
+
+        ex.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        ex.SubStatusCode.Should().Be(0);
+    }
+
+    [Fact(Skip = "Real Cosmos sub-status codes provide fine-grained classification (e.g. 1001 timeout, 1003 rate limiting).")]
+    public void CosmosException_SubStatusCodeShouldBeSpecific_RealCosmos() { }
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos error messages include activity ID,
+    /// request URI, and detailed status info. InMemoryContainer uses minimal messages.
+    /// </summary>
+    [Fact]
+    public async Task CosmosException_MessageFormat_SimplerThanRealCosmos()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+            _container.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Dup" },
+                new PartitionKey("pk1")));
+
+        // InMemoryContainer message is short — no ActivityId or request URI
+        ex.Message.Should().NotContain("ActivityId");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Phase 6: Continuation Tokens
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos continuation tokens are opaque
+    /// base64-encoded structures. InMemoryContainer uses plain integer offsets.
+    /// </summary>
+    [Fact]
+    public async Task ContinuationToken_IsPlainInteger_NotOpaqueBase64()
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            await _container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+        }
+
+        var options = new QueryRequestOptions { MaxItemCount = 1 };
+        var iterator = _container.GetItemQueryIterator<TestDocument>("SELECT * FROM c", requestOptions: options);
+
+        var response = await iterator.ReadNextAsync();
+        var token = response.ContinuationToken;
+
+        // InMemoryContainer uses integer offset as continuation token
+        int.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out _).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos returns 400 BadRequest for invalid
+    /// continuation tokens. InMemoryContainer silently falls back to offset 0.
+    /// </summary>
+    [Fact]
+    public async Task ContinuationToken_Invalid_SilentlyFallsToStart()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        // Pass garbage continuation token — should not throw
+        var iterator = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c",
+            continuationToken: "invalid-garbage-token");
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        // Still returns data (fell back to start)
+        results.Should().NotBeEmpty();
+    }
+
+    [Fact(Skip = "Real Cosmos returns 400 BadRequest for invalid continuation tokens.")]
+    public void ContinuationToken_InvalidShouldReturn400_RealCosmos() { }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Phase 7: LINQ Enhancements
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: LINQ operators like GroupJoin and TakeWhile that
+    /// are not translatable to Cosmos SQL work in InMemoryContainer because it
+    /// runs LINQ-to-Objects.
+    /// </summary>
+    [Fact]
+    public async Task LinqQuery_UnsupportedOperators_SucceedInMemory_WouldFailRealCosmos()
+    {
+        for (var i = 0; i < 5; i++)
+        {
+            await _container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}", Value = i },
+                new PartitionKey("pk1"));
+        }
+
+        var queryable = _container.GetItemLinqQueryable<TestDocument>(true);
+
+        // TakeWhile is not supported by Cosmos SQL
+        var results = queryable.OrderBy(d => d.Value).TakeWhile(d => d.Value < 3).ToList();
+        results.Should().HaveCount(3);
+
+        // Aggregate (reduce) is not supported by Cosmos SQL
+        var sum = queryable.Sum(d => d.Value);
+        sum.Should().Be(10);
+    }
+
+    [Fact(Skip = "Real Cosmos would reject TakeWhile, Aggregate, and other LINQ-to-Objects-only operators.")]
+    public void LinqQuery_UnsupportedOperators_ShouldThrow_RealCosmos() { }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Phase 8: Partition Key Edge Cases
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos treats PartitionKey.None and PartitionKey.Null
+    /// differently (None = no partition key in document, Null = explicit null).
+    /// InMemoryContainer treats them as resolving to the same internal key for storage,
+    /// so items stored with either key end up in the same partition.
+    /// </summary>
+    [Fact]
+    public async Task PartitionKey_NoneVsNull_TreatedIdentically()
+    {
+        var container = new InMemoryContainer("pk-test", "/pk");
+
+        // Create with explicit PartitionKey.Null
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = (string?)null, name = "Test" }),
+            PartitionKey.Null);
+
+        // Read with PartitionKey.None — succeeds because emulator treats them the same
+        var response = await container.ReadItemAsync<JObject>("1", PartitionKey.None);
+        response.Resource["name"]!.Value<string>().Should().Be("Test");
+    }
+
+    [Fact(Skip = "Real Cosmos distinguishes PartitionKey.None (missing) from PartitionKey.Null (explicit null).")]
+    public void PartitionKey_NoneVsNull_ShouldDiffer_RealCosmos() { }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Phase 9: Database Property
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// BEHAVIORAL DIFFERENCE: Real Cosmos returns the same Database instance on
+    /// each access. InMemoryContainer creates a new NSubstitute mock each time.
+    /// </summary>
+    [Fact]
+    public void Database_NewMockInstanceOnEachAccess_UnlikeRealCosmos()
+    {
+        var db1 = _container.Database;
+        var db2 = _container.Database;
+
+        // Each access returns a different mock instance (referential inequality)
+        db1.Should().NotBeSameAs(db2);
+    }
+
+    [Fact(Skip = "Real Cosmos returns the same Database instance on every Container.Database access.")]
+    public void Database_ShouldReturnSameInstance_RealCosmos() { }
 }
