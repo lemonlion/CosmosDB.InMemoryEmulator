@@ -266,3 +266,579 @@ public class PartitionKeyNoneVsNullTests
             "the emulator treats PartitionKey.None and PartitionKey.Null identically");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 1 — PK Data Type Coverage
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class PartitionKeyDataTypeTests
+{
+    [Fact]
+    public async Task PartitionKey_DoubleValue_StoredAndRetrievable()
+    {
+        var container = new InMemoryContainer("test", "/score");
+
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","score":3.14,"name":"Pi"}""")),
+            new PartitionKey(3.14));
+
+        var read = await container.ReadItemAsync<JObject>("1", new PartitionKey(3.14));
+        read.Resource["name"]!.ToString().Should().Be("Pi");
+    }
+
+    [Fact]
+    public async Task PartitionKey_EmptyString_StoredAndRetrievable()
+    {
+        var container = new InMemoryContainer("test", "/category");
+
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","category":"","name":"Empty"}""")),
+            new PartitionKey(""));
+
+        var read = await container.ReadItemAsync<JObject>("1", new PartitionKey(""));
+        read.Resource["name"]!.ToString().Should().Be("Empty");
+    }
+
+    [Fact]
+    public async Task PartitionKey_LongString_StoredAndRetrievable()
+    {
+        var container = new InMemoryContainer("test", "/category");
+        var longPk = new string('x', 1000);
+
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                $$$"""{"id":"1","category":"{{{longPk}}}","name":"LongPK"}""")),
+            new PartitionKey(longPk));
+
+        var read = await container.ReadItemAsync<JObject>("1", new PartitionKey(longPk));
+        read.Resource["name"]!.ToString().Should().Be("LongPK");
+    }
+
+    [Fact]
+    public async Task PartitionKey_UnicodeCharacters_StoredAndRetrievable()
+    {
+        var container = new InMemoryContainer("test", "/category");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", category = "日本語🎉", name = "Unicode" }),
+            new PartitionKey("日本語🎉"));
+
+        var read = await container.ReadItemAsync<JObject>("1", new PartitionKey("日本語🎉"));
+        read.Resource["name"]!.ToString().Should().Be("Unicode");
+    }
+
+    [Fact]
+    public async Task PartitionKey_SpecialJsonCharacters_StoredAndRetrievable()
+    {
+        var container = new InMemoryContainer("test", "/category");
+        var specialPk = "he said \"hello\" \\ end";
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", category = specialPk, name = "Special" }),
+            new PartitionKey(specialPk));
+
+        var read = await container.ReadItemAsync<JObject>("1", new PartitionKey(specialPk));
+        read.Resource["name"]!.ToString().Should().Be("Special");
+    }
+
+    [Fact]
+    public async Task PartitionKey_ContainingPipeCharacter_StoredAndRetrievable()
+    {
+        // Documents delimiter risk: single PK with pipe char works for single-path keys
+        var container = new InMemoryContainer("test", "/category");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", category = "a|b", name = "Pipe" }),
+            new PartitionKey("a|b"));
+
+        var read = await container.ReadItemAsync<JObject>("1", new PartitionKey("a|b"));
+        read.Resource["name"]!.ToString().Should().Be("Pipe");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 2 — Composite/Hierarchical PK Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class CompositePartitionKeyEdgeCaseTests
+{
+    [Fact]
+    public async Task CompositeKey_MixedTypes_StringAndNumber()
+    {
+        var container = new InMemoryContainer("test", ["/tenant", "/region"]);
+        var pk = new PartitionKeyBuilder().Add("t1").Add("us-east").Build();
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", tenant = "t1", region = "us-east", name = "Mixed" }),
+            pk);
+
+        var read = await container.ReadItemAsync<JObject>("1", pk);
+        read.Resource["name"]!.ToString().Should().Be("Mixed");
+    }
+
+    [Fact]
+    public async Task CompositeKey_SameIdDifferentComposite_BothExist()
+    {
+        var container = new InMemoryContainer("test", ["/tenant", "/region"]);
+        var pk1 = new PartitionKeyBuilder().Add("t1").Add("us").Build();
+        var pk2 = new PartitionKeyBuilder().Add("t1").Add("eu").Build();
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "doc1", tenant = "t1", region = "us", name = "US" }),
+            pk1);
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "doc1", tenant = "t1", region = "eu", name = "EU" }),
+            pk2);
+
+        container.ItemCount.Should().Be(2);
+
+        var readUS = await container.ReadItemAsync<JObject>("doc1", pk1);
+        readUS.Resource["name"]!.ToString().Should().Be("US");
+
+        var readEU = await container.ReadItemAsync<JObject>("doc1", pk2);
+        readEU.Resource["name"]!.ToString().Should().Be("EU");
+    }
+
+    [Fact]
+    public async Task CompositeKey_FourPaths()
+    {
+        var container = new InMemoryContainer("test",
+            ["/tenant", "/region", "/env", "/shard"]);
+        var pk = new PartitionKeyBuilder()
+            .Add("acme").Add("us").Add("prod").Add("s1").Build();
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", tenant = "acme", region = "us", env = "prod", shard = "s1" }),
+            pk);
+
+        var read = await container.ReadItemAsync<JObject>("1", pk);
+        read.Resource["tenant"]!.ToString().Should().Be("acme");
+    }
+
+    [Fact]
+    public async Task CompositeKey_ReadMany_RetrievedCorrectly()
+    {
+        var container = new InMemoryContainer("test", ["/tenant", "/region"]);
+        var pk1 = new PartitionKeyBuilder().Add("t1").Add("us").Build();
+        var pk2 = new PartitionKeyBuilder().Add("t1").Add("eu").Build();
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", tenant = "t1", region = "us" }), pk1);
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", tenant = "t1", region = "eu" }), pk2);
+
+        var response = await container.ReadManyItemsAsync<JObject>([
+            ("1", pk1),
+            ("2", pk2)
+        ]);
+
+        response.Resource.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task CompositeKey_DeleteAllByPartitionKey()
+    {
+        var container = new InMemoryContainer("test", ["/tenant", "/region"]);
+        var pk1 = new PartitionKeyBuilder().Add("t1").Add("us").Build();
+        var pk2 = new PartitionKeyBuilder().Add("t2").Add("us").Build();
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", tenant = "t1", region = "us" }), pk1);
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", tenant = "t1", region = "us" }), pk1);
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", tenant = "t2", region = "us" }), pk2);
+
+        await container.DeleteAllItemsByPartitionKeyStreamAsync(pk1);
+
+        container.ItemCount.Should().Be(1);
+        var remaining = await container.ReadItemAsync<JObject>("3", pk2);
+        remaining.Resource["id"]!.ToString().Should().Be("3");
+    }
+
+    [Fact]
+    public async Task CompositeKey_TransactionalBatch()
+    {
+        var container = new InMemoryContainer("test", ["/tenant", "/region"]);
+        var pk = new PartitionKeyBuilder().Add("t1").Add("us").Build();
+
+        var batch = container.CreateTransactionalBatch(pk);
+        batch.CreateItem(JObject.FromObject(new { id = "1", tenant = "t1", region = "us", name = "A" }));
+        batch.CreateItem(JObject.FromObject(new { id = "2", tenant = "t1", region = "us", name = "B" }));
+
+        using var response = await batch.ExecuteAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        container.ItemCount.Should().Be(2);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 3 — Bug Documentation Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class PartitionKeyBugDocumentationTests
+{
+    [Fact(Skip = "BUG 3: ExtractPartitionKeyValue drops null components from composite keys. " +
+        "Composite key (/a, /b, /c) with null middle → 'x|z' (2 parts) instead of 'x||z' (3 parts). " +
+        "This can cause collisions between different composite key schemas.")]
+    public async Task CompositeKey_WithNullComponent_PreservesPosition()
+    {
+        var container = new InMemoryContainer("test", ["/a", "/b", "/c"]);
+        var pk = new PartitionKeyBuilder().Add("x").Add(null as string).Add("z").Build();
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", a = "x", c = "z" }), pk);
+
+        var read = await container.ReadItemAsync<JObject>("1", pk);
+        read.Resource["a"]!.ToString().Should().Be("x");
+    }
+
+    [Fact]
+    public async Task CompositeKey_WithNullComponent_EmulatorBehavior_DropsNulls()
+    {
+        // ── Divergent behavior documentation ──
+        // Real Cosmos DB: Null is a valid component in hierarchical partition keys and
+        //   is preserved positionally. ("x", null, "z") != ("x", "z").
+        // In-Memory Emulator: ExtractPartitionKeyValue filters out null components
+        //   (line: `var nonNull = parts.Where(p => p is not null).ToList()`).
+        //   This means ("x", null, "z") is stored as "x|z" — same as 2-path ("x", "z").
+        var container = new InMemoryContainer("test", ["/a", "/b", "/c"]);
+
+        // PartitionKeyBuilder with null still produces a valid PK for the SDK
+        var pk = new PartitionKeyBuilder().Add("x").Add(null as string).Add("z").Build();
+
+        // The emulator accepts the item, but the storage key loses the null position
+        var response = await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","a":"x","c":"z"}""")),
+            pk);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact(Skip = "BUG 4: ExtractPartitionKeyValue (CRUD path) and ExtractPartitionKeyValueFromJson " +
+        "(FeedRange path) produce different PK strings for the same document. CRUD filters out nulls " +
+        "and falls back to id; FeedRange keeps nulls as empty string with no fallback.")]
+    public async Task FeedRange_FilterConsistentWithCrudPartitionKey()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        // Get single feed range
+        var ranges = await container.GetFeedRangesAsync();
+        var iterator = container.GetItemQueryIterator<TestDocument>(
+            ranges[0], new QueryDefinition("SELECT * FROM c"));
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle(d => d.Id == "1",
+            "item stored via CRUD should be visible in FeedRange-filtered query");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 4 — PK Path Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class PartitionKeyPathEdgeCaseTests
+{
+    [Fact]
+    public async Task PartitionKey_DeeplyNestedPath_ThreeLevels()
+    {
+        var container = new InMemoryContainer("test", "/a/b/c");
+
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","a":{"b":{"c":"deep-value"}},"name":"Deep"}""")),
+            new PartitionKey("deep-value"));
+
+        var read = await container.ReadItemAsync<JObject>("1", new PartitionKey("deep-value"));
+        read.Resource["name"]!.ToString().Should().Be("Deep");
+    }
+
+    [Fact]
+    public async Task PartitionKey_DefaultIdPath()
+    {
+        var container = new InMemoryContainer("test", "/id");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "myId", name = "IdAsPK" }),
+            new PartitionKey("myId"));
+
+        var read = await container.ReadItemAsync<JObject>("myId", new PartitionKey("myId"));
+        read.Resource["name"]!.ToString().Should().Be("IdAsPK");
+    }
+
+    [Fact]
+    public async Task PartitionKey_PathCaseSensitivity()
+    {
+        // PK path is case-sensitive — /Name != /name
+        var container = new InMemoryContainer("test", "/Name");
+
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","Name":"CasePK","name":"lowercase"}""")),
+            new PartitionKey("CasePK"));
+
+        var read = await container.ReadItemAsync<JObject>("1", new PartitionKey("CasePK"));
+        read.Resource["Name"]!.ToString().Should().Be("CasePK");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 5 — PK with Operations (Cross-Cutting)
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class PartitionKeyOperationsTests
+{
+    [Fact]
+    public async Task Upsert_SameId_DifferentPartitionKey_CreatesTwoItems()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        await container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pkA", Name = "A" },
+            new PartitionKey("pkA"));
+        await container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pkB", Name = "B" },
+            new PartitionKey("pkB"));
+
+        container.ItemCount.Should().Be(2);
+
+        var readA = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pkA"));
+        readA.Resource.Name.Should().Be("A");
+
+        var readB = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pkB"));
+        readB.Resource.Name.Should().Be("B");
+    }
+
+    [Fact]
+    public async Task Replace_ExplicitPk_MismatchWithBody_UsesExplicitPk()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        // Replace with explicit PK "pk1" but body says "pk2"
+        var replaced = await container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk2", Name = "Replaced" },
+            "1", new PartitionKey("pk1"));
+
+        // Item should still be in pk1 partition (explicit PK wins for storage key)
+        var read = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Replaced");
+    }
+
+    [Fact]
+    public async Task Query_WithPartitionKeyFilter_ReturnsOnlyMatchingPartition()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+        await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk2", Name = "Bob" },
+            new PartitionKey("pk2"));
+
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.partitionKey = @pk")
+            .WithParameter("@pk", "pk1");
+        var iterator = container.GetItemQueryIterator<TestDocument>(query);
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task ReadMany_MixedExistingAndNonExisting_ReturnsOnlyExisting()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+
+        var response = await container.ReadManyItemsAsync<TestDocument>([
+            ("1", new PartitionKey("pk1")),
+            ("999", new PartitionKey("pk1"))
+        ]);
+
+        response.Resource.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task ReadMany_WithPartitionKeyNull_ReturnsNullPkItems()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = (string)null!, name = "NullPK" }),
+            PartitionKey.Null);
+
+        var response = await container.ReadManyItemsAsync<JObject>([
+            ("1", PartitionKey.Null)
+        ]);
+
+        response.Resource.Should().ContainSingle();
+        response.Resource.First()["name"]!.ToString().Should().Be("NullPK");
+    }
+
+    [Fact]
+    public async Task DeleteAllByPartitionKey_NonExistentPk_ReturnsOk()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+
+        var response = await container.DeleteAllItemsByPartitionKeyStreamAsync(
+            new PartitionKey("nonexistent"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        container.ItemCount.Should().Be(1, "items in other partitions should be untouched");
+    }
+
+    [Fact]
+    public async Task DeleteAllByPartitionKey_WithNullPk_DeletesNullPkItems()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = (string)null!, name = "NullPK" }),
+            PartitionKey.Null);
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "real", name = "RealPK" }),
+            new PartitionKey("real"));
+
+        await container.DeleteAllItemsByPartitionKeyStreamAsync(PartitionKey.Null);
+
+        container.ItemCount.Should().Be(1);
+        var remaining = await container.ReadItemAsync<JObject>("2", new PartitionKey("real"));
+        remaining.Resource["name"]!.ToString().Should().Be("RealPK");
+    }
+
+    [Fact]
+    public async Task Stream_CreateAndRead_ExplicitPk_WorksCorrectly()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        var createResponse = await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"myPk","name":"StreamTest"}""")),
+            new PartitionKey("myPk"));
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var readResponse = await container.ReadItemStreamAsync("1", new PartitionKey("myPk"));
+        readResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var reader = new StreamReader(readResponse.Content);
+        var json = await reader.ReadToEndAsync();
+        var jObj = JObject.Parse(json);
+        jObj["name"]!.ToString().Should().Be("StreamTest");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 6 — PK and Change Feed
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class PartitionKeyChangeFeedTests
+{
+    [Fact]
+    public async Task SamePartitionKey_AllItemsInSameFeedRange()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        // Create 10 items all with the same PK
+        for (int i = 0; i < 10; i++)
+        {
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "samePK", Name = $"Item{i}" },
+                new PartitionKey("samePK"));
+        }
+
+        var ranges = await container.GetFeedRangesAsync();
+        ranges.Should().HaveCountGreaterThan(0);
+
+        // Find which range contains our items
+        int totalFound = 0;
+        int rangesWithItems = 0;
+        foreach (var range in ranges)
+        {
+            var iterator = container.GetItemQueryIterator<TestDocument>(
+                range, new QueryDefinition("SELECT * FROM c"));
+            var items = new List<TestDocument>();
+            while (iterator.HasMoreResults)
+            {
+                var page = await iterator.ReadNextAsync();
+                items.AddRange(page);
+            }
+            if (items.Count > 0)
+            {
+                rangesWithItems++;
+                totalFound += items.Count;
+            }
+        }
+
+        totalFound.Should().Be(10);
+        rangesWithItems.Should().Be(1, "all items with the same PK should be in the same feed range");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_IncludesPartitionKeyFields()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+
+        var iterator = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(),
+            ChangeFeedMode.LatestVersion);
+
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            if (page.StatusCode == HttpStatusCode.NotModified) break;
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        results[0]["partitionKey"]!.ToString().Should().Be("pk1",
+            "change feed entries should include the partition key field");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_AfterDelete_CheckpointAdvances()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+
+        var checkpointAfterCreate = container.GetChangeFeedCheckpoint();
+
+        await container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        var checkpointAfterDelete = container.GetChangeFeedCheckpoint();
+        checkpointAfterDelete.Should().BeGreaterThan(checkpointAfterCreate,
+            "delete should advance the change feed checkpoint");
+    }
+}
