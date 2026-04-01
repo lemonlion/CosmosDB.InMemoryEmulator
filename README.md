@@ -4,33 +4,51 @@
 [![NuGet Downloads](https://img.shields.io/nuget/dt/CosmosDB.InMemoryEmulator.svg)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator)
 [![CI](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/actions/workflows/ci.yml/badge.svg)](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/actions/workflows/ci.yml)
 
-A high-fidelity, in-memory implementation of the Azure Cosmos DB SDK for .NET — purpose-built for fast, reliable component and integration testing.
+A fully featured, in-process, fake for Azure Cosmos DB SDK for .NET — purpose-built for fast, reliable component and integration testing.  Runs in memory on the fly for the lifetime of your test run (although persistence between runs is available as a feature).
 
-> **Drop-in replacements for `CosmosClient`, `Database`, and `Container`** — full CRUD, SQL queries, LINQ, patch, batches, change feed, and more. No network, no emulator process, no Docker, no Azure subscription required.
+Has full support for *all* Cosmos CRUD and SQL querying, including raw querying, functions, LINQ querying (including `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` support - no production code changes necessary), 
 
-## `.ToFeedIterator()` Works — Zero Production Code Changes
+Includes all the other features of CosmosDB like Triggers, Change Feed, Point-in-time restore, TTL...
 
-Using the [`FakeCosmosHandler`](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Integration-Approaches#fakecosmoshandler-high-fidelity) approach, **your production code stays completely untouched** — including calls to `.ToFeedIterator()` and `GetItemLinqQueryable<T>()`. The handler intercepts HTTP traffic at the SDK level, so LINQ queries, SQL queries, CRUD operations, and all other Cosmos operations work exactly as written.
+The only real features not implemented are user authentication and client encryption which are deliberately out of scope for a testing fake.
+
+## Usage
+
+Works by replacing either `Microsoft.Azure.Cosmos.Container` or `Microsoft.Azure.Cosmos.CosmosClient`.
+
+### Dependency Injection
+
+In your `ConfigureTestServices()` method in your `WebApplicationFactory()`:
 
 ```csharp
-// Your production code — works against real Cosmos DB AND the in-memory emulator, unmodified
-var results = container
-    .GetItemLinqQueryable<Order>()
-    .Where(o => o.Status == "active")
-    .ToFeedIterator();  // ← works as-is, no changes needed
+    servicesCollection.UseInMemoryCosmosClient(); // Replaces all Cosmos Clients With In-Memory Emulator
+```
+OR
+```csharp
+    servicesCollection.UseInMemoryCosmosContainer(); // Replaces all Cosmos Containers With In-Memory Emulator
 ```
 
-> **How?** `FakeCosmosHandler` is a custom `HttpMessageHandler` that intercepts the Cosmos SDK's HTTP pipeline. The SDK translates your LINQ expression into Cosmos SQL, sends it over HTTP, and the handler executes that SQL against an in-memory store. Your production code never knows the difference. See the [Feed Iterator Usage Guide](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feed-Iterator-Usage-Guide) for details.
+### Direct Instantiation
 
-## Why This Exists
+```csharp
+     var cosmosClient = new InMemoryCosmosClient(); // Fully functional In-Memory Cosmos Client Emulator
+```
+OR
+```csharp
+     var cosmosClient = new InMemoryContainer(); // Fully functional In-Memory Cosmos Container Emulator
+```
 
-| Approach | Problem |
+## Motivation
+
+Designed for fast feedback on Integration/Component tests in a local or CI environment, to avoid relying completely on the official Cosmos emulator or official Cosmos DB or inaccurate high level abstractions. 
+
+| Traditional Approach | Problem |
 |----------|---------|
 | **[Official Cosmos DB Emulator](https://learn.microsoft.com/en-us/azure/cosmos-db/emulator)** | Heavy process, slow startup, port conflicts, unreliable in CI |
-| **Mocking `CosmosClient` directly** | Fragile, doesn't test query logic, misses serialization bugs |
 | **Real Azure Cosmos DB** | Slow, costly, requires network, shared state between test runs |
+| **Repository Abstraction Layer** | Fragile, doesn't test query logic, misses serialization bugs |
 
-**CosmosDB.InMemoryEmulator** fills the gap with in-memory speed and zero external dependencies.
+Recommendation is to use **CosmosDB.InMemoryEmulator** for integration/component testing locally and in CI for quick feedback and iteration, while still having the integration/component tests *additionally* running in CI against the official out of process emulator for (10x) slower feedback.
 
 ## Features
 
@@ -50,10 +68,12 @@ var results = container
 - **Point-in-time restore** — restore a container to any previous point in time via change feed replay
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
-- **Triggers** — pre-trigger and post-trigger execution via C# handlers
+- **Triggers** — pre-trigger and post-trigger execution via C# handlers, with optional JavaScript body interpretation via the `CosmosDB.InMemoryEmulator.JsTriggers` package
 - **FeedRange support** — configurable `FeedRangeCount` with scoped queries and change feed iterators
 - **Vector search** — `VECTORDISTANCE` with cosine, dot product, and Euclidean distance; works in `SELECT`, `WHERE`, and `ORDER BY`
-- **1274 tests** covering all features (22 skipped — see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations))
+- **1200+ tests** covering all features
+
+For behavioural differences from a real CosmosDB see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)
 
 ## Installation
 
@@ -62,37 +82,7 @@ dotnet add package CosmosDB.InMemoryEmulator
 ```
 
 **Target framework:** .NET 8.0 | **Cosmos SDK:** Microsoft.Azure.Cosmos 3.58.0+
-
-## Quick Start
-
-```csharp
-using CosmosDB.InMemoryEmulator;
-using Microsoft.Azure.Cosmos;
-
-var container = new InMemoryContainer("my-container", "/partitionKey");
-
-// Create
-await container.CreateItemAsync(
-    new { id = "1", partitionKey = "pk1", name = "Alice" },
-    new PartitionKey("pk1"));
-
-// Query
-var iterator = container.GetItemQueryIterator<dynamic>(
-    "SELECT * FROM c WHERE c.name = 'Alice'");
-var page = await iterator.ReadNextAsync();
-```
-
-## Integration Approaches
-
-| | Direct `InMemoryContainer` | `FakeCosmosHandler` | DI Extensions |
-|---|---|---|---|
-| **Production code changes** | One token per LINQ call site¹ | **None** | None |
-| **CRUD operations** | Yes | **Yes** | Yes |
-| **Fidelity** | Good | **Highest** | Good |
-| **Fault injection** | No | **Yes** | No |
-| **Best for** | Unit tests | Component/acceptance tests | Integration tests with DI |
-
-¹ `.ToFeedIterator()` → `.ToFeedIteratorOverridable()`. Not needed if you don't use LINQ `.ToFeedIterator()`.
+.NET 10 upgrade will happen before .NET 8.0 support ends, but it is being deliberately held off to avoid having to fully maintain multiple packages targeting different .NET frameworks, as until then there is little benefit having both.
 
 ## Documentation
 
