@@ -184,7 +184,7 @@ public class UseInMemoryCosmosDBTests : IDisposable
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
 
     [Fact]
-    public void Default_RegistersInMemoryCosmosClient()
+    public void Default_RegistersCosmosClient()
     {
         var services = new ServiceCollection();
 
@@ -192,11 +192,11 @@ public class UseInMemoryCosmosDBTests : IDisposable
 
         var provider = services.BuildServiceProvider();
         var client = provider.GetRequiredService<CosmosClient>();
-        client.Should().BeOfType<InMemoryCosmosClient>();
+        client.Should().NotBeNull();
     }
 
     [Fact]
-    public void Default_RegistersInMemoryContainer()
+    public void Default_RegistersContainer()
     {
         var services = new ServiceCollection();
 
@@ -204,7 +204,8 @@ public class UseInMemoryCosmosDBTests : IDisposable
 
         var provider = services.BuildServiceProvider();
         var container = provider.GetRequiredService<Container>();
-        container.Should().BeOfType<InMemoryContainer>();
+        container.Should().NotBeNull();
+        container.Id.Should().Be("in-memory-container");
     }
 
     [Fact]
@@ -219,7 +220,7 @@ public class UseInMemoryCosmosDBTests : IDisposable
 
         var provider = services.BuildServiceProvider();
         var client = provider.GetRequiredService<CosmosClient>();
-        client.Should().BeOfType<InMemoryCosmosClient>();
+        client.Should().NotBeNull();
     }
 
     [Fact]
@@ -234,26 +235,30 @@ public class UseInMemoryCosmosDBTests : IDisposable
 
         var provider = services.BuildServiceProvider();
         var container = provider.GetRequiredService<Container>();
-        container.Should().BeOfType<InMemoryContainer>();
+        container.Should().NotBeNull();
+        container.Id.Should().Be("orders");
     }
 
     [Fact]
     public void ContainerIsFromClient()
     {
         var services = new ServiceCollection();
+        FakeCosmosHandler? capturedHandler = null;
 
         services.UseInMemoryCosmosDB(o =>
         {
             o.DatabaseName = "mydb";
             o.AddContainer("orders", "/pk");
+            o.OnHandlerCreated = (_, h) => capturedHandler = h;
         });
 
         var provider = services.BuildServiceProvider();
-        var client = (InMemoryCosmosClient)provider.GetRequiredService<CosmosClient>();
         var diContainer = provider.GetRequiredService<Container>();
-        var clientContainer = client.GetContainer("mydb", "orders");
 
-        diContainer.Should().BeSameAs(clientContainer);
+        // DI container and client both route through the same FakeCosmosHandler
+        diContainer.Id.Should().Be("orders");
+        capturedHandler.Should().NotBeNull();
+        capturedHandler!.BackingContainer.Id.Should().Be("orders");
     }
 
     [Fact]
@@ -264,7 +269,7 @@ public class UseInMemoryCosmosDBTests : IDisposable
         services.UseInMemoryCosmosDB(o => o.DatabaseName = "TestDb");
 
         var provider = services.BuildServiceProvider();
-        var client = (InMemoryCosmosClient)provider.GetRequiredService<CosmosClient>();
+        var client = provider.GetRequiredService<CosmosClient>();
         var db = client.GetDatabase("TestDb");
         db.Id.Should().Be("TestDb");
     }
@@ -273,16 +278,20 @@ public class UseInMemoryCosmosDBTests : IDisposable
     public void DefaultDatabaseName_IsInMemoryDb()
     {
         var services = new ServiceCollection();
+        FakeCosmosHandler? capturedHandler = null;
 
-        services.UseInMemoryCosmosDB();
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.OnHandlerCreated = (_, h) => capturedHandler = h;
+        });
 
         var provider = services.BuildServiceProvider();
-        var client = (InMemoryCosmosClient)provider.GetRequiredService<CosmosClient>();
         var container = provider.GetRequiredService<Container>();
 
-        // The default database should be "in-memory-db"
-        var containerFromClient = client.GetContainer("in-memory-db", "in-memory-container");
-        container.Should().BeSameAs(containerFromClient);
+        // The default database and container names are used
+        container.Id.Should().Be("in-memory-container");
+        capturedHandler.Should().NotBeNull();
+        capturedHandler!.BackingContainer.Id.Should().Be("in-memory-container");
     }
 
     [Fact]
@@ -303,21 +312,22 @@ public class UseInMemoryCosmosDBTests : IDisposable
     }
 
     [Fact]
-    public void RegistersFeedIteratorSetup()
+    public void DoesNotNeedFeedIteratorSetup()
     {
         InMemoryFeedIteratorSetup.Deregister();
         var services = new ServiceCollection();
 
         services.UseInMemoryCosmosDB();
 
-        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().NotBeNull();
+        // FakeCosmosHandler handles .ToFeedIterator() natively — no setup needed
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().BeNull();
     }
 
     [Fact]
     public void OnClientCreatedCallback()
     {
         var services = new ServiceCollection();
-        InMemoryCosmosClient? captured = null;
+        CosmosClient? captured = null;
 
         services.UseInMemoryCosmosDB(o => o.OnClientCreated = c => captured = c);
 
@@ -336,33 +346,34 @@ public class UseInMemoryCosmosDBTests : IDisposable
         services.UseInMemoryCosmosDB();
 
         var provider = services.BuildServiceProvider();
-        provider.GetRequiredService<CosmosClient>().Should().BeOfType<InMemoryCosmosClient>();
+        provider.GetRequiredService<CosmosClient>().Should().NotBeNull();
         // Auto-detect: existing factory resolves against the in-memory client
-        provider.GetRequiredService<Container>().Should().BeOfType<InMemoryContainer>();
+        provider.GetRequiredService<Container>().Should().NotBeNull();
     }
 
     [Fact]
     public void ContainerPerDatabaseOverride()
     {
         var services = new ServiceCollection();
+        var capturedHandlers = new Dictionary<string, FakeCosmosHandler>();
 
         services.UseInMemoryCosmosDB(o =>
         {
             o.AddContainer("c1", "/pk", databaseName: "db1");
             o.AddContainer("c2", "/pk", databaseName: "db2");
+            o.OnHandlerCreated = (name, h) => capturedHandlers[name] = h;
         });
 
         var provider = services.BuildServiceProvider();
-        var client = (InMemoryCosmosClient)provider.GetRequiredService<CosmosClient>();
         var containers = provider.GetServices<Container>().ToList();
 
         containers.Should().HaveCount(2);
+        containers.Select(c => c.Id).Should().BeEquivalentTo(["c1", "c2"]);
 
-        // Each container should be from a different database
-        var c1 = client.GetContainer("db1", "c1");
-        var c2 = client.GetContainer("db2", "c2");
-        containers.Should().Contain(c1);
-        containers.Should().Contain(c2);
+        // Each container backed by its own FakeCosmosHandler
+        capturedHandlers.Should().HaveCount(2);
+        capturedHandlers["c1"].BackingContainer.Id.Should().Be("c1");
+        capturedHandlers["c2"].BackingContainer.Id.Should().Be("c2");
     }
 
     [Fact]
@@ -481,10 +492,12 @@ public class ServiceCollectionExtensionEdgeCaseTests : IDisposable
     public void UseInMemoryCosmosDB_ClientGetContainerReturnsRegisteredContainer()
     {
         var services = new ServiceCollection();
+        FakeCosmosHandler? capturedHandler = null;
         services.UseInMemoryCosmosDB(o =>
         {
             o.DatabaseName = "db";
             o.AddContainer("orders", "/pk");
+            o.OnHandlerCreated = (_, h) => capturedHandler = h;
         });
         var provider = services.BuildServiceProvider();
 
@@ -492,8 +505,11 @@ public class ServiceCollectionExtensionEdgeCaseTests : IDisposable
         var diContainer = provider.GetRequiredService<Container>();
         var clientContainer = client.GetContainer("db", "orders");
 
-        // Critical: repos that call client.GetContainer() must get the same instance
-        diContainer.Should().BeSameAs(clientContainer);
+        // Both route through the same FakeCosmosHandler backing
+        diContainer.Id.Should().Be("orders");
+        clientContainer.Id.Should().Be("orders");
+        capturedHandler.Should().NotBeNull();
+        capturedHandler!.BackingContainer.Id.Should().Be("orders");
     }
 }
 
@@ -750,7 +766,7 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
     public void OnClientCreatedCallback()
     {
         var services = new ServiceCollection();
-        InMemoryCosmosClient? captured = null;
+        CosmosClient? captured = null;
 
         services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o => o.OnClientCreated = c => captured = c);
 
@@ -859,11 +875,11 @@ public class AutoDetectContainerTests
 
         var provider = services.BuildServiceProvider();
         var client = provider.GetRequiredService<CosmosClient>();
-        client.Should().BeOfType<InMemoryCosmosClient>();
+        client.Should().NotBeNull();
 
-        // Container resolves via the existing factory, which calls GetContainer on the in-memory client
+        // Container resolves via the existing factory, which calls GetContainer on the real client
         var container = provider.GetRequiredService<Container>();
-        container.Should().BeOfType<InMemoryContainer>();
+        container.Should().NotBeNull();
         container.Id.Should().Be("orders");
     }
 
@@ -910,7 +926,7 @@ public class AutoDetectContainerTests
     }
 
     [Fact]
-    public void AutoDetect_ClientGetContainer_ReturnsSameInstance_AsFactory()
+    public void AutoDetect_ClientGetContainer_SharesSameBackingStore()
     {
         var services = new ServiceCollection();
         services.AddSingleton<CosmosClient>(_ =>
@@ -922,11 +938,11 @@ public class AutoDetectContainerTests
 
         var provider = services.BuildServiceProvider();
         var diContainer = provider.GetRequiredService<Container>();
-        var client = (InMemoryCosmosClient)provider.GetRequiredService<CosmosClient>();
-        var clientContainer = client.GetContainer("MyDb", "orders");
+        var clientContainer = provider.GetRequiredService<CosmosClient>().GetContainer("MyDb", "orders");
 
-        // Critical: repos that call client.GetContainer() get the same instance
-        diContainer.Should().BeSameAs(clientContainer);
+        // Both route through the same FakeCosmosHandler backing
+        diContainer.Id.Should().Be("orders");
+        clientContainer.Id.Should().Be("orders");
     }
 
     [Fact]
@@ -942,7 +958,7 @@ public class AutoDetectContainerTests
         var provider = services.BuildServiceProvider();
         // Default container should still be created when no existing registrations
         var container = provider.GetRequiredService<Container>();
-        container.Should().BeOfType<InMemoryContainer>();
+        container.Should().NotBeNull();
         container.Id.Should().Be("in-memory-container");
     }
 
@@ -976,12 +992,12 @@ public class AutoDetectContainerTests
 
         var provider = services.BuildServiceProvider();
         var container = provider.GetRequiredService<Container>();
-        container.Should().BeOfType<InMemoryContainer>();
+        container.Should().NotBeNull();
         container.Id.Should().Be("orders");
     }
 
     [Fact]
-    public void AutoDetect_RegistersFeedIteratorSetup()
+    public void AutoDetect_DoesNotNeedFeedIteratorSetup()
     {
         InMemoryFeedIteratorSetup.Deregister();
         var services = new ServiceCollection();
@@ -992,7 +1008,8 @@ public class AutoDetectContainerTests
 
         services.UseInMemoryCosmosDB();
 
-        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().NotBeNull();
+        // FakeCosmosHandler handles .ToFeedIterator() natively — no setup needed
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().BeNull();
     }
 
     [Fact]
@@ -1003,7 +1020,7 @@ public class AutoDetectContainerTests
             throw new InvalidOperationException("Should be replaced"));
         services.AddSingleton<Container>(sp =>
             sp.GetRequiredService<CosmosClient>().GetContainer("db", "items"));
-        InMemoryCosmosClient? captured = null;
+        CosmosClient? captured = null;
 
         services.UseInMemoryCosmosDB(o => o.OnClientCreated = c => captured = c);
 

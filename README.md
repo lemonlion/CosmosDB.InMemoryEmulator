@@ -21,11 +21,11 @@ Works by replacing either `Microsoft.Azure.Cosmos.Container` or `Microsoft.Azure
 In your `ConfigureTestServices()` method in your `WebApplicationFactory()`:
 
 ```csharp
-serviceCollection.UseInMemoryCosmosClient(); // Replaces all Cosmos Clients With In-Memory Emulator
+serviceCollection.UseInMemoryCosmosDB(); // Replaces all Cosmos Clients and Containers — highest fidelity, zero production code changes
 ```
 OR
 ```csharp
-serviceCollection.UseInMemoryCosmosContainer(); // Replaces all Cosmos Containers With In-Memory Emulator
+serviceCollection.UseInMemoryCosmosContainers(); // Replaces only Cosmos Containers (lower fidelity, needs .ToFeedIteratorOverridable() for LINQ)
 ```
 
 ### Direct Instantiation

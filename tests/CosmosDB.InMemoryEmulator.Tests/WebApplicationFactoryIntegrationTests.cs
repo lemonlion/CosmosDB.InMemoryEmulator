@@ -21,9 +21,15 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 // ════════════════════════════════════════════════════════════════════════════════
 
 public record CosmosTestItem(
-    [property: JsonPropertyName("id")] string Id,
-    [property: JsonPropertyName("partitionKey")] string PartitionKey,
-    [property: JsonPropertyName("name")] string Name);
+    [property: JsonPropertyName("id")]
+    [property: Newtonsoft.Json.JsonProperty("id")]
+    string Id,
+    [property: JsonPropertyName("partitionKey")]
+    [property: Newtonsoft.Json.JsonProperty("partitionKey")]
+    string PartitionKey,
+    [property: JsonPropertyName("name")]
+    [property: Newtonsoft.Json.JsonProperty("name")]
+    string Name);
 
 /// <summary>
 /// A repository that resolves Container from DI — simulates the BreakfastProvider pattern.
@@ -298,10 +304,11 @@ public class WebApplicationFactoryIntegrationTests : IDisposable
                 services.UseInMemoryCosmosDB(o => o.AddContainer("items", "/partitionKey")));
 
         var cosmosClient = app.Services.GetRequiredService<CosmosClient>();
-        cosmosClient.Should().BeOfType<InMemoryCosmosClient>();
+        cosmosClient.Should().NotBeNull();
 
         var container = cosmosClient.GetContainer("in-memory-db", "items");
-        container.Should().BeOfType<InMemoryContainer>();
+        container.Should().NotBeNull();
+        container.Id.Should().Be("items");
     }
 
     [Fact]
@@ -426,10 +433,10 @@ public class WebApplicationFactoryIntegrationTests : IDisposable
         var container = app.Services.GetRequiredService<Container>();
         container.Id.Should().Be("items");
 
-        // Verify the client also returns the same container instance
-        var cosmosClient = (InMemoryCosmosClient)app.Services.GetRequiredService<CosmosClient>();
+        // Verify the client also returns a container with the same name
+        var cosmosClient = app.Services.GetRequiredService<CosmosClient>();
         var clientContainer = cosmosClient.GetContainer("ProductionDb", "items");
-        container.Should().BeSameAs(clientContainer);
+        clientContainer.Id.Should().Be("items");
     }
 
     [Fact]

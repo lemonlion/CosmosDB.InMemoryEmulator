@@ -1,3 +1,5 @@
+using Microsoft.Azure.Cosmos;
+
 namespace CosmosDB.InMemoryEmulator;
 
 /// <summary>
@@ -24,10 +26,18 @@ public class InMemoryCosmosOptions
     public bool RegisterFeedIteratorSetup { get; set; } = true;
 
     /// <summary>
-    /// Callback invoked with the <see cref="InMemoryCosmosClient"/> after it is created.
-    /// Use this to pre-seed data, configure additional databases, etc.
+    /// Callback invoked with the <see cref="CosmosClient"/> after it is created.
+    /// Use this to capture the client reference for test assertions, etc.
     /// </summary>
-    public Action<InMemoryCosmosClient>? OnClientCreated { get; set; }
+    public Action<CosmosClient>? OnClientCreated { get; set; }
+
+    /// <summary>
+    /// Callback invoked with each <see cref="FakeCosmosHandler"/> after it is created.
+    /// Use this to capture handler references for fault injection, request logging,
+    /// or to access the backing <see cref="InMemoryContainer"/> via
+    /// <see cref="FakeCosmosHandler.BackingContainer"/>.
+    /// </summary>
+    public Action<string, FakeCosmosHandler>? OnHandlerCreated { get; set; }
 
     /// <summary>
     /// Adds a container configuration.

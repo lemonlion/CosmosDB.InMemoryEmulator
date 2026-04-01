@@ -11,12 +11,15 @@ namespace CosmosDB.InMemoryEmulator;
 public static class ServiceCollectionExtensions
 {
     private const string DefaultDatabaseName = "in-memory-db";
+    private const string FakeConnectionString = "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;";
 
     /// <summary>
     /// Replaces all registered <see cref="CosmosClient"/> and <see cref="Container"/>
-    /// instances in the service collection with in-memory equivalents.
-    /// Also registers <see cref="InMemoryFeedIteratorSetup"/> so that
-    /// <c>.ToFeedIteratorOverridable()</c> works correctly.
+    /// instances in the service collection with in-memory equivalents backed by
+    /// <see cref="FakeCosmosHandler"/>. This provides the highest fidelity: a real
+    /// <see cref="CosmosClient"/> exercises the full SDK HTTP pipeline, with
+    /// <see cref="FakeCosmosHandler"/> intercepting requests in-process.
+    /// LINQ <c>.ToFeedIterator()</c> works without any production code changes.
     /// </summary>
     public static IServiceCollection UseInMemoryCosmosDB(
         this IServiceCollection services,
@@ -37,49 +40,71 @@ public static class ServiceCollectionExtensions
         // Always replace CosmosClient
         services.RemoveAll<CosmosClient>();
 
-        // Create the InMemoryCosmosClient
-        var client = new InMemoryCosmosClient();
-
+        // Determine container configs
+        List<ContainerConfig> containerConfigs;
         if (options.Containers.Count > 0)
         {
-            // Explicit mode: remove existing Container registrations and replace with configured ones
+            containerConfigs = options.Containers;
+            // Explicit mode: remove existing Container registrations
             services.RemoveAll<Container>();
-
-            foreach (var containerConfig in options.Containers)
-            {
-                var dbName = containerConfig.DatabaseName ?? databaseName;
-                var db = (InMemoryDatabase)client.GetDatabase(dbName);
-                db.GetOrCreateContainer(containerConfig.ContainerName, containerConfig.PartitionKeyPath);
-            }
-
-            foreach (var containerConfig in options.Containers)
-            {
-                var dbName = containerConfig.DatabaseName ?? databaseName;
-                var container = client.GetContainer(dbName, containerConfig.ContainerName);
-                services.Add(new ServiceDescriptor(typeof(Container), _ => container, containerLifetime));
-            }
         }
-        else if (existingContainerDescriptors.Count > 0)
+        else if (existingContainerDescriptors.Count == 0)
         {
-            // Auto-detect mode: keep existing Container registrations.
-            // They resolve against the new InMemoryCosmosClient via GetContainer().
+            // No existing registrations and no explicit config: create a default container
+            containerConfigs = [new ContainerConfig("in-memory-container")];
         }
         else
         {
-            // No existing registrations and no explicit config: create a default container
-            var db = (InMemoryDatabase)client.GetDatabase(databaseName);
-            db.GetOrCreateContainer("in-memory-container", "/id");
-            var container = client.GetContainer(databaseName, "in-memory-container");
-            services.Add(new ServiceDescriptor(typeof(Container), _ => container, ServiceLifetime.Singleton));
+            // Auto-detect mode: no explicit containers, but there are existing registrations.
+            // We still need to create a handler. Use a default container.
+            containerConfigs = [new ContainerConfig("in-memory-container")];
         }
+
+        // Create InMemoryContainers and FakeCosmosHandlers
+        var handlers = new Dictionary<string, FakeCosmosHandler>();
+        foreach (var config in containerConfigs)
+        {
+            var container = new InMemoryContainer(config.ContainerName, config.PartitionKeyPath);
+            var handler = new FakeCosmosHandler(container);
+            handlers[config.ContainerName] = handler;
+            options.OnHandlerCreated?.Invoke(config.ContainerName, handler);
+        }
+
+        // Build the HTTP handler (single or router)
+        HttpMessageHandler httpHandler = handlers.Count == 1
+            ? handlers.Values.First()
+            : FakeCosmosHandler.CreateRouter(handlers);
+
+        // Create a real CosmosClient with the FakeCosmosHandler
+        var client = new CosmosClient(
+            FakeConnectionString,
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                HttpClientFactory = () => new HttpClient(httpHandler)
+            });
 
         options.OnClientCreated?.Invoke(client);
 
-        // Register the client
+        // Register Container(s) in DI
+        if (options.Containers.Count > 0 || existingContainerDescriptors.Count == 0)
+        {
+            foreach (var config in containerConfigs)
+            {
+                var dbName = config.DatabaseName ?? databaseName;
+                var containerName = config.ContainerName;
+                services.Add(new ServiceDescriptor(
+                    typeof(Container),
+                    _ => client.GetContainer(dbName, containerName),
+                    containerLifetime));
+            }
+        }
+        // else: auto-detect mode — keep existing Container registrations as-is
+
+        // Register the real CosmosClient backed by FakeCosmosHandler
         services.AddSingleton<CosmosClient>(client);
 
-        if (options.RegisterFeedIteratorSetup)
-            InMemoryFeedIteratorSetup.Register();
+        // No need for InMemoryFeedIteratorSetup — FakeCosmosHandler handles .ToFeedIterator() natively
 
         return services;
     }

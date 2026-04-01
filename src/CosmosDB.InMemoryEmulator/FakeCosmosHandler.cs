@@ -103,6 +103,9 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// <summary>Recorded HTTP requests in the form "METHOD /path".</summary>
     public IReadOnlyCollection<string> RequestLog => _requestLog;
 
+    /// <summary>The backing in-memory container that stores all data for this handler.</summary>
+    public InMemoryContainer BackingContainer => _container;
+
     /// <summary>Recorded SQL query strings that were executed.</summary>
     public IReadOnlyCollection<string> QueryLog => _queryLog;
 
