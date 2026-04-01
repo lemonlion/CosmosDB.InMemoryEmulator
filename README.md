@@ -44,8 +44,8 @@ Designed for super fast feedback from your Integration/Component tests in a loca
 
 | Traditional Approach | Problem |
 |----------|---------|
-| **[Official Cosmos DB Emulator](https://learn.microsoft.com/en-us/azure/cosmos-db/emulator)** | Heavy process, slow startup, port conflicts, unreliable in CI |
-| **Real Azure Cosmos DB** | Slow, costly, requires network, shared state between test runs |
+| **[Official Cosmos DB Emulator](https://learn.microsoft.com/en-us/azure/cosmos-db/emulator)** | Heavy process, slow startup, poor performance, limited feature set, unreliable in CI |
+| **Real Azure Cosmos DB** | Slower, costly, requires network, authentication overhead, shared state between test runs |
 | **Repository Abstraction Layer** | Fragile, doesn't test query logic, misses serialization bugs |
 
 Recommendation is to use **CosmosDB.InMemoryEmulator** for integration/component testing locally and in CI for quick feedback and iteration, while still having the integration/component tests *additionally* running in CI against the official out of process emulator for (10x) slower feedback.
