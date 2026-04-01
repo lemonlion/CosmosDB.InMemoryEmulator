@@ -341,6 +341,250 @@ public class LinqQueryableParameterTests5
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 23 — LINQ Operator Coverage
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class LinqOperatorTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task SeedItems()
+    {
+        await _container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 30, IsActive = true }, new PartitionKey("pk1"));
+        await _container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20, IsActive = false }, new PartitionKey("pk1"));
+        await _container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk2", Name = "Charlie", Value = 10, IsActive = true }, new PartitionKey("pk2"));
+        await _container.CreateItemAsync(new TestDocument { Id = "4", PartitionKey = "pk2", Name = "Diana", Value = 40, IsActive = true }, new PartitionKey("pk2"));
+    }
+
+    [Fact]
+    public async Task Linq_OrderByDescending()
+    {
+        await SeedItems();
+        var q = _container.GetItemLinqQueryable<TestDocument>(true);
+        var results = q.OrderByDescending(d => d.Value).ToList();
+
+        results.Select(d => d.Value).Should().BeInDescendingOrder();
+    }
+
+    [Fact]
+    public async Task Linq_ThenBy_AfterOrderBy()
+    {
+        await SeedItems();
+        var q = _container.GetItemLinqQueryable<TestDocument>(true);
+        var results = q.OrderBy(d => d.IsActive).ThenBy(d => d.Value).ToList();
+
+        // false < true, then ascending value
+        results[0].Name.Should().Be("Bob"); // IsActive=false, Value=20
+        results[1].Value.Should().BeLessThanOrEqualTo(results[2].Value);
+    }
+
+    [Fact]
+    public async Task Linq_Sum_Aggregate()
+    {
+        await SeedItems();
+        var q = _container.GetItemLinqQueryable<TestDocument>(true);
+        var sum = q.Sum(d => d.Value);
+
+        sum.Should().Be(100); // 30+20+10+40
+    }
+
+    [Fact]
+    public async Task Linq_Average_Aggregate()
+    {
+        await SeedItems();
+        var q = _container.GetItemLinqQueryable<TestDocument>(true);
+        var avg = q.Average(d => d.Value);
+
+        avg.Should().Be(25.0); // 100/4
+    }
+
+    [Fact]
+    public async Task Linq_Min_Max_Aggregates()
+    {
+        await SeedItems();
+        var q = _container.GetItemLinqQueryable<TestDocument>(true);
+
+        q.Min(d => d.Value).Should().Be(10);
+        q.Max(d => d.Value).Should().Be(40);
+    }
+
+    [Fact]
+    public async Task Linq_Distinct_RemovesDuplicateProjections()
+    {
+        await SeedItems();
+        var q = _container.GetItemLinqQueryable<TestDocument>(true);
+        var activeFlags = q.Select(d => d.IsActive).Distinct().ToList();
+
+        activeFlags.Should().HaveCount(2);
+        activeFlags.Should().Contain(true);
+        activeFlags.Should().Contain(false);
+    }
+
+    [Fact]
+    public async Task Linq_GroupBy_ByPartitionKey()
+    {
+        await SeedItems();
+        var q = _container.GetItemLinqQueryable<TestDocument>(true);
+        var groups = q.GroupBy(d => d.PartitionKey).ToList();
+
+        groups.Should().HaveCount(2);
+        groups.SelectMany(g => g).Should().HaveCount(4);
+    }
+
+    [Fact]
+    public async Task Linq_SelectMany_FlattenTags()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A", Tags = ["x", "y"] },
+            new PartitionKey("pk1"));
+        await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B", Tags = ["y", "z"] },
+            new PartitionKey("pk1"));
+
+        var q = container.GetItemLinqQueryable<TestDocument>(true);
+        var allTags = q.SelectMany(d => d.Tags).ToList();
+
+        allTags.Should().HaveCount(4);
+        allTags.Should().Contain("x");
+        allTags.Should().Contain("z");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 23 — Registration Lifecycle
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class LinqRegistrationLifecycleTests
+{
+    [Fact]
+    public void Register_SetsStaticFallbackFactory()
+    {
+        InMemoryFeedIteratorSetup.Register();
+        CosmosOverridableFeedIteratorExtensions.FeedIteratorFactory.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void Register_IsIdempotent_CallingTwiceDoesNotThrow()
+    {
+        InMemoryFeedIteratorSetup.Register();
+        InMemoryFeedIteratorSetup.Register(); // second call should not throw
+
+        CosmosOverridableFeedIteratorExtensions.FeedIteratorFactory.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void ToFeedIteratorOverridable_WithoutRegister_ThrowsOrReturnsNull()
+    {
+        InMemoryFeedIteratorSetup.Deregister();
+        CosmosOverridableFeedIteratorExtensions.FeedIteratorFactory.Should().BeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 23 — ToFeedIteratorOverridable Integration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class LinqFeedIteratorIntegrationTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task ToFeedIteratorOverridable_WithSkipTake_ReturnsPaginatedResults()
+    {
+        InMemoryFeedIteratorSetup.Register();
+
+        for (var i = 0; i < 10; i++)
+            await _container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}", Value = i },
+                new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemLinqQueryable<TestDocument>()
+            .OrderBy(d => d.Value)
+            .Skip(3)
+            .Take(4)
+            .ToFeedIteratorOverridable();
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(4);
+        results.Select(d => d.Value).Should().ContainInConsecutiveOrder(3, 4, 5, 6);
+    }
+
+    [Fact]
+    public async Task ToFeedIteratorOverridable_MultipleEnumerations_ReturnSameResults()
+    {
+        InMemoryFeedIteratorSetup.Register();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 },
+            new PartitionKey("pk1"));
+
+        // First enumeration
+        var iter1 = _container.GetItemLinqQueryable<TestDocument>()
+            .Where(d => d.Name == "Alice")
+            .ToFeedIteratorOverridable();
+        var results1 = new List<TestDocument>();
+        while (iter1.HasMoreResults)
+        {
+            var page = await iter1.ReadNextAsync();
+            results1.AddRange(page);
+        }
+
+        // Second enumeration
+        var iter2 = _container.GetItemLinqQueryable<TestDocument>()
+            .Where(d => d.Name == "Alice")
+            .ToFeedIteratorOverridable();
+        var results2 = new List<TestDocument>();
+        while (iter2.HasMoreResults)
+        {
+            var page = await iter2.ReadNextAsync();
+            results2.AddRange(page);
+        }
+
+        results1.Should().HaveCount(1);
+        results2.Should().HaveCount(1);
+        results1[0].Id.Should().Be(results2[0].Id);
+    }
+
+    [Fact]
+    public async Task ToFeedIteratorOverridable_OrderByDescending_ReturnsDescendingResults()
+    {
+        InMemoryFeedIteratorSetup.Register();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 },
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 30 },
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Charlie", Value = 20 },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemLinqQueryable<TestDocument>()
+            .OrderByDescending(d => d.Value)
+            .ToFeedIteratorOverridable();
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Select(d => d.Value).Should().ContainInConsecutiveOrder(30, 20, 10);
+    }
+}
+
 
 public class LinqGapTests3
 {
