@@ -395,3 +395,100 @@ public class FeedRangeChangeFeedFilteringTests
         results.Should().HaveCount(10);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Phase E — Large Document Consistency
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FeedRangeLargeDocumentTests
+{
+    [Fact]
+    public async Task LargeDocuments_FeedRangeQuery_SumsToTotal()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.FeedRangeCount = 4;
+
+        // Create 20 items with large payloads (~10 KB each)
+        var bigPayload = new string('x', 10_000);
+        for (var i = 0; i < 20; i++)
+        {
+            var doc = new JObject
+            {
+                ["id"] = $"big-{i}",
+                ["partitionKey"] = $"pk-{i}",
+                ["data"] = bigPayload
+            };
+            await container.CreateItemAsync(doc, new PartitionKey($"pk-{i}"));
+        }
+
+        var ranges = await container.GetFeedRangesAsync();
+        ranges.Should().HaveCount(4);
+
+        var totalCount = 0;
+        foreach (var range in ranges)
+        {
+            var iter = container.GetItemQueryIterator<JObject>(
+                range, new QueryDefinition("SELECT * FROM c"));
+            while (iter.HasMoreResults)
+            {
+                var page = await iter.ReadNextAsync();
+                totalCount += page.Count;
+            }
+        }
+
+        totalCount.Should().Be(20, "sum across all feed ranges should equal total items");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Phase G — Handler Consistency (Divergent)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FeedRangeHandlerConsistencyTests
+{
+    [Fact]
+    public async Task InMemoryContainer_FeedRange_QueryFiltersCorrectly_VsDirectQuery()
+    {
+        // Verifies that querying with a specific feed range returns a strict
+        // subset compared to querying without a feed range, documenting the
+        // expected filtering behavior.
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.FeedRangeCount = 4;
+
+        for (var i = 0; i < 40; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"N{i}" },
+                new PartitionKey($"pk-{i}"));
+
+        // Full query (no feed range)
+        var allResults = new List<TestDocument>();
+        var allIter = container.GetItemQueryIterator<TestDocument>(
+            new QueryDefinition("SELECT * FROM c"));
+        while (allIter.HasMoreResults)
+        {
+            var page = await allIter.ReadNextAsync();
+            allResults.AddRange(page);
+        }
+
+        // Per-feed-range queries
+        var ranges = await container.GetFeedRangesAsync();
+        var perRangeTotal = 0;
+        foreach (var range in ranges)
+        {
+            var rangeResults = new List<TestDocument>();
+            var iter = container.GetItemQueryIterator<TestDocument>(
+                range, new QueryDefinition("SELECT * FROM c"));
+            while (iter.HasMoreResults)
+            {
+                var page = await iter.ReadNextAsync();
+                rangeResults.AddRange(page);
+            }
+            rangeResults.Count.Should().BeLessThan(allResults.Count,
+                "each feed range should return a subset");
+            perRangeTotal += rangeResults.Count;
+        }
+
+        perRangeTotal.Should().Be(allResults.Count,
+            "sum of per-range results should equal total");
+    }
+}
