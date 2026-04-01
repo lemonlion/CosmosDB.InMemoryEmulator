@@ -118,7 +118,7 @@ public class EmulatorLoadTests(ITestOutputHelper output) : IAsyncLifetime
 
         foreach (var id in Enumerable.Range(1, seedCount))
         {
-            knownIds.TryAdd(id.ToString(), "seed");
+            knownIds.TryAdd(id.ToString(), $"pk-{id % 20}");
         }
 
         var nextId = new AtomicCounter(10_000);
@@ -159,6 +159,9 @@ public class EmulatorLoadTests(ITestOutputHelper output) : IAsyncLifetime
                     operationStopwatch.Stop();
                     stats.RecordLatency(operationStopwatch.Elapsed);
                 }
+                // Note: 404s from replace/patch racing with concurrent delete are expected and counted
+                // here rather than under the specific operation stat. totalOps still includes NotFound,
+                // so the assertion in ReportAndAssert remains correct.
                 catch (CosmosException cosmosException)
                     when (cosmosException.StatusCode == HttpStatusCode.NotFound)
                 {
@@ -211,7 +214,7 @@ public class EmulatorLoadTests(ITestOutputHelper output) : IAsyncLifetime
                 await ReadAndVerifyQueryWithFilter(knownIds, stats);
                 break;
             case 3:
-                await ReadAndVerifyPointRead(knownIds, stats);
+                await ReadAndVerifyCrossPartitionQuery(stats);
                 break;
         }
     }
@@ -242,28 +245,21 @@ public class EmulatorLoadTests(ITestOutputHelper output) : IAsyncLifetime
         Interlocked.Increment(ref stats.Reads);
     }
 
-    private async Task ReadAndVerifyPointRead(
-        ConcurrentDictionary<string, string> knownIds,
-        LoadStats stats)
+    private async Task ReadAndVerifyCrossPartitionQuery(LoadStats stats)
     {
-        var ids = knownIds.Keys.ToArray();
-        if (ids.Length == 0)
+        var threshold = Random.Shared.Next(500);
+        var iterator = _container.GetItemQueryIterator<LoadDocument>(
+            new QueryDefinition("SELECT TOP 20 * FROM c WHERE c.counter > @threshold")
+                .WithParameter("@threshold", threshold));
+
+        var results = new List<LoadDocument>();
+        while (iterator.HasMoreResults)
         {
-            Interlocked.Increment(ref stats.Reads);
-            return;
+            var response = await iterator.ReadNextAsync();
+            results.AddRange(response);
         }
 
-        var targetId = ids[Random.Shared.Next(ids.Length)];
-        if (!knownIds.TryGetValue(targetId, out var partitionKey))
-        {
-            Interlocked.Increment(ref stats.Reads);
-            return;
-        }
-
-        var response = await _container.ReadItemAsync<LoadDocument>(targetId, new PartitionKey(partitionKey));
-
-        response.Resource.Should().NotBeNull();
-        response.Resource.Data.Should().NotBeNullOrEmpty();
+        results.Should().OnlyContain(d => d.Counter > threshold);
         Interlocked.Increment(ref stats.Reads);
     }
 
@@ -390,7 +386,10 @@ public class EmulatorLoadTests(ITestOutputHelper output) : IAsyncLifetime
 
                 var response = await _container.UpsertItemAsync(document, new PartitionKey(partitionKey));
 
-                response.StatusCode.Should().Be(HttpStatusCode.OK);
+                // Concurrent delete can remove the item between TryGetValue and UpsertItemAsync,
+                // causing Cosmos to create fresh (201) instead of update (200)
+                response.StatusCode.Should().BeOneOf(HttpStatusCode.OK, HttpStatusCode.Created);
+                knownIds.TryAdd(targetId, partitionKey);
                 Interlocked.Increment(ref stats.Upserts);
                 return;
             }
@@ -498,8 +497,9 @@ public class EmulatorLoadTests(ITestOutputHelper output) : IAsyncLifetime
         for (var seedIndex = 1; seedIndex <= count; seedIndex++)
         {
             var id = seedIndex.ToString();
-            var document = CreateDocument(id, "seed");
-            await _container.CreateItemAsync(document, new PartitionKey("seed"));
+            var partitionKey = $"pk-{seedIndex % 20}";
+            var document = CreateDocument(id, partitionKey);
+            await _container.CreateItemAsync(document, new PartitionKey(partitionKey));
         }
     }
 
@@ -560,5 +560,8 @@ public class EmulatorLoadTests(ITestOutputHelper output) : IAsyncLifetime
 
         stats.Errors.Should().Be(0,
             "no unexpected errors should occur under sustained load");
+
+        stats.GetPercentile(99).Should().BeLessThan(5000,
+            "P99 latency should stay under 5000ms even for the real emulator to catch hangs");
     }
 }

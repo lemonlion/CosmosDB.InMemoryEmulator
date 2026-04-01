@@ -596,4 +596,861 @@ public class FakeCosmosHandlerTests
 
         count.Resource.Should().Be(2);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C1. Parameterized Query
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_ParameterizedQuery_ReturnsCorrectResults()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20 }, new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var queryDef = new QueryDefinition("SELECT * FROM c WHERE c.name = @name")
+            .WithParameter("@name", "Alice");
+        var results = new List<TestDocument>();
+        var iterator = cosmosContainer.GetItemQueryIterator<TestDocument>(queryDef);
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C2. TOP Query
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_TopQuery_ReturnsLimitedResults()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var results = new List<TestDocument>();
+        var iterator = cosmosContainer.GetItemLinqQueryable<TestDocument>()
+            .Take(3)
+            .ToFeedIterator();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(3);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C3. OFFSET/LIMIT Query
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_OffsetLimitQuery_ReturnsPaginatedSlice()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var results = new List<TestDocument>();
+        var iterator = cosmosContainer.GetItemLinqQueryable<TestDocument>()
+            .Skip(2).Take(3)
+            .ToFeedIterator();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(3);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C4. DISTINCT Query
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_DistinctQuery_ReturnsUniqueValues()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Alice" }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Bob" }, new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var results = new List<string>();
+        var iterator = cosmosContainer.GetItemQueryIterator<string>(
+            "SELECT DISTINCT VALUE c.name FROM c");
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results.Should().Contain("Alice");
+        results.Should().Contain("Bob");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C5. ORDER BY Descending
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_OrderByDescending_ReturnsReverseOrder()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Charlie" }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Bob" }, new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var results = new List<TestDocument>();
+        var iterator = cosmosContainer.GetItemLinqQueryable<TestDocument>()
+            .OrderByDescending(doc => doc.Name).ToFeedIterator();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results[0].Name.Should().Be("Charlie");
+        results[1].Name.Should().Be("Bob");
+        results[2].Name.Should().Be("Alice");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C6. Multi-field ORDER BY
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_OrderBy_MultipleFields_ReturnsCorrectOrder()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 20 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Alice", Value = 10 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Bob", Value = 5 }, new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var results = new List<TestDocument>();
+        var iterator = cosmosContainer.GetItemLinqQueryable<TestDocument>()
+            .OrderBy(doc => doc.Name).ThenBy(doc => doc.Value)
+            .ToFeedIterator();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results[0].Name.Should().Be("Alice");
+        results[0].Value.Should().Be(10);
+        results[1].Name.Should().Be("Alice");
+        results[1].Value.Should().Be(20);
+        results[2].Name.Should().Be("Bob");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C7. SUM Aggregate
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_SumAggregate_ReturnsCorrectSum()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A", Value = 10 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B", Value = 20 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "C", Value = 30 }, new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var results = new List<int>();
+        var iterator = cosmosContainer.GetItemQueryIterator<int>(
+            "SELECT VALUE SUM(c[\"value\"]) FROM c");
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Should().Be(60);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C8. MIN/MAX Aggregates
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_MinMaxAggregate_ReturnsCorrectValues()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A", Value = 10 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B", Value = 50 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "C", Value = 30 }, new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var minResults = new List<int>();
+        var minIter = cosmosContainer.GetItemQueryIterator<int>(
+            "SELECT VALUE MIN(c[\"value\"]) FROM c");
+        while (minIter.HasMoreResults)
+        {
+            var page = await minIter.ReadNextAsync();
+            minResults.AddRange(page);
+        }
+
+        var maxResults = new List<int>();
+        var maxIter = cosmosContainer.GetItemQueryIterator<int>(
+            "SELECT VALUE MAX(c[\"value\"]) FROM c");
+        while (maxIter.HasMoreResults)
+        {
+            var page = await maxIter.ReadNextAsync();
+            maxResults.AddRange(page);
+        }
+
+        minResults.Should().ContainSingle().Which.Should().Be(10);
+        maxResults.Should().ContainSingle().Which.Should().Be(50);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C9. AVG Aggregate
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_AvgAggregate_ReturnsCorrectAverage()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A", Value = 10 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B", Value = 20 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "C", Value = 30 }, new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var results = new List<double>();
+        var iterator = cosmosContainer.GetItemQueryIterator<double>(
+            "SELECT VALUE AVG(c[\"value\"]) FROM c");
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Should().Be(20.0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C10. Empty Container Query
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_EmptyContainer_QueryReturnsEmpty()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var results = new List<TestDocument>();
+        var iterator = cosmosContainer.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().BeEmpty();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C11. GROUP BY Query
+    //
+    //  The SDK's GroupByQueryPipelineStage on non-Windows platforms expects a
+    //  specific rewritten query format where each document is wrapped in a
+    //  structure with "groupByItems" + "payload" (similar to ORDER BY wrapping).
+    //  The handler's query plan returns groupByExpressions and
+    //  groupByAliasToAggregateType, but the rewritten query is the original SQL,
+    //  which the SDK's GroupByQueryPipelineStage then fails to parse because it
+    //  tries to extract JSON paths from SDK-internal field names containing
+    //  curly braces (e.g. {"item": c.name}).
+    //
+    //  Fixing this requires implementing GROUP BY document wrapping in
+    //  FakeCosmosHandler.HandleQueryAsync (analogous to the ORDER BY wrapping),
+    //  which is non-trivial because:
+    //  1. The SDK expects partial aggregates per group key per partition range
+    //  2. The rewritten query format is undocumented SDK internals
+    //  3. AVG needs {sum,count} per group, not a final value
+    //
+    //  GROUP BY works correctly via InMemoryContainer.GetItemQueryIterator()
+    //  directly — this limitation only applies to the FakeCosmosHandler HTTP
+    //  path. Using InMemoryCosmosClient or UseInMemoryCosmosDB() DI bypasses
+    //  this entirely.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact(Skip = "C11: GROUP BY via FakeCosmosHandler fails on non-Windows. " +
+                  "The SDK's GroupByQueryPipelineStage expects rewritten documents with " +
+                  "groupByItems + payload wrapping (similar to ORDER BY). The handler returns " +
+                  "raw query results which the SDK cannot parse. Fixing requires implementing " +
+                  "GROUP BY document wrapping (partial aggregates per group key per range). " +
+                  "GROUP BY works via InMemoryContainer directly — this only affects the " +
+                  "FakeCosmosHandler HTTP pipeline.")]
+    public async Task Handler_GroupByQuery_ReturnsGroupedResults()
+    {
+        // Expected real Cosmos behavior:
+        // "SELECT c.name, COUNT(1) AS cnt FROM c GROUP BY c.name" with 2 Alices and 1 Bob
+        // should return [{name:"Alice",cnt:2}, {name:"Bob",cnt:1}].
+        //
+        // What happens: The SDK's GroupByQueryPipelineStage throws
+        // Newtonsoft.Json.JsonException: "Unexpected character while parsing path indexer: {"
+        // because it tries to parse the raw query results as groupByItems-wrapped documents.
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Alice", Value = 20 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Bob", Value = 30 }, new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var results = new List<JObject>();
+        var iterator = cosmosContainer.GetItemQueryIterator<JObject>(
+            "SELECT c.name, COUNT(1) AS cnt FROM c GROUP BY c.name");
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results.Should().Contain(r => r["name"]!.ToString() == "Alice" && r["cnt"]!.Value<int>() == 2);
+        results.Should().Contain(r => r["name"]!.ToString() == "Bob" && r["cnt"]!.Value<int>() == 1);
+    }
+
+    /// <summary>
+    /// Sister test for C11: Demonstrates that GROUP BY works correctly via InMemoryContainer
+    /// directly, bypassing the FakeCosmosHandler HTTP pipeline. This proves the SQL engine
+    /// supports GROUP BY — the limitation is only in the SDK's response format expectations
+    /// when going through FakeCosmosHandler.
+    /// </summary>
+    [Fact]
+    public async Task Handler_GroupByQuery_Divergent_WorksViaContainerDirectly()
+    {
+        // GROUP BY works via InMemoryContainer.GetItemQueryIterator() directly.
+        // The limitation is only in the FakeCosmosHandler HTTP path, where the SDK's
+        // GroupByQueryPipelineStage expects a specific rewritten document format.
+        // Users should use InMemoryCosmosClient or UseInMemoryCosmosDB() DI for
+        // GROUP BY support — FakeCosmosHandler is the low-level HTTP approach.
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Alice", Value = 20 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Bob", Value = 30 }, new PartitionKey("pk1"));
+
+        var results = new List<JObject>();
+        var iterator = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT c.name, COUNT(1) AS cnt FROM c GROUP BY c.name"));
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        // This succeeds — GROUP BY is supported at the container level
+        results.Should().HaveCount(2);
+        results.Should().Contain(r => r["name"]!.ToString() == "Alice" && r["cnt"]!.Value<int>() == 2);
+        results.Should().Contain(r => r["name"]!.ToString() == "Bob" && r["cnt"]!.Value<int>() == 1);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C12. Query with Partition Key Filter
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_QueryWithPartitionKeyFilter_ReturnsFilteredResults()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pkA", Name = "FromA" }, new PartitionKey("pkA"));
+        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pkB", Name = "FromB" }, new PartitionKey("pkB"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var results = new List<TestDocument>();
+        var iterator = cosmosContainer.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pkA") });
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("FromA");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  D4. Query response item count header
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_QueryResponse_ContainsItemCount()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob" }, new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var httpClient = new HttpClient(handler);
+
+        var request = new HttpRequestMessage(HttpMethod.Post,
+            "https://localhost:9999/dbs/db/colls/test/docs");
+        request.Headers.Add("x-ms-documentdb-query", "True");
+        request.Headers.Add("x-ms-documentdb-isquery", "True");
+        request.Content = new StringContent(
+            """{"query":"SELECT * FROM c"}""", Encoding.UTF8, "application/query+json");
+
+        var response = await httpClient.SendAsync(request);
+        response.Headers.TryGetValues("x-ms-item-count", out var itemCountValues).Should().BeTrue();
+        int.Parse(itemCountValues!.First()).Should().Be(2);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  D5. Collection metadata detail
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_CollectionMetadata_ContainsIndexingPolicy()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        using var handler = new FakeCosmosHandler(container);
+        using var httpClient = new HttpClient(handler);
+
+        var response = await httpClient.GetAsync("https://localhost:9999/dbs/db/colls/test");
+
+        var body = await response.Content.ReadAsStringAsync();
+        var json = JObject.Parse(body);
+        json["indexingPolicy"].Should().NotBeNull();
+        json["indexingPolicy"]!["indexingMode"]!.ToString().Should().Be("consistent");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  D6. Composite PK metadata
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_CollectionMetadata_WithCompositePartitionKey_ReturnsMultiplePaths()
+    {
+        var container = new InMemoryContainer("test", ["/tenantId", "/userId"]);
+        using var handler = new FakeCosmosHandler(container);
+        using var httpClient = new HttpClient(handler);
+
+        var response = await httpClient.GetAsync("https://localhost:9999/dbs/db/colls/test");
+
+        var body = await response.Content.ReadAsStringAsync();
+        var json = JObject.Parse(body);
+        var paths = json["partitionKey"]!["paths"]!.ToObject<string[]>();
+        paths.Should().HaveCount(2);
+        paths.Should().Contain("/tenantId");
+        paths.Should().Contain("/userId");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  D7. Account metadata detail
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_AccountMetadata_ContainsQueryEngineConfiguration()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        using var handler = new FakeCosmosHandler(container);
+        using var httpClient = new HttpClient(handler);
+
+        var response = await httpClient.GetAsync("https://localhost:9999/");
+
+        var body = await response.Content.ReadAsStringAsync();
+        var json = JObject.Parse(body);
+        json["queryEngineConfiguration"].Should().NotBeNull();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  E1. Router with single container
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_Router_SingleContainer_WorksCorrectly()
+    {
+        var container = new InMemoryContainer("only", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Solo" },
+            new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        var router = FakeCosmosHandler.CreateRouter(new Dictionary<string, FakeCosmosHandler>
+        {
+            ["only"] = handler,
+        });
+
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(router) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+
+        var c = client.GetContainer("db", "only");
+        var results = new List<TestDocument>();
+        var iter = c.GetItemLinqQueryable<TestDocument>().ToFeedIterator();
+        while (iter.HasMoreResults) { var page = await iter.ReadNextAsync(); results.AddRange(page); }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Solo");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  E2. Full CRUD through router
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_Router_CrudThroughRouter_WorksEndToEnd()
+    {
+        var container = new InMemoryContainer("crud-routed", "/partitionKey");
+        using var handler = new FakeCosmosHandler(container);
+        var router = FakeCosmosHandler.CreateRouter(new Dictionary<string, FakeCosmosHandler>
+        {
+            ["crud-routed"] = handler,
+        });
+
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(router) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+
+        var c = client.GetContainer("db", "crud-routed");
+        var doc = new TestDocument { Id = "r1", PartitionKey = "pk1", Name = "Created" };
+
+        // Create
+        var createResp = await c.CreateItemAsync(doc, new PartitionKey("pk1"));
+        createResp.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // Read
+        var readResp = await c.ReadItemAsync<TestDocument>("r1", new PartitionKey("pk1"));
+        readResp.Resource.Name.Should().Be("Created");
+
+        // Replace
+        doc.Name = "Replaced";
+        var replaceResp = await c.ReplaceItemAsync(doc, "r1", new PartitionKey("pk1"));
+        replaceResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        replaceResp.Resource.Name.Should().Be("Replaced");
+
+        // Delete
+        var deleteResp = await c.DeleteItemAsync<TestDocument>("r1", new PartitionKey("pk1"));
+        deleteResp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        // Verify gone
+        var act = () => c.ReadItemAsync<TestDocument>("r1", new PartitionKey("pk1"));
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  E3. Per-container fault injection via router
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_Router_FaultInjection_PerContainer()
+    {
+        var containerOk = new InMemoryContainer("healthy", "/partitionKey");
+        var containerFail = new InMemoryContainer("faulty", "/partitionKey");
+
+        await containerOk.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Ok" },
+            new PartitionKey("pk1"));
+        await containerFail.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Fail" },
+            new PartitionKey("pk1"));
+
+        using var handlerOk = new FakeCosmosHandler(containerOk);
+        using var handlerFail = new FakeCosmosHandler(containerFail);
+
+        // Only the faulty container injects faults
+        handlerFail.FaultInjector = _ =>
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+
+        var router = FakeCosmosHandler.CreateRouter(new Dictionary<string, FakeCosmosHandler>
+        {
+            ["healthy"] = handlerOk,
+            ["faulty"] = handlerFail,
+        });
+
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(router) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+
+        // Healthy container works
+        var healthy = client.GetContainer("db", "healthy");
+        var readOk = await healthy.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        readOk.Resource.Name.Should().Be("Ok");
+
+        // Faulty container fails
+        var faulty = client.GetContainer("db", "faulty");
+        var act = () => faulty.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  F1. Abandoned iteration cache eviction
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_AbandonedIteration_CacheIsEventuallyEvicted()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container, new FakeCosmosHandlerOptions
+        {
+            CacheTtl = TimeSpan.FromMilliseconds(100)
+        });
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        // Start paginated query but only read the first page
+        var iterator = cosmosContainer.GetItemLinqQueryable<TestDocument>(
+                requestOptions: new QueryRequestOptions { MaxItemCount = 2 })
+            .ToFeedIterator();
+        if (iterator.HasMoreResults)
+            await iterator.ReadNextAsync();
+        // Deliberately abandon the iterator
+
+        // Wait for cache TTL
+        await Task.Delay(200);
+
+        // A fresh query should still work correctly (cache was evicted, no corruption)
+        var results = new List<TestDocument>();
+        var freshIterator = cosmosContainer.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        while (freshIterator.HasMoreResults)
+        {
+            var page = await freshIterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(10);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  F2. Concurrent queries don't interfere
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_ConcurrentQueries_DoNotInterfere()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20 }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Charlie", Value = 30 }, new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        var task1 = Task.Run(async () =>
+        {
+            var results = new List<TestDocument>();
+            var iter = cosmosContainer.GetItemQueryIterator<TestDocument>("SELECT * FROM c WHERE c.name = 'Alice'");
+            while (iter.HasMoreResults)
+            {
+                var page = await iter.ReadNextAsync();
+                results.AddRange(page);
+            }
+            return results;
+        });
+
+        var task2 = Task.Run(async () =>
+        {
+            var results = new List<TestDocument>();
+            var iter = cosmosContainer.GetItemQueryIterator<TestDocument>("SELECT * FROM c WHERE c[\"value\"] > 15");
+            while (iter.HasMoreResults)
+            {
+                var page = await iter.ReadNextAsync();
+                results.AddRange(page);
+            }
+            return results;
+        });
+
+        var results1 = await task1;
+        var results2 = await task2;
+
+        results1.Should().ContainSingle().Which.Name.Should().Be("Alice");
+        results2.Should().HaveCount(2);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  G1. Dispose clears cache
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_Dispose_ClearsQueryCache()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 5; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test");
+
+        // Run a paginated query to populate cache
+        var iterator = cosmosContainer.GetItemLinqQueryable<TestDocument>(
+                requestOptions: new QueryRequestOptions { MaxItemCount = 2 })
+            .ToFeedIterator();
+        if (iterator.HasMoreResults)
+            await iterator.ReadNextAsync();
+
+        // Dispose should not throw
+        handler.Dispose();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  G2. Double dispose safety
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void Handler_DoubleDispose_DoesNotThrow()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var handler = new FakeCosmosHandler(container);
+
+        handler.Dispose();
+        var act = () => handler.Dispose();
+
+        act.Should().NotThrow();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  H1. Unrecognised route returns 404
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_UnrecognisedRoute_Returns404WithMessage()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        using var handler = new FakeCosmosHandler(container);
+        using var httpClient = new HttpClient(handler);
+
+        var response = await httpClient.GetAsync("https://localhost:9999/dbs/db/something/weird");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("FakeCosmosHandler");
+        body.Should().Contain("unrecognised route");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B1. Numeric Partition Key
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_CreateItem_WithNumericPartitionKey_Succeeds()
+    {
+        var container = new InMemoryContainer("numericpk", "/value");
+        using var handler = new FakeCosmosHandler(container);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+        var c = client.GetContainer("db", "numericpk");
+
+        var doc = new { id = "n1", value = 42, name = "NumericPK" };
+        var createResponse = await c.CreateItemAsync(doc, new PartitionKey(42));
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var readResponse = await c.ReadItemAsync<JObject>("n1", new PartitionKey(42));
+        readResponse.Resource["name"]!.ToString().Should().Be("NumericPK");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B2. Boolean Partition Key
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_CreateItem_WithBooleanPartitionKey_Succeeds()
+    {
+        var container = new InMemoryContainer("boolpk", "/isActive");
+        using var handler = new FakeCosmosHandler(container);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+        var c = client.GetContainer("db", "boolpk");
+
+        var doc = new { id = "b1", isActive = true, name = "BoolPK" };
+        var createResponse = await c.CreateItemAsync(doc, new PartitionKey(true));
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var readResponse = await c.ReadItemAsync<JObject>("b1", new PartitionKey(true));
+        readResponse.Resource["name"]!.ToString().Should().Be("BoolPK");
+    }
 }

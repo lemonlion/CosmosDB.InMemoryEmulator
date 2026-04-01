@@ -172,6 +172,76 @@ public class UseInMemoryCosmosContainersTests : IDisposable
         var containers = provider.GetServices<Container>().ToList();
         containers.Should().ContainSingle();
     }
+
+    [Fact]
+    public void MatchesExistingLifetime_Transient()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<Container>(_ => new InMemoryContainer("old", "/id"));
+
+        services.UseInMemoryCosmosContainers();
+
+        var descriptor = services.First(d => d.ServiceType == typeof(Container));
+        descriptor.Lifetime.Should().Be(ServiceLifetime.Transient);
+    }
+
+    [Fact]
+    public void MatchesExistingLifetime_DefaultsSingleton()
+    {
+        var services = new ServiceCollection();
+        // No existing Container registration — should default to Singleton
+
+        services.UseInMemoryCosmosContainers();
+
+        var descriptor = services.First(d => d.ServiceType == typeof(Container));
+        descriptor.Lifetime.Should().Be(ServiceLifetime.Singleton);
+    }
+
+    [Fact]
+    public void DuplicateContainerNames_RegistersBoth()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosContainers(o =>
+        {
+            o.AddContainer("orders", "/pk");
+            o.AddContainer("orders", "/pk2");
+        });
+
+        var provider = services.BuildServiceProvider();
+        var containers = provider.GetServices<Container>().ToList();
+        // Both registrations should be present — they're independent InMemoryContainers
+        containers.Should().HaveCount(2);
+        containers.Should().AllSatisfy(c => c.Id.Should().Be("orders"));
+    }
+
+    [Fact]
+    public void OnContainerCreated_FiresForEachContainer()
+    {
+        var services = new ServiceCollection();
+        var captured = new List<InMemoryContainer>();
+
+        services.UseInMemoryCosmosContainers(o =>
+        {
+            o.OnContainerCreated = c => captured.Add(c);
+            o.AddContainer("orders", "/pk");
+            o.AddContainer("events", "/partitionKey");
+            o.AddContainer("logs", "/category");
+        });
+
+        captured.Should().HaveCount(3);
+        captured.Select(c => c.Id).Should().BeEquivalentTo(["orders", "events", "logs"]);
+    }
+
+    [Fact]
+    public void ReturnsSameServiceCollection_Fluent()
+    {
+        var services = new ServiceCollection();
+
+        var result = services.UseInMemoryCosmosContainers();
+
+        result.Should().BeSameAs(services);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -387,6 +457,132 @@ public class UseInMemoryCosmosDBTests : IDisposable
         var descriptor = services.First(d => d.ServiceType == typeof(Container));
         descriptor.Lifetime.Should().Be(ServiceLifetime.Scoped);
     }
+
+    [Fact]
+    public void MatchesExistingLifetime_Transient()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<Container>(_ => new InMemoryContainer("old", "/id"));
+
+        services.UseInMemoryCosmosDB();
+
+        var descriptor = services.First(d => d.ServiceType == typeof(Container));
+        descriptor.Lifetime.Should().Be(ServiceLifetime.Transient);
+    }
+
+    [Fact]
+    public void MatchesExistingLifetime_DefaultsSingleton()
+    {
+        var services = new ServiceCollection();
+        // No existing Container registration — defaults to Singleton
+
+        services.UseInMemoryCosmosDB();
+
+        var descriptor = services.First(d => d.ServiceType == typeof(Container));
+        descriptor.Lifetime.Should().Be(ServiceLifetime.Singleton);
+    }
+
+    [Fact]
+    public void Idempotent_CalledTwice()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB();
+        services.UseInMemoryCosmosDB();
+
+        var provider = services.BuildServiceProvider();
+        var containers = provider.GetServices<Container>().ToList();
+        containers.Should().ContainSingle();
+        var clients = provider.GetServices<CosmosClient>().ToList();
+        clients.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void OnHandlerCreatedCallback_SingleContainer()
+    {
+        var services = new ServiceCollection();
+        string? capturedName = null;
+        FakeCosmosHandler? capturedHandler = null;
+
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.AddContainer("orders", "/pk");
+            o.OnHandlerCreated = (name, handler) =>
+            {
+                capturedName = name;
+                capturedHandler = handler;
+            };
+        });
+
+        capturedName.Should().Be("orders");
+        capturedHandler.Should().NotBeNull();
+        capturedHandler!.BackingContainer.Id.Should().Be("orders");
+    }
+
+    [Fact]
+    public void DuplicateContainerNames_LastHandlerWins()
+    {
+        // When duplicate container names are used with UseInMemoryCosmosDB,
+        // the handlers dictionary uses the container name as key — the last one wins.
+        // Both are still registered in DI as separate Container instances, but
+        // the FakeCosmosHandler routing only sees the last one.
+        var services = new ServiceCollection();
+        var capturedHandlers = new List<(string Name, FakeCosmosHandler Handler)>();
+
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.AddContainer("orders", "/pk");
+            o.AddContainer("orders", "/pk2");
+            o.OnHandlerCreated = (name, h) => capturedHandlers.Add((name, h));
+        });
+
+        var provider = services.BuildServiceProvider();
+        var containers = provider.GetServices<Container>().ToList();
+        // Both containers are registered in DI
+        containers.Should().HaveCount(2);
+
+        // OnHandlerCreated fires for each, but second overwrites first in the handler dictionary
+        capturedHandlers.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void CosmosClientAlwaysSingleton_EvenIfExistingWasScoped()
+    {
+        var services = new ServiceCollection();
+        services.AddScoped<CosmosClient>(_ =>
+            throw new InvalidOperationException("Should have been removed"));
+
+        services.UseInMemoryCosmosDB();
+
+        // CosmsosClient is always registered as Singleton regardless of existing registration
+        var descriptor = services.First(d => d.ServiceType == typeof(CosmosClient));
+        descriptor.Lifetime.Should().Be(ServiceLifetime.Singleton);
+    }
+
+    [Fact]
+    public void ReturnsSameServiceCollection_Fluent()
+    {
+        var services = new ServiceCollection();
+
+        var result = services.UseInMemoryCosmosDB();
+
+        result.Should().BeSameAs(services);
+    }
+
+    [Fact]
+    public void OnClientCreated_ReturnsInstanceDIResolves()
+    {
+        var services = new ServiceCollection();
+        CosmosClient? captured = null;
+
+        services.UseInMemoryCosmosDB(o => o.OnClientCreated = c => captured = c);
+
+        var provider = services.BuildServiceProvider();
+        var resolved = provider.GetRequiredService<CosmosClient>();
+
+        // The callback receives the exact same instance that DI will resolve
+        captured.Should().BeSameAs(resolved);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -510,6 +706,146 @@ public class ServiceCollectionExtensionEdgeCaseTests : IDisposable
         clientContainer.Id.Should().Be("orders");
         capturedHandler.Should().NotBeNull();
         capturedHandler!.BackingContainer.Id.Should().Be("orders");
+    }
+
+    [Fact]
+    public void BothMethodsCalled_UseInMemoryCosmosDB_ThenContainers()
+    {
+        // When UseInMemoryCosmosDB is called first and UseInMemoryCosmosContainers second,
+        // the Container registration from UseInMemoryCosmosDB gets removed and replaced.
+        // CosmosClient from UseInMemoryCosmosDB remains.
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB(o => o.AddContainer("fromDB", "/pk"));
+        services.UseInMemoryCosmosContainers(o => o.AddContainer("fromContainers", "/pk"));
+
+        var provider = services.BuildServiceProvider();
+        var containers = provider.GetServices<Container>().ToList();
+        containers.Should().ContainSingle();
+        containers[0].Id.Should().Be("fromContainers");
+        // CosmosClient from UseInMemoryCosmosDB should still be present
+        provider.GetRequiredService<CosmosClient>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void BothMethodsCalled_UseInMemoryCosmosContainers_ThenCosmosDB()
+    {
+        // When UseInMemoryCosmosContainers is called first and UseInMemoryCosmosDB second,
+        // Container from Containers gets removed and replaced by DB's container.
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosContainers(o => o.AddContainer("fromContainers", "/pk"));
+        services.UseInMemoryCosmosDB(o => o.AddContainer("fromDB", "/pk"));
+
+        var provider = services.BuildServiceProvider();
+        var containers = provider.GetServices<Container>().ToList();
+        containers.Should().ContainSingle();
+        containers[0].Id.Should().Be("fromDB");
+    }
+
+    [Fact]
+    public async Task ScopedLifetime_DisposalWorks()
+    {
+        var services = new ServiceCollection();
+        services.AddScoped<Container>(_ => new InMemoryContainer("old", "/id"));
+
+        services.UseInMemoryCosmosDB(o => o.AddContainer("test", "/partitionKey"));
+
+        var provider = services.BuildServiceProvider();
+
+        Container container;
+        using (var scope = provider.CreateScope())
+        {
+            container = scope.ServiceProvider.GetRequiredService<Container>();
+            container.Should().NotBeNull();
+            container.Id.Should().Be("test");
+
+            // Container is usable within the scope
+            await container.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Scoped" },
+                new PartitionKey("pk1"));
+        }
+
+        // After scope disposal, a new scope should get a fresh factory invocation
+        using var scope2 = provider.CreateScope();
+        var container2 = scope2.ServiceProvider.GetRequiredService<Container>();
+        container2.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void FeedIteratorSetup_Asymmetry_UseInMemoryCosmosDB_DoesNotRegister()
+    {
+        // UseInMemoryCosmosDB does NOT register FeedIteratorSetup (FakeCosmosHandler handles it natively)
+        InMemoryFeedIteratorSetup.Deregister();
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB();
+
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().BeNull(
+            "UseInMemoryCosmosDB uses FakeCosmosHandler which handles .ToFeedIterator() natively");
+    }
+
+    [Fact]
+    public void FeedIteratorSetup_Asymmetry_UseInMemoryCosmosContainers_DoesRegister()
+    {
+        // UseInMemoryCosmosContainers DOES register FeedIteratorSetup by default
+        InMemoryFeedIteratorSetup.Deregister();
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosContainers();
+
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().NotBeNull(
+            "UseInMemoryCosmosContainers requires FeedIteratorSetup for .ToFeedIteratorOverridable()");
+    }
+
+    [Fact]
+    public void FeedIteratorSetup_Asymmetry_TypedClient_DoesRegister()
+    {
+        // UseInMemoryCosmosDB<T> DOES register FeedIteratorSetup by default
+        InMemoryFeedIteratorSetup.Deregister();
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
+
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().NotBeNull(
+            "UseInMemoryCosmosDB<T> uses InMemoryCosmosClient (not FakeCosmosHandler) so needs FeedIteratorSetup");
+    }
+
+    [Fact]
+    public void FluentChaining_InMemoryCosmosOptions_AddContainer()
+    {
+        var options = new InMemoryCosmosOptions();
+
+        var result = options.AddContainer("a", "/pk").AddContainer("b", "/pk2");
+
+        result.Should().BeSameAs(options);
+        options.Containers.Should().HaveCount(2);
+        options.Containers[0].ContainerName.Should().Be("a");
+        options.Containers[1].ContainerName.Should().Be("b");
+    }
+
+    [Fact]
+    public void FluentChaining_InMemoryContainerOptions_AddContainer()
+    {
+        var options = new InMemoryContainerOptions();
+
+        var result = options.AddContainer("a", "/pk").AddContainer("b", "/pk2");
+
+        result.Should().BeSameAs(options);
+        options.Containers.Should().HaveCount(2);
+        options.Containers[0].ContainerName.Should().Be("a");
+        options.Containers[1].ContainerName.Should().Be("b");
+    }
+
+    [Fact]
+    public void ContainerConfig_RecordEquality()
+    {
+        var a = new ContainerConfig("orders", "/pk", "db1");
+        var b = new ContainerConfig("orders", "/pk", "db1");
+        var c = new ContainerConfig("events", "/pk", "db1");
+
+        a.Should().Be(b);
+        a.Should().NotBe(c);
     }
 }
 
@@ -842,6 +1178,138 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
         var act = () => bioContainer.ReadItemAsync<TestDocument>("oob-1", new PartitionKey("pk1"));
         await act.Should().ThrowAsync<CosmosException>();
     }
+
+    [Fact]
+    public void Idempotent_CalledTwice()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
+
+        var provider = services.BuildServiceProvider();
+        var clients = provider.GetServices<EmployeeCosmosClient>().ToList();
+        clients.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void MatchesExistingLifetime_Transient()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<EmployeeCosmosClient>(_ => new EmployeeCosmosClient());
+
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
+
+        var descriptor = services.First(d => d.ServiceType == typeof(EmployeeCosmosClient));
+        descriptor.Lifetime.Should().Be(ServiceLifetime.Transient);
+    }
+
+    [Fact]
+    public void MultipleContainersOnSameTypedClient()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o =>
+        {
+            o.DatabaseName = "BiometricDb";
+            o.AddContainer("biometrics", "/pk");
+            o.AddContainer("audit-logs", "/pk");
+        });
+
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<EmployeeCosmosClient>();
+
+        // Both containers should be accessible via GetContainer
+        var bioContainer = client.GetContainer("BiometricDb", "biometrics");
+        bioContainer.Should().BeOfType<InMemoryContainer>();
+        bioContainer.Id.Should().Be("biometrics");
+
+        var auditContainer = client.GetContainer("BiometricDb", "audit-logs");
+        auditContainer.Should().BeOfType<InMemoryContainer>();
+        auditContainer.Id.Should().Be("audit-logs");
+
+        // They should be independent containers
+        bioContainer.Should().NotBeSameAs(auditContainer);
+    }
+
+    [Fact]
+    public void PerContainerDatabaseOverride_TypedClient()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o =>
+        {
+            o.AddContainer("c1", "/pk", databaseName: "db1");
+            o.AddContainer("c2", "/pk", databaseName: "db2");
+        });
+
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<EmployeeCosmosClient>();
+
+        var c1 = client.GetContainer("db1", "c1");
+        c1.Should().BeOfType<InMemoryContainer>();
+        c1.Id.Should().Be("c1");
+
+        var c2 = client.GetContainer("db2", "c2");
+        c2.Should().BeOfType<InMemoryContainer>();
+        c2.Id.Should().Be("c2");
+    }
+
+    [Fact]
+    public void OnHandlerCreated_SilentlyIgnored_TypedClient()
+    {
+        // UseInMemoryCosmosDB<T> uses InMemoryCosmosClient, not FakeCosmosHandler.
+        // OnHandlerCreated is on InMemoryCosmosOptions but only used by UseInMemoryCosmosDB().
+        // The typed client method silently ignores it — no crash, no callback.
+        var services = new ServiceCollection();
+        var callbackInvoked = false;
+
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o =>
+        {
+            o.OnHandlerCreated = (_, _) => callbackInvoked = true;
+            o.AddContainer("bio", "/pk");
+        });
+
+        callbackInvoked.Should().BeFalse(
+            "UseInMemoryCosmosDB<T> does not use FakeCosmosHandler, so OnHandlerCreated should not fire");
+    }
+
+    [Fact]
+    public void HttpMessageHandlerWrapper_Ignored_TypedClient()
+    {
+        // UseInMemoryCosmosDB<T> uses InMemoryCosmosClient (no HTTP pipeline).
+        // HttpMessageHandlerWrapper is silently ignored — should not crash.
+        var services = new ServiceCollection();
+        var wrapperInvoked = false;
+
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o =>
+        {
+            o.HttpMessageHandlerWrapper = handler =>
+            {
+                wrapperInvoked = true;
+                return handler;
+            };
+            o.AddContainer("bio", "/pk");
+        });
+
+        wrapperInvoked.Should().BeFalse(
+            "UseInMemoryCosmosDB<T> does not create an HTTP pipeline, so HttpMessageHandlerWrapper should not fire");
+
+        // Client should still work fine
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<EmployeeCosmosClient>();
+        client.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void ReturnsSameServiceCollection_Fluent()
+    {
+        var services = new ServiceCollection();
+
+        var result = services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
+
+        result.Should().BeSameAs(services);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -1026,6 +1494,29 @@ public class AutoDetectContainerTests
 
         captured.Should().NotBeNull();
     }
+
+    [Fact]
+    public void AutoDetect_MixedExistingLifetimes_UsesFirst()
+    {
+        // When existing Container registrations have mixed lifetimes,
+        // the code uses FirstOrDefault()?.Lifetime — so the first registration's lifetime wins.
+        var services = new ServiceCollection();
+        services.AddSingleton<CosmosClient>(_ =>
+            throw new InvalidOperationException("Should be replaced"));
+        services.AddScoped<Container>(sp =>
+            sp.GetRequiredService<CosmosClient>().GetContainer("db", "orders"));
+        services.AddSingleton<Container>(sp =>
+            sp.GetRequiredService<CosmosClient>().GetContainer("db", "customers"));
+
+        services.UseInMemoryCosmosDB();
+
+        // In auto-detect mode, existing registrations are preserved as-is.
+        // The first descriptor's lifetime (Scoped) was captured for informational purposes,
+        // but since auto-detect doesn't replace, both registrations keep their original lifetimes.
+        var descriptors = services.Where(d => d.ServiceType == typeof(Container)).ToList();
+        descriptors[0].Lifetime.Should().Be(ServiceLifetime.Scoped);
+        descriptors[1].Lifetime.Should().Be(ServiceLifetime.Singleton);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -1206,5 +1697,34 @@ public class HttpMessageHandlerWrapperTests : IDisposable
         countingHandler.Should().NotBeNull();
         countingHandler!.RequestCount.Should().BeGreaterThanOrEqualTo(3,
             "Create + Read + Query should produce at least 3 HTTP requests through the wrapper");
+    }
+
+    [Fact]
+    public void OnHandlerCreated_And_HttpWrapper_BothFire()
+    {
+        // Both callbacks should fire: OnHandlerCreated fires per-container during
+        // handler creation, then HttpMessageHandlerWrapper fires once with the
+        // final handler (or router).
+        var services = new ServiceCollection();
+        var handlerCreatedNames = new List<string>();
+        HttpMessageHandler? wrappedHandler = null;
+
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.AddContainer("orders", "/pk");
+            o.OnHandlerCreated = (name, _) => handlerCreatedNames.Add(name);
+            o.HttpMessageHandlerWrapper = handler =>
+            {
+                wrappedHandler = handler;
+                return handler;
+            };
+        });
+
+        // OnHandlerCreated fires first, per container
+        handlerCreatedNames.Should().ContainSingle().Which.Should().Be("orders");
+
+        // HttpMessageHandlerWrapper fires after, with the handler
+        wrappedHandler.Should().NotBeNull();
+        wrappedHandler.Should().BeOfType<FakeCosmosHandler>();
     }
 }

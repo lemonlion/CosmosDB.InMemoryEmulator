@@ -1069,9 +1069,14 @@ public class FakeCosmosHandler : HttpMessageHandler
                     var arr = JArray.Parse(raw);
                     if (arr.Count == 1)
                     {
-                        return arr[0].Type == JTokenType.String
-                            ? new PartitionKey(arr[0].Value<string>())
-                            : new PartitionKey(arr[0].ToString());
+                        return arr[0].Type switch
+                        {
+                            JTokenType.String => new PartitionKey(arr[0].Value<string>()),
+                            JTokenType.Integer or JTokenType.Float => new PartitionKey(arr[0].Value<double>()),
+                            JTokenType.Boolean => new PartitionKey(arr[0].Value<bool>()),
+                            JTokenType.Null => PartitionKey.Null,
+                            _ => new PartitionKey(arr[0].ToString())
+                        };
                     }
 
                     if (arr.Count > 1)
@@ -1079,9 +1084,24 @@ public class FakeCosmosHandler : HttpMessageHandler
                         var builder = new PartitionKeyBuilder();
                         foreach (var token in arr)
                         {
-                            builder.Add(token.Type == JTokenType.String
-                                ? token.Value<string>()
-                                : token.ToString());
+                            switch (token.Type)
+                            {
+                                case JTokenType.String:
+                                    builder.Add(token.Value<string>()!);
+                                    break;
+                                case JTokenType.Integer or JTokenType.Float:
+                                    builder.Add(token.Value<double>());
+                                    break;
+                                case JTokenType.Boolean:
+                                    builder.Add(token.Value<bool>());
+                                    break;
+                                case JTokenType.Null:
+                                    builder.AddNullValue();
+                                    break;
+                                default:
+                                    builder.Add(token.ToString());
+                                    break;
+                            }
                         }
                         return builder.Build();
                     }

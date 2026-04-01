@@ -37,11 +37,15 @@ public class InMemoryTransactionalBatch : TransactionalBatch
     private const int MaxBatchOperations = 100;
     private const int MaxBatchSizeBytes = 2 * 1024 * 1024;
 
+    private enum BatchOpType { Create, Read, Upsert, Replace, Delete, Patch, CreateStream, UpsertStream, ReplaceStream }
+
     private readonly InMemoryContainer _container;
     private readonly PartitionKey _partitionKey;
-    private readonly List<Func<Task>> _operations = new();
+    private readonly List<(Func<Task> Execute, BatchOpType Type)> _operations = new();
     private long _estimatedBatchSize;
     private readonly Dictionary<int, string> _readResults = new();
+    private readonly Dictionary<int, string> _writeEtags = new();
+    private readonly Dictionary<int, HttpStatusCode> _opStatusCodes = new();
 
     public InMemoryTransactionalBatch(InMemoryContainer container, PartitionKey partitionKey)
     {
@@ -53,7 +57,12 @@ public class InMemoryTransactionalBatch : TransactionalBatch
     {
         var json = JsonConvert.SerializeObject(item, JsonSettings);
         _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(json);
-        _operations.Add(async () => await _container.CreateItemAsync(item, _partitionKey, ToItemRequestOptions(requestOptions)));
+        var opIndex = _operations.Count;
+        _operations.Add((async () =>
+        {
+            var result = await _container.CreateItemAsync(item, _partitionKey, ToItemRequestOptions(requestOptions));
+            _writeEtags[opIndex] = result.ETag;
+        }, BatchOpType.Create));
         return this;
     }
 
@@ -61,7 +70,13 @@ public class InMemoryTransactionalBatch : TransactionalBatch
     {
         var json = JsonConvert.SerializeObject(item, JsonSettings);
         _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(json);
-        _operations.Add(async () => await _container.UpsertItemAsync(item, _partitionKey, ToItemRequestOptions(requestOptions)));
+        var opIndex = _operations.Count;
+        _operations.Add((async () =>
+        {
+            var result = await _container.UpsertItemAsync(item, _partitionKey, ToItemRequestOptions(requestOptions));
+            _writeEtags[opIndex] = result.ETag;
+            _opStatusCodes[opIndex] = result.StatusCode;
+        }, BatchOpType.Upsert));
         return this;
     }
 
@@ -69,24 +84,29 @@ public class InMemoryTransactionalBatch : TransactionalBatch
     {
         var json = JsonConvert.SerializeObject(item, JsonSettings);
         _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(json);
-        _operations.Add(async () => await _container.ReplaceItemAsync(item, id, _partitionKey, ToItemRequestOptions(requestOptions)));
+        var opIndex = _operations.Count;
+        _operations.Add((async () =>
+        {
+            var result = await _container.ReplaceItemAsync(item, id, _partitionKey, ToItemRequestOptions(requestOptions));
+            _writeEtags[opIndex] = result.ETag;
+        }, BatchOpType.Replace));
         return this;
     }
 
     public override TransactionalBatch DeleteItem(string id, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
-        _operations.Add(async () => await _container.DeleteItemAsync<object>(id, _partitionKey, ToItemRequestOptions(requestOptions)));
+        _operations.Add((async () => await _container.DeleteItemAsync<object>(id, _partitionKey, ToItemRequestOptions(requestOptions)), BatchOpType.Delete));
         return this;
     }
 
     public override TransactionalBatch ReadItem(string id, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
         var operationIndex = _operations.Count;
-        _operations.Add(async () =>
+        _operations.Add((async () =>
         {
             var result = await _container.ReadItemAsync<object>(id, _partitionKey, ToItemRequestOptions(requestOptions));
             _readResults[operationIndex] = JsonConvert.SerializeObject(result.Resource, JsonSettings);
-        });
+        }, BatchOpType.Read));
         return this;
     }
 
@@ -125,6 +145,8 @@ public class InMemoryTransactionalBatch : TransactionalBatch
 
         var itemsSnapshot = _container.SnapshotItems();
         var etagsSnapshot = _container.SnapshotEtags();
+        var timestampsSnapshot = _container.SnapshotTimestamps();
+        var changeFeedCount = _container.GetChangeFeedCount();
 
         var operationResults = new List<(HttpStatusCode status, bool isSuccess)>();
         var failedIndex = -1;
@@ -134,8 +156,17 @@ public class InMemoryTransactionalBatch : TransactionalBatch
         {
             try
             {
-                await _operations[i]();
-                var statusCode = _readResults.ContainsKey(i) ? HttpStatusCode.OK : HttpStatusCode.Created;
+                var (execute, opType) = _operations[i];
+                await execute();
+                var statusCode = opType switch
+                {
+                    BatchOpType.Read => HttpStatusCode.OK,
+                    BatchOpType.Delete => HttpStatusCode.NoContent,
+                    BatchOpType.Replace => HttpStatusCode.OK,
+                    BatchOpType.Patch => HttpStatusCode.OK,
+                    BatchOpType.Upsert => _opStatusCodes.TryGetValue(i, out var sc) ? sc : HttpStatusCode.Created,
+                    _ => HttpStatusCode.Created
+                };
                 operationResults.Add((statusCode, true));
             }
             catch (CosmosException ex)
@@ -149,7 +180,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
 
         if (failedIndex >= 0)
         {
-            _container.RestoreSnapshot(itemsSnapshot, etagsSnapshot);
+            _container.RestoreSnapshot(itemsSnapshot, etagsSnapshot, timestampsSnapshot, changeFeedCount);
             for (var i = 0; i < failedIndex; i++)
             {
                 operationResults[i] = (HttpStatusCode.FailedDependency, false);
@@ -160,10 +191,10 @@ public class InMemoryTransactionalBatch : TransactionalBatch
                 operationResults.Add((HttpStatusCode.FailedDependency, false));
             }
 
-            return new InMemoryBatchResponse(failedStatusCode, false, operationResults, _readResults);
+            return new InMemoryBatchResponse(failedStatusCode, false, operationResults, _readResults, _writeEtags);
         }
 
-        return new InMemoryBatchResponse(HttpStatusCode.OK, true, operationResults, _readResults);
+        return new InMemoryBatchResponse(HttpStatusCode.OK, true, operationResults, _readResults, _writeEtags);
     }
 
     public override Task<TransactionalBatchResponse> ExecuteAsync(TransactionalBatchRequestOptions requestOptions, CancellationToken cancellationToken = default)
@@ -174,41 +205,63 @@ public class InMemoryTransactionalBatch : TransactionalBatch
     public override TransactionalBatch CreateItemStream(Stream streamPayload, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
         var json = new StreamReader(streamPayload).ReadToEnd();
-        _operations.Add(async () =>
+        _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(json);
+        _operations.Add((async () =>
         {
             var jObj = JsonParseHelpers.ParseJson(json);
             var id = jObj["id"]?.ToString() ?? Guid.NewGuid().ToString();
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
             await _container.CreateItemStreamAsync(stream, _partitionKey);
-        });
+        }, BatchOpType.Create));
         return this;
     }
 
     public override TransactionalBatch UpsertItemStream(Stream streamPayload, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
         var json = new StreamReader(streamPayload).ReadToEnd();
-        _operations.Add(async () =>
+        _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(json);
+        _operations.Add((async () =>
         {
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
             await _container.UpsertItemStreamAsync(stream, _partitionKey);
-        });
+        }, BatchOpType.Upsert));
         return this;
     }
 
     public override TransactionalBatch ReplaceItemStream(string id, Stream streamPayload, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
         var json = new StreamReader(streamPayload).ReadToEnd();
-        _operations.Add(async () =>
+        _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(json);
+        _operations.Add((async () =>
         {
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
             await _container.ReplaceItemStreamAsync(stream, id, _partitionKey);
-        });
+        }, BatchOpType.Replace));
         return this;
     }
 
     public override TransactionalBatch PatchItem(string id, IReadOnlyList<PatchOperation> patchOperations, TransactionalBatchPatchItemRequestOptions? requestOptions = null)
     {
-        _operations.Add(async () => await _container.PatchItemAsync<object>(id, _partitionKey, patchOperations));
+        var estimatedSize = patchOperations.Sum(op =>
+        {
+            var json = JsonConvert.SerializeObject(op, JsonSettings);
+            return System.Text.Encoding.UTF8.GetByteCount(json);
+        });
+        _estimatedBatchSize += estimatedSize;
+        _operations.Add((async () =>
+        {
+            PatchItemRequestOptions? patchOptions = null;
+            if (requestOptions is not null)
+            {
+                patchOptions = new PatchItemRequestOptions
+                {
+                    IfMatchEtag = requestOptions.IfMatchEtag,
+                    IfNoneMatchEtag = requestOptions.IfNoneMatchEtag,
+                    FilterPredicate = requestOptions.FilterPredicate,
+                };
+            }
+            await _container.PatchItemAsync<object>(id, _partitionKey, patchOperations, patchOptions);
+        }, BatchOpType.Patch));
         return this;
     }
 
@@ -220,17 +273,20 @@ public class InMemoryTransactionalBatch : TransactionalBatch
         private readonly bool _isSuccess;
         private readonly List<(HttpStatusCode status, bool isSuccess)> _operationResults;
         private readonly Dictionary<int, string> _readResults;
+        private readonly Dictionary<int, string> _writeEtags;
 
         public InMemoryBatchResponse(
             HttpStatusCode statusCode,
             bool isSuccess,
             List<(HttpStatusCode status, bool isSuccess)> operationResults,
-            Dictionary<int, string> readResults)
+            Dictionary<int, string> readResults,
+            Dictionary<int, string> writeEtags)
         {
             _statusCode = statusCode;
             _isSuccess = isSuccess;
             _operationResults = operationResults;
             _readResults = readResults;
+            _writeEtags = writeEtags;
         }
 
         public override HttpStatusCode StatusCode => _statusCode;
@@ -247,6 +303,10 @@ public class InMemoryTransactionalBatch : TransactionalBatch
                 var result = Substitute.For<TransactionalBatchOperationResult>();
                 result.StatusCode.Returns(status);
                 result.IsSuccessStatusCode.Returns(isSuccess);
+                if (_writeEtags.TryGetValue(index, out var etag))
+                {
+                    result.ETag.Returns(etag);
+                }
                 return result;
             }
         }
@@ -263,7 +323,20 @@ public class InMemoryTransactionalBatch : TransactionalBatch
                 result.Resource.Returns(JsonConvert.DeserializeObject<T>(json, JsonSettings)!);
             }
 
+            if (_writeEtags.TryGetValue(index, out var etag))
+            {
+                result.ETag.Returns(etag);
+            }
+
             return result;
+        }
+
+        public override IEnumerator<TransactionalBatchOperationResult> GetEnumerator()
+        {
+            for (var i = 0; i < _operationResults.Count; i++)
+            {
+                yield return this[i];
+            }
         }
 
         protected override void Dispose(bool disposing) { }

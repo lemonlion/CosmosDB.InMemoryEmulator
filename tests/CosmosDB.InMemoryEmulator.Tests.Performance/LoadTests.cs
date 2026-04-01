@@ -72,7 +72,7 @@ public class LoadTests(ITestOutputHelper output)
 
         foreach (var id in Enumerable.Range(1, seedCount))
         {
-            knownIds.TryAdd(id.ToString(), "seed");
+            knownIds.TryAdd(id.ToString(), $"pk-{id % 20}");
         }
 
         var nextId = new AtomicCounter(10_000);
@@ -113,6 +113,9 @@ public class LoadTests(ITestOutputHelper output)
                     operationStopwatch.Stop();
                     stats.RecordLatency(operationStopwatch.Elapsed);
                 }
+                // Note: 404s from replace/patch racing with concurrent delete are expected and counted
+                // here rather than under the specific operation stat. totalOps still includes NotFound,
+                // so the assertion in ReportAndAssert remains correct.
                 catch (CosmosException cosmosException) when (cosmosException.StatusCode == HttpStatusCode.NotFound)
                 {
                     operationStopwatch.Stop();
@@ -164,7 +167,7 @@ public class LoadTests(ITestOutputHelper output)
                 await ReadAndVerifyQueryWithFilter(container, knownIds, stats);
                 break;
             case 3:
-                await ReadAndVerifyPointRead(container, knownIds, stats);
+                await ReadAndVerifyCrossPartitionQuery(container, stats);
                 break;
         }
     }
@@ -177,14 +180,14 @@ public class LoadTests(ITestOutputHelper output)
         var ids = knownIds.Keys.ToArray();
         if (ids.Length == 0)
         {
-            Interlocked.Increment(ref stats.Reads);
+            Interlocked.Increment(ref stats.Skipped);
             return;
         }
 
         var targetId = ids[Random.Shared.Next(ids.Length)];
         if (!knownIds.TryGetValue(targetId, out var partitionKey))
         {
-            Interlocked.Increment(ref stats.Reads);
+            Interlocked.Increment(ref stats.Skipped);
             return;
         }
 
@@ -196,29 +199,23 @@ public class LoadTests(ITestOutputHelper output)
         Interlocked.Increment(ref stats.Reads);
     }
 
-    private static async Task ReadAndVerifyPointRead(
+    private static async Task ReadAndVerifyCrossPartitionQuery(
         InMemoryContainer container,
-        ConcurrentDictionary<string, string> knownIds,
         LoadStats stats)
     {
-        var ids = knownIds.Keys.ToArray();
-        if (ids.Length == 0)
+        var threshold = Random.Shared.Next(500);
+        var iterator = container.GetItemQueryIterator<LoadDocument>(
+            new QueryDefinition("SELECT TOP 20 * FROM c WHERE c.counter > @threshold")
+                .WithParameter("@threshold", threshold));
+
+        var results = new List<LoadDocument>();
+        while (iterator.HasMoreResults)
         {
-            Interlocked.Increment(ref stats.Reads);
-            return;
+            var response = await iterator.ReadNextAsync();
+            results.AddRange(response);
         }
 
-        var targetId = ids[Random.Shared.Next(ids.Length)];
-        if (!knownIds.TryGetValue(targetId, out var partitionKey))
-        {
-            Interlocked.Increment(ref stats.Reads);
-            return;
-        }
-
-        var response = await container.ReadItemAsync<LoadDocument>(targetId, new PartitionKey(partitionKey));
-
-        response.Resource.Should().NotBeNull();
-        response.Resource.Data.Should().NotBeNullOrEmpty();
+        results.Should().OnlyContain(d => d.Counter > threshold);
         Interlocked.Increment(ref stats.Reads);
     }
 
@@ -254,7 +251,7 @@ public class LoadTests(ITestOutputHelper output)
         var ids = knownIds.Keys.ToArray();
         if (ids.Length == 0)
         {
-            Interlocked.Increment(ref stats.Reads);
+            Interlocked.Increment(ref stats.Skipped);
             return;
         }
 
@@ -343,7 +340,7 @@ public class LoadTests(ITestOutputHelper output)
                 var targetId = ids[Random.Shared.Next(ids.Length)];
                 if (!knownIds.TryGetValue(targetId, out var partitionKey))
                 {
-                    Interlocked.Increment(ref stats.Upserts);
+                    Interlocked.Increment(ref stats.Skipped);
                     return;
                 }
 
@@ -351,7 +348,10 @@ public class LoadTests(ITestOutputHelper output)
 
                 var response = await container.UpsertItemAsync(document, new PartitionKey(partitionKey));
 
-                response.StatusCode.Should().Be(HttpStatusCode.OK);
+                // Concurrent delete can remove the item between TryGetValue and UpsertItemAsync,
+                // causing Cosmos to create fresh (201) instead of update (200)
+                response.StatusCode.Should().BeOneOf(HttpStatusCode.OK, HttpStatusCode.Created);
+                knownIds.TryAdd(targetId, partitionKey);
                 Interlocked.Increment(ref stats.Upserts);
                 return;
             }
@@ -376,14 +376,14 @@ public class LoadTests(ITestOutputHelper output)
         var ids = knownIds.Keys.ToArray();
         if (ids.Length == 0)
         {
-            Interlocked.Increment(ref stats.Replaces);
+            Interlocked.Increment(ref stats.Skipped);
             return;
         }
 
         var targetId = ids[Random.Shared.Next(ids.Length)];
         if (!knownIds.TryGetValue(targetId, out var partitionKey))
         {
-            Interlocked.Increment(ref stats.Replaces);
+            Interlocked.Increment(ref stats.Skipped);
             return;
         }
 
@@ -403,14 +403,14 @@ public class LoadTests(ITestOutputHelper output)
         var ids = knownIds.Keys.ToArray();
         if (ids.Length == 0)
         {
-            Interlocked.Increment(ref stats.Patches);
+            Interlocked.Increment(ref stats.Skipped);
             return;
         }
 
         var targetId = ids[Random.Shared.Next(ids.Length)];
         if (!knownIds.TryGetValue(targetId, out var patchPartitionKey))
         {
-            Interlocked.Increment(ref stats.Patches);
+            Interlocked.Increment(ref stats.Skipped);
             return;
         }
 
@@ -435,22 +435,31 @@ public class LoadTests(ITestOutputHelper output)
         var ids = knownIds.Keys.ToArray();
         if (ids.Length == 0)
         {
-            Interlocked.Increment(ref stats.Deletes);
+            Interlocked.Increment(ref stats.Skipped);
             return;
         }
 
         var targetId = ids[Random.Shared.Next(ids.Length)];
         if (!knownIds.TryRemove(targetId, out var partitionKey))
         {
-            Interlocked.Increment(ref stats.Deletes);
+            Interlocked.Increment(ref stats.Skipped);
             return;
         }
 
-        var response = await container.DeleteItemAsync<LoadDocument>(
-            targetId, new PartitionKey(partitionKey));
+        try
+        {
+            var response = await container.DeleteItemAsync<LoadDocument>(
+                targetId, new PartitionKey(partitionKey));
 
-        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
-        Interlocked.Increment(ref stats.Deletes);
+            response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+            Interlocked.Increment(ref stats.Deletes);
+        }
+        catch
+        {
+            // Re-add to knownIds so the item isn't orphaned if the delete failed
+            knownIds.TryAdd(targetId, partitionKey);
+            throw;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -462,8 +471,9 @@ public class LoadTests(ITestOutputHelper output)
         for (var seedIndex = 1; seedIndex <= count; seedIndex++)
         {
             var id = seedIndex.ToString();
-            var document = CreateDocument(id, "seed");
-            await container.CreateItemAsync(document, new PartitionKey("seed"));
+            var partitionKey = $"pk-{seedIndex % 20}";
+            var document = CreateDocument(id, partitionKey);
+            await container.CreateItemAsync(document, new PartitionKey(partitionKey));
         }
     }
 
@@ -484,7 +494,7 @@ public class LoadTests(ITestOutputHelper output)
     {
         var totalOps = stats.Reads + stats.Creates + stats.Upserts
                        + stats.Replaces + stats.Patches + stats.Deletes
-                       + stats.NotFound + stats.Errors;
+                       + stats.NotFound + stats.Errors + stats.Skipped;
 
         var opsPerSecond = totalOps / stats.SchedulingTime.TotalSeconds;
 
@@ -505,6 +515,7 @@ public class LoadTests(ITestOutputHelper output)
         output.WriteLine($"║  Deletes           : {stats.Deletes,8:N0}{"",-18}║");
         output.WriteLine($"╠══════════════════════════════════════════════════╣");
         output.WriteLine($"║  Expected 404s     : {stats.NotFound,8:N0}{"",-18}║");
+        output.WriteLine($"║  Skipped (no-ops)  : {stats.Skipped,8:N0}{"",-18}║");
         output.WriteLine($"║  Unexpected errors : {stats.Errors,8:N0}{"",-18}║");
         output.WriteLine($"╠══════════════════════════════════════════════════╣");
         output.WriteLine($"║  Mean latency      : {stats.MeanLatency,8:F3}ms{"",-15}║");
@@ -528,8 +539,8 @@ public class LoadTests(ITestOutputHelper output)
         opsPerSecond.Should().BeGreaterThanOrEqualTo(_targetCallsPerSecond * 0.95,
             $"throughput should sustain at least 95% of target ({_targetCallsPerSecond} ops/s)");
 
-        stats.GetPercentile(99).Should().BeLessThan(200,
-            "P99 latency should stay under 200ms for in-memory operations");
+        stats.GetPercentile(99).Should().BeLessThan(2000,
+            "P99 latency should stay under 2000ms for in-memory operations (includes cross-partition queries)");
     }
 }
 
@@ -561,6 +572,7 @@ public class LoadStats
     public long Deletes;
     public long NotFound;
     public long Errors;
+    public long Skipped;
     public TimeSpan SchedulingTime;
     public TimeSpan WallClockTime;
 

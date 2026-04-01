@@ -501,4 +501,219 @@ public class FakeCosmosHandlerCrudTests : IDisposable
         var ex = await act.Should().ThrowAsync<CosmosException>();
         ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  A1. Special Character IDs
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Theory]
+    [InlineData("a.b.c")]
+    [InlineData("hello world")]
+    [InlineData("日本語")]
+    [InlineData("a+b")]
+    public async Task Handler_CreateItem_WithSpecialCharactersInId_Succeeds(string id)
+    {
+        var doc = new TestDocument { Id = id, PartitionKey = "pk1", Name = "Special" };
+        var createResponse = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var readResponse = await _container.ReadItemAsync<TestDocument>(id, new PartitionKey("pk1"));
+        readResponse.Resource.Id.Should().Be(id);
+        readResponse.Resource.Name.Should().Be("Special");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  A2. Replace with matching ETag
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_ReplaceItem_WithMatchingETag_Succeeds()
+    {
+        var doc = new TestDocument { Id = "etag-rp1", PartitionKey = "pk1", Name = "Original" };
+        var createResponse = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+        var etag = createResponse.ETag;
+
+        doc.Name = "Updated";
+        var replaceResponse = await _container.ReplaceItemAsync(doc, "etag-rp1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = etag });
+
+        replaceResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        replaceResponse.Resource.Name.Should().Be("Updated");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  A3/A4. Delete with ETag
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_DeleteItem_WithStaleETag_ThrowsPreconditionFailed()
+    {
+        var doc = new TestDocument { Id = "etag-d1", PartitionKey = "pk1", Name = "Original" };
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        // Modify to change the ETag
+        doc.Name = "Modified";
+        await _container.UpsertItemAsync(doc, new PartitionKey("pk1"));
+
+        var act = () => _container.DeleteItemAsync<TestDocument>("etag-d1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"stale-etag\"" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task Handler_DeleteItem_WithMatchingETag_Succeeds()
+    {
+        var doc = new TestDocument { Id = "etag-d2", PartitionKey = "pk1", Name = "ToDelete" };
+        var createResponse = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+        var etag = createResponse.ETag;
+
+        var deleteResponse = await _container.DeleteItemAsync<TestDocument>("etag-d2", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = etag });
+
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  A5/A6. Patch Remove + Add operations
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_PatchItem_RemoveOperation_Succeeds()
+    {
+        var doc = new TestDocument { Id = "prm1", PartitionKey = "pk1", Name = "HasName", Value = 42 };
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var response = await _container.PatchItemAsync<TestDocument>("prm1", new PartitionKey("pk1"),
+            [PatchOperation.Remove("/name")]);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.Name.Should().BeNull();
+        response.Resource.Value.Should().Be(42); // unchanged
+    }
+
+    [Fact]
+    public async Task Handler_PatchItem_AddOperation_Succeeds()
+    {
+        var doc = new TestDocument { Id = "padd1", PartitionKey = "pk1", Name = "Before" };
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var response = await _container.PatchItemAsync<TestDocument>("padd1", new PartitionKey("pk1"),
+            [PatchOperation.Add("/tags", new[] { "alpha", "beta" })]);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.Tags.Should().Contain("alpha");
+        response.Resource.Tags.Should().Contain("beta");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  A7-A10. ETag in CRUD responses
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_CreateItem_ReturnsETagInResponse()
+    {
+        var doc = new TestDocument { Id = "etag-c1", PartitionKey = "pk1", Name = "Alice" };
+
+        var response = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        response.ETag.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Handler_UpsertItem_ReturnsETagInResponse()
+    {
+        var doc = new TestDocument { Id = "etag-u1", PartitionKey = "pk1", Name = "Alice" };
+
+        var response = await _container.UpsertItemAsync(doc, new PartitionKey("pk1"));
+
+        response.ETag.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Handler_ReplaceItem_ReturnsUpdatedETag()
+    {
+        var doc = new TestDocument { Id = "etag-rp2", PartitionKey = "pk1", Name = "Before" };
+        var createResponse = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+        var originalETag = createResponse.ETag;
+
+        doc.Name = "After";
+        var replaceResponse = await _container.ReplaceItemAsync(doc, "etag-rp2", new PartitionKey("pk1"));
+
+        replaceResponse.ETag.Should().NotBeNullOrEmpty();
+        replaceResponse.ETag.Should().NotBe(originalETag);
+    }
+
+    [Fact]
+    public async Task Handler_ReadItem_ReturnsETagInResponse()
+    {
+        var doc = new TestDocument { Id = "etag-r1", PartitionKey = "pk1", Name = "Alice" };
+        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemAsync<TestDocument>("etag-r1", new PartitionKey("pk1"));
+
+        response.ETag.Should().NotBeNullOrEmpty();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B3. PartitionKey.None round-trip
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_ReadItem_WithPartitionKeyNone_Succeeds()
+    {
+        var pkNoneContainer = new InMemoryContainer("pknone-test", "/partitionKey");
+        using var pkNoneHandler = new FakeCosmosHandler(pkNoneContainer);
+        using var pkNoneClient = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(pkNoneHandler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+        var container = pkNoneClient.GetContainer("db", "pknone-test");
+
+        var doc = new { id = "none1", name = "NoPK" };
+        await container.CreateItemAsync(doc, PartitionKey.None);
+
+        var response = await container.ReadItemAsync<dynamic>("none1", PartitionKey.None);
+        ((string)response.Resource.name).Should().Be("NoPK");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  D1-D3. Response headers on CRUD operations
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Handler_CrudResponse_ContainsRequestCharge()
+    {
+        var doc = new TestDocument { Id = "hdr1", PartitionKey = "pk1", Name = "Alice" };
+
+        var response = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        response.RequestCharge.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task Handler_CrudResponse_ContainsActivityId()
+    {
+        var doc = new TestDocument { Id = "hdr2", PartitionKey = "pk1", Name = "Alice" };
+
+        var response = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        response.ActivityId.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Handler_CrudResponse_ContainsSessionToken()
+    {
+        var doc = new TestDocument { Id = "hdr3", PartitionKey = "pk1", Name = "Alice" };
+
+        var response = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        response.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty();
+    }
 }
