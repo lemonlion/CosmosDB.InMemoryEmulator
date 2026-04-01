@@ -50,6 +50,8 @@ Designed for super fast feedback from your Integration/Component tests in a loca
 
 Recommendation is to use **CosmosDB.InMemoryEmulator** for integration/component testing locally and in CI for quick feedback and iteration, while still having the integration/component tests *additionally* running in CI against the official out of process emulator for (10x) slower feedback.
 
+See the **[Feature Comparison With Alternatives](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feature-Comparison-With-Alternatives)** for a detailed side-by-side breakdown.
+
 ## Features
 
 - **Full CRUD** — typed and stream variants with proper status codes and ETags
@@ -92,18 +94,7 @@ All packages support .NET 8.0+.  .NET 10 specific packages will be created befor
 
 ## Documentation
 
-| Guide | Description |
-|-------|-------------|
-| **[Getting Started](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Getting-Started)** | Installation, quick start, first test |
-| **[Integration Approaches](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Integration-Approaches)** | Detailed comparison of all three approaches with pros/cons |
-| **[Dependency Injection](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Dependency-Injection)** | Step-by-step DI setup for all patterns |
-| **[Feed Iterator Usage](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feed-Iterator-Usage-Guide)** | Making `.ToFeedIterator()` work — `FakeCosmosHandler` vs `ToFeedIteratorOverridable()` |
-| **[SQL Queries](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/SQL-Queries)** | Full SQL reference — clauses, operators, 100+ functions |
-| **[Features](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Features)** | Patch, batches, change feed, ETags, TTL, stored procs, state persistence, PITR |
-| **[API Reference](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/API-Reference)** | Complete class and method reference |
-| **[Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)** | Behavioural differences from real Cosmos DB |
-| **[Troubleshooting](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Troubleshooting)** | Common errors and how to fix them |
-| **[Comparison](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Comparison)** | vs Official Emulator, vs community alternatives |
+Full documentation is available on the **[Wiki](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki)**.
 
 ## Dependencies
 
