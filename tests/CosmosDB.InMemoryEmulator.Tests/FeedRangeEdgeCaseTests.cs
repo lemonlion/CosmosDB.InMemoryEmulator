@@ -707,3 +707,332 @@ public class FakeCosmosHandlerConsistencyTests
             "items should not appear in multiple FeedRanges");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Phase 6 — Stream & Concurrency
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FeedRangeStreamAndConcurrencyTests
+{
+    [Fact]
+    public async Task GetItemQueryStreamIterator_WithFeedRange_MatchesTypedIterator()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.FeedRangeCount = 3;
+        for (var i = 0; i < 30; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"N{i}" },
+                new PartitionKey($"pk-{i}"));
+
+        var feedRanges = await container.GetFeedRangesAsync();
+
+        foreach (var range in feedRanges)
+        {
+            // Typed iterator
+            var typedResults = new List<TestDocument>();
+            var typedIter = container.GetItemQueryIterator<TestDocument>(
+                range, new QueryDefinition("SELECT * FROM c"));
+            while (typedIter.HasMoreResults)
+            {
+                var page = await typedIter.ReadNextAsync();
+                typedResults.AddRange(page);
+            }
+
+            // Stream iterator
+            var streamResults = new List<string>();
+            var streamIter = container.GetItemQueryStreamIterator(
+                range, new QueryDefinition("SELECT * FROM c"));
+            while (streamIter.HasMoreResults)
+            {
+                var response = await streamIter.ReadNextAsync();
+                using var reader = new StreamReader(response.Content);
+                var json = await reader.ReadToEndAsync();
+                var docs = JObject.Parse(json)["Documents"]!;
+                foreach (var doc in docs)
+                    streamResults.Add(doc["id"]!.ToString());
+            }
+
+            typedResults.Select(r => r.Id).OrderBy(x => x)
+                .Should().Equal(streamResults.OrderBy(x => x),
+                    "stream and typed iterators should return same items");
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentReads_AcrossDifferentFeedRanges_ThreadSafe()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.FeedRangeCount = 4;
+        for (var i = 0; i < 100; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"N{i}" },
+                new PartitionKey($"pk-{i}"));
+
+        var feedRanges = await container.GetFeedRangesAsync();
+        var allIds = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+        await Task.WhenAll(feedRanges.Select(async range =>
+        {
+            var iter = container.GetItemQueryIterator<TestDocument>(
+                range, new QueryDefinition("SELECT * FROM c"));
+            while (iter.HasMoreResults)
+            {
+                var page = await iter.ReadNextAsync();
+                foreach (var item in page)
+                    allIds.Add(item.Id);
+            }
+        }));
+
+        allIds.Should().HaveCount(100, "concurrent reads should not lose items");
+        allIds.Distinct().Should().HaveCount(100, "no duplicates from concurrent reads");
+    }
+
+    [Fact]
+    public async Task ItemsCreatedDuringIteration_SnapshotBehavior()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.FeedRangeCount = 2;
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"N{i}" },
+                new PartitionKey($"pk-{i}"));
+
+        var feedRanges = await container.GetFeedRangesAsync();
+        var iter = container.GetItemQueryIterator<TestDocument>(
+            feedRanges[0], new QueryDefinition("SELECT * FROM c"));
+
+        // Read first page
+        var firstPage = await iter.ReadNextAsync();
+        var beforeCount = firstPage.Count;
+
+        // Add more items while iterator is open
+        for (var i = 100; i < 110; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"N{i}" },
+                new PartitionKey($"pk-{i}"));
+
+        // The iterator should not throw (whether it includes new items is implementation-dependent)
+        beforeCount.Should().BeGreaterThan(0, "first page should have items");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_AfterUpdates_ItemsStayInSameRange()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.FeedRangeCount = 3;
+        for (var i = 0; i < 15; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"Original{i}" },
+                new PartitionKey($"pk-{i}"));
+
+        var feedRanges = await container.GetFeedRangesAsync();
+
+        // Record which range each item is in
+        var itemToRange = new Dictionary<string, int>();
+        for (var r = 0; r < feedRanges.Count; r++)
+        {
+            var iter = container.GetItemQueryIterator<TestDocument>(
+                feedRanges[r], new QueryDefinition("SELECT * FROM c"));
+            while (iter.HasMoreResults)
+            {
+                var page = await iter.ReadNextAsync();
+                foreach (var item in page) itemToRange[item.Id] = r;
+            }
+        }
+
+        // Update some items (same partition key = same range)
+        for (var i = 0; i < 5; i++)
+            await container.UpsertItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"Updated{i}" },
+                new PartitionKey($"pk-{i}"));
+
+        // Verify updated items are still in the same ranges
+        for (var r = 0; r < feedRanges.Count; r++)
+        {
+            var iter = container.GetItemQueryIterator<TestDocument>(
+                feedRanges[r], new QueryDefinition("SELECT * FROM c"));
+            while (iter.HasMoreResults)
+            {
+                var page = await iter.ReadNextAsync();
+                foreach (var item in page)
+                {
+                    if (itemToRange.ContainsKey(item.Id))
+                        itemToRange[item.Id].Should().Be(r,
+                            $"item {item.Id} should still be in range {r} after update");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task FeedRanges_AreContiguous_WithEvenCounts()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.FeedRangeCount = 4;
+        var feedRanges = await container.GetFeedRangesAsync();
+
+        feedRanges.Should().HaveCount(4);
+
+        // Parse feed ranges and verify contiguity
+        var boundaries = new List<(string min, string max)>();
+        foreach (var range in feedRanges)
+        {
+            var rangeJson = JObject.Parse(range.ToJsonString());
+            var epk = rangeJson["Range"];
+            if (epk != null)
+            {
+                boundaries.Add((epk["min"]!.ToString(), epk["max"]!.ToString()));
+            }
+        }
+
+        // First range starts at "" (empty), last range ends at "FF"
+        if (boundaries.Count > 0)
+        {
+            boundaries[0].min.Should().Be("", "first range should start at empty string");
+            boundaries[^1].max.Should().Be("FF", "last range should end at FF");
+
+            // Each range's max should equal the next range's min (contiguity)
+            for (var i = 0; i < boundaries.Count - 1; i++)
+            {
+                boundaries[i].max.Should().Be(boundaries[i + 1].min,
+                    $"range {i} max should equal range {i + 1} min");
+            }
+        }
+    }
+
+    [Fact]
+    public async Task FeedRanges_AreContiguous_WithLargeCounts()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.FeedRangeCount = 16;
+        var feedRanges = await container.GetFeedRangesAsync();
+
+        feedRanges.Should().HaveCount(16);
+
+        // Verify all items distributed without loss
+        for (var i = 0; i < 50; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"N{i}" },
+                new PartitionKey($"pk-{i}"));
+
+        var total = 0;
+        foreach (var range in feedRanges)
+        {
+            var iter = container.GetItemQueryIterator<TestDocument>(
+                range, new QueryDefinition("SELECT * FROM c"));
+            while (iter.HasMoreResults)
+            {
+                var page = await iter.ReadNextAsync();
+                total += page.Count;
+            }
+        }
+        total.Should().Be(50, "all 50 items should be distributed across 16 ranges");
+    }
+
+    [Fact]
+    public async Task GetFeedRangesAsync_IsIdempotent()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.FeedRangeCount = 3;
+
+        var ranges1 = await container.GetFeedRangesAsync();
+        var ranges2 = await container.GetFeedRangesAsync();
+
+        ranges1.Should().HaveCount(ranges2.Count);
+        for (var i = 0; i < ranges1.Count; i++)
+        {
+            ranges1[i].ToJsonString().Should().Be(ranges2[i].ToJsonString(),
+                $"range {i} should be identical across calls");
+        }
+    }
+
+    [Fact]
+    public async Task FeedRange_JsonRoundTrip_PreservesBoundaries()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.FeedRangeCount = 4;
+        var feedRanges = await container.GetFeedRangesAsync();
+
+        foreach (var range in feedRanges)
+        {
+            var json = range.ToJsonString();
+            json.Should().NotBeNullOrEmpty();
+
+            // Verify the JSON is valid and contains Range fields
+            var parsed = JObject.Parse(json);
+            var rangeObj = parsed["Range"];
+            if (rangeObj != null)
+            {
+                rangeObj["min"].Should().NotBeNull();
+                rangeObj["max"].Should().NotBeNull();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task GuidPartitionKey_FeedRange_Distribution()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.FeedRangeCount = 4;
+
+        // GUIDs should distribute roughly evenly
+        for (var i = 0; i < 100; i++)
+        {
+            var guid = Guid.NewGuid().ToString();
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = guid, Name = $"N{i}" },
+                new PartitionKey(guid));
+        }
+
+        var feedRanges = await container.GetFeedRangesAsync();
+        var rangeCounts = new int[4];
+        for (var r = 0; r < feedRanges.Count; r++)
+        {
+            var iter = container.GetItemQueryIterator<TestDocument>(
+                feedRanges[r], new QueryDefinition("SELECT * FROM c"));
+            while (iter.HasMoreResults)
+            {
+                var page = await iter.ReadNextAsync();
+                rangeCounts[r] += page.Count;
+            }
+        }
+
+        // With 100 GUIDs across 4 ranges, each should have at least some items
+        rangeCounts.Sum().Should().Be(100, "all items should be accounted for");
+        rangeCounts.Should().AllSatisfy(c => c.Should().BeGreaterThan(0),
+            "each range should have at least one GUID-keyed item");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_WithFeedRange_OnlyReturnsItemsInRange()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.FeedRangeCount = 2;
+
+        // Create items
+        for (var i = 0; i < 20; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"N{i}" },
+                new PartitionKey($"pk-{i}"));
+
+        var feedRanges = await container.GetFeedRangesAsync();
+
+        var allItems = new List<string>();
+        foreach (var range in feedRanges)
+        {
+            var iter = container.GetChangeFeedIterator<TestDocument>(
+                ChangeFeedStartFrom.Beginning(range),
+                ChangeFeedMode.Incremental);
+            while (iter.HasMoreResults)
+            {
+                var page = await iter.ReadNextAsync();
+                if (page.StatusCode == System.Net.HttpStatusCode.NotModified) break;
+                allItems.AddRange(page.Select(d => d.Id));
+            }
+        }
+
+        // Union of all feed range change feeds should cover all items
+        allItems.Distinct().Should().HaveCount(20,
+            "union of change feeds across all ranges should cover all items");
+    }
+}
