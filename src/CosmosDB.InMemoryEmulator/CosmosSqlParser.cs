@@ -451,6 +451,8 @@ public static class CosmosSqlParser
         select (SqlExpression)new FunctionCallExpression(name.ToUpperInvariant(), args);
 
     // Dotted function call: namespace.FUNC_NAME(args...) — supports udf.xxx()
+    // UDF names preserve original casing (Cosmos DB UDFs are case-sensitive);
+    // built-in dotted functions (e.g. ST_DISTANCE) are uppercased.
     private static readonly TokenListParser<CosmosSqlToken, SqlExpression> DottedFunctionCall =
         from first in AnyIdentifierOrKeyword
         from dot in Token.EqualTo(CosmosSqlToken.Dot)
@@ -458,7 +460,10 @@ public static class CosmosSqlParser
         from open in Token.EqualTo(CosmosSqlToken.OpenParen)
         from args in Superpower.Parse.Ref(() => Expr).ManyDelimitedBy(Token.EqualTo(CosmosSqlToken.Comma))
         from close in Token.EqualTo(CosmosSqlToken.CloseParen)
-        select (SqlExpression)new FunctionCallExpression((first + "." + second).ToUpperInvariant(), args);
+        select (SqlExpression)new FunctionCallExpression(
+            first.Equals("udf", StringComparison.OrdinalIgnoreCase)
+                ? "UDF." + second   // preserve UDF name casing
+                : (first + "." + second).ToUpperInvariant(), args);
 
     // EXISTS( subquery-text )
     private static readonly TokenListParser<CosmosSqlToken, SqlExpression> ExistsExpr =

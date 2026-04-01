@@ -1427,7 +1427,7 @@ public class FakeCosmosHandler : HttpMessageHandler
 
         public RoutingHandler(IReadOnlyDictionary<string, FakeCosmosHandler> handlers)
         {
-            _handlers = new(handlers, StringComparer.OrdinalIgnoreCase);
+            _handlers = new(handlers, StringComparer.Ordinal);
             _default = handlers.Values.First();
         }
 

@@ -73,6 +73,7 @@ Recommendation is to use **CosmosDB.InMemoryEmulator** for integration/component
 - **FeedRange support** — configurable `FeedRangeCount` with scoped queries and change feed iterators
 - **Vector search** — `VECTORDISTANCE` with cosine, dot product, and Euclidean distance; works in `SELECT`, `WHERE`, and `ORDER BY`
 - **Users & permissions** — stub user/permission CRUD with synthetic tokens (no authorization enforced)
+- **Computed properties** — virtual container-level properties evaluated at query time; usable in `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`
 - **1350+ tests** covering all features and performance
 
 For behavioural differences from a real CosmosDB see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)

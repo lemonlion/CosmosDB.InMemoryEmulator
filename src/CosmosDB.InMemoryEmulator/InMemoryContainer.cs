@@ -71,6 +71,7 @@ public class InMemoryContainer : Container
     private readonly Dictionary<string, Func<PartitionKey, dynamic[], string>> _storedProcedures = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RegisteredTrigger> _triggers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TriggerProperties> _triggerProperties = new(StringComparer.Ordinal);
+    private volatile (string Name, string FromAlias, SqlExpression Expr)[] _parsedComputedProperties;
 
     /// <summary>
     /// Optional JavaScript trigger engine. When set, triggers that have a <see cref="TriggerProperties.Body"/>
@@ -1470,6 +1471,7 @@ public class InMemoryContainer : Container
         CancellationToken cancellationToken = default)
     {
         _containerProperties = containerProperties;
+        _parsedComputedProperties = null;
         var r = Substitute.For<ContainerResponse>();
         r.StatusCode.Returns(HttpStatusCode.OK);
         r.Resource.Returns(containerProperties);
@@ -1482,6 +1484,7 @@ public class InMemoryContainer : Container
         CancellationToken cancellationToken = default)
     {
         _containerProperties = containerProperties;
+        _parsedComputedProperties = null;
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, JsonConvert.SerializeObject(containerProperties, JsonSettings)));
     }
 
@@ -2157,6 +2160,72 @@ public class InMemoryContainer : Container
 
     private const string UdfRegistryKey = "__udf_registry__";
 
+    private (string Name, string FromAlias, SqlExpression Expr)[] GetParsedComputedProperties()
+    {
+        var cached = _parsedComputedProperties;
+        if (cached is not null) return cached;
+
+        var cps = _containerProperties.ComputedProperties;
+        if (cps is null or { Count: 0 })
+        {
+            _parsedComputedProperties = Array.Empty<(string, string, SqlExpression)>();
+            return _parsedComputedProperties;
+        }
+
+        var result = new (string Name, string FromAlias, SqlExpression Expr)[cps.Count];
+        for (var i = 0; i < cps.Count; i++)
+        {
+            var parsed = CosmosSqlParser.Parse(cps[i].Query);
+            if (parsed.IsValueSelect && parsed.SelectFields.Length == 1 && parsed.SelectFields[0].SqlExpr is not null)
+            {
+                result[i] = (cps[i].Name, parsed.FromAlias, parsed.SelectFields[0].SqlExpr);
+            }
+            else
+            {
+                // Fallback: try to evaluate via the expression string
+                result[i] = (cps[i].Name, parsed.FromAlias, null);
+            }
+        }
+
+        _parsedComputedProperties = result;
+        return result;
+    }
+
+    private List<string> AugmentWithComputedProperties(
+        List<string> items, IDictionary<string, object> parameters)
+    {
+        var cps = GetParsedComputedProperties();
+        if (cps.Length == 0) return items;
+
+        return items.Select(json =>
+        {
+            var jObj = JsonParseHelpers.ParseJson(json);
+            foreach (var (name, fromAlias, expr) in cps)
+            {
+                if (expr is null) continue;
+                var value = EvaluateSqlExpression(expr, jObj, fromAlias, parameters);
+                if (value is UndefinedValue)
+                    continue;
+                jObj[name] = value is not null ? JToken.FromObject(value) : JValue.CreateNull();
+            }
+            return jObj.ToString(Formatting.None);
+        }).ToList();
+    }
+
+    private static List<string> StripComputedProperties(
+        List<string> items, (string Name, string FromAlias, SqlExpression Expr)[] cps)
+    {
+        if (cps.Length == 0) return items;
+        var names = new HashSet<string>(cps.Select(cp => cp.Name));
+        return items.Select(json =>
+        {
+            var jObj = JsonParseHelpers.ParseJson(json);
+            foreach (var name in names)
+                jObj.Remove(name);
+            return jObj.ToString(Formatting.None);
+        }).ToList();
+    }
+
     private List<string> FilterItemsByQuery(
         string queryText, IDictionary<string, object> parameters, QueryRequestOptions requestOptions)
     {
@@ -2173,6 +2242,13 @@ public class InMemoryContainer : Container
         var parsed = CosmosSqlParser.Parse(queryText);
 
         var items = GetAllItemsForPartition(requestOptions);
+
+        // Computed properties — augment items with virtual properties before any filtering/projection
+        var computedProps = GetParsedComputedProperties();
+        if (computedProps.Length > 0)
+        {
+            items = AugmentWithComputedProperties(items, parameters);
+        }
 
         // FROM alias IN c.field — top-level array iteration (must come before JOINs/WHERE)
         if (parsed.FromSource is not null)
@@ -2243,6 +2319,12 @@ public class InMemoryContainer : Container
         if (!groupByApplied && !parsed.IsSelectAll && parsed.SelectFields.Length > 0)
         {
             items = ProjectFields(items, parsed, parameters);
+        }
+
+        // SELECT * must not include computed properties (they are virtual)
+        if (parsed.IsSelectAll && computedProps.Length > 0)
+        {
+            items = StripComputedProperties(items, computedProps);
         }
 
         // DISTINCT — applied after projection so dedup works on projected shapes

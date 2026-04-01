@@ -701,7 +701,7 @@ public class QueryTests
         parsed.SelectFields.Should().HaveCount(1);
         parsed.SelectFields[0].SqlExpr.Should().BeOfType<FunctionCallExpression>();
         var func = (FunctionCallExpression)parsed.SelectFields[0].SqlExpr!;
-        func.FunctionName.Should().Be("UDF.MYFUNC");
+        func.FunctionName.Should().Be("UDF.myFunc");
     }
 
     // ── Round-trip: parse then SimplifySdkQuery ──
