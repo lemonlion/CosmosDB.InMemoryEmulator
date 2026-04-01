@@ -75,14 +75,17 @@ Recommendation is to use **CosmosDB.InMemoryEmulator** for integration/component
 
 For behavioural differences from a real CosmosDB see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)
 
-## Installation
+## NuGet Packages
 
-```
-dotnet add package CosmosDB.InMemoryEmulator
-```
+| Framework | Package | Description | NuGet |
+|---|---|---|---|
+| **Core library** | `CosmosDB.InMemoryEmulator` | Primary Features | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator) |
+| **JavaScript Triggers** | `CosmosDB.InMemoryEmulator.JsTriggers` | Support for JS Triggers | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.JsTriggers) |
+| **Production Extensions** | `CosmosDB.InMemoryEmulator.ProductionExtensions` | Support for use of the *optional* `.ToFeedIteratorOverridable()` alternative to the native `.ToFeedIterator()`* | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.ProductionExtensions) |
 
-**Target framework:** .NET 8.0 | **Cosmos SDK:** Microsoft.Azure.Cosmos 3.58.0+
-.NET 10 upgrade will happen before .NET 8.0 support ends, but it is being deliberately held off to avoid having to fully maintain multiple packages targeting different .NET frameworks, as until then there is little benefit having both.
+* Native `.ToFeedIterator()` method works without any fuss, there is just occasionally some advantages to using `.ToFeedIteratorOverridable()`, hence why this optional package is supplied.  See [Feed Iterator Usage](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feed-Iterator-Usage-Guide).
+
+All packages support .NET 8.0+.  .NET 10 specific packages will be created before .NET 8.0 support ends, but it is being deliberately held off to avoid having to fully maintain multiple packages targeting different .NET frameworks, as until then there is little benefit having both.
 
 ## Documentation
 
