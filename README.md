@@ -8,7 +8,7 @@ A fully featured, in-process, fake for Azure Cosmos DB SDK for .NET — purpose-
 
 Has full support for *all* Cosmos CRUD and SQL querying, including raw querying, functions, LINQ querying (including `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` support - no production code changes necessary).
 
-Includes all the other features of CosmosDB like Triggers, Stored Procedures, Change Feed, Transactional Batches, Point-in-time restore, TTL...
+Includes all the other features of CosmosDB like Triggers, Stored Procedures, Change Feed, Transactional Batches, Bulk Operations, Point-in-time restore, TTL...
 
 Client encryption keys are deliberately not implemented as they require Azure Key Vault integration and are out of scope for a testing fake.
 
@@ -56,6 +56,7 @@ Recommendation is to use **CosmosDB.InMemoryEmulator** for integration/component
 - **Feature Complete SQL query engine** — 100+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries, full-text search, vector search
 - **Full LINQ support** — `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` interception
 - **Triggers** — pre-trigger and post-trigger execution via C# handlers, with optional JavaScript body interpretation via the `CosmosDB.InMemoryEmulator.JsTriggers` package
+- **Bulk operations** — `AllowBulkExecution = true` with concurrent `Task.WhenAll` patterns
 - **Transactional batches** — atomic execution with rollback on failure
 - **Change feed** — iterators, checkpoints, delete tombstones, and `ChangeFeedProcessor`
 - **Point-in-time restore** — restore a container to any previous point in time via change feed replay
@@ -72,7 +73,7 @@ Recommendation is to use **CosmosDB.InMemoryEmulator** for integration/component
 - **FeedRange support** — configurable `FeedRangeCount` with scoped queries and change feed iterators
 - **Vector search** — `VECTORDISTANCE` with cosine, dot product, and Euclidean distance; works in `SELECT`, `WHERE`, and `ORDER BY`
 - **Users & permissions** — stub user/permission CRUD with synthetic tokens (no authorization enforced)
-- **1300+ tests** covering all features and performance
+- **1350+ tests** covering all features and performance
 
 For behavioural differences from a real CosmosDB see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)
 
@@ -114,4 +115,4 @@ All packages support .NET 8.0+.  .NET 10 specific packages will be created befor
 
 ## License
 
-[Apache License 2.0](LICENSE)
+[MIT License](LICENSE)

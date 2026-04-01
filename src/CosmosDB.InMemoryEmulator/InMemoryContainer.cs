@@ -61,12 +61,16 @@ public class InMemoryContainer : Container
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), DateTimeOffset> _timestamps = new();
     private readonly List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> _changeFeed = new();
     private readonly object _changeFeedLock = new();
+    private readonly object _uniqueKeyWriteLock = new();
+
+    private bool HasUniqueKeys =>
+        _containerProperties.UniqueKeyPolicy?.UniqueKeys.Count > 0;
     private ContainerProperties _containerProperties;
     private readonly Scripts _scripts;
-    private readonly Dictionary<string, Func<object[], object>> _userDefinedFunctions = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, Func<PartitionKey, dynamic[], string>> _storedProcedures = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, RegisteredTrigger> _triggers = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, TriggerProperties> _triggerProperties = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Func<object[], object>> _userDefinedFunctions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Func<PartitionKey, dynamic[], string>> _storedProcedures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RegisteredTrigger> _triggers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TriggerProperties> _triggerProperties = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Optional JavaScript trigger engine. When set, triggers that have a <see cref="TriggerProperties.Body"/>
@@ -368,12 +372,25 @@ public class InMemoryContainer : Container
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
 
-        ValidateUniqueKeys(jObj, pk);
-
-        if (!_items.TryAdd(key, json))
+        if (HasUniqueKeys)
         {
-            throw new CosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
-                HttpStatusCode.Conflict, 0, string.Empty, 0);
+            lock (_uniqueKeyWriteLock)
+            {
+                ValidateUniqueKeys(jObj, pk);
+                if (!_items.TryAdd(key, json))
+                {
+                    throw new CosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
+                        HttpStatusCode.Conflict, 0, string.Empty, 0);
+                }
+            }
+        }
+        else
+        {
+            if (!_items.TryAdd(key, json))
+            {
+                throw new CosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
+                    HttpStatusCode.Conflict, 0, string.Empty, 0);
+            }
         }
 
         var etag = GenerateETag();
@@ -442,15 +459,37 @@ public class InMemoryContainer : Container
         }
 
         CheckIfMatch(requestOptions, key);
-        ValidateUniqueKeys(jObj, pk, excludeItemId: itemId);
-        var existed = _items.ContainsKey(key);
-        var previousJson = existed ? _items[key] : null;
-        var previousEtag = existed ? _etags.GetValueOrDefault(key) : null;
-        var previousTimestamp = existed ? _timestamps.GetValueOrDefault(key) : default(DateTimeOffset?);
-        var etag = GenerateETag();
-        _etags[key] = etag;
-        _timestamps[key] = DateTimeOffset.UtcNow;
-        _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+        bool existed;
+        string previousJson;
+        string previousEtag;
+        DateTimeOffset? previousTimestamp;
+        string etag;
+        if (HasUniqueKeys)
+        {
+            lock (_uniqueKeyWriteLock)
+            {
+                ValidateUniqueKeys(jObj, pk, excludeItemId: itemId);
+                existed = _items.ContainsKey(key);
+                previousJson = existed ? _items[key] : null;
+                previousEtag = existed ? _etags.GetValueOrDefault(key) : null;
+                previousTimestamp = existed ? _timestamps.GetValueOrDefault(key) : default(DateTimeOffset?);
+                etag = GenerateETag();
+                _etags[key] = etag;
+                _timestamps[key] = DateTimeOffset.UtcNow;
+                _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+            }
+        }
+        else
+        {
+            existed = _items.ContainsKey(key);
+            previousJson = existed ? _items[key] : null;
+            previousEtag = existed ? _etags.GetValueOrDefault(key) : null;
+            previousTimestamp = existed ? _timestamps.GetValueOrDefault(key) : default(DateTimeOffset?);
+            etag = GenerateETag();
+            _etags[key] = etag;
+            _timestamps[key] = DateTimeOffset.UtcNow;
+            _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+        }
         RecordChangeFeed(itemId, pk, _items[key]);
 
         try
@@ -500,14 +539,34 @@ public class InMemoryContainer : Container
         }
 
         CheckIfMatch(requestOptions, key);
-        ValidateUniqueKeys(jObj, pk, excludeItemId: id);
-        var previousJson = _items[key];
-        var previousEtag = _etags.GetValueOrDefault(key);
-        var previousTimestamp = _timestamps.GetValueOrDefault(key);
-        var etag = GenerateETag();
-        _etags[key] = etag;
-        _timestamps[key] = DateTimeOffset.UtcNow;
-        _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+        string previousJson;
+        string previousEtag;
+        DateTimeOffset previousTimestamp;
+        string etag;
+        if (HasUniqueKeys)
+        {
+            lock (_uniqueKeyWriteLock)
+            {
+                ValidateUniqueKeys(jObj, pk, excludeItemId: id);
+                previousJson = _items[key];
+                previousEtag = _etags.GetValueOrDefault(key);
+                previousTimestamp = _timestamps.GetValueOrDefault(key);
+                etag = GenerateETag();
+                _etags[key] = etag;
+                _timestamps[key] = DateTimeOffset.UtcNow;
+                _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+            }
+        }
+        else
+        {
+            previousJson = _items[key];
+            previousEtag = _etags.GetValueOrDefault(key);
+            previousTimestamp = _timestamps.GetValueOrDefault(key);
+            etag = GenerateETag();
+            _etags[key] = etag;
+            _timestamps[key] = DateTimeOffset.UtcNow;
+            _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+        }
         RecordChangeFeed(id, pk, _items[key]);
 
         try
@@ -593,12 +652,28 @@ public class InMemoryContainer : Container
         ApplyPatchOperations(jObj, patchOperations);
         var updatedJson = jObj.ToString(Formatting.None);
         ValidateDocumentSize(updatedJson);
-        ValidateUniqueKeys(jObj, pk, excludeItemId: id);
-        var etag = GenerateETag();
-        _etags[key] = etag;
-        _timestamps[key] = DateTimeOffset.UtcNow;
-        var enrichedJson = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
-        _items[key] = enrichedJson;
+        string etag;
+        if (HasUniqueKeys)
+        {
+            lock (_uniqueKeyWriteLock)
+            {
+                ValidateUniqueKeys(jObj, pk, excludeItemId: id);
+                etag = GenerateETag();
+                _etags[key] = etag;
+                _timestamps[key] = DateTimeOffset.UtcNow;
+                var enriched = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
+                _items[key] = enriched;
+            }
+        }
+        else
+        {
+            etag = GenerateETag();
+            _etags[key] = etag;
+            _timestamps[key] = DateTimeOffset.UtcNow;
+            var enriched = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
+            _items[key] = enriched;
+        }
+        var enrichedJson = _items[key];
         RecordChangeFeed(id, pk, enrichedJson);
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         var result = JsonConvert.DeserializeObject<T>(enrichedJson, JsonSettings);
@@ -625,14 +700,21 @@ public class InMemoryContainer : Container
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(itemId, pk);
 
-        if (!ValidateUniqueKeysStream(jObj, pk))
+        if (HasUniqueKeys)
         {
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
-        }
+            lock (_uniqueKeyWriteLock)
+            {
+                if (!ValidateUniqueKeysStream(jObj, pk))
+                    return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
 
-        if (!_items.TryAdd(key, json))
+                if (!_items.TryAdd(key, json))
+                    return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+            }
+        }
+        else
         {
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+            if (!_items.TryAdd(key, json))
+                return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
         }
 
         var etag = GenerateETag();
@@ -699,16 +781,34 @@ public class InMemoryContainer : Container
         {
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
         }
-        if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: itemId))
+        bool existed;
+        string etag;
+        string enrichedJson;
+        if (HasUniqueKeys)
         {
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+            lock (_uniqueKeyWriteLock)
+            {
+                if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: itemId))
+                    return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+                existed = _items.ContainsKey(key);
+                etag = GenerateETag();
+                _etags[key] = etag;
+                _timestamps[key] = DateTimeOffset.UtcNow;
+                enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+                _items[key] = enrichedJson;
+            }
         }
-        var existed = _items.ContainsKey(key);
-        var etag = GenerateETag();
-        _etags[key] = etag;
-        _timestamps[key] = DateTimeOffset.UtcNow;
-        var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
-        _items[key] = enrichedJson;
+        else
+        {
+            if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: itemId))
+                return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+            existed = _items.ContainsKey(key);
+            etag = GenerateETag();
+            _etags[key] = etag;
+            _timestamps[key] = DateTimeOffset.UtcNow;
+            enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+            _items[key] = enrichedJson;
+        }
         RecordChangeFeed(itemId, pk, enrichedJson);
 
         try
@@ -757,16 +857,31 @@ public class InMemoryContainer : Container
         jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
 
-        if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
+        string etag;
+        string enrichedJson;
+        if (HasUniqueKeys)
         {
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+            lock (_uniqueKeyWriteLock)
+            {
+                if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
+                    return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+                etag = GenerateETag();
+                _etags[key] = etag;
+                _timestamps[key] = DateTimeOffset.UtcNow;
+                enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+                _items[key] = enrichedJson;
+            }
         }
-
-        var etag = GenerateETag();
-        _etags[key] = etag;
-        _timestamps[key] = DateTimeOffset.UtcNow;
-        var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
-        _items[key] = enrichedJson;
+        else
+        {
+            if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
+                return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+            etag = GenerateETag();
+            _etags[key] = etag;
+            _timestamps[key] = DateTimeOffset.UtcNow;
+            enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+            _items[key] = enrichedJson;
+        }
         RecordChangeFeed(id, pk, enrichedJson);
 
         try
