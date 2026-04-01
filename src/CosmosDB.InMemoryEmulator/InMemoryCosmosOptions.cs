@@ -40,6 +40,26 @@ public class InMemoryCosmosOptions
     public Action<string, FakeCosmosHandler>? OnHandlerCreated { get; set; }
 
     /// <summary>
+    /// Optional function that wraps the final <see cref="HttpMessageHandler"/>
+    /// (the <see cref="FakeCosmosHandler"/> or multi-container router) before it is
+    /// passed to <see cref="CosmosClientOptions.HttpClientFactory"/>.
+    /// <para>
+    /// Use this to insert a <see cref="DelegatingHandler"/> into the pipeline.
+    /// The input is the handler that serves in-memory responses; the return value
+    /// replaces it as the outermost handler in the <see cref="HttpClient"/>.
+    /// </para>
+    /// <para>
+    /// When <c>null</c> (the default), the handler is used as-is — no behaviour change
+    /// for existing consumers.
+    /// </para>
+    /// <para>
+    /// Only applies to <see cref="ServiceCollectionExtensions.UseInMemoryCosmosDB"/>.
+    /// Ignored by <c>UseInMemoryCosmosDB&lt;TClient&gt;()</c> (no HTTP pipeline).
+    /// </para>
+    /// </summary>
+    public Func<HttpMessageHandler, HttpMessageHandler>? HttpMessageHandlerWrapper { get; set; }
+
+    /// <summary>
     /// Adds a container configuration.
     /// </summary>
     public InMemoryCosmosOptions AddContainer(
@@ -48,6 +68,19 @@ public class InMemoryCosmosOptions
         string? databaseName = null)
     {
         Containers.Add(new ContainerConfig(containerName, partitionKeyPath, databaseName));
+        return this;
+    }
+
+    /// <summary>
+    /// Sets <see cref="HttpMessageHandlerWrapper"/> to the specified function.
+    /// The function receives the <see cref="FakeCosmosHandler"/> (or multi-container
+    /// router) and must return the handler to use as the outermost handler in
+    /// the <see cref="HttpClient"/>.
+    /// </summary>
+    public InMemoryCosmosOptions WithHttpMessageHandlerWrapper(
+        Func<HttpMessageHandler, HttpMessageHandler> wrapper)
+    {
+        HttpMessageHandlerWrapper = wrapper;
         return this;
     }
 }

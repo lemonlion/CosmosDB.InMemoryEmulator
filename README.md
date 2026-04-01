@@ -71,6 +71,7 @@ See the **[Feature Comparison With Alternatives](https://github.com/lemonlion/Co
 - **Fault injection** — simulate 429 throttling, 503 errors, timeouts
 - **DI integration** — `UseInMemoryCosmosDB()` extension methods for `IServiceCollection`
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
+- **Custom handler wrapping** — insert `DelegatingHandler` middleware (logging, tracking, metrics) via `HttpMessageHandlerWrapper`
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
 - **FeedRange support** — configurable `FeedRangeCount` with scoped queries and change feed iterators
 - **Vector search** — `VECTORDISTANCE` with cosine, dot product, and Euclidean distance; works in `SELECT`, `WHERE`, and `ORDER BY`

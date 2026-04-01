@@ -1027,3 +1027,184 @@ public class AutoDetectContainerTests
         captured.Should().NotBeNull();
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Phase 6: HttpMessageHandlerWrapper
+// ════════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class HttpMessageHandlerWrapperTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    /// <summary>
+    /// A test DelegatingHandler that counts requests passing through it.
+    /// </summary>
+    private class CountingHandler : DelegatingHandler
+    {
+        public int RequestCount { get; private set; }
+
+        public CountingHandler(HttpMessageHandler innerHandler) : base(innerHandler) { }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            return base.SendAsync(request, cancellationToken);
+        }
+    }
+
+    [Fact]
+    public void Wrapper_IsInvoked_WithHandler()
+    {
+        var services = new ServiceCollection();
+        HttpMessageHandler? capturedHandler = null;
+
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.AddContainer("orders", "/pk");
+            o.HttpMessageHandlerWrapper = handler =>
+            {
+                capturedHandler = handler;
+                return handler; // pass through unchanged
+            };
+        });
+
+        capturedHandler.Should().NotBeNull();
+        capturedHandler.Should().BeOfType<FakeCosmosHandler>();
+    }
+
+    [Fact]
+    public async Task Wrapper_ReturnValue_IsUsed_DelegatingHandlerSendAsyncCalled()
+    {
+        var services = new ServiceCollection();
+        CountingHandler? countingHandler = null;
+
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.AddContainer("test", "/partitionKey");
+            o.HttpMessageHandlerWrapper = handler =>
+            {
+                countingHandler = new CountingHandler(handler);
+                return countingHandler;
+            };
+        });
+
+        var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+
+        // Perform a CRUD operation — this should flow through the CountingHandler
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        countingHandler.Should().NotBeNull();
+        countingHandler!.RequestCount.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task NullWrapper_Default_ExistingBehaviourPreserved()
+    {
+        var services = new ServiceCollection();
+
+        // No HttpMessageHandlerWrapper set — default null
+        services.UseInMemoryCosmosDB(o => o.AddContainer("test", "/partitionKey"));
+
+        var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+
+        // CRUD should work exactly as before
+        var createResponse = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var readResponse = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        readResponse.Resource.Name.Should().Be("Test");
+    }
+
+    [Fact]
+    public void MultiContainer_Wrapper_ReceivesRouter_NotIndividualHandler()
+    {
+        var services = new ServiceCollection();
+        HttpMessageHandler? capturedHandler = null;
+
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.AddContainer("orders", "/pk");
+            o.AddContainer("events", "/pk");
+            o.HttpMessageHandlerWrapper = handler =>
+            {
+                capturedHandler = handler;
+                return handler;
+            };
+        });
+
+        capturedHandler.Should().NotBeNull();
+        // With multiple containers, the handler is the router — NOT a FakeCosmosHandler
+        capturedHandler.Should().NotBeOfType<FakeCosmosHandler>();
+    }
+
+    [Fact]
+    public void FluentMethod_WithHttpMessageHandlerWrapper_Works()
+    {
+        var services = new ServiceCollection();
+        HttpMessageHandler? capturedHandler = null;
+
+        services.UseInMemoryCosmosDB(o => o
+            .AddContainer("orders", "/pk")
+            .WithHttpMessageHandlerWrapper(handler =>
+            {
+                capturedHandler = handler;
+                return handler;
+            }));
+
+        capturedHandler.Should().NotBeNull();
+        capturedHandler.Should().BeOfType<FakeCosmosHandler>();
+    }
+
+    [Fact]
+    public async Task FullDelegatingHandlerChaining_CrudAndQueryThroughWrapper()
+    {
+        var services = new ServiceCollection();
+        CountingHandler? countingHandler = null;
+
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.AddContainer("test", "/partitionKey");
+            o.HttpMessageHandlerWrapper = handler =>
+            {
+                countingHandler = new CountingHandler(handler);
+                return countingHandler;
+            };
+        });
+
+        var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+
+        // Create
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+
+        // Read
+        var readResponse = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        readResponse.Resource.Name.Should().Be("Alice");
+
+        // Query
+        var iterator = container.GetItemQueryIterator<TestDocument>(
+            new QueryDefinition("SELECT * FROM c WHERE c.name = 'Alice'"));
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+
+        // All requests went through the counting handler
+        countingHandler.Should().NotBeNull();
+        countingHandler!.RequestCount.Should().BeGreaterThanOrEqualTo(3,
+            "Create + Read + Query should produce at least 3 HTTP requests through the wrapper");
+    }
+}

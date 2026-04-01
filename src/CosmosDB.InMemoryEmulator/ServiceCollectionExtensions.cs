@@ -75,13 +75,16 @@ public static class ServiceCollectionExtensions
             ? handlers.Values.First()
             : FakeCosmosHandler.CreateRouter(handlers);
 
+        // Apply optional wrapper (e.g. DelegatingHandler for logging/tracking)
+        var finalHandler = options.HttpMessageHandlerWrapper?.Invoke(httpHandler) ?? httpHandler;
+
         // Create a real CosmosClient with the FakeCosmosHandler
         var client = new CosmosClient(
             FakeConnectionString,
             new CosmosClientOptions
             {
                 ConnectionMode = ConnectionMode.Gateway,
-                HttpClientFactory = () => new HttpClient(httpHandler)
+                HttpClientFactory = () => new HttpClient(finalHandler)
             });
 
         options.OnClientCreated?.Invoke(client);
