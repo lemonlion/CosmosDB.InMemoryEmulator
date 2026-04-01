@@ -60,7 +60,7 @@ See the **[Feature Comparison With Alternatives](https://github.com/lemonlion/Co
 - **Triggers** — pre-trigger and post-trigger execution via C# handlers, with optional JavaScript body interpretation via the `CosmosDB.InMemoryEmulator.JsTriggers` package
 - **Bulk operations** — `AllowBulkExecution = true` with concurrent `Task.WhenAll` patterns
 - **Transactional batches** — atomic execution with rollback on failure
-- **Change feed** — iterators, checkpoints, delete tombstones, and `ChangeFeedProcessor`
+- **Change feed** — iterators, checkpoints, delete tombstones, `ChangeFeedProcessor`, and manual checkpoint processor
 - **Point-in-time restore** — restore a container to any previous point in time via change feed replay
 - **Partition keys** — single and composite, auto-extraction from documents
 - **State persistence** — export/import container state as JSON

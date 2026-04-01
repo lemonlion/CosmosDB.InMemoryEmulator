@@ -166,6 +166,143 @@ internal sealed class InMemoryChangeFeedStreamProcessor : ChangeFeedProcessor
     }
 }
 
+internal sealed class InMemoryManualCheckpointChangeFeedProcessor<T> : ChangeFeedProcessor
+{
+    private readonly InMemoryContainer _container;
+    private readonly Container.ChangeFeedHandlerWithManualCheckpoint<T> _handler;
+    private CancellationTokenSource _cts;
+    private Task _pollingTask;
+    private long _checkpoint;
+
+    internal InMemoryManualCheckpointChangeFeedProcessor(
+        InMemoryContainer container,
+        Container.ChangeFeedHandlerWithManualCheckpoint<T> handler)
+    {
+        _container = container;
+        _handler = handler;
+    }
+
+    public override Task StartAsync()
+    {
+        _checkpoint = _container.GetChangeFeedCheckpoint();
+        _cts = new CancellationTokenSource();
+        _pollingTask = PollAsync(_cts.Token);
+        return Task.CompletedTask;
+    }
+
+    public override async Task StopAsync()
+    {
+        if (_cts != null)
+        {
+            await _cts.CancelAsync();
+            try { await _pollingTask; }
+            catch (OperationCanceledException) { }
+            _cts.Dispose();
+            _cts = null;
+        }
+    }
+
+    private async Task PollAsync(CancellationToken cancellationToken)
+    {
+        var context = new InMemoryChangeFeedProcessorContext();
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+
+            var iterator = _container.GetChangeFeedIterator<T>(_checkpoint);
+            var changes = new List<T>();
+
+            while (iterator.HasMoreResults)
+            {
+                var response = await iterator.ReadNextAsync(cancellationToken);
+                if (response.StatusCode == HttpStatusCode.NotModified)
+                    break;
+                changes.AddRange(response);
+            }
+
+            if (changes.Count > 0)
+            {
+                var pendingCheckpoint = _checkpoint + changes.Count;
+                var checkpointed = false;
+                await _handler(context, changes, async () => { checkpointed = true; await Task.CompletedTask; }, cancellationToken);
+                if (checkpointed)
+                    _checkpoint = pendingCheckpoint;
+            }
+        }
+    }
+}
+
+internal sealed class InMemoryManualCheckpointStreamChangeFeedProcessor : ChangeFeedProcessor
+{
+    private readonly InMemoryContainer _container;
+    private readonly Container.ChangeFeedStreamHandlerWithManualCheckpoint _handler;
+    private CancellationTokenSource _cts;
+    private Task _pollingTask;
+    private long _checkpoint;
+
+    internal InMemoryManualCheckpointStreamChangeFeedProcessor(
+        InMemoryContainer container,
+        Container.ChangeFeedStreamHandlerWithManualCheckpoint handler)
+    {
+        _container = container;
+        _handler = handler;
+    }
+
+    public override Task StartAsync()
+    {
+        _checkpoint = _container.GetChangeFeedCheckpoint();
+        _cts = new CancellationTokenSource();
+        _pollingTask = PollAsync(_cts.Token);
+        return Task.CompletedTask;
+    }
+
+    public override async Task StopAsync()
+    {
+        if (_cts != null)
+        {
+            await _cts.CancelAsync();
+            try { await _pollingTask; }
+            catch (OperationCanceledException) { }
+            _cts.Dispose();
+            _cts = null;
+        }
+    }
+
+    private async Task PollAsync(CancellationToken cancellationToken)
+    {
+        var context = new InMemoryChangeFeedProcessorContext();
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+
+            var iterator = _container.GetChangeFeedIterator<JObject>(_checkpoint);
+            var changes = new List<JObject>();
+
+            while (iterator.HasMoreResults)
+            {
+                var response = await iterator.ReadNextAsync(cancellationToken);
+                if (response.StatusCode == HttpStatusCode.NotModified)
+                    break;
+                changes.AddRange(response);
+            }
+
+            if (changes.Count > 0)
+            {
+                var pendingCheckpoint = _checkpoint + changes.Count;
+                var checkpointed = false;
+                var array = new JArray(changes);
+                var bytes = System.Text.Encoding.UTF8.GetBytes(array.ToString());
+                using var stream = new MemoryStream(bytes);
+                await _handler(context, stream, async () => { checkpointed = true; await Task.CompletedTask; }, cancellationToken);
+                if (checkpointed)
+                    _checkpoint = pendingCheckpoint;
+            }
+        }
+    }
+}
+
 internal static class ChangeFeedProcessorBuilderFactory
 {
     private static readonly Assembly CosmosAssembly = typeof(Container).Assembly;

@@ -591,26 +591,111 @@ public class ChangeFeedManualCheckpointDivergentBehaviorTests4
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: GetChangeFeedProcessorBuilderWithManualCheckpoint returns a NoOp processor.
-    /// Real Cosmos DB supports manual checkpoint where the handler explicitly calls checkpointAsync.
-    /// InMemoryContainer creates a NoOpChangeFeedProcessor that never invokes the handler.
-    /// The processor can be started and stopped without errors, but no changes are delivered.
-    /// Note: WithLeaseContainer requires ContainerInternal which InMemoryContainer does not implement,
-    /// so we only verify the processor builds and starts/stops without error.
+    /// Manual checkpoint processor now works. The handler receives changes and can call
+    /// checkpointAsync to save progress. The processor polls the in-memory change feed
+    /// every 50ms, same as the automatic checkpoint variant.
     /// </summary>
     [Fact]
-    public async Task ManualCheckpoint_ProcessorReturnsNoOp()
+    public async Task ManualCheckpoint_ProcessorInvokesHandler()
     {
-        var builder = _container.GetChangeFeedProcessorBuilderWithManualCheckpoint<TestDocument>(
+        var receivedChanges = new List<TestDocument>();
+        var checkpointCalled = false;
+
+        var processor = _container.GetChangeFeedProcessorBuilderWithManualCheckpoint<TestDocument>(
             "processor",
-            (context, changes, checkpointAsync, ct) => Task.CompletedTask);
+            async (context, changes, checkpointAsync, ct) =>
+            {
+                receivedChanges.AddRange(changes);
+                checkpointCalled = true;
+                await checkpointAsync();
+            })
+            .WithInstanceName("instance")
+            .WithInMemoryLeaseContainer()
+            .Build();
 
-        // The builder returns a NoOp processor — we verify it can be obtained
-        builder.Should().NotBeNull();
+        await processor.StartAsync();
 
-        // WithInstanceName works on the builder
-        var builderWithInstance = builder.WithInstanceName("instance");
-        builderWithInstance.Should().NotBeNull();
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "ManualCp" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(500);
+        await processor.StopAsync();
+
+        receivedChanges.Should().ContainSingle().Which.Name.Should().Be("ManualCp");
+        checkpointCalled.Should().BeTrue();
+    }
+}
+
+
+public class ChangeFeedManualCheckpointStreamTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task ManualCheckpoint_StreamHandler_InvokesHandlerAndCheckpoints()
+    {
+        var handlerCalled = new TaskCompletionSource<bool>();
+        var checkpointCalled = false;
+        string receivedJson = null!;
+
+        var processor = _container.GetChangeFeedProcessorBuilderWithManualCheckpoint(
+            "stream-processor",
+            async (context, stream, checkpointAsync, ct) =>
+            {
+                using var reader = new StreamReader(stream);
+                receivedJson = await reader.ReadToEndAsync(ct);
+                checkpointCalled = true;
+                await checkpointAsync();
+                handlerCalled.TrySetResult(true);
+            })
+            .WithInstanceName("instance")
+            .WithInMemoryLeaseContainer()
+            .Build();
+
+        await processor.StartAsync();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "StreamMC" },
+            new PartitionKey("pk1"));
+
+        await Task.WhenAny(handlerCalled.Task, Task.Delay(TimeSpan.FromSeconds(2)));
+        await processor.StopAsync();
+
+        handlerCalled.Task.IsCompleted.Should().BeTrue();
+        checkpointCalled.Should().BeTrue();
+        receivedJson.Should().Contain("StreamMC");
+    }
+
+    [Fact]
+    public async Task ManualCheckpoint_WithoutCallingCheckpoint_RedeliversChanges()
+    {
+        var deliveryCount = 0;
+
+        var processor = _container.GetChangeFeedProcessorBuilderWithManualCheckpoint<TestDocument>(
+            "processor",
+            (context, changes, checkpointAsync, ct) =>
+            {
+                Interlocked.Increment(ref deliveryCount);
+                // Deliberately NOT calling checkpointAsync — changes should be redelivered
+                return Task.CompletedTask;
+            })
+            .WithInstanceName("instance")
+            .WithInMemoryLeaseContainer()
+            .Build();
+
+        await processor.StartAsync();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Redelivery" },
+            new PartitionKey("pk1"));
+
+        // Wait for multiple poll cycles — if checkpoint not called, changes are redelivered
+        await Task.Delay(300);
+        await processor.StopAsync();
+
+        deliveryCount.Should().BeGreaterThan(1,
+            "when checkpoint is not called, the same changes should be redelivered on subsequent polls");
     }
 }
 
@@ -942,37 +1027,53 @@ public class ChangeFeedGapTests4
         firstPage.Count.Should().BeLessThanOrEqualTo(2);
     }
 
-    [Fact(Skip = "ChangeFeedStartFrom with FeedRange is not implemented. " +
-                 "Real Cosmos DB scopes the change feed to the specified FeedRange. " +
-                 "InMemoryContainer ignores the FeedRange and returns all changes. " +
-                 "See divergent behavior test in ChangeFeedFeedRangeDivergentBehaviorTests4.")]
+    [Fact]
     public async Task ChangeFeed_FromFeedRange_ScopesToRange()
     {
+        _container.FeedRangeCount = 4;
+
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
         await _container.CreateItemAsync(
             new TestDocument { Id = "2", PartitionKey = "pk2", Name = "B" }, new PartitionKey("pk2"));
 
         var ranges = await _container.GetFeedRangesAsync();
-        var iterator = _container.GetChangeFeedIterator<TestDocument>(
-            ChangeFeedStartFrom.Beginning(ranges[0]),
-            ChangeFeedMode.Incremental);
-
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
+        var allResults = new List<TestDocument>();
+        foreach (var range in ranges)
         {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
+            var iterator = _container.GetChangeFeedIterator<TestDocument>(
+                ChangeFeedStartFrom.Beginning(range),
+                ChangeFeedMode.Incremental);
+
+            while (iterator.HasMoreResults)
+            {
+                var page = await iterator.ReadNextAsync();
+                allResults.AddRange(page);
+            }
         }
 
-        results.Should().HaveCountLessThan(2);
+        // Each range returns a subset; union of all ranges returns all items
+        allResults.Should().HaveCount(2);
+
+        // At least one range should return fewer than all items (proving scoping works)
+        var perRangeCounts = new List<int>();
+        foreach (var range in ranges)
+        {
+            var iterator = _container.GetChangeFeedIterator<TestDocument>(
+                ChangeFeedStartFrom.Beginning(range),
+                ChangeFeedMode.Incremental);
+            var rangeResults = new List<TestDocument>();
+            while (iterator.HasMoreResults)
+            {
+                var page = await iterator.ReadNextAsync();
+                rangeResults.AddRange(page);
+            }
+            perRangeCounts.Add(rangeResults.Count);
+        }
+        perRangeCounts.Should().Contain(c => c < 2, "at least one range should scope to a subset");
     }
 
-    [Fact(Skip = "GetChangeFeedProcessorBuilderWithManualCheckpoint returns a NoOp processor. " +
-                 "Real Cosmos DB supports manual checkpoint where the handler must explicitly call " +
-                 "checkpointAsync to save progress. InMemoryContainer creates a NoOpChangeFeedProcessor " +
-                 "that never invokes the handler delegate. " +
-                 "See divergent behavior test in ChangeFeedManualCheckpointDivergentBehaviorTests4.")]
+    [Fact]
     public async Task ChangeFeed_ManualCheckpoint_InvokesHandler()
     {
         var invoked = false;
@@ -984,7 +1085,7 @@ public class ChangeFeedGapTests4
                 await checkpointAsync();
             });
 
-        var processor = builder.WithInstanceName("instance").WithLeaseContainer(_container).Build();
+        var processor = builder.WithInstanceName("instance").WithInMemoryLeaseContainer().Build();
         await processor.StartAsync();
 
         await _container.CreateItemAsync(

@@ -1413,11 +1413,13 @@ public class InMemoryContainer : Container
 
     public override ChangeFeedProcessorBuilder GetChangeFeedProcessorBuilderWithManualCheckpoint<T>(
         string processorName, Container.ChangeFeedHandlerWithManualCheckpoint<T> onChangesDelegate)
-        => ChangeFeedProcessorBuilderFactory.Create(processorName, new NoOpChangeFeedProcessor());
+        => ChangeFeedProcessorBuilderFactory.Create(processorName,
+            new InMemoryManualCheckpointChangeFeedProcessor<T>(this, onChangesDelegate));
 
     public override ChangeFeedProcessorBuilder GetChangeFeedProcessorBuilderWithManualCheckpoint(
         string processorName, Container.ChangeFeedStreamHandlerWithManualCheckpoint onChangesDelegate)
-        => ChangeFeedProcessorBuilderFactory.Create(processorName, new NoOpChangeFeedProcessor());
+        => ChangeFeedProcessorBuilderFactory.Create(processorName,
+            new InMemoryManualCheckpointStreamChangeFeedProcessor(this, onChangesDelegate));
 
     public override ChangeFeedEstimator GetChangeFeedEstimator(
         string processorName, Container leaseContainer)
