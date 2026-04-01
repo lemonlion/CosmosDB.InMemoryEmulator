@@ -76,7 +76,7 @@ Recommendation is to use **CosmosDB.InMemoryEmulator** for integration/component
 - **Computed properties** — virtual container-level properties evaluated at query time; usable in `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`
 - **1350+ tests** covering all features and performance
 
-For behavioural differences from a real CosmosDB see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)
+For the full feature list see [Features](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Features). For a side-by-side comparison with the official Microsoft emulator see [Feature Comparison With Alternatives](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feature-Comparison-With-Alternatives). For behavioural differences from a real CosmosDB see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)
 
 ## NuGet Packages
 
