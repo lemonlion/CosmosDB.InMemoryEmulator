@@ -21,21 +21,21 @@ Works by replacing either `Microsoft.Azure.Cosmos.Container` or `Microsoft.Azure
 In your `ConfigureTestServices()` method in your `WebApplicationFactory()`:
 
 ```csharp
-    servicesCollection.UseInMemoryCosmosClient(); // Replaces all Cosmos Clients With In-Memory Emulator
+servicesCollection.UseInMemoryCosmosClient(); // Replaces all Cosmos Clients With In-Memory Emulator
 ```
 OR
 ```csharp
-    servicesCollection.UseInMemoryCosmosContainer(); // Replaces all Cosmos Containers With In-Memory Emulator
+servicesCollection.UseInMemoryCosmosContainer(); // Replaces all Cosmos Containers With In-Memory Emulator
 ```
 
 ### Direct Instantiation
 
 ```csharp
-     var cosmosClient = new InMemoryCosmosClient(); // Fully functional In-Memory Cosmos Client Emulator
+var cosmosClient = new InMemoryCosmosClient(); // Fully functional In-Memory Cosmos Client Emulator
 ```
 OR
 ```csharp
-     var cosmosClient = new InMemoryContainer(); // Fully functional In-Memory Cosmos Container Emulator
+var cosmosClient = new InMemoryContainer(); // Fully functional In-Memory Cosmos Container Emulator
 ```
 
 ## Motivation
