@@ -226,7 +226,14 @@ public static class CosmosSqlTokenizer
         select Unit.Value;
 
     private static readonly TextParser<Unit> NumberToken =
-        Numerics.Decimal.Select(_ => Unit.Value);
+        (from number in Numerics.Decimal
+         from exp in (
+             from e in Character.EqualTo('e').Or(Character.EqualTo('E'))
+             from sign in Character.EqualTo('+').Or(Character.EqualTo('-')).OptionalOrDefault()
+             from digits in Character.Digit.AtLeastOnce()
+             select Unit.Value
+         ).OptionalOrDefault()
+         select Unit.Value);
 
     private static readonly TextParser<Unit> IdentOrKeyword =
         from first in Character.Letter.Or(Character.EqualTo('_'))

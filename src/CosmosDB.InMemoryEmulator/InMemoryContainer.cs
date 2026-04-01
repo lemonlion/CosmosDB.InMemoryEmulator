@@ -93,6 +93,36 @@ public class InMemoryContainer : Container
         private UndefinedValue() { }
     }
 
+    /// <summary>
+    /// Type-aware equality comparer for JToken values, matching Cosmos DB semantics.
+    /// Different types (number vs string) are never equal, even if their string representations match.
+    /// </summary>
+    private sealed class JTokenValueComparer : IEqualityComparer<JToken>
+    {
+        public static readonly JTokenValueComparer Instance = new();
+
+        public bool Equals(JToken x, JToken y)
+        {
+            if (ReferenceEquals(x, y)) return true;
+            if (x is null || y is null) return x is null && y is null;
+            return JToken.DeepEquals(x, y);
+        }
+
+        public int GetHashCode(JToken obj)
+        {
+            if (obj is null) return 0;
+            return obj.Type switch
+            {
+                JTokenType.Integer => HashCode.Combine(obj.Type, obj.Value<long>()),
+                JTokenType.Float => HashCode.Combine(obj.Type, obj.Value<double>()),
+                JTokenType.String => HashCode.Combine(obj.Type, obj.Value<string>()?.GetHashCode() ?? 0),
+                JTokenType.Boolean => HashCode.Combine(obj.Type, obj.Value<bool>()),
+                JTokenType.Null => HashCode.Combine(obj.Type),
+                _ => HashCode.Combine(obj.Type, obj.ToString().GetHashCode())
+            };
+        }
+    }
+
     internal Action OnDeleted { get; set; }
 
     /// <summary>
@@ -373,6 +403,8 @@ public class InMemoryContainer : Container
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
 
+        EvictIfExpired(key);
+
         if (HasUniqueKeys)
         {
             lock (_uniqueKeyWriteLock)
@@ -533,8 +565,9 @@ public class InMemoryContainer : Container
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(id, pk);
 
-        if (!_items.ContainsKey(key))
+        if (!_items.ContainsKey(key) || IsExpired(key))
         {
+            EvictIfExpired(key);
             throw new CosmosException($"Entity with the specified id does not exist. id = {id}",
                 HttpStatusCode.NotFound, 0, string.Empty, 0);
         }
@@ -594,8 +627,9 @@ public class InMemoryContainer : Container
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
 
-        if (!_items.ContainsKey(key))
+        if (!_items.ContainsKey(key) || IsExpired(key))
         {
+            EvictIfExpired(key);
             throw new CosmosException($"Entity with the specified id does not exist. id = {id}",
                 HttpStatusCode.NotFound, 0, string.Empty, 0);
         }
@@ -624,8 +658,9 @@ public class InMemoryContainer : Container
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
 
-        if (!_items.TryGetValue(key, out var existingJson))
+        if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
         {
+            EvictIfExpired(key);
             throw new CosmosException($"Entity with the specified id does not exist. id = {id}",
                 HttpStatusCode.NotFound, 0, string.Empty, 0);
         }
@@ -700,6 +735,8 @@ public class InMemoryContainer : Container
         var itemId = jObj["id"]?.ToString() ?? Guid.NewGuid().ToString();
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(itemId, pk);
+
+        EvictIfExpired(key);
 
         if (HasUniqueKeys)
         {
@@ -843,8 +880,9 @@ public class InMemoryContainer : Container
         ValidateDocumentSize(json);
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
-        if (!_items.ContainsKey(key))
+        if (!_items.ContainsKey(key) || IsExpired(key))
         {
+            EvictIfExpired(key);
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
         }
 
@@ -905,8 +943,9 @@ public class InMemoryContainer : Container
         cancellationToken.ThrowIfCancellationRequested();
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
-        if (!_items.ContainsKey(key))
+        if (!_items.ContainsKey(key) || IsExpired(key))
         {
+            EvictIfExpired(key);
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
         }
 
@@ -931,8 +970,9 @@ public class InMemoryContainer : Container
         cancellationToken.ThrowIfCancellationRequested();
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
-        if (!_items.TryGetValue(key, out var existingJson))
+        if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
         {
+            EvictIfExpired(key);
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
         }
 
@@ -983,7 +1023,7 @@ public class InMemoryContainer : Container
         {
             var pkStr = PartitionKeyToString(pk);
             var key = ItemKey(itemId, pkStr);
-            if (_items.TryGetValue(key, out var json))
+            if (_items.TryGetValue(key, out var json) && !IsExpired(key))
             {
                 var deserialized = JsonConvert.DeserializeObject<T>(json, JsonSettings);
                 if (deserialized is not null)
@@ -1004,7 +1044,7 @@ public class InMemoryContainer : Container
         {
             var pkStr = PartitionKeyToString(pk);
             var key = ItemKey(itemId, pkStr);
-            if (_items.TryGetValue(key, out var json))
+            if (_items.TryGetValue(key, out var json) && !IsExpired(key))
             {
                 results.Add(JsonParseHelpers.ParseJson(json));
             }
@@ -1474,6 +1514,7 @@ public class InMemoryContainer : Container
     {
         _containerProperties = containerProperties;
         _parsedComputedProperties = null;
+        DefaultTimeToLive = containerProperties.DefaultTimeToLive;
         var r = Substitute.For<ContainerResponse>();
         r.StatusCode.Returns(HttpStatusCode.OK);
         r.Resource.Returns(containerProperties);
@@ -1487,6 +1528,7 @@ public class InMemoryContainer : Container
     {
         _containerProperties = containerProperties;
         _parsedComputedProperties = null;
+        DefaultTimeToLive = containerProperties.DefaultTimeToLive;
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, JsonConvert.SerializeObject(containerProperties, JsonSettings)));
     }
 
@@ -1972,6 +2014,13 @@ public class InMemoryContainer : Container
 
     private bool IsExpired((string Id, string PartitionKey) key)
     {
+        // TTL feature is completely disabled when DefaultTimeToLive is null.
+        // Per-item _ttl is ignored in this case (matches real Cosmos DB behaviour).
+        if (DefaultTimeToLive is null)
+        {
+            return false;
+        }
+
         if (!_timestamps.TryGetValue(key, out var ts))
         {
             return false;
@@ -1985,11 +2034,14 @@ public class InMemoryContainer : Container
             var itemTtl = jObj["_ttl"];
             if (itemTtl is not null && int.TryParse(itemTtl.ToString(), out var perItemTtl))
             {
+                // _ttl = -1 means "never expire" even if container has a default TTL
+                if (perItemTtl == -1) return false;
                 return elapsed >= perItemTtl;
             }
         }
 
-        if (DefaultTimeToLive is null or <= 0)
+        // DefaultTimeToLive = -1 means TTL is ON but items without per-item _ttl don't expire
+        if (DefaultTimeToLive.Value <= 0)
         {
             return false;
         }
@@ -2015,9 +2067,22 @@ public class InMemoryContainer : Container
     internal Dictionary<(string Id, string PartitionKey), string> SnapshotEtags()
         => new(_etags);
 
+    internal Dictionary<(string Id, string PartitionKey), DateTimeOffset> SnapshotTimestamps()
+        => new(_timestamps);
+
+    internal int GetChangeFeedCount()
+    {
+        lock (_changeFeedLock)
+        {
+            return _changeFeed.Count;
+        }
+    }
+
     internal void RestoreSnapshot(
         Dictionary<(string Id, string PartitionKey), string> itemsSnapshot,
-        Dictionary<(string Id, string PartitionKey), string> etagsSnapshot)
+        Dictionary<(string Id, string PartitionKey), string> etagsSnapshot,
+        Dictionary<(string Id, string PartitionKey), DateTimeOffset> timestampsSnapshot,
+        int changeFeedCount)
     {
         _items.Clear();
         foreach (var kvp in itemsSnapshot)
@@ -2029,6 +2094,20 @@ public class InMemoryContainer : Container
         foreach (var kvp in etagsSnapshot)
         {
             _etags[kvp.Key] = kvp.Value;
+        }
+
+        _timestamps.Clear();
+        foreach (var kvp in timestampsSnapshot)
+        {
+            _timestamps[kvp.Key] = kvp.Value;
+        }
+
+        lock (_changeFeedLock)
+        {
+            while (_changeFeed.Count > changeFeedCount)
+            {
+                _changeFeed.RemoveAt(_changeFeed.Count - 1);
+            }
         }
     }
 
@@ -4090,7 +4169,10 @@ public class InMemoryContainer : Container
                         var token = item.SelectToken(path);
                         return token is JArray arr ? (object)(long)arr.Count : null;
                     }
-                    return null;
+
+                    // Support nested function calls like ARRAY_LENGTH(SetIntersect(...))
+                    var evaluated = EvaluateSqlExpression(func.Arguments[0], item, fromAlias, parameters);
+                    return evaluated is JArray evalArr ? (object)(long)evalArr.Count : null;
                 }
             case "ARRAY_SLICE":
                 {
@@ -4285,14 +4367,32 @@ public class InMemoryContainer : Container
                     }
 
                     var sourceArray = ResolveJArray(func.Arguments[0], item, fromAlias, parameters);
-                    var searchArray = ResolveJArray(func.Arguments[1], item, fromAlias, parameters);
-                    if (sourceArray is null || searchArray is null || searchArray.Count == 0)
+                    if (sourceArray is null || sourceArray.Count == 0)
                     {
                         return false;
                     }
 
-                    var sourceValues = new HashSet<string>(sourceArray.Select(t => t.ToString()));
-                    return searchArray.Any(t => sourceValues.Contains(t.ToString()));
+                    // Support both array form: ARRAY_CONTAINS_ANY(c.tags, ['a','b'])
+                    // and variadic form: ARRAY_CONTAINS_ANY(c.tags, 'a', 'b')
+                    var searchArray = ResolveJArray(func.Arguments[1], item, fromAlias, parameters);
+                    if (searchArray is null && func.Arguments.Length >= 2)
+                    {
+                        searchArray = new JArray();
+                        for (int i = 1; i < func.Arguments.Length; i++)
+                        {
+                            var val = EvaluateSqlExpression(func.Arguments[i], item, fromAlias, parameters);
+                            if (val is UndefinedValue) continue;
+                            searchArray.Add(val is JToken jt ? jt : (val is null ? JValue.CreateNull() : JToken.FromObject(val)));
+                        }
+                    }
+
+                    if (searchArray is null || searchArray.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    var sourceValues = new HashSet<JToken>(sourceArray, JTokenValueComparer.Instance);
+                    return searchArray.Any(t => sourceValues.Contains(t));
                 }
             case "ARRAY_CONTAINS_ALL":
                 {
@@ -4302,10 +4402,23 @@ public class InMemoryContainer : Container
                     }
 
                     var sourceArray = ResolveJArray(func.Arguments[0], item, fromAlias, parameters);
-                    var searchArray = ResolveJArray(func.Arguments[1], item, fromAlias, parameters);
                     if (sourceArray is null)
                     {
                         return false;
+                    }
+
+                    // Support both array form: ARRAY_CONTAINS_ALL(c.tags, ['a','b'])
+                    // and variadic form: ARRAY_CONTAINS_ALL(c.tags, 'a', 'b')
+                    var searchArray = ResolveJArray(func.Arguments[1], item, fromAlias, parameters);
+                    if (searchArray is null && func.Arguments.Length >= 2)
+                    {
+                        searchArray = new JArray();
+                        for (int i = 1; i < func.Arguments.Length; i++)
+                        {
+                            var val = EvaluateSqlExpression(func.Arguments[i], item, fromAlias, parameters);
+                            if (val is UndefinedValue) continue;
+                            searchArray.Add(val is JToken jt ? jt : (val is null ? JValue.CreateNull() : JToken.FromObject(val)));
+                        }
                     }
 
                     if (searchArray is null || searchArray.Count == 0)
@@ -4313,8 +4426,8 @@ public class InMemoryContainer : Container
                         return true;
                     }
 
-                    var sourceValues = new HashSet<string>(sourceArray.Select(t => t.ToString()));
-                    return searchArray.All(t => sourceValues.Contains(t.ToString()));
+                    var sourceValues = new HashSet<JToken>(sourceArray, JTokenValueComparer.Instance);
+                    return searchArray.All(t => sourceValues.Contains(t));
                 }
             case "SETINTERSECT":
                 {
@@ -4330,13 +4443,12 @@ public class InMemoryContainer : Container
                         return new JArray();
                     }
 
-                    var set2 = new HashSet<string>(arr2.Select(t => t.ToString()));
+                    var set2 = new HashSet<JToken>(arr2, JTokenValueComparer.Instance);
                     var result = new JArray();
-                    var seen = new HashSet<string>();
+                    var seen = new HashSet<JToken>(JTokenValueComparer.Instance);
                     foreach (var element in arr1)
                     {
-                        var val = element.ToString();
-                        if (set2.Contains(val) && seen.Add(val))
+                        if (set2.Contains(element) && seen.Add(element))
                         {
                             result.Add(element.DeepClone());
                         }
@@ -4353,12 +4465,12 @@ public class InMemoryContainer : Container
                     var arr1 = ResolveJArray(func.Arguments[0], item, fromAlias, parameters);
                     var arr2 = ResolveJArray(func.Arguments[1], item, fromAlias, parameters);
                     var result = new JArray();
-                    var seen = new HashSet<string>();
+                    var seen = new HashSet<JToken>(JTokenValueComparer.Instance);
                     if (arr1 is not null)
                     {
                         foreach (var element in arr1)
                         {
-                            if (seen.Add(element.ToString()))
+                            if (seen.Add(element))
                             {
                                 result.Add(element.DeepClone());
                             }
@@ -4368,7 +4480,7 @@ public class InMemoryContainer : Container
                     {
                         foreach (var element in arr2)
                         {
-                            if (seen.Add(element.ToString()))
+                            if (seen.Add(element))
                             {
                                 result.Add(element.DeepClone());
                             }
@@ -5401,13 +5513,13 @@ public class InMemoryContainer : Container
         return distanceFunction.ToLowerInvariant() switch
         {
             "cosine" => CosineSimilarity(vec1, vec2),
-            "dotproduct" => DotProduct(vec1, vec2),
-            "euclidean" => EuclideanDistance(vec1, vec2),
+            "dotproduct" => (object)DotProduct(vec1, vec2),
+            "euclidean" => (object)EuclideanDistance(vec1, vec2),
             _ => CosineSimilarity(vec1, vec2),
         };
     }
 
-    private static double CosineSimilarity(double[] a, double[] b)
+    private static object CosineSimilarity(double[] a, double[] b)
     {
         double dot = 0, magA = 0, magB = 0;
         for (var i = 0; i < a.Length; i++)
@@ -5417,7 +5529,7 @@ public class InMemoryContainer : Container
             magB += b[i] * b[i];
         }
         var denominator = Math.Sqrt(magA) * Math.Sqrt(magB);
-        return denominator == 0 ? 0 : dot / denominator;
+        return denominator == 0 ? null : (object)(dot / denominator);
     }
 
     private static double DotProduct(double[] a, double[] b)

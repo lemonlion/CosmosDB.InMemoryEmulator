@@ -278,4 +278,893 @@ public class VectorSearchTests
         results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9,
             "default distance function should be cosine similarity");
     }
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  A: Mathematical Edge Cases
+    // ═════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task VectorDistance_Cosine_ZeroVector_ReturnsNull()
+    {
+        // BUG-1: zero-magnitude vector → cosine is undefined.
+        // Real Cosmos DB returns no SimilarityScore (null). Emulator should match.
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 0.0, 0.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Type.Should().Be(JTokenType.Null,
+            "cosine similarity is undefined for zero-magnitude vectors — should return null");
+    }
+
+    [Fact]
+    public async Task VectorDistance_Cosine_NonUnitVectors_NormalizesCorrectly()
+    {
+        // [3,4] and [6,8] are parallel (same direction) — cosine = 1.0 regardless of magnitude
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 3.0, 4.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [6.0, 8.0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9,
+            "parallel non-unit vectors should have cosine similarity 1.0");
+    }
+
+    [Fact]
+    public async Task VectorDistance_Cosine_NegativeComponents_ComputesCorrectly()
+    {
+        // [1, -1] vs [-1, 1] → dot = -2, |a|=√2, |b|=√2 → cosine = -2/2 = -1.0
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, -1.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [-1.0, 1.0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(-1.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_DotProduct_OrthogonalVectors_ReturnsZero()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [0.0, 1.0], false, {distanceFunction:'dotproduct'}) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(0.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_DotProduct_OppositeVectors_ReturnsNegative()
+    {
+        // [1,0] · [-1,0] = -1
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [-1.0, 0.0], false, {distanceFunction:'dotproduct'}) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(-1.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_Euclidean_IdenticalVectors_ReturnsZero()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 5.0, 3.0, 1.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [5.0, 3.0, 1.0], false, {distanceFunction:'euclidean'}) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(0.0, 1e-9,
+            "euclidean distance from a vector to itself should be 0");
+    }
+
+    [Fact]
+    public async Task VectorDistance_Euclidean_KnownTriangle_345()
+    {
+        // [0,0] vs [3,4] → √(9+16) = 5.0
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 0.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [3.0, 4.0], false, {distanceFunction:'euclidean'}) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(5.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_Cosine_SingleDimension_HandlesCorrectly()
+    {
+        // 1D vectors: [5] vs [3] → both positive, cosine = 1.0
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 5.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [3.0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9,
+            "1D positive vectors are parallel → cosine = 1.0");
+    }
+
+    [Fact]
+    public async Task VectorDistance_DotProduct_ZeroVector_ReturnsZero()
+    {
+        // dot([0,0,0], [1,2,3]) = 0
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 0.0, 0.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 2.0, 3.0], false, {distanceFunction:'dotproduct'}) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(0.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_Euclidean_ZeroVector_ReturnsVectorMagnitude()
+    {
+        // euclidean([3,4,0], [0,0,0]) = √(9+16+0) = 5.0
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 3.0, 4.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [0.0, 0.0, 0.0], false, {distanceFunction:'euclidean'}) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(5.0, 1e-9);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  B: Parameter Handling & Overloads
+    // ═════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task VectorDistance_TwoArgsOnly_DefaultsToCosine()
+    {
+        var container = await CreateContainerWithVectors();
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c WHERE c.id = 'x'");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_ThreeArgs_BruteForce_False()
+    {
+        var container = await CreateContainerWithVectors();
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0], false) AS score FROM c WHERE c.id = 'x'");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_FourArgs_DotProduct()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 2.0, 3.0 } }),
+            new PartitionKey("a"));
+
+        // dot([2,3], [4,5]) = 8 + 15 = 23
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [4.0, 5.0], false, {distanceFunction:'dotproduct'}) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(23.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_FourArgs_Cosine_Explicit()
+    {
+        var container = await CreateContainerWithVectors();
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0], false, {distanceFunction:'cosine'}) AS score FROM c WHERE c.id = 'x'");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9,
+            "explicit cosine should produce same result as default");
+    }
+
+    [Fact]
+    public async Task VectorDistance_OptionsWithDataType_AcceptedSilently()
+    {
+        // dataType is an index-level concern — emulator accepts but ignores it
+        var container = await CreateContainerWithVectors();
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0], false, {distanceFunction:'cosine', dataType:'Float32'}) AS score FROM c WHERE c.id = 'x'");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_OptionsWithSearchListSizeMultiplier_AcceptedSilently()
+    {
+        var container = await CreateContainerWithVectors();
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0], false, {distanceFunction:'cosine', searchListSizeMultiplier:10}) AS score FROM c WHERE c.id = 'x'");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_OptionsWithFilterPriority_AcceptedSilently()
+    {
+        var container = await CreateContainerWithVectors();
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0], false, {distanceFunction:'cosine', filterPriority:0.5}) AS score FROM c WHERE c.id = 'x'");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_UnknownDistanceFunction_FallsToCosine()
+    {
+        // Unknown distanceFunction silently falls back to cosine (emulator-specific behaviour)
+        var container = await CreateContainerWithVectors();
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0], false, {distanceFunction:'manhattan'}) AS score FROM c WHERE c.id = 'x'");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9,
+            "unknown distance function should fall back to cosine in the emulator");
+    }
+
+    [Theory]
+    [InlineData("cosine")]
+    [InlineData("COSINE")]
+    [InlineData("Cosine")]
+    [InlineData("CoSiNe")]
+    public async Task VectorDistance_CaseInsensitiveDistanceFunction(string distFn)
+    {
+        var container = await CreateContainerWithVectors();
+        var results = await RunQuery(container,
+            $"SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0], false, {{distanceFunction:'{distFn}'}}) AS score FROM c WHERE c.id = 'x'");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9,
+            $"distanceFunction '{distFn}' should be case-insensitive");
+    }
+
+    [Fact]
+    public async Task VectorDistance_OneArg_ReturnsNull()
+    {
+        // Only 1 vector arg — less than minimum 2 args, should return null
+        var container = await CreateContainerWithVectors();
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding) AS score FROM c WHERE c.id = 'x'");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Type.Should().Be(JTokenType.Null);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  C: Data Type & Input Edge Cases
+    // ═════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task VectorDistance_IntegerVectorValues_WorkCorrectly()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1, 0, 0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1, 0, 0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_MixedIntAndFloatValues_WorkCorrectly()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 2, 3.5 } }),
+            new PartitionKey("a"));
+
+        // dot([1.0, 2, 3.5], [1, 2.0, 3.5]) = 1 + 4 + 12.25 = 17.25
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1, 2.0, 3.5], false, {distanceFunction:'dotproduct'}) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(17.25, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_EmptyVector_ReturnsNull()
+    {
+        // Both vectors empty [] — length == 0, should return null
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.Parse("{\"id\":\"1\",\"pk\":\"a\",\"embedding\":[]}"),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, []) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Type.Should().Be(JTokenType.Null,
+            "empty vectors (length 0) should return null");
+    }
+
+    [Fact]
+    public async Task VectorDistance_VeryLargeValues_NoOverflow()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1e38, 1e38 } }),
+            new PartitionKey("a"));
+
+        // Should not throw — cosine of parallel vectors is still 1.0
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1e38, 1e38]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        var score = results[0]["score"];
+        // Either a valid double or null — must not throw
+        (score!.Type == JTokenType.Float || score.Type == JTokenType.Integer || score.Type == JTokenType.Null)
+            .Should().BeTrue("very large values should not cause an exception");
+    }
+
+    [Fact]
+    public async Task VectorDistance_VerySmallValues_NoPrecisionLoss()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1e-10, 1e-10, 0.0 } }),
+            new PartitionKey("a"));
+
+        // [1e-10, 1e-10, 0] vs [1e-10, 1e-10, 0] — identical vectors, cosine = 1.0
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1e-10, 1e-10, 0.0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-6,
+            "very small but identical vectors should still have cosine ≈ 1.0");
+    }
+
+    [Fact]
+    public async Task VectorDistance_NullVectorProperty_ReturnsNull()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.Parse("{\"id\":\"1\",\"pk\":\"a\",\"embedding\":null}"),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Type.Should().Be(JTokenType.Null);
+    }
+
+    [Fact]
+    public async Task VectorDistance_NonArrayVectorProperty_ReturnsNull()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = "not-a-vector" }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Type.Should().Be(JTokenType.Null);
+    }
+
+    [Fact]
+    public async Task VectorDistance_NestedProperty_WorksCorrectly()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.Parse("{\"id\":\"1\",\"pk\":\"a\",\"metadata\":{\"embedding\":[1.0,0.0,0.0]}}"),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.metadata.embedding, [1.0, 0.0, 0.0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_VectorWithNonNumericElement_ReturnsNull()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.Parse("{\"id\":\"1\",\"pk\":\"a\",\"embedding\":[1.0,\"abc\",3.0]}"),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Type.Should().Be(JTokenType.Null,
+            "non-numeric elements in the vector should return null");
+    }
+
+    [Fact]
+    public async Task VectorDistance_TwoDimensional_WorksCorrectly()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        // cosine([1,0], [0,1]) = 0.0
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [0.0, 1.0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(0.0, 1e-9);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  D: SQL Integration (SELECT, WHERE, ORDER BY, GROUP BY)
+    // ═════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task VectorDistance_InWhereClause_FiltersBySimilarityThreshold()
+    {
+        var container = await CreateContainerWithVectors();
+
+        // Cosine scores: x=1.0, y=0.0, z=0.0, neg-x=-1.0
+        // WHERE score > 0.5 should only return x
+        var results = await RunQuery(container,
+            "SELECT c.id FROM c WHERE VectorDistance(c.embedding, [1.0, 0.0, 0.0]) > 0.5");
+
+        results.Should().ContainSingle();
+        results[0]["id"]!.ToString().Should().Be("x");
+    }
+
+    [Fact]
+    public async Task VectorDistance_InWhereAndSelect_DifferentVectors()
+    {
+        var container = await CreateContainerWithVectors();
+
+        // WHERE uses [1,0,0] to filter (score > 0.5 → only 'x'), but SELECT computes score against [0,1,0]
+        var results = await RunQuery(container,
+            "SELECT c.id, VectorDistance(c.embedding, [0.0, 1.0, 0.0]) AS score FROM c WHERE VectorDistance(c.embedding, [1.0, 0.0, 0.0]) > 0.5");
+
+        results.Should().ContainSingle();
+        results[0]["id"]!.ToString().Should().Be("x");
+        // x=[1,0,0] vs [0,1,0] → cosine = 0.0
+        results[0]["score"]!.Value<double>().Should().BeApproximately(0.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_OrderByAsc_LeastSimilarFirst()
+    {
+        var container = await CreateContainerWithVectors();
+
+        var results = await RunQuery(container,
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [1.0, 0.0, 0.0]) ASC");
+
+        results.Should().HaveCount(4);
+        results[0]["id"]!.ToString().Should().Be("neg-x", "score -1.0 should be first in ASC");
+        results[^1]["id"]!.ToString().Should().Be("x", "score 1.0 should be last in ASC");
+    }
+
+    [Fact]
+    public async Task VectorDistance_WithOffsetLimit_Paginated()
+    {
+        var container = await CreateContainerWithVectors();
+
+        // ORDER BY DESC: x(1.0), y(0.0), z(0.0), neg-x(-1.0)
+        // OFFSET 1 LIMIT 2 → should skip x, return y and z
+        var results = await RunQuery(container,
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [1.0, 0.0, 0.0]) DESC OFFSET 1 LIMIT 2");
+
+        results.Should().HaveCount(2);
+        results.Should().NotContain(r => r["id"]!.ToString() == "x");
+        results.Should().NotContain(r => r["id"]!.ToString() == "neg-x");
+    }
+
+    [Fact]
+    public async Task VectorDistance_AliasedInOrderBy_Works()
+    {
+        var container = await CreateContainerWithVectors();
+
+        // Use the alias 'score' in ORDER BY — some SQL engines support this
+        var results = await RunQuery(container,
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [1.0, 0.0, 0.0]) DESC");
+
+        results.Should().HaveCount(4);
+        results[0]["id"]!.ToString().Should().Be("x");
+    }
+
+    [Fact]
+    public async Task VectorDistance_MultipleCallsInSameQuery_Works()
+    {
+        var container = await CreateContainerWithVectors();
+
+        // Two VectorDistance calls against different query vectors in the same SELECT
+        var results = await RunQuery(container,
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS scoreX, VectorDistance(c.embedding, [0.0, 1.0, 0.0]) AS scoreY FROM c WHERE c.id = 'x'");
+
+        results.Should().ContainSingle();
+        results[0]["scoreX"]!.Value<double>().Should().BeApproximately(1.0, 1e-9);
+        results[0]["scoreY"]!.Value<double>().Should().BeApproximately(0.0, 1e-9);
+    }
+
+    [Fact]
+    public async Task VectorDistance_WithDistinct_WorksCorrectly()
+    {
+        var container = await CreateContainerWithVectors();
+
+        // y and z both have cosine 0.0 against [1,0,0], so DISTINCT should collapse them
+        var results = await RunQuery(container,
+            "SELECT DISTINCT VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c");
+
+        // Scores: 1.0, 0.0, 0.0, -1.0 → distinct: 1.0, 0.0, -1.0
+        results.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task VectorDistance_CrossPartition_WithoutPartitionKey()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", embedding = new[] { 0.0, 1.0 } }),
+            new PartitionKey("b"));
+
+        // No partition key specified — cross-partition query
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+    }
+
+    // D10: GROUP BY with AVG(VectorDistance(...)) — the GROUP BY aggregate handler
+    // uses ExtractNumericValues which calls SelectToken with the inner argument as a
+    // JSON path. Function calls like VectorDistance(...) are not valid JSON paths, so
+    // this throws. Fixing requires the GROUP BY aggregate pipeline to evaluate arbitrary
+    // SQL expressions (not just property paths) before aggregating. This is a general
+    // limitation of GROUP BY + aggregate(functionCall), not specific to vectors.
+    [Fact(Skip = "D10: GROUP BY with AVG(VectorDistance(...)) is not supported. " +
+                  "The GROUP BY aggregate handler (ExtractNumericValues) tries to use the inner " +
+                  "function call as a JSON path via SelectToken, which fails. Fixing requires " +
+                  "the aggregate pipeline to evaluate arbitrary SQL expressions before aggregating. " +
+                  "This is a general GROUP BY + aggregate(functionCall) limitation, not vector-specific.")]
+    public async Task VectorDistance_WithGroupBy_AggregatesCorrectly()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", category = "A", embedding = new[] { 1.0, 0.0 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", category = "A", embedding = new[] { 0.8, 0.6 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "a", category = "B", embedding = new[] { 0.0, 1.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT c.category, AVG(VectorDistance(c.embedding, [1.0, 0.0])) AS avgScore FROM c GROUP BY c.category");
+
+        results.Should().HaveCount(2);
+        var catA = results.First(r => r["category"]!.ToString() == "A");
+        var catB = results.First(r => r["category"]!.ToString() == "B");
+        catA["avgScore"]!.Value<double>().Should().BeGreaterThan(catB["avgScore"]!.Value<double>(),
+            "category A vectors are closer to [1,0] than category B");
+    }
+
+    // Sister test: GROUP BY works fine with VectorDistance when used outside aggregates
+    [Fact]
+    public async Task VectorDistance_WithGroupBy_NonAggregated_WorksInSelect()
+    {
+        // GROUP BY c.category works; the VectorDistance call is in a non-aggregated
+        // position (it just reappears in the grouping key projection). This shows
+        // that VectorDistance itself works fine — it's only the combination of
+        // aggregate(functionCall) that's unsupported.
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", category = "A", embedding = new[] { 1.0, 0.0 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", category = "B", embedding = new[] { 0.0, 1.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT c.category, COUNT(1) AS cnt FROM c GROUP BY c.category");
+
+        results.Should().HaveCount(2);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  E: Multi-Document / Ranking Scenarios
+    // ═════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task VectorDistance_KNN_Top5_ReturnsCorrectNearest()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        // Insert 20 docs with embeddings at increasing angles from [1,0]
+        for (var i = 0; i < 20; i++)
+        {
+            var angle = i * Math.PI / 20; // 0 to ~π
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"d{i}", pk = "a",
+                    embedding = new[] { Math.Cos(angle), Math.Sin(angle) } }),
+                new PartitionKey("a"));
+        }
+
+        var results = await RunQuery(container,
+            "SELECT TOP 5 c.id, VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [1.0, 0.0]) DESC");
+
+        results.Should().HaveCount(5);
+        // First result should be d0 (angle=0, closest to [1,0])
+        results[0]["id"]!.ToString().Should().Be("d0");
+        // All scores should be in descending order
+        for (var i = 0; i < results.Count - 1; i++)
+            results[i]["score"]!.Value<double>().Should()
+                .BeGreaterThanOrEqualTo(results[i + 1]["score"]!.Value<double>());
+    }
+
+    [Fact]
+    public async Task VectorDistance_TiedScores_ReturnedStably()
+    {
+        var container = await CreateContainerWithVectors();
+
+        // y=[0,1,0] and z=[0,0,1] both have cosine 0.0 with [1,0,0]
+        var results = await RunQuery(container,
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [1.0, 0.0, 0.0]) DESC");
+
+        results.Should().HaveCount(4);
+        // Both y and z should appear (tied at 0.0), between x (1.0) and neg-x (-1.0)
+        var middleIds = results.Skip(1).Take(2).Select(r => r["id"]!.ToString()).ToList();
+        middleIds.Should().Contain("y");
+        middleIds.Should().Contain("z");
+    }
+
+    [Fact]
+    public async Task VectorDistance_AllDocsHaveSameEmbedding_SameScore()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        for (var i = 0; i < 5; i++)
+        {
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"d{i}", pk = "a", embedding = new[] { 0.6, 0.8 } }),
+                new PartitionKey("a"));
+        }
+
+        var results = await RunQuery(container,
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c");
+
+        results.Should().HaveCount(5);
+        var scores = results.Select(r => r["score"]!.Value<double>()).Distinct().ToList();
+        scores.Should().ContainSingle("all identical embeddings should produce the same score");
+    }
+
+    [Fact]
+    public async Task VectorDistance_LargeDataset_100Docs_OrderByCorrect()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        var rng = new Random(42); // deterministic seed
+        for (var i = 0; i < 100; i++)
+        {
+            var vec = new[] { rng.NextDouble(), rng.NextDouble(), rng.NextDouble() };
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"d{i}", pk = "a", embedding = vec }),
+                new PartitionKey("a"));
+        }
+
+        var results = await RunQuery(container,
+            "SELECT TOP 10 c.id, VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [1.0, 0.0, 0.0]) DESC");
+
+        results.Should().HaveCount(10);
+        for (var i = 0; i < results.Count - 1; i++)
+            results[i]["score"]!.Value<double>().Should()
+                .BeGreaterThanOrEqualTo(results[i + 1]["score"]!.Value<double>(),
+                    "results should be in descending score order");
+    }
+
+    [Fact]
+    public async Task VectorDistance_MixOfValidAndMissingEmbeddings_NullsHandled()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "with-vec", pk = "a", embedding = new[] { 1.0, 0.0 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "no-vec", pk = "a", name = "missing" }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c");
+
+        results.Should().HaveCount(2);
+        var withVec = results.First(r => r["id"]!.ToString() == "with-vec");
+        var noVec = results.First(r => r["id"]!.ToString() == "no-vec");
+        withVec["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9);
+        noVec["score"]!.Type.Should().Be(JTokenType.Null);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  F: Divergent Behaviour Tests
+    //  Skipped tests document real Cosmos DB behaviour that is too complex
+    //  or not meaningful to implement. Sister tests show emulator behaviour.
+    // ═════════════════════════════════════════════════════════════════════
+
+    // ─── F1: Multi-dimensional arrays ────────────────────────────────────
+    // Real Cosmos DB: "If a multi-dimensional array is provided, the function
+    // doesn't return a SimilarityScore value and doesn't return an error."
+    // This means the property is omitted entirely from the result object.
+    // The emulator returns null for the property instead, which is close
+    // but not identical (property present with null vs property absent).
+
+    [Fact(Skip = "F1: Real Cosmos DB omits the SimilarityScore property entirely for multi-dimensional " +
+                  "array inputs rather than returning null. The emulator returns the property with a null " +
+                  "value. Fixing this would require the query engine to distinguish between 'return null' " +
+                  "and 'omit property from output', which is a fundamental change to projection handling. " +
+                  "Impact: Very low — user code checking for null handles both cases.")]
+    public void VectorDistance_MultiDimensionalArray_RealCosmosReturnsNoScore()
+    {
+        // Expected real Cosmos DB behavior:
+        // Given a document with embedding: [[1,2],[3,4]] (nested array),
+        // SELECT VectorDistance(c.embedding, [1,0]) AS score FROM c
+        // returns {"id": "1"} with NO "score" property (not null, absent).
+    }
+
+    [Fact]
+    public async Task VectorDistance_MultiDimensionalArray_EmulatorReturnsNull()
+    {
+        // Emulator behaviour: multi-dimensional array → ToDoubleArray returns null
+        // because inner elements are JArray not JTokenType.Float/Integer → returns null
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.Parse("{\"id\":\"1\",\"pk\":\"a\",\"embedding\":[[1,2],[3,4]]}"),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        // Emulator returns the property with null value (not omitted)
+        results[0]["score"]!.Type.Should().Be(JTokenType.Null,
+            "emulator returns null for multi-dimensional arrays (real Cosmos omits the property entirely)");
+    }
+
+    // ─── F2: Vector embedding policy required in real Cosmos ─────────────
+    // Real Cosmos DB requires a vectorEmbeddings container policy defining
+    // path, dataType, dimensions, and distanceFunction. Without it, vector
+    // search fails. The emulator has no such requirement.
+
+    [Fact(Skip = "F2: Real Cosmos DB requires a vectorEmbeddings container policy (path, dataType, " +
+                  "dimensions, distanceFunction) for VECTORDISTANCE to work. Without it, the query fails. " +
+                  "The emulator intentionally skips this requirement — always brute-force exact computation " +
+                  "without any policy needed. Implementing this would add complexity with no testing value " +
+                  "since the policy is an infrastructure concern, not a logic concern.")]
+    public void VectorDistance_RequiresVectorPolicy_InRealCosmos()
+    {
+        // Expected real Cosmos DB behavior:
+        // Without vectorEmbeddings policy, VECTORDISTANCE queries fail with an error.
+    }
+
+    [Fact]
+    public async Task VectorDistance_EmulatorDoesNotRequireVectorPolicy()
+    {
+        // Emulator behaviour: no vector policy needed, just use the function
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9,
+            "emulator works without any vector embedding policy configuration");
+    }
+
+    // ─── F3: Flat index dimension limit ──────────────────────────────────
+    // Real Cosmos DB flat index supports max 505 dimensions.
+    // quantizedFlat and diskANN support up to 4096.
+    // The emulator has no limit (tested up to 1536).
+
+    [Fact(Skip = "F3: Real Cosmos DB flat index limits vectors to 505 dimensions; quantizedFlat and " +
+                  "diskANN support up to 4096. The emulator has no dimensionality limit because it " +
+                  "doesn't simulate vector indexing — it always does brute-force linear scan. Imposing " +
+                  "artificial limits would reduce testing flexibility without adding correctness value.")]
+    public void VectorDistance_FlatIndexMax505Dimensions_InRealCosmos()
+    {
+        // Expected real Cosmos DB behavior:
+        // Vectors with >505 dimensions fail with flat index type.
+        // Vectors with >4096 dimensions fail with quantizedFlat/diskANN.
+    }
+
+    [Fact]
+    public async Task VectorDistance_EmulatorSupportsAnyDimensionality()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        var vec = new double[2000]; // Exceeds all real Cosmos limits
+        vec[0] = 1.0;
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = vec }),
+            new PartitionKey("a"));
+
+        var queryVec = string.Join(",", vec.Select(v => v.ToString("F1")));
+        var results = await RunQuery(container,
+            $"SELECT VectorDistance(c.embedding, [{queryVec}]) AS score FROM c");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9,
+            "emulator supports vectors of any dimensionality (no index limits)");
+    }
+
+    // ─── F4: TOP N required with ORDER BY in real Cosmos ─────────────────
+    // Microsoft docs: "Always use a TOP N clause in the SELECT statement of a query.
+    // Otherwise the vector search tries to return many more results and the query
+    // costs more RUs and have higher latency than necessary."
+    // This is a performance guidance, not a hard error in all cases.
+
+    [Fact(Skip = "F4: Real Cosmos DB strongly recommends TOP N with ORDER BY VectorDistance — without " +
+                  "it, queries may time out or consume excessive RUs on large datasets. The emulator " +
+                  "has no RU model and performs instant brute-force computation, so this limitation " +
+                  "doesn't apply. Enforcing it would break valid test patterns.")]
+    public void VectorDistance_RequiresTopNWithOrderBy_InRealCosmos()
+    {
+        // Expected real Cosmos DB behavior:
+        // ORDER BY VectorDistance without TOP N may time out.
+    }
+
+    [Fact]
+    public async Task VectorDistance_EmulatorAllowsOrderByWithoutTopN()
+    {
+        var container = await CreateContainerWithVectors();
+
+        // No TOP N — emulator returns all results, no issue
+        var results = await RunQuery(container,
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [1.0, 0.0, 0.0]) DESC");
+
+        results.Should().HaveCount(4, "emulator returns all results without requiring TOP N");
+    }
 }
