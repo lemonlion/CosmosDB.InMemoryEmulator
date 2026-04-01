@@ -390,3 +390,216 @@ public class ContainerDatabaseBacklinkTests
         containerResponse.Container.Should().NotBeNull();
     }
 }
+
+// ─── Unique Key Policy Enforcement ──────────────────────────────────────
+
+public class UniqueKeyPolicyTests
+{
+    [Fact]
+    public async Task CreateItem_ViolatesUniqueKey_ThrowsConflict()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task CreateItem_SameUniqueKey_DifferentPartition_Succeeds()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+
+        // Same email but different partition — should succeed (unique keys are per-partition)
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", email = "alice@test.com" }),
+            new PartitionKey("b"));
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task CreateItem_CompositeUniqueKey_ViolatesBoth_ThrowsConflict()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/firstName", "/lastName" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", firstName = "Alice", lastName = "Smith" }),
+            new PartitionKey("a"));
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", firstName = "Alice", lastName = "Smith" }),
+            new PartitionKey("a"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task CreateItem_CompositeUniqueKey_OnlyOneDiffers_Succeeds()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/firstName", "/lastName" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", firstName = "Alice", lastName = "Smith" }),
+            new PartitionKey("a"));
+
+        // Different lastName — should succeed
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", firstName = "Alice", lastName = "Jones" }),
+            new PartitionKey("a"));
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task UpsertItem_ViolatesUniqueKey_OfDifferentItem_ThrowsConflict()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+
+        // Upsert a DIFFERENT item with same email — should conflict
+        var act = () => container.UpsertItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task UpsertItem_SameItem_UpdatesWithoutConflict()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+
+        // Upsert same item (id=1) with same email — should succeed (updating self)
+        var act = () => container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", email = "alice@test.com", name = "updated" }),
+            new PartitionKey("a"));
+
+        await act.Should().NotThrowAsync();
+    }
+}
+
+// ─── ConflictResolutionPolicy Stored But Not Enforced ───────────────────
+
+public class ConflictResolutionPolicyTests
+{
+    /// <summary>
+    /// In real Cosmos DB, the conflict resolution policy with a custom stored procedure
+    /// resolves write conflicts in multi-region setups by invoking the specified sproc.
+    /// The emulator stores the policy but operates with implicit strong consistency and
+    /// single-region semantics, so conflict resolution never actually triggers.
+    /// </summary>
+    [Fact(Skip = "ConflictResolutionPolicy is stored on ContainerProperties and returned " +
+        "on reads, but it is never enforced. The emulator operates in single-region mode " +
+        "with implicit strong consistency, so write–write conflicts that would trigger the " +
+        "policy in a multi-region setup cannot occur. The stored policy is purely decorative.")]
+    public async Task ConflictResolution_CustomSproc_ShouldResolveConflicts()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (InMemoryDatabase)(await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
+        await db.CreateContainerAsync(new ContainerProperties("ctr1", "/pk")
+        {
+            ConflictResolutionPolicy = new ConflictResolutionPolicy
+            {
+                Mode = ConflictResolutionMode.Custom,
+                ResolutionProcedure = "dbs/testdb/colls/ctr1/sprocs/resolveConflict"
+            }
+        });
+
+        // In a multi-region real Cosmos account, concurrent writes from different regions
+        // would trigger the custom stored procedure. This cannot be simulated.
+        Assert.Fail("Cannot simulate multi-region write conflicts in single-region emulator.");
+    }
+
+    /// <summary>
+    /// Sister test: the policy is stored and echoed back, but has no runtime effect.
+    /// </summary>
+    [Fact]
+    public async Task ConflictResolution_EmulatorBehavior_PolicyStoredButNotEnforced()
+    {
+        // ── Divergent behavior documentation ──
+        // Real Cosmos DB: ConflictResolutionPolicy determines how write conflicts are
+        //   resolved in multi-region write configurations. LastWriterWins uses _ts
+        //   comparison. Custom mode invokes a stored procedure.
+        // In-Memory Emulator: The policy is accepted by ContainerProperties and returned
+        //   on ReadContainerAsync / ReplaceContainerAsync. However, since the emulator is
+        //   single-region and strongly consistent, no write–write conflicts can occur,
+        //   and the policy is never triggered. It's stored for API compatibility only.
+        var client = new InMemoryCosmosClient();
+        var db = (InMemoryDatabase)(await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
+        var containerResponse = await db.CreateContainerAsync(new ContainerProperties("ctr1", "/pk")
+        {
+            ConflictResolutionPolicy = new ConflictResolutionPolicy
+            {
+                Mode = ConflictResolutionMode.LastWriterWins
+            }
+        });
+
+        var readBack = await containerResponse.Container.ReadContainerAsync();
+        readBack.Resource.ConflictResolutionPolicy.Mode.Should().Be(
+            ConflictResolutionMode.LastWriterWins,
+            "the policy is stored and returned but never actually enforced");
+    }
+}

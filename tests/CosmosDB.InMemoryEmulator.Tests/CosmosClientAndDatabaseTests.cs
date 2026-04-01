@@ -1970,3 +1970,64 @@ public class DeleteStreamAsyncContainerTests
         await act.Should().ThrowAsync<CosmosException>();
     }
 }
+
+// ─── DeleteContainerAsync Removes From Parent DB ────────────────────────
+
+public class DeleteContainerParentDbTests
+{
+    /// <summary>
+    /// In real Cosmos DB, deleting a container removes it from the database's container list.
+    /// In the emulator, DeleteContainerAsync clears internal data but does not remove itself
+    /// from the parent InMemoryDatabase._containers dictionary.
+    /// </summary>
+    [Fact]
+    public async Task DeleteContainer_ShouldRemoveFromDatabase_ContainerList()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (InMemoryDatabase)(await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
+        await db.CreateContainerAsync("ctr1", "/pk");
+
+        var container = db.GetContainer("ctr1");
+        await container.DeleteContainerAsync();
+
+        // After deletion, the container should not be listed
+        var iterator = db.GetContainerQueryIterator<ContainerProperties>("SELECT * FROM c");
+        var containers = new List<ContainerProperties>();
+        while (iterator.HasMoreResults)
+            containers.AddRange(await iterator.ReadNextAsync());
+
+        containers.Should().NotContain(c => c.Id == "ctr1");
+    }
+}
+
+// ─── Client Encryption Key Operations ───────────────────────────────────
+
+public class ClientEncryptionKeyTests
+{
+    /// <summary>
+    /// Client encryption key management (CreateClientEncryptionKeyAsync,
+    /// RewrapClientEncryptionKeyAsync, ReadClientEncryptionKeyAsync) requires integration
+    /// with Azure Key Vault and the Microsoft Data Encryption (MDE) SDK. These operations
+    /// manage envelope encryption where a data encryption key (DEK) is wrapped by a
+    /// customer-managed key (CMK) stored in Key Vault.
+    /// </summary>
+    [Fact(Skip = "Client encryption key operations require Azure Key Vault integration and " +
+        "the Microsoft Data Encryption SDK (MDE). CreateClientEncryptionKeyAsync wraps a " +
+        "data encryption key (DEK) with a customer-managed key from Key Vault. " +
+        "ReadClientEncryptionKeyAsync and RewrapClientEncryptionKeyAsync manage the DEK " +
+        "lifecycle. These deep SDK internals (EncryptionKeyWrapProvider, DataEncryptionKey) " +
+        "are not meaningful without actual Key Vault access. " +
+        "InMemoryDatabase currently throws NotImplementedException for these methods.")]
+    public async Task CreateClientEncryptionKey_ShouldCreateAndStoreKey()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (InMemoryDatabase)(await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
+
+        // Real code would need: ClientEncryptionKeyProperties with EncryptionAlgorithm,
+        // KeyWrapMetadata pointing to Key Vault. The emulator throws NotImplementedException.
+        await db.CreateClientEncryptionKeyAsync(
+            new ClientEncryptionKeyProperties("dek1", "AEAD_AES_256_CBC_HMAC_SHA256",
+                new byte[] { 0x01, 0x02, 0x03 },
+                new EncryptionKeyWrapMetadata("akvso", "masterkey1", "https://vault.azure.net/keys/key1/1", "RSA-OAEP")));
+    }
+}

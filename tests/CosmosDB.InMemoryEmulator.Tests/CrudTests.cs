@@ -1,6 +1,8 @@
 using System.Net;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Azure.Cosmos.Scripts;
+using Newtonsoft.Json;
 using Xunit;
 using System.Text;
 using Newtonsoft.Json.Linq;
@@ -1608,5 +1610,222 @@ public class UpsertItemGapTests
 
         var checkpoint = _container.GetChangeFeedCheckpoint();
         checkpoint.Should().BeGreaterThan(0);
+    }
+}
+
+// ─── ReplaceItemAsync Unique Key Validation ─────────────────────────────
+
+public class ReplaceItemUniqueKeyTests
+{
+    [Fact]
+    public async Task ReplaceItem_ViolatesUniqueKey_ThrowsConflict()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", email = "bob@test.com" }),
+            new PartitionKey("a"));
+
+        // Replace item 2 changing email to collide with item 1
+        var act = () => container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", email = "alice@test.com" }),
+            "2", new PartitionKey("a"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+}
+
+// ─── PatchItemAsync Unique Key Validation ───────────────────────────────
+
+public class PatchItemUniqueKeyTests
+{
+    [Fact]
+    public async Task PatchItem_ViolatesUniqueKey_ThrowsConflict()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", email = "bob@test.com" }),
+            new PartitionKey("a"));
+
+        // Patch item 2 changing email to collide with item 1
+        var act = () => container.PatchItemAsync<JObject>(
+            "2", new PartitionKey("a"),
+            new[] { PatchOperation.Replace("/email", "alice@test.com") });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+}
+
+// ─── Stream CRUD Unique Key Validation ──────────────────────────────────
+
+public class StreamCrudUniqueKeyTests
+{
+    private static MemoryStream ToStream(object obj) =>
+        new(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(obj)));
+
+    [Fact]
+    public async Task CreateItemStream_ViolatesUniqueKey_ReturnsConflict()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemStreamAsync(
+            ToStream(new { id = "1", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+
+        var response = await container.CreateItemStreamAsync(
+            ToStream(new { id = "2", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task UpsertItemStream_ViolatesUniqueKey_OfDifferentItem_ReturnsConflict()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemStreamAsync(
+            ToStream(new { id = "1", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+
+        var response = await container.UpsertItemStreamAsync(
+            ToStream(new { id = "2", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task ReplaceItemStream_ViolatesUniqueKey_ReturnsConflict()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemStreamAsync(
+            ToStream(new { id = "1", pk = "a", email = "alice@test.com" }),
+            new PartitionKey("a"));
+        await container.CreateItemStreamAsync(
+            ToStream(new { id = "2", pk = "a", email = "bob@test.com" }),
+            new PartitionKey("a"));
+
+        var response = await container.ReplaceItemStreamAsync(
+            ToStream(new { id = "2", pk = "a", email = "alice@test.com" }),
+            "2", new PartitionKey("a"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+}
+
+// ─── Trigger Execution ──────────────────────────────────────────────────
+
+public class TriggerExecutionTests
+{
+    /// <summary>
+    /// Pre-triggers can now modify documents via C# handlers registered with RegisterTrigger.
+    /// The trigger is registered as a C# Func&lt;JObject, JObject&gt; and fires when
+    /// PreTriggers is specified in ItemRequestOptions.
+    /// </summary>
+    [Fact]
+    public async Task PreTrigger_ShouldModifyDocumentOnCreate()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+
+        // Register a C# pre-trigger that adds a 'createdBy' field
+        container.RegisterTrigger("addCreatedBy", TriggerType.Pre, TriggerOperation.Create,
+            preHandler: doc =>
+            {
+                doc["createdBy"] = "trigger";
+                return doc;
+            });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "addCreatedBy" } });
+
+        var response = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        response.Resource["createdBy"]!.Value<string>().Should().Be("trigger");
+    }
+
+    /// <summary>
+    /// Demonstrates that CreateTriggerAsync alone (without RegisterTrigger) stores trigger
+    /// metadata but does not cause trigger execution. JavaScript bodies are not interpreted.
+    /// To get trigger execution, use RegisterTrigger with a C# handler.
+    /// </summary>
+    [Fact]
+    public async Task PreTrigger_CreateTriggerAsyncAlone_DoesNotFireWithoutRegisterTrigger()
+    {
+        // ── Divergent behavior documentation ──
+        // Real Cosmos DB: trigger body is executed as server-side JavaScript.
+        //   The trigger can read/modify the incoming document before it is committed.
+        // In-Memory Emulator: CreateTriggerAsync stores trigger metadata (returns 201 Created)
+        //   but does not execute JavaScript bodies. To get trigger execution, register a
+        //   C# handler via container.RegisterTrigger(). If PreTriggers is specified in
+        //   ItemRequestOptions but no C# handler is registered, the trigger is not found
+        //   and a BadRequest (400) is thrown.
+        var container = new InMemoryContainer("test-container", "/pk");
+
+        // This succeeds (201 Created) — metadata is stored.
+        var triggerResponse = await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "addCreatedBy",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.Create,
+            Body = @"function() { /* would add createdBy */ }"
+        });
+        triggerResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // Create an item without specifying PreTriggers — no trigger fires.
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        // Verify the trigger did NOT modify the document.
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["createdBy"].Should().BeNull(
+            "CreateTriggerAsync alone does not enable trigger execution — use RegisterTrigger");
     }
 }

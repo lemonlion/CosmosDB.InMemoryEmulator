@@ -2892,3 +2892,880 @@ public class FromSourceArrayIterationTests
         results.Should().BeEmpty();
     }
 }
+
+// ─── Aggregate without GROUP BY ─────────────────────────────────────────
+
+public class AggregateWithoutGroupByTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task SelectValueCount_ReturnsExactCount()
+    {
+        for (var i = 0; i < 5; i++)
+        {
+            await _container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = "a" }),
+                new PartitionKey("a"));
+        }
+
+        var iterator = _container.GetItemQueryIterator<long>(
+            "SELECT VALUE COUNT(1) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<long>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task SelectValueSum_ReturnsTotalSum()
+    {
+        for (var i = 1; i <= 4; i++)
+        {
+            await _container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = "a", value = i * 10 }),
+                new PartitionKey("a"));
+        }
+
+        var iterator = _container.GetItemQueryIterator<double>(
+            "SELECT VALUE SUM(c.value) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<double>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Should().Be(100);
+    }
+}
+
+// ─── LIKE with ESCAPE ───────────────────────────────────────────────────
+
+public class LikeWithEscapeTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task Like_WithEscapeClause_MatchesLiteralPercent()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", code = "50% off" }),
+            new PartitionKey("a"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", code = "50 items" }),
+            new PartitionKey("a"));
+
+        // In real Cosmos: LIKE '50!% off' ESCAPE '!' matches only "50% off"
+        var query = new QueryDefinition(
+            "SELECT * FROM c WHERE c.code LIKE '50!% off' ESCAPE '!'");
+
+        var iterator = _container.GetItemQueryIterator<JObject>(query,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        results[0]["id"]!.Value<string>().Should().Be("1");
+    }
+}
+
+// ─── COT (Cotangent) ────────────────────────────────────────────────────
+
+public class CotFunctionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task Cot_ReturnsCorrectValue()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", angle = 1.0 }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<double>(
+            "SELECT VALUE COT(c.angle) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<double>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        // COT(1.0) = 1/TAN(1.0) ≈ 0.6420926
+        results.Should().ContainSingle().Which.Should().BeApproximately(1.0 / Math.Tan(1.0), 0.0001);
+    }
+}
+
+// ─── CHOOSE ─────────────────────────────────────────────────────────────
+
+public class ChooseFunctionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task Choose_ReturnsValueAtIndex()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        // CHOOSE is 1-based: CHOOSE(2, 'a', 'b', 'c') → 'b'
+        var iterator = _container.GetItemQueryIterator<string>(
+            "SELECT VALUE CHOOSE(2, 'apple', 'banana', 'cherry') FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Should().Be("banana");
+    }
+
+    [Fact]
+    public async Task Choose_OutOfBounds_ReturnsUndefined()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        // Index 5 is out of bounds for 3 items → undefined
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT CHOOSE(5, 'a', 'b', 'c') AS result FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        // In real Cosmos DB, undefined values omit the field entirely.
+        // The emulator projects null/undefined as JSON null.
+        var token = results.Should().ContainSingle().Subject["result"];
+        token.Should().NotBeNull();
+        token!.Type.Should().Be(JTokenType.Null);
+    }
+}
+
+// ─── OBJECTTOARRAY ──────────────────────────────────────────────────────
+
+public class ObjectToArrayFunctionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task ObjectToArray_ConvertsObjectToNameValuePairs()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", props = new { name = "Alice", age = 30 } }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JArray>(
+            "SELECT VALUE ObjectToArray(c.props) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JArray>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        var arr = results.Should().ContainSingle().Subject;
+        arr.Count.Should().Be(2);
+        arr[0]["k"]!.Value<string>().Should().Be("name");
+        arr[0]["v"]!.Value<string>().Should().Be("Alice");
+        arr[1]["k"]!.Value<string>().Should().Be("age");
+        arr[1]["v"]!.Value<int>().Should().Be(30);
+    }
+}
+
+// ─── STRINGJOIN ─────────────────────────────────────────────────────────
+
+public class StringJoinFunctionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task StringJoin_JoinsArrayElements()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", tags = new[] { "red", "green", "blue" } }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<string>(
+            "SELECT VALUE StringJoin(',', c.tags) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Should().Be("red,green,blue");
+    }
+}
+
+// ─── STRINGSPLIT ────────────────────────────────────────────────────────
+
+public class StringSplitFunctionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task StringSplit_SplitsByDelimiter()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", csv = "red,green,blue" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JArray>(
+            "SELECT VALUE StringSplit(c.csv, ',') FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JArray>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        var arr = results.Should().ContainSingle().Subject;
+        arr.Select(t => t.Value<string>()).Should().BeEquivalentTo("red", "green", "blue");
+    }
+}
+
+// ─── DOCUMENTID ─────────────────────────────────────────────────────────
+
+public class DocumentIdFunctionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task DocumentId_ReturnsRidField()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<string>(
+            "SELECT VALUE DOCUMENTID(c) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        // DOCUMENTID returns the _rid system property
+        results.Should().ContainSingle().Which.Should().NotBeNullOrEmpty();
+    }
+}
+
+// ─── ST_AREA ────────────────────────────────────────────────────────────
+
+public class StAreaFunctionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task StArea_ReturnsAreaForPolygon()
+    {
+        // A simple square polygon roughly 1° × 1° near the equator
+        var polygon = new
+        {
+            type = "Polygon",
+            coordinates = new[]
+            {
+                new[] { new[] { 0.0, 0.0 }, new[] { 1.0, 0.0 }, new[] { 1.0, 1.0 }, new[] { 0.0, 1.0 }, new[] { 0.0, 0.0 } }
+            }
+        };
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", region = polygon }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<double>(
+            "SELECT VALUE ST_AREA(c.region) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<double>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        // Should return a positive area value (in square meters)
+        results.Should().ContainSingle().Which.Should().BeGreaterThan(0);
+    }
+}
+
+// ─── NOT LIKE ───────────────────────────────────────────────────────────
+
+public class NotLikeTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task NotLike_ExcludesMatchingItems()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }),
+            new PartitionKey("a"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", name = "Bob" }),
+            new PartitionKey("a"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "a", name = "Alicia" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.name NOT LIKE 'Al%'",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        results[0]["id"]!.Value<string>().Should().Be("2");
+    }
+}
+
+// ─── Stream Iterator Continuation Token ─────────────────────────────────
+
+public class StreamIteratorContinuationTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task GetItemQueryStreamIterator_RespectsContinuationToken()
+    {
+        for (var i = 0; i < 5; i++)
+            await _container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = "a" }),
+                new PartitionKey("a"));
+
+        var opts = new QueryRequestOptions { PartitionKey = new PartitionKey("a"), MaxItemCount = 2 };
+
+        // First page
+        var iterator1 = _container.GetItemQueryStreamIterator(
+            "SELECT * FROM c", continuationToken: null, requestOptions: opts);
+        var page1 = await iterator1.ReadNextAsync();
+        var page1Json = await new StreamReader(page1.Content).ReadToEndAsync();
+        var page1Docs = JObject.Parse(page1Json)["Documents"] as JArray;
+        var token = page1.Headers["x-ms-continuation"];
+
+        token.Should().NotBeNullOrEmpty("there are more items to fetch");
+        page1Docs!.Count.Should().Be(2);
+
+        // Second page using continuation token
+        var iterator2 = _container.GetItemQueryStreamIterator(
+            "SELECT * FROM c", continuationToken: token, requestOptions: opts);
+        var page2 = await iterator2.ReadNextAsync();
+        var page2Json = await new StreamReader(page2.Content).ReadToEndAsync();
+        var page2Docs = JObject.Parse(page2Json)["Documents"] as JArray;
+
+        page2Docs!.Count.Should().Be(2);
+
+        // Items from page2 should not overlap with page1
+        var page1Ids = page1Docs.Select(d => d["id"]!.Value<string>()).ToHashSet();
+        var page2Ids = page2Docs.Select(d => d["id"]!.Value<string>()).ToHashSet();
+        page1Ids.Overlaps(page2Ids).Should().BeFalse("pages should not have overlapping items");
+    }
+}
+
+// ─── Continuation Token Format ──────────────────────────────────────────
+
+public class ContinuationTokenFormatTests
+{
+    /// <summary>
+    /// In real Cosmos DB, continuation tokens are opaque base64-encoded JSON strings that
+    /// include routing info, range IDs, and composite tokens. In the emulator they are
+    /// simple integer offsets like "0", "3", "6". This test documents the ideal behavior.
+    /// </summary>
+    [Fact(Skip = "The emulator uses simple integer-offset continuation tokens (e.g. '3') " +
+        "instead of the opaque base64-encoded JSON tokens used by real Cosmos DB. This is " +
+        "intentional for simplicity and does not affect pagination correctness, but code that " +
+        "parses or validates continuation token format will behave differently.")]
+    public async Task ContinuationToken_ShouldBeOpaqueBase64()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        for (var i = 0; i < 5; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = "a" }),
+                new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a"), MaxItemCount = 2 });
+        var page = await iterator.ReadNextAsync();
+
+        // Real Cosmos returns something like: eyJfcmlkIjoiLzEi...
+        var token = page.ContinuationToken;
+        token.Should().NotBeNullOrEmpty();
+        // Base64 string should not parse as a plain integer
+        int.TryParse(token, out _).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Sister test: demonstrates the emulator uses simple integer offsets as tokens.
+    /// </summary>
+    [Fact]
+    public async Task ContinuationToken_EmulatorBehavior_IsPlainIntegerOffset()
+    {
+        // ── Divergent behavior documentation ──
+        // Real Cosmos DB: tokens are opaque, versioned, JSON-based, then base64-encoded.
+        //   They contain partition ranges, RIDs, and composite continuation state.
+        //   The exact format is undocumented and changes between SDK versions.
+        // In-Memory Emulator: tokens are simple integer strings representing the offset
+        //   into the result set. E.g., MaxItemCount=2 → first token is "2", next is "4".
+        //   Pagination still works correctly; only the token format differs.
+        var container = new InMemoryContainer("test-container", "/pk");
+        for (var i = 0; i < 5; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = "a" }),
+                new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a"), MaxItemCount = 2 });
+        var page = await iterator.ReadNextAsync();
+
+        var token = page.ContinuationToken;
+        token.Should().NotBeNullOrEmpty();
+        int.TryParse(token, out var offset).Should().BeTrue(
+            "the emulator uses plain integer offsets as continuation tokens");
+        offset.Should().Be(2, "first page with MaxItemCount=2 yields offset 2");
+    }
+}
+
+// ─── VECTORDISTANCE ─────────────────────────────────────────────────────
+
+public class VectorDistanceTests
+{
+    /// <summary>
+    /// VECTORDISTANCE computes similarity between vectors for AI/ML workloads.
+    /// Supports cosine similarity (default), dot product, and Euclidean distance.
+    /// No vector index policy is required on the in-memory container.
+    /// </summary>
+    [Fact]
+    public async Task VectorDistance_ShouldComputeCosineSimilarity()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0, 0.0 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", embedding = new[] { 0.0, 1.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        // VectorDistance defaults to cosine similarity; ORDER BY expression is fully supported
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [1.0, 0.0, 0.0])",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+        // Ascending order: orthogonal (score=0) first, then identical (score=1)
+        results[0]["score"]!.Value<double>().Should().BeApproximately(0.0, 1e-9);
+        results[1]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9);
+    }
+}
+
+// ─── ObjectToArray k/v format ───────────────────────────────────────────
+
+public class ObjectToArray_KV_Tests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task ObjectToArray_ReturnsKAndVKeys()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", props = new { name = "Alice", age = 30 } }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JArray>(
+            "SELECT VALUE ObjectToArray(c.props) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JArray>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        var arr = results.Should().ContainSingle().Subject;
+        arr.Count.Should().Be(2);
+        // Real Cosmos DB uses lowercase "k" and "v"
+        arr[0]["k"]!.Value<string>().Should().Be("name");
+        arr[0]["v"]!.Value<string>().Should().Be("Alice");
+        arr[1]["k"]!.Value<string>().Should().Be("age");
+        arr[1]["v"]!.Value<int>().Should().Be(30);
+    }
+}
+
+// ─── COUNT(c.field) excludes undefined ──────────────────────────────────
+
+public class CountFieldTests
+{
+    [Fact]
+    public async Task Query_Count_OfField_ExcludesUndefined()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","optional":"yes"}""")),
+            new PartitionKey("a"));
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a"}""")),
+            new PartitionKey("a"));
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","pk":"a","optional":"also"}""")),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT COUNT(c.optional) AS cnt FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        // Only 2 docs have "optional" field defined
+        results.Should().ContainSingle().Subject["cnt"]!.Value<int>().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Query_Count_Star_CountsAllRows()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","optional":"yes"}""")),
+            new PartitionKey("a"));
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a"}""")),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT COUNT(1) AS cnt FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle().Subject["cnt"]!.Value<int>().Should().Be(2);
+    }
+}
+
+// ─── MIN/MAX on strings ─────────────────────────────────────────────────
+
+public class MinMaxStringTests
+{
+    [Fact]
+    public async Task Query_Min_OnStrings_ReturnsLexicographicMin()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","name":"Charlie"}""")),
+            new PartitionKey("a"));
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a","name":"Alice"}""")),
+            new PartitionKey("a"));
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","pk":"a","name":"Bob"}""")),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT MIN(c.name) AS minName FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle().Subject["minName"]!.Value<string>().Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task Query_Max_OnStrings_ReturnsLexicographicMax()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","name":"Charlie"}""")),
+            new PartitionKey("a"));
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a","name":"Alice"}""")),
+            new PartitionKey("a"));
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","pk":"a","name":"Bob"}""")),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT MAX(c.name) AS maxName FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle().Subject["maxName"]!.Value<string>().Should().Be("Charlie");
+    }
+}
+
+// ─── AVG empty set returns undefined ────────────────────────────────────
+
+public class AvgEmptySetTests
+{
+    [Fact]
+    public async Task Query_Avg_EmptySet_ReturnsNoValue()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","name":"Alice"}""")),
+            new PartitionKey("a"));
+
+        // None of the docs have "score" field, so AVG gets empty numeric set
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT AVG(c.score) AS avgScore FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        // Real Cosmos returns {} (empty object) when all aggregated values are undefined
+        var result = results.Should().ContainSingle().Subject;
+        result.ContainsKey("avgScore").Should().BeFalse("AVG of empty set should omit the field entirely");
+    }
+}
+
+// ─── REGEXMATCH modifiers ───────────────────────────────────────────────
+
+public class RegexMatchModifierTests
+{
+    [Fact]
+    public async Task RegexMatch_MultilineModifier_MatchesAcrossLines()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("{\"id\":\"1\",\"pk\":\"a\",\"text\":\"line1\\nline2\"}")),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<string>(
+            "SELECT VALUE c.id FROM c WHERE RegexMatch(c.text, '^line2', 'm')",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task RegexMatch_SinglelineModifier_DotMatchesNewline()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("{\"id\":\"1\",\"pk\":\"a\",\"text\":\"line1\\nline2\"}")),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<string>(
+            "SELECT VALUE c.id FROM c WHERE RegexMatch(c.text, 'line1.line2', 's')",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task RegexMatch_CombinedModifiers_Work()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("{\"id\":\"1\",\"pk\":\"a\",\"text\":\"Hello\\nworld\"}")),
+            new PartitionKey("a"));
+
+        // 'im' = ignore case + multiline
+        var iterator = container.GetItemQueryIterator<string>(
+            "SELECT VALUE c.id FROM c WHERE RegexMatch(c.text, '^WORLD', 'im')",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+    }
+}
+
+// ─── EXISTS catch-all ───────────────────────────────────────────────────
+
+public class ExistsCatchAllTests
+{
+    [Fact]
+    public async Task Query_Exists_UnparseableSubquery_ReturnsFalse()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","name":"Alice"}""")),
+            new PartitionKey("a"));
+
+        // This subquery is intentionally malformed to trigger the catch block
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE EXISTS(SELECT %%% INVALID %%%)",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        // Real Cosmos would reject this; catch-all should be false (safe default)
+        results.Should().BeEmpty();
+    }
+}
+
+// ─── ArrayToObject function ─────────────────────────────────────────────
+
+public class ArrayToObjectTests
+{
+    [Fact]
+    public async Task ArrayToObject_ConvertsKVArrayToObject()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        var json = """{"id":"1","pk":"a","arr":[{"k":"name","v":"Alice"},{"k":"age","v":30}]}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT VALUE ArrayToObject(c.arr) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        var obj = results.Should().ContainSingle().Subject;
+        obj["name"]!.Value<string>().Should().Be("Alice");
+        obj["age"]!.Value<int>().Should().Be(30);
+    }
+
+    [Fact]
+    public async Task ArrayToObject_WithNonKVArray_ReturnsUndefined()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        var json = """{"id":"1","pk":"a","arr":["hello","world"]}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)),
+            new PartitionKey("a"));
+
+        // SELECT VALUE means undefined results in empty result set
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT VALUE ArrayToObject(c.arr) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+}
+
+// ─── StringTo* functions — invalid input returns undefined ──────────────
+
+public class StringToUndefinedTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task SeedAsync()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","val":"not-valid"}""")),
+            new PartitionKey("a"));
+    }
+
+    [Fact]
+    public async Task StringToNumber_InvalidInput_ReturnsUndefined()
+    {
+        await SeedAsync();
+
+        // SELECT VALUE means undefined values are omitted from results
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE StringToNumber(c.val) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty("invalid input to StringToNumber should return undefined, omitted by VALUE");
+    }
+
+    [Fact]
+    public async Task StringToBoolean_InvalidInput_ReturnsUndefined()
+    {
+        await SeedAsync();
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE StringToBoolean(c.val) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty("invalid input to StringToBoolean should return undefined, omitted by VALUE");
+    }
+
+    [Fact]
+    public async Task StringToArray_InvalidInput_ReturnsUndefined()
+    {
+        await SeedAsync();
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE StringToArray(c.val) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty("invalid input to StringToArray should return undefined, omitted by VALUE");
+    }
+
+    [Fact]
+    public async Task StringToObject_InvalidInput_ReturnsUndefined()
+    {
+        await SeedAsync();
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE StringToObject(c.val) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty("invalid input to StringToObject should return undefined, omitted by VALUE");
+    }
+
+    [Fact]
+    public async Task StringToNull_InvalidInput_ReturnsUndefined()
+    {
+        await SeedAsync();
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE StringToNull(c.val) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty("invalid input to StringToNull should return undefined, omitted by VALUE");
+    }
+}
+
+// ─── GROUP BY without aggregates ────────────────────────────────────────
+
+public class GroupByNoAggregateTests
+{
+    [Fact]
+    public async Task Query_GroupBy_WithoutAggregates_ReturnsProjectedFields()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","city":"London","name":"Alice"}""")),
+            new PartitionKey("a"));
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a","city":"London","name":"Bob"}""")),
+            new PartitionKey("a"));
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","pk":"a","city":"Paris","name":"Charlie"}""")),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT c.city FROM c GROUP BY c.city",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+        // Each result should ONLY have "city" — not the full document
+        foreach (var r in results)
+        {
+            r.Properties().Select(p => p.Name).Should().BeEquivalentTo(new[] { "city" });
+        }
+        results.Select(r => r["city"]!.Value<string>()).Should().BeEquivalentTo(new[] { "London", "Paris" });
+    }
+}

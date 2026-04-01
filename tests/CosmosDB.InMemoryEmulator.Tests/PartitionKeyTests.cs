@@ -209,3 +209,60 @@ public class PartitionKeyFallbackDivergentBehaviorTests
         response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 }
+
+// ─── PartitionKey.None vs PartitionKey.Null ─────────────────────────────
+
+public class PartitionKeyNoneVsNullTests
+{
+    /// <summary>
+    /// In real Cosmos DB, PartitionKey.None represents the absence of a partition key (used
+    /// for containers created without a partition key definition in older API versions).
+    /// PartitionKey.Null represents an explicit null value. They are semantically distinct.
+    /// The emulator treats both as the storage key "null", making them interchangeable.
+    /// </summary>
+    [Fact(Skip = "The emulator's PartitionKeyToString maps both PartitionKey.None and " +
+        "PartitionKey.Null to the string 'null'. In real Cosmos DB, PartitionKey.None has " +
+        "special routing behavior for legacy non-partitioned containers, while PartitionKey.Null " +
+        "is an explicit null value in the partition key field. The emulator does not support " +
+        "non-partitioned (legacy) containers so the distinction is not meaningful here.")]
+    public async Task PartitionKeyNone_ShouldNotMatchPartitionKeyNull()
+    {
+        var container = new InMemoryContainer("test-container", "/pk");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = (string)null! }),
+            PartitionKey.Null);
+
+        // In real Cosmos, reading with PartitionKey.Null would not find an item
+        // written with PartitionKey.None
+        var act = () => container.ReadItemAsync<JObject>("1", PartitionKey.Null);
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    /// <summary>
+    /// Sister test: demonstrates the emulator treats None and Null identically.
+    /// </summary>
+    [Fact]
+    public async Task PartitionKeyNoneVsNull_EmulatorBehavior_TreatedIdentically()
+    {
+        // ── Divergent behavior documentation ──
+        // Real Cosmos DB: PartitionKey.None → system-defined partition for legacy containers.
+        //   PartitionKey.Null → explicit null value in the PK field. An item written with
+        //   PartitionKey.None cannot be read with PartitionKey.Null (different routing).
+        // In-Memory Emulator: ExtractPartitionKeyValue and PartitionKeyToString both map
+        //   None and Null to the string "null". Items are stored with key (id, "null") in
+        //   both cases, making them interchangeable. This is correct for modern containers
+        //   but differs for legacy non-partitioned scenarios.
+        var container = new InMemoryContainer("test-container", "/pk");
+
+        // Create item with explicit null pk value via PartitionKey.Null
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = (string)null! }),
+            PartitionKey.Null);
+
+        // In the emulator, PartitionKey.None resolves the same way as PartitionKey.Null
+        var response = await container.ReadItemAsync<JObject>("1", PartitionKey.None);
+        response.Resource["id"]!.Value<string>().Should().Be("1",
+            "the emulator treats PartitionKey.None and PartitionKey.Null identically");
+    }
+}
