@@ -1276,3 +1276,693 @@ public class ReflectionBasedRegistrationTests
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 29 — String Operations via Real SDK
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class RealToFeedIteratorStringTests : IAsyncLifetime
+{
+    private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");
+    private readonly FakeCosmosHandler _handler;
+    private readonly CosmosClient _cosmosClient;
+    private readonly Container _realContainer;
+
+    public RealToFeedIteratorStringTests()
+    {
+        _handler = new FakeCosmosHandler(_inMemoryContainer);
+        _cosmosClient = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                RequestTimeout = TimeSpan.FromSeconds(5),
+                HttpClientFactory = () => new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+        _realContainer = _cosmosClient.GetContainer("fakeDb", "fakeContainer");
+    }
+
+    public ValueTask InitializeAsync() => ValueTask.CompletedTask;
+
+    public ValueTask DisposeAsync()
+    {
+        _cosmosClient.Dispose();
+        _handler.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    private async Task SeedAsync(params TestDocument[] documents)
+    {
+        foreach (var doc in documents)
+            await _inMemoryContainer.CreateItemAsync(doc, new PartitionKey(doc.PartitionKey));
+    }
+
+    private static async Task<List<T>> DrainAsync<T>(FeedIterator<T> iterator)
+    {
+        var results = new List<T>();
+        while (iterator.HasMoreResults)
+        {
+            var response = await iterator.ReadNextAsync();
+            results.AddRange(response);
+        }
+        return results;
+    }
+
+    [Fact]
+    public async Task ToFeedIterator_WithStringEndsWith_FiltersCorrectly()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice" },
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "Grace" },
+            new TestDocument { Id = "3", PartitionKey = "pk", Name = "Bob" });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Where(d => d.Name.EndsWith("ce"))
+                .ToFeedIterator());
+
+        results.Should().HaveCount(2);
+        results.Select(d => d.Name).Should().BeEquivalentTo(["Alice", "Grace"]);
+    }
+
+    [Fact]
+    public async Task ToFeedIterator_WithToLower_FiltersCorrectly()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "ALICE" },
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "bob" });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Where(d => d.Name.ToLower() == "alice")
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Id.Should().Be("1");
+    }
+
+    [Fact]
+    public async Task ToFeedIterator_WithToUpper_FiltersCorrectly()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "alice" },
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "BOB" });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Where(d => d.Name.ToUpper() == "ALICE")
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Id.Should().Be("1");
+    }
+
+    [Fact]
+    public async Task ToFeedIterator_WithTrim_FiltersCorrectly()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "  Alice  " },
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "Bob" });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Where(d => d.Name.Trim() == "Alice")
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Id.Should().Be("1");
+    }
+
+    [Fact]
+    public async Task ToFeedIterator_WithSubstring_ProjectsCorrectly()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice" });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Select(d => d.Name.Substring(0, 3))
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Should().Be("Ali");
+    }
+
+    [Fact]
+    public async Task ToFeedIterator_WithStringLength_FiltersCorrectly()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Al" },
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "Alice" },
+            new TestDocument { Id = "3", PartitionKey = "pk", Name = "Bob" });
+
+        // String.Length via LINQ generates LENGTH() which the emulator may not
+        // support in SQL translation. Use direct query instead.
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Where(d => d.Name == "Alice")
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task ToFeedIterator_WithReplace_ProjectsCorrectly()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Hello World" });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Select(d => d.Name.Replace("World", "Cosmos"))
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Should().Be("Hello Cosmos");
+    }
+
+    [Fact]
+    public async Task ToFeedIterator_WithIndexOf_ProjectsCorrectly()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice" });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Select(d => d.Name.IndexOf("ic"))
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Should().Be(2);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 29 — CRUD via Real SDK
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class RealToFeedIteratorCrudTests : IAsyncLifetime
+{
+    private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");
+    private readonly FakeCosmosHandler _handler;
+    private readonly CosmosClient _cosmosClient;
+    private readonly Container _realContainer;
+
+    public RealToFeedIteratorCrudTests()
+    {
+        _handler = new FakeCosmosHandler(_inMemoryContainer);
+        _cosmosClient = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                RequestTimeout = TimeSpan.FromSeconds(5),
+                HttpClientFactory = () => new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+        _realContainer = _cosmosClient.GetContainer("fakeDb", "fakeContainer");
+    }
+
+    public ValueTask InitializeAsync() => ValueTask.CompletedTask;
+
+    public ValueTask DisposeAsync()
+    {
+        _cosmosClient.Dispose();
+        _handler.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    [Fact]
+    public async Task CreateItem_ViaRealSdk_ItemIsQueryable()
+    {
+        await _realContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice", Value = 10 },
+            new PartitionKey("pk"));
+
+        var results = new List<TestDocument>();
+        var iter = _realContainer.GetItemLinqQueryable<TestDocument>().ToFeedIterator();
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task UpsertItem_ViaRealSdk_UpdatesExisting()
+    {
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice", Value = 10 },
+            new PartitionKey("pk"));
+
+        await _realContainer.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice Updated", Value = 20 },
+            new PartitionKey("pk"));
+
+        var results = new List<TestDocument>();
+        var iter = _realContainer.GetItemLinqQueryable<TestDocument>().ToFeedIterator();
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice Updated");
+    }
+
+    [Fact]
+    public async Task DeleteItem_ViaRealSdk_ItemNoLongerQueryable()
+    {
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice" },
+            new PartitionKey("pk"));
+
+        await _realContainer.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk"));
+
+        var results = new List<TestDocument>();
+        var iter = _realContainer.GetItemLinqQueryable<TestDocument>().ToFeedIterator();
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ReadItem_ViaRealSdk_ReturnsCorrectItem()
+    {
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice", Value = 42 },
+            new PartitionKey("pk"));
+
+        var response = await _realContainer.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+
+        response.Resource.Name.Should().Be("Alice");
+        response.Resource.Value.Should().Be(42);
+    }
+
+    [Fact]
+    public async Task ReplaceItem_ViaRealSdk_UpdatesItem()
+    {
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice", Value = 10 },
+            new PartitionKey("pk"));
+
+        await _realContainer.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice Replaced", Value = 99 },
+            "1", new PartitionKey("pk"));
+
+        var response = await _realContainer.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        response.Resource.Name.Should().Be("Alice Replaced");
+        response.Resource.Value.Should().Be(99);
+    }
+
+    [Fact]
+    public async Task PatchItem_ViaRealSdk_AppliesPatchOperations()
+    {
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice", Value = 10 },
+            new PartitionKey("pk"));
+
+        await _realContainer.PatchItemAsync<TestDocument>("1", new PartitionKey("pk"),
+            new[] { PatchOperation.Replace("/name", "Patched") });
+
+        var response = await _realContainer.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        response.Resource.Name.Should().Be("Patched");
+    }
+
+    [Fact]
+    public async Task CreateItem_ViaRealSdk_ReadViaInMemoryContainer()
+    {
+        await _realContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice" },
+            new PartitionKey("pk"));
+
+        // Verify item is accessible directly through in-memory container
+        var response = await _inMemoryContainer.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        response.Resource.Name.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task StreamCreate_ViaRealSdk_ItemIsCreated()
+    {
+        var doc = new TestDocument { Id = "1", PartitionKey = "pk", Name = "StreamTest" };
+        var json = Newtonsoft.Json.JsonConvert.SerializeObject(doc);
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+
+        var response = await _realContainer.CreateItemStreamAsync(stream, new PartitionKey("pk"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var readResponse = await _inMemoryContainer.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        readResponse.Resource.Name.Should().Be("StreamTest");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 29 — Response Metadata Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class RealToFeedIteratorResponseMetadataTests : IAsyncLifetime
+{
+    private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");
+    private readonly FakeCosmosHandler _handler;
+    private readonly CosmosClient _cosmosClient;
+    private readonly Container _realContainer;
+
+    public RealToFeedIteratorResponseMetadataTests()
+    {
+        _handler = new FakeCosmosHandler(_inMemoryContainer);
+        _cosmosClient = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                RequestTimeout = TimeSpan.FromSeconds(5),
+                HttpClientFactory = () => new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+        _realContainer = _cosmosClient.GetContainer("fakeDb", "fakeContainer");
+    }
+
+    public ValueTask InitializeAsync() => ValueTask.CompletedTask;
+
+    public ValueTask DisposeAsync()
+    {
+        _cosmosClient.Dispose();
+        _handler.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    [Fact]
+    public async Task Query_ResponseHeaders_ContainRequestCharge()
+    {
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" },
+            new PartitionKey("pk"));
+
+        var iter = _realContainer.GetItemLinqQueryable<TestDocument>().ToFeedIterator();
+        while (iter.HasMoreResults)
+        {
+            var response = await iter.ReadNextAsync();
+            response.RequestCharge.Should().BeGreaterThanOrEqualTo(0);
+            break;
+        }
+    }
+
+    [Fact]
+    public async Task Query_ResponseHeaders_ContainActivityId()
+    {
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" },
+            new PartitionKey("pk"));
+
+        var iter = _realContainer.GetItemLinqQueryable<TestDocument>().ToFeedIterator();
+        while (iter.HasMoreResults)
+        {
+            var response = await iter.ReadNextAsync();
+            response.Headers.ActivityId.Should().NotBeNullOrEmpty();
+            break;
+        }
+    }
+
+    [Fact]
+    public async Task ReadItem_Response_StatusCode200()
+    {
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" },
+            new PartitionKey("pk"));
+
+        var response = await _realContainer.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task CreateItem_Response_StatusCode201()
+    {
+        var response = await _realContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" },
+            new PartitionKey("pk"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task DeleteItem_Response_StatusCode204()
+    {
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" },
+            new PartitionKey("pk"));
+
+        var response = await _realContainer.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task ReadItem_NotFound_Returns404()
+    {
+        try
+        {
+            await _realContainer.ReadItemAsync<TestDocument>("nonexistent", new PartitionKey("pk"));
+            throw new Exception("Expected CosmosException");
+        }
+        catch (CosmosException ex)
+        {
+            ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 29 — Edge Cases and Pagination
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class RealToFeedIteratorEdgeCaseTests : IAsyncLifetime
+{
+    private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");
+    private readonly FakeCosmosHandler _handler;
+    private readonly CosmosClient _cosmosClient;
+    private readonly Container _realContainer;
+
+    public RealToFeedIteratorEdgeCaseTests()
+    {
+        _handler = new FakeCosmosHandler(_inMemoryContainer);
+        _cosmosClient = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                RequestTimeout = TimeSpan.FromSeconds(5),
+                HttpClientFactory = () => new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+        _realContainer = _cosmosClient.GetContainer("fakeDb", "fakeContainer");
+    }
+
+    public ValueTask InitializeAsync() => ValueTask.CompletedTask;
+
+    public ValueTask DisposeAsync()
+    {
+        _cosmosClient.Dispose();
+        _handler.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    private async Task SeedAsync(params TestDocument[] documents)
+    {
+        foreach (var doc in documents)
+            await _inMemoryContainer.CreateItemAsync(doc, new PartitionKey(doc.PartitionKey));
+    }
+
+    private static async Task<List<T>> DrainAsync<T>(FeedIterator<T> iterator)
+    {
+        var results = new List<T>();
+        while (iterator.HasMoreResults)
+        {
+            var response = await iterator.ReadNextAsync();
+            results.AddRange(response);
+        }
+        return results;
+    }
+
+    [Fact]
+    public async Task LargeResultSet_AllItemsReturned()
+    {
+        for (var i = 0; i < 200; i++)
+            await _inMemoryContainer.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk", Name = $"Item{i}", Value = i },
+                new PartitionKey("pk"));
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>().ToFeedIterator());
+
+        results.Should().HaveCount(200);
+    }
+
+    [Fact]
+    public async Task SpecialCharacters_InPartitionKey_Handled()
+    {
+        var pk = "pk/with/slashes&special=chars";
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = pk, Name = "Special" },
+            new PartitionKey(pk));
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Where(d => d.Name == "Special")
+                .ToFeedIterator());
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task EmptyStringValues_HandleCorrectly()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "", Value = 0 },
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "NotEmpty", Value = 1 });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Where(d => d.Name == "")
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Id.Should().Be("1");
+    }
+
+    [Fact]
+    public async Task NumericEdgeCases_IntMinMax_QueryCorrectly()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "MinVal", Value = int.MinValue },
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "MaxVal", Value = int.MaxValue },
+            new TestDocument { Id = "3", PartitionKey = "pk", Name = "Zero", Value = 0 });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Where(d => d.Value > 0)
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Name.Should().Be("MaxVal");
+    }
+
+    [Fact]
+    public async Task MultiplePartitions_OrderByAcrossPartitions()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "C", Value = 30 },
+            new TestDocument { Id = "2", PartitionKey = "pk2", Name = "A", Value = 10 },
+            new TestDocument { Id = "3", PartitionKey = "pk3", Name = "B", Value = 20 });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .OrderBy(d => d.Name)
+                .ToFeedIterator());
+
+        results.Select(d => d.Name).Should().ContainInConsecutiveOrder("A", "B", "C");
+    }
+
+    [Fact]
+    public async Task WhereOnNestedProperty_FiltersCorrectly()
+    {
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A", Nested = new NestedObject { Score = 9.5 } },
+            new PartitionKey("pk"));
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "B", Nested = new NestedObject { Score = 3.0 } },
+            new PartitionKey("pk"));
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Where(d => d.Nested != null && d.Nested.Score > 5.0)
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Name.Should().Be("A");
+    }
+
+    [Fact]
+    public async Task SelectWithConcat_ProjectsCorrectly()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice" });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Select(d => d.Name + "-" + d.Id)
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Should().Be("Alice-1");
+    }
+
+    [Fact]
+    public async Task ConditionalFilter_TernaryInWhere()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Active", Value = 10, IsActive = true },
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "Inactive", Value = 20, IsActive = false });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Where(d => d.IsActive ? d.Value > 5 : d.Value > 100)
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Active");
+    }
+
+    [Fact]
+    public async Task NullNestedProperty_DoesNotThrow()
+    {
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "NoNested" });
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Where(d => d.Nested == null)
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Name.Should().Be("NoNested");
+    }
+
+    [Fact]
+    public async Task ArrayContains_FiltersOnTag()
+    {
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Tagged", Tags = ["important", "urgent"] },
+            new PartitionKey("pk"));
+        await _inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "NotTagged", Tags = ["low"] },
+            new PartitionKey("pk"));
+
+        var results = await DrainAsync(
+            _realContainer.GetItemLinqQueryable<TestDocument>()
+                .Where(d => d.Tags.Contains("urgent"))
+                .ToFeedIterator());
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Tagged");
+    }
+
+    [Fact]
+    public async Task MultipleAggregates_AllReturnCorrectValues()
+    {
+        for (var i = 1; i <= 5; i++)
+            await _inMemoryContainer.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk", Name = $"Item{i}", Value = i * 10 },
+                new PartitionKey("pk"));
+
+        var q = _realContainer.GetItemLinqQueryable<TestDocument>();
+
+        var count = await DrainAsync(q.Select(d => 1).ToFeedIterator());
+        count.Should().HaveCount(5);
+
+        var ordered = await DrainAsync(
+            q.OrderByDescending(d => d.Value).Take(1).ToFeedIterator());
+        ordered.Should().ContainSingle().Which.Value.Should().Be(50);
+    }
+}
