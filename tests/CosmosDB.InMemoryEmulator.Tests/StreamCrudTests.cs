@@ -480,3 +480,544 @@ public class StreamOperationGapTests3
         deleteResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  B: Response Body Validation
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamResponseBodyTests
+{
+    private readonly InMemoryContainer _container = new("body-test", "/partitionKey");
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+    private static async Task<string> ReadStreamAsync(Stream s) { using var r = new StreamReader(s); return await r.ReadToEndAsync(); }
+
+    [Fact]
+    public async Task CreateStream_ResponseContent_ContainsCreatedDocument()
+    {
+        using var response = await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"Alice"}"""),
+            new PartitionKey("pk1"));
+
+        response.Content.Should().NotBeNull();
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["id"]!.ToString().Should().Be("1");
+        body["name"]!.ToString().Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task UpsertStream_NewItem_ResponseContent_ContainsDocument()
+    {
+        using var response = await _container.UpsertItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"Bob"}"""),
+            new PartitionKey("pk1"));
+
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["name"]!.ToString().Should().Be("Bob");
+    }
+
+    [Fact]
+    public async Task UpsertStream_ExistingItem_ResponseContent_ContainsUpdatedDocument()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"Old"}"""),
+            new PartitionKey("pk1"));
+
+        using var response = await _container.UpsertItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"New"}"""),
+            new PartitionKey("pk1"));
+
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["name"]!.ToString().Should().Be("New");
+    }
+
+    [Fact]
+    public async Task ReplaceStream_ResponseContent_ContainsReplacedDocument()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"Original"}"""),
+            new PartitionKey("pk1"));
+
+        using var response = await _container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"Replaced"}"""),
+            "1", new PartitionKey("pk1"));
+
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["name"]!.ToString().Should().Be("Replaced");
+    }
+
+    [Fact]
+    public async Task ReadStream_AfterCreateStream_ReturnsCompleteDocument()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"Alice","value":42}"""),
+            new PartitionKey("pk1"));
+
+        using var response = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["name"]!.ToString().Should().Be("Alice");
+        body["value"]!.Value<int>().Should().Be(42);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  C: System Properties in Stream Responses
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamSystemPropertyTests
+{
+    private readonly InMemoryContainer _container = new("sysprop-test", "/partitionKey");
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+    private static async Task<string> ReadStreamAsync(Stream s) { using var r = new StreamReader(s); return await r.ReadToEndAsync(); }
+
+    [Fact]
+    public async Task CreateStream_ResponseBody_ContainsEtagSystemProperty()
+    {
+        using var response = await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""),
+            new PartitionKey("pk1"));
+
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["_etag"].Should().NotBeNull();
+        body["_etag"]!.ToString().Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task CreateStream_ResponseBody_ContainsTsSystemProperty()
+    {
+        using var response = await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""),
+            new PartitionKey("pk1"));
+
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["_ts"].Should().NotBeNull();
+        body["_ts"]!.Value<long>().Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task UpsertStream_ExistingItem_UpdatesEtagAndTs()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"Old"}"""),
+            new PartitionKey("pk1"));
+
+        using var read1 = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        var body1 = JObject.Parse(await ReadStreamAsync(read1.Content));
+        var etag1 = body1["_etag"]!.ToString();
+
+        await _container.UpsertItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"New"}"""),
+            new PartitionKey("pk1"));
+
+        using var read2 = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        var body2 = JObject.Parse(await ReadStreamAsync(read2.Content));
+        body2["_etag"]!.ToString().Should().NotBe(etag1);
+    }
+
+    [Fact]
+    public async Task ReplaceStream_UpdatesEtag()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""),
+            new PartitionKey("pk1"));
+
+        using var read1 = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        var etag1 = JObject.Parse(await ReadStreamAsync(read1.Content))["_etag"]!.ToString();
+
+        await _container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"replaced"}"""),
+            "1", new PartitionKey("pk1"));
+
+        using var read2 = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        var etag2 = JObject.Parse(await ReadStreamAsync(read2.Content))["_etag"]!.ToString();
+        etag2.Should().NotBe(etag1);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  D: IsSuccessStatusCode
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamIsSuccessStatusCodeTests
+{
+    private readonly InMemoryContainer _container = new("success-test", "/partitionKey");
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task Stream_SuccessResponses_HaveIsSuccessStatusCode_True()
+    {
+        using var create = await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
+        create.IsSuccessStatusCode.Should().BeTrue();
+
+        using var read = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        read.IsSuccessStatusCode.Should().BeTrue();
+
+        using var upsert = await _container.UpsertItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"updated"}"""), new PartitionKey("pk1"));
+        upsert.IsSuccessStatusCode.Should().BeTrue();
+
+        using var replace = await _container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"replaced"}"""),
+            "1", new PartitionKey("pk1"));
+        replace.IsSuccessStatusCode.Should().BeTrue();
+
+        using var delete = await _container.DeleteItemStreamAsync("1", new PartitionKey("pk1"));
+        delete.IsSuccessStatusCode.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Stream_ErrorResponses_HaveIsSuccessStatusCode_False()
+    {
+        using var readMiss = await _container.ReadItemStreamAsync("miss", new PartitionKey("pk1"));
+        readMiss.IsSuccessStatusCode.Should().BeFalse();
+
+        using var deleteMiss = await _container.DeleteItemStreamAsync("miss", new PartitionKey("pk1"));
+        deleteMiss.IsSuccessStatusCode.Should().BeFalse();
+
+        using var replaceMiss = await _container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"miss","partitionKey":"pk1"}"""), "miss", new PartitionKey("pk1"));
+        replaceMiss.IsSuccessStatusCode.Should().BeFalse();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  E: Response Headers
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamCrudResponseHeaderTests
+{
+    private readonly InMemoryContainer _container = new("hdr-test", "/partitionKey");
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task Stream_AllCrudResponses_ContainRequestChargeHeader()
+    {
+        using var create = await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
+        create.Headers["x-ms-request-charge"].Should().NotBeNullOrEmpty();
+
+        using var read = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        read.Headers["x-ms-request-charge"].Should().NotBeNullOrEmpty();
+
+        using var upsert = await _container.UpsertItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","x":"y"}"""), new PartitionKey("pk1"));
+        upsert.Headers["x-ms-request-charge"].Should().NotBeNullOrEmpty();
+
+        using var replace = await _container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","z":"w"}"""), "1", new PartitionKey("pk1"));
+        replace.Headers["x-ms-request-charge"].Should().NotBeNullOrEmpty();
+
+        using var delete = await _container.DeleteItemStreamAsync("1", new PartitionKey("pk1"));
+        delete.Headers["x-ms-request-charge"].Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Stream_AllCrudResponses_ContainActivityIdHeader()
+    {
+        using var create = await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
+        create.Headers["x-ms-activity-id"].Should().NotBeNullOrEmpty();
+
+        using var read = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        read.Headers["x-ms-activity-id"].Should().NotBeNullOrEmpty();
+
+        using var delete = await _container.DeleteItemStreamAsync("1", new PartitionKey("pk1"));
+        delete.Headers["x-ms-activity-id"].Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Stream_WriteResponses_ContainETagHeader()
+    {
+        using var create = await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
+        create.Headers.ETag.Should().NotBeNullOrEmpty();
+
+        using var upsert = await _container.UpsertItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"u"}"""), new PartitionKey("pk1"));
+        upsert.Headers.ETag.Should().NotBeNullOrEmpty();
+
+        using var replace = await _container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"r"}"""), "1", new PartitionKey("pk1"));
+        replace.Headers.ETag.Should().NotBeNullOrEmpty();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  F: ETag Lifecycle in Stream API
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamETagLifecycleTests
+{
+    private readonly InMemoryContainer _container = new("etag-life", "/partitionKey");
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task UpsertStream_ChangesETag()
+    {
+        using var create = await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
+        var etag1 = create.Headers.ETag;
+
+        using var upsert = await _container.UpsertItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"u"}"""), new PartitionKey("pk1"));
+        upsert.Headers.ETag.Should().NotBe(etag1);
+    }
+
+    [Fact]
+    public async Task ReplaceStream_ChangesETag()
+    {
+        using var create = await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
+        var etag1 = create.Headers.ETag;
+
+        using var replace = await _container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"r"}"""), "1", new PartitionKey("pk1"));
+        replace.Headers.ETag.Should().NotBe(etag1);
+    }
+
+    [Fact]
+    public async Task ReadStream_ConsecutiveReads_ETagConsistent()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
+
+        using var read1 = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        using var read2 = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        read1.Headers.ETag.Should().Be(read2.Headers.ETag);
+    }
+
+    [Fact]
+    public async Task DeleteStream_WithIfMatch_CurrentETag_Succeeds()
+    {
+        using var create = await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
+        var etag = create.Headers.ETag;
+
+        using var delete = await _container.DeleteItemStreamAsync("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = etag });
+        delete.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  G: Data Integrity
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamDataIntegrityTests
+{
+    private readonly InMemoryContainer _container = new("integrity-test", "/partitionKey");
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+    private static async Task<string> ReadStreamAsync(Stream s) { using var r = new StreamReader(s); return await r.ReadToEndAsync(); }
+
+    [Fact]
+    public async Task CreateStream_ThenTypedRead_DataRoundTrips()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"Alice","value":42}"""),
+            new PartitionKey("pk1"));
+
+        var result = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        result.Resource.Name.Should().Be("Alice");
+        result.Resource.Value.Should().Be(42);
+    }
+
+    [Fact]
+    public async Task TypedCreate_ThenStreamRead_DataRoundTrips()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Bob", Value = 99 },
+            new PartitionKey("pk1"));
+
+        using var response = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["name"]!.ToString().Should().Be("Bob");
+        body["value"]!.Value<int>().Should().Be(99);
+    }
+
+    [Fact]
+    public async Task UpsertStream_ReplacesEntireDocument_NotMerge()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"Alice","extra":"field"}"""),
+            new PartitionKey("pk1"));
+
+        await _container.UpsertItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"Alice"}"""),
+            new PartitionKey("pk1"));
+
+        using var read = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        var body = JObject.Parse(await ReadStreamAsync(read.Content));
+        body["extra"].Should().BeNull("upsert replaces entire document, it does not merge");
+    }
+
+    [Fact]
+    public async Task DeleteStream_ThenRead_Returns404()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
+
+        await _container.DeleteItemStreamAsync("1", new PartitionKey("pk1"));
+
+        using var read = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        read.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task DeleteStream_ThenCreate_SameId_Succeeds()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"first"}"""),
+            new PartitionKey("pk1"));
+
+        await _container.DeleteItemStreamAsync("1", new PartitionKey("pk1"));
+
+        using var create = await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"second"}"""),
+            new PartitionKey("pk1"));
+        create.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task ReplaceStream_FullyReplacesDocument()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","fieldA":"a","fieldB":"b"}"""),
+            new PartitionKey("pk1"));
+
+        await _container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","fieldA":"updated"}"""),
+            "1", new PartitionKey("pk1"));
+
+        using var read = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        var body = JObject.Parse(await ReadStreamAsync(read.Content));
+        body["fieldA"]!.ToString().Should().Be("updated");
+        body["fieldB"].Should().BeNull("replace should fully replace, not merge");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  H: Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamEdgeCaseTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+    private static async Task<string> ReadStreamAsync(Stream s) { using var r = new StreamReader(s); return await r.ReadToEndAsync(); }
+
+    [Fact]
+    public async Task CreateStream_CompositePartitionKey_ExtractsCorrectly()
+    {
+        var container = new InMemoryContainer("composite-pk", new[] { "/tenantId", "/userId" });
+
+        using var response = await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","tenantId":"t1","userId":"u1","name":"Alice"}"""),
+            new PartitionKeyBuilder().Add("t1").Add("u1").Build());
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var result = await container.ReadItemAsync<JObject>("1",
+            new PartitionKeyBuilder().Add("t1").Add("u1").Build());
+        result.Resource["name"]!.ToString().Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task CreateStream_UnicodeContent_PreservedInResponse()
+    {
+        var container = new InMemoryContainer("unicode-stream", "/pk");
+
+        using var response = await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a","name":"日本語テスト🎉"}"""),
+            new PartitionKey("a"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        using var read = await container.ReadItemStreamAsync("1", new PartitionKey("a"));
+        var body = JObject.Parse(await ReadStreamAsync(read.Content));
+        body["name"]!.ToString().Should().Be("日本語テスト🎉");
+    }
+
+    [Fact]
+    public async Task CreateStream_RecordsInChangeFeed()
+    {
+        var container = new InMemoryContainer("cf-stream", "/pk");
+
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a","name":"feedme"}"""),
+            new PartitionKey("a"));
+
+        var iter = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+        var page = await iter.ReadNextAsync();
+
+        page.Should().Contain(j => j["id"]!.ToString() == "1");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  I: Divergent Behaviors (Skip + Sister Tests)
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamDivergentBehaviorTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+    private static async Task<string> ReadStreamAsync(Stream s) { using var r = new StreamReader(s); return await r.ReadToEndAsync(); }
+
+    [Fact(Skip = "Real Cosmos DB returns 400 when body id differs from parameter id. " +
+        "InMemoryContainer uses parameter id for lookup; body id is not validated.")]
+    public async Task ReplaceStream_IdMismatch_Returns400()
+    {
+        var container = new InMemoryContainer("mismatch", "/partitionKey");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
+
+        using var response = await container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"wrong","partitionKey":"pk1"}"""),
+            "1", new PartitionKey("pk1"));
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Divergent_ReplaceStream_IdMismatch_UsesParameterId()
+    {
+        // Sister test: emulator uses parameter id, not body id
+        var container = new InMemoryContainer("mismatch-div", "/partitionKey");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"orig"}"""), new PartitionKey("pk1"));
+
+        // Body says id="wrong" but parameter says "1" — emulator uses parameter id
+        using var response = await container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"wrong","partitionKey":"pk1","name":"replaced"}"""),
+            "1", new PartitionKey("pk1"));
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            "emulator uses parameter id for key lookup, body id is ignored");
+    }
+
+    [Fact(Skip = "Real Cosmos DB includes _rid, _self, _attachments system properties. " +
+        "InMemoryContainer only enriches with _etag and _ts.")]
+    public async Task Stream_ResponseBody_ContainsAllSystemProperties()
+    {
+        var container = new InMemoryContainer("sysprop-all", "/pk");
+        using var response = await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["_rid"].Should().NotBeNull();
+        body["_self"].Should().NotBeNull();
+        body["_attachments"].Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Divergent_Stream_ResponseBody_ContainsOnlyEtagAndTs()
+    {
+        // Sister test: only _etag and _ts are present
+        var container = new InMemoryContainer("sysprop-div", "/pk");
+        using var response = await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["_etag"].Should().NotBeNull();
+        body["_ts"].Should().NotBeNull();
+        body["_rid"].Should().BeNull("emulator does not generate _rid");
+        body["_self"].Should().BeNull("emulator does not generate _self");
+    }
+}
