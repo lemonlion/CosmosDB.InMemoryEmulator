@@ -593,29 +593,120 @@ public class CosmosClientAndDatabaseTests
 
     // ── A10 CreateAndInitializeAsync ─────────────────────────────────────────
 
-    [Fact(Skip = "SKIP REASON: CreateAndInitializeAsync is a static factory method on CosmosClient. Static methods cannot be overridden in InMemoryCosmosClient. Callers should use 'new InMemoryCosmosClient()' directly for in-memory testing.")]
-    public async Task CreateAndInitializeAsync_CreatesClientWithPrewarmedContainers()
-    {
-        await Task.CompletedTask;
-        // In real SDK:
-        // var containers = new List<(string, string)> { ("db1", "container1") };
-        // var client = await CosmosClient.CreateAndInitializeAsync(
-        //     "https://localhost:8081/", "key", containers);
-        // client.Should().NotBeNull();
-    }
-
     /// <summary>
-    /// DIVERGENT BEHAVIOR: CosmosClient.CreateAndInitializeAsync is a static factory
-    /// method that cannot be overridden. For in-memory testing, callers should construct
-    /// InMemoryCosmosClient directly via new InMemoryCosmosClient() and manually
-    /// create databases/containers as needed.
-    /// See skipped test: CreateAndInitializeAsync_CreatesClientWithPrewarmedContainers
+    /// CreateAndInitializeAsync is a static factory method on CosmosClient that cannot be
+    /// overridden in InMemoryCosmosClient. However, it can still be used in tests by passing
+    /// a <see cref="CosmosClientOptions"/> with an <c>HttpClientFactory</c> that points at a
+    /// <see cref="FakeCosmosHandler"/>. The real SDK method executes normally but all HTTP
+    /// traffic is served by the in-memory handler — same pattern as RealToFeedIteratorTests.
     /// </summary>
     [Fact]
-    public void DivergentBehavior_CreateAndInitializeAsync_NotAvailable_UseConstructorInstead()
+    public async Task CreateAndInitializeAsync_WorksWithFakeCosmosHandler()
     {
-        var client = new InMemoryCosmosClient();
+        // Arrange: set up in-memory container and FakeCosmosHandler
+        var inMemoryContainer = new InMemoryContainer("myContainer", "/partitionKey");
+        await inMemoryContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Seeded", Value = 42 },
+            new PartitionKey("pk1"));
+
+        using var handler = new FakeCosmosHandler(inMemoryContainer);
+
+        var containers = new List<(string, string)> { ("fakeDb", "myContainer") };
+
+        // Act: call the REAL static factory method — FakeCosmosHandler serves all HTTP traffic
+        using var client = await CosmosClient.CreateAndInitializeAsync(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            containers,
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                RequestTimeout = TimeSpan.FromSeconds(5),
+                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+
+        // Assert: client was created and can read pre-seeded data
         client.Should().NotBeNull();
+
+        var container = client.GetContainer("fakeDb", "myContainer");
+        var response = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.Name.Should().Be("Seeded");
+    }
+
+    [Fact]
+    public async Task CreateAndInitializeAsync_ConnectionString_WorksWithFakeCosmosHandler()
+    {
+        var inMemoryContainer = new InMemoryContainer("orders", "/partitionKey");
+        using var handler = new FakeCosmosHandler(inMemoryContainer);
+
+        var containers = new List<(string, string)> { ("shopDb", "orders") };
+
+        using var client = await CosmosClient.CreateAndInitializeAsync(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            containers,
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+
+        client.Should().NotBeNull();
+
+        // Verify we can write and read through the CreateAndInitializeAsync-created client
+        var container = client.GetContainer("shopDb", "orders");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "o1", PartitionKey = "pk1", Name = "Order1", Value = 100 },
+            new PartitionKey("pk1"));
+
+        var response = await container.ReadItemAsync<TestDocument>("o1", new PartitionKey("pk1"));
+        response.Resource.Name.Should().Be("Order1");
+    }
+
+    [Fact]
+    public async Task CreateAndInitializeAsync_MultiContainer_WorksWithRouter()
+    {
+        var usersContainer = new InMemoryContainer("users", "/partitionKey");
+        var ordersContainer = new InMemoryContainer("orders", "/partitionKey");
+
+        using var router = FakeCosmosHandler.CreateRouter(new Dictionary<string, FakeCosmosHandler>
+        {
+            ["users"] = new FakeCosmosHandler(usersContainer),
+            ["orders"] = new FakeCosmosHandler(ordersContainer)
+        });
+
+        var containers = new List<(string, string)> { ("myDb", "users"), ("myDb", "orders") };
+
+        using var client = await CosmosClient.CreateAndInitializeAsync(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            containers,
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(router) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+
+        // Write to each container through the real SDK client
+        await client.GetContainer("myDb", "users").CreateItemAsync(
+            new TestDocument { Id = "u1", PartitionKey = "pk1", Name = "Alice", Value = 1 },
+            new PartitionKey("pk1"));
+        await client.GetContainer("myDb", "orders").CreateItemAsync(
+            new TestDocument { Id = "o1", PartitionKey = "pk1", Name = "Order1", Value = 99 },
+            new PartitionKey("pk1"));
+
+        // Verify each container has only its own data
+        var userResp = await client.GetContainer("myDb", "users")
+            .ReadItemAsync<TestDocument>("u1", new PartitionKey("pk1"));
+        userResp.Resource.Name.Should().Be("Alice");
+
+        var orderResp = await client.GetContainer("myDb", "orders")
+            .ReadItemAsync<TestDocument>("o1", new PartitionKey("pk1"));
+        orderResp.Resource.Name.Should().Be("Order1");
     }
 
     // ── A6 GetDatabase proxy semantics ───────────────────────────────────────

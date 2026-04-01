@@ -68,6 +68,13 @@ public class InMemoryContainer : Container
     private readonly Dictionary<string, RegisteredTrigger> _triggers = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TriggerProperties> _triggerProperties = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Optional JavaScript trigger engine. When set, triggers that have a <see cref="TriggerProperties.Body"/>
+    /// but no C# handler will be executed via this engine. Set by calling <c>UseJsTriggers()</c>
+    /// from the <c>CosmosDB.InMemoryEmulator.JsTriggers</c> package.
+    /// </summary>
+    public IJsTriggerEngine JsTriggerEngine { get; set; }
+
     private sealed record RegisteredTrigger(
         TriggerType TriggerType,
         TriggerOperation TriggerOperation,
@@ -1558,17 +1565,37 @@ public class InMemoryContainer : Container
 
         foreach (var name in triggerNames)
         {
-            if (!_triggers.TryGetValue(name, out var trigger))
+            // Priority 1: C# handler
+            if (_triggers.TryGetValue(name, out var trigger))
             {
-                throw new CosmosException(
-                    $"Trigger '{name}' is not registered. Register it via RegisterTrigger() before referencing it in PreTriggers.",
-                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
+                if (trigger.TriggerType != TriggerType.Pre || trigger.PreHandler is null) continue;
+                if (!TriggerOperationMatches(trigger.TriggerOperation, currentOp)) continue;
+
+                jObj = trigger.PreHandler(jObj);
+                continue;
             }
 
-            if (trigger.TriggerType != TriggerType.Pre || trigger.PreHandler is null) continue;
-            if (!TriggerOperationMatches(trigger.TriggerOperation, currentOp)) continue;
+            // Priority 2: JS body via JsTriggerEngine
+            if (_triggerProperties.TryGetValue(name, out var props) && props.Body is not null)
+            {
+                if (props.TriggerType != TriggerType.Pre) continue;
+                if (!TriggerOperationMatches(props.TriggerOperation, currentOp)) continue;
 
-            jObj = trigger.PreHandler(jObj);
+                if (JsTriggerEngine is null)
+                {
+                    throw new CosmosException(
+                        $"Trigger '{name}' has a JavaScript body but no JS trigger engine is configured. " +
+                        "Install the CosmosDB.InMemoryEmulator.JsTriggers package and call container.UseJsTriggers().",
+                        HttpStatusCode.BadRequest, 0, string.Empty, 0);
+                }
+
+                jObj = JsTriggerEngine.ExecutePreTrigger(props.Body, jObj);
+                continue;
+            }
+
+            throw new CosmosException(
+                $"Trigger '{name}' is not registered. Register it via RegisterTrigger() or CreateTriggerAsync() before referencing it in PreTriggers.",
+                HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
 
         return jObj;
@@ -1583,30 +1610,63 @@ public class InMemoryContainer : Container
 
         foreach (var name in triggerNames)
         {
-            if (!_triggers.TryGetValue(name, out var trigger))
+            // Priority 1: C# handler
+            if (_triggers.TryGetValue(name, out var trigger))
             {
-                throw new CosmosException(
-                    $"Trigger '{name}' is not registered. Register it via RegisterTrigger() before referencing it in PostTriggers.",
-                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
+                if (trigger.TriggerType != TriggerType.Post || trigger.PostHandler is null) continue;
+                if (!TriggerOperationMatches(trigger.TriggerOperation, currentOp)) continue;
+
+                try
+                {
+                    trigger.PostHandler(committedDoc);
+                }
+                catch (CosmosException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    throw new CosmosException(
+                        $"Post-trigger '{name}' failed: {ex.Message}",
+                        HttpStatusCode.InternalServerError, 0, string.Empty, 0);
+                }
+                continue;
             }
 
-            if (trigger.TriggerType != TriggerType.Post || trigger.PostHandler is null) continue;
-            if (!TriggerOperationMatches(trigger.TriggerOperation, currentOp)) continue;
+            // Priority 2: JS body via JsTriggerEngine
+            if (_triggerProperties.TryGetValue(name, out var props) && props.Body is not null)
+            {
+                if (props.TriggerType != TriggerType.Post) continue;
+                if (!TriggerOperationMatches(props.TriggerOperation, currentOp)) continue;
 
-            try
-            {
-                trigger.PostHandler(committedDoc);
+                if (JsTriggerEngine is null)
+                {
+                    throw new CosmosException(
+                        $"Trigger '{name}' has a JavaScript body but no JS trigger engine is configured. " +
+                        "Install the CosmosDB.InMemoryEmulator.JsTriggers package and call container.UseJsTriggers().",
+                        HttpStatusCode.BadRequest, 0, string.Empty, 0);
+                }
+
+                try
+                {
+                    JsTriggerEngine.ExecutePostTrigger(props.Body, committedDoc);
+                }
+                catch (CosmosException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    throw new CosmosException(
+                        $"Post-trigger '{name}' failed: {ex.Message}",
+                        HttpStatusCode.InternalServerError, 0, string.Empty, 0);
+                }
+                continue;
             }
-            catch (CosmosException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                throw new CosmosException(
-                    $"Post-trigger '{name}' failed: {ex.Message}",
-                    HttpStatusCode.InternalServerError, 0, string.Empty, 0);
-            }
+
+            throw new CosmosException(
+                $"Trigger '{name}' is not registered. Register it via RegisterTrigger() or CreateTriggerAsync() before referencing it in PostTriggers.",
+                HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
     }
 

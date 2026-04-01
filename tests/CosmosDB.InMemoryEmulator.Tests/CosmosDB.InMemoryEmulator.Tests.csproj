@@ -28,6 +28,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\..\src\CosmosDB.InMemoryEmulator\CosmosDB.InMemoryEmulator.csproj" />
+		<ProjectReference Include="..\..\src\CosmosDB.InMemoryEmulator.JsTriggers\CosmosDB.InMemoryEmulator.JsTriggers.csproj" />
 		<ProjectReference Include="..\..\src\CosmosDB.InMemoryEmulator.ProductionExtensions\CosmosDB.InMemoryEmulator.ProductionExtensions.csproj" />
 	</ItemGroup>
 

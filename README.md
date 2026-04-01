@@ -6,11 +6,11 @@
 
 A fully featured, in-process, fake for Azure Cosmos DB SDK for .NET — purpose-built for fast, reliable component and integration testing.  Runs in memory on the fly for the lifetime of your test run (although persistence between runs is available as a feature).
 
-Has full support for *all* Cosmos CRUD and SQL querying, including raw querying, functions, LINQ querying (including `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` support - no production code changes necessary), 
+Has full support for *all* Cosmos CRUD and SQL querying, including raw querying, functions, LINQ querying (including `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` support - no production code changes necessary).
 
-Includes all the other features of CosmosDB like Triggers, Change Feed, Point-in-time restore, TTL...
+Includes all the other features of CosmosDB like Triggers, Stored Procedures, Change Feed, Transactional Batches, Point-in-time restore, TTL...
 
-The only real features not implemented are user authentication and client encryption which are deliberately out of scope for a testing fake.
+User authentication and client encryption are deliberately not implemented as they are generally out of scope for a testing fake.
 
 ## Usage
 
@@ -21,11 +21,11 @@ Works by replacing either `Microsoft.Azure.Cosmos.Container` or `Microsoft.Azure
 In your `ConfigureTestServices()` method in your `WebApplicationFactory()`:
 
 ```csharp
-servicesCollection.UseInMemoryCosmosClient(); // Replaces all Cosmos Clients With In-Memory Emulator
+serviceCollection.UseInMemoryCosmosClient(); // Replaces all Cosmos Clients With In-Memory Emulator
 ```
 OR
 ```csharp
-servicesCollection.UseInMemoryCosmosContainer(); // Replaces all Cosmos Containers With In-Memory Emulator
+serviceCollection.UseInMemoryCosmosContainer(); // Replaces all Cosmos Containers With In-Memory Emulator
 ```
 
 ### Direct Instantiation
@@ -40,7 +40,7 @@ var cosmosClient = new InMemoryContainer(); // Fully functional In-Memory Cosmos
 
 ## Motivation
 
-Designed for fast feedback on Integration/Component tests in a local or CI environment, to avoid relying completely on the official Cosmos emulator or official Cosmos DB or inaccurate high level abstractions. 
+Designed for super fast feedback from your Integration/Component tests in a local or CI environment, to avoid relying completely on the official Cosmos emulator or official Cosmos DB or inaccurate high level abstractions. 
 
 | Traditional Approach | Problem |
 |----------|---------|
