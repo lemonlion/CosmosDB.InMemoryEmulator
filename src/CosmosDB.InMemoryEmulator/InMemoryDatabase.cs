@@ -18,11 +18,13 @@ namespace CosmosDB.InMemoryEmulator;
 /// </summary>
 /// <remarks>
 /// Throughput operations return synthetic values (400 RU/s by default).
-/// User and client encryption key operations throw <see cref="System.NotImplementedException"/>.
+/// User operations return stub responses with synthetic metadata.
+/// Client encryption key operations throw <see cref="System.NotImplementedException"/>.
 /// </remarks>
 public class InMemoryDatabase : Database
 {
     private readonly ConcurrentDictionary<string, InMemoryContainer> _containers = new();
+    private readonly ConcurrentDictionary<string, InMemoryUser> _users = new();
     private readonly InMemoryCosmosClient _client;
 
     /// <summary>
@@ -270,16 +272,52 @@ public class InMemoryDatabase : Database
     public override ContainerBuilder DefineContainer(string name, string partitionKeyPath)
         => new ContainerBuilder(this, name, partitionKeyPath);
 
-    // ── Not implemented overrides (users, encryption) ───────────────────────
-    public override User GetUser(string id) => throw new System.NotImplementedException();
+    // ── User management (stub store — no authorization enforced) ───────────
+
+    public override User GetUser(string id)
+    {
+        return _users.GetOrAdd(id, uid => new InMemoryUser(uid, () => _users.TryRemove(uid, out _)));
+    }
+
     public override Task<UserResponse> CreateUserAsync(string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
-        => throw new System.NotImplementedException();
+    {
+        var user = new InMemoryUser(id, () => _users.TryRemove(id, out _));
+        if (!_users.TryAdd(id, user))
+            throw new CosmosException($"User '{id}' already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
+
+        var response = Substitute.For<UserResponse>();
+        response.StatusCode.Returns(HttpStatusCode.Created);
+        response.Resource.Returns(new UserProperties(id));
+        response.User.Returns(user);
+        return Task.FromResult(response);
+    }
+
     public override Task<UserResponse> UpsertUserAsync(string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
-        => throw new System.NotImplementedException();
+    {
+        var isNew = !_users.ContainsKey(id);
+        var user = _users.GetOrAdd(id, uid => new InMemoryUser(uid, () => _users.TryRemove(uid, out _)));
+
+        var response = Substitute.For<UserResponse>();
+        response.StatusCode.Returns(isNew ? HttpStatusCode.Created : HttpStatusCode.OK);
+        response.Resource.Returns(new UserProperties(id));
+        response.User.Returns(user);
+        return Task.FromResult(response);
+    }
+
     public override FeedIterator<T> GetUserQueryIterator<T>(string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
-        => throw new System.NotImplementedException();
+    {
+        return new InMemoryFeedIterator<T>(
+            () => _users.Values
+                .Select(u => (T)(object)new UserProperties(u.Id))
+                .ToList());
+    }
+
     public override FeedIterator<T> GetUserQueryIterator<T>(QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
-        => throw new System.NotImplementedException();
+    {
+        return GetUserQueryIterator<T>((string)null, continuationToken, requestOptions);
+    }
+
+    // ── Not implemented overrides (encryption) ──────────────────────────────
     public override ClientEncryptionKey GetClientEncryptionKey(string id) => throw new System.NotImplementedException();
     public override FeedIterator<ClientEncryptionKeyProperties> GetClientEncryptionKeyQueryIterator(QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
         => throw new System.NotImplementedException();

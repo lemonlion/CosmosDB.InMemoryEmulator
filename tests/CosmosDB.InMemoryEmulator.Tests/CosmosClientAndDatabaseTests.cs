@@ -811,89 +811,370 @@ public class CosmosClientAndDatabaseTests
 
     // ── B15 User Management ──────────────────────────────────────────────────
 
-    [Fact(Skip = "SKIP REASON: User management (GetUser, CreateUserAsync, UpsertUserAsync) is an administrative feature for managing database-level access control. Not meaningful in an in-memory emulator where there is no authentication layer.")]
+    [Fact]
     public async Task CreateUserAsync_CreatesUser()
     {
         var client = new InMemoryCosmosClient();
         await client.CreateDatabaseAsync("test-db");
         var db = client.GetDatabase("test-db");
+
         var response = await db.CreateUserAsync("user1");
+
         response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.Resource.Should().NotBeNull();
+        response.Resource.Id.Should().Be("user1");
     }
 
-    [Fact(Skip = "SKIP REASON: User management is an administrative feature. Not meaningful in an in-memory emulator where there is no authentication layer.")]
-    public async Task UpsertUserAsync_CreatesOrUpdatesUser()
+    [Fact]
+    public async Task CreateUserAsync_Duplicate_ThrowsConflict()
     {
         var client = new InMemoryCosmosClient();
         await client.CreateDatabaseAsync("test-db");
         var db = client.GetDatabase("test-db");
-        var response = await db.UpsertUserAsync("user1");
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await db.CreateUserAsync("user1");
+
+        var act = () => db.CreateUserAsync("user1");
+
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.Conflict);
     }
 
-    [Fact(Skip = "SKIP REASON: User management is an administrative feature. Not meaningful in an in-memory emulator.")]
+    [Fact]
+    public async Task UpsertUserAsync_CreatesNewUser()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+
+        var response = await db.UpsertUserAsync("user1");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.Resource.Id.Should().Be("user1");
+    }
+
+    [Fact]
+    public async Task UpsertUserAsync_UpdatesExistingUser()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+
+        var response = await db.UpsertUserAsync("user1");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.Id.Should().Be("user1");
+    }
+
+    [Fact]
     public void GetUser_ReturnsUserProxy()
     {
         var client = new InMemoryCosmosClient();
         var db = client.GetDatabase("test-db");
+
         var user = db.GetUser("user1");
+
         user.Should().NotBeNull();
+        user.Id.Should().Be("user1");
     }
 
-    [Fact(Skip = "SKIP REASON: User management is an administrative feature. GetUserQueryIterator requires User to be implemented first.")]
+    [Fact]
     public async Task GetUserQueryIterator_ReturnsUsers()
     {
         var client = new InMemoryCosmosClient();
         await client.CreateDatabaseAsync("test-db");
         var db = client.GetDatabase("test-db");
         await db.CreateUserAsync("user1");
-        var iterator = db.GetUserQueryIterator<dynamic>();
-        var users = new List<dynamic>();
+        await db.CreateUserAsync("user2");
+
+        var iterator = db.GetUserQueryIterator<UserProperties>();
+        var users = new List<UserProperties>();
         while (iterator.HasMoreResults)
         {
             var response = await iterator.ReadNextAsync();
             users.AddRange(response);
         }
+
+        users.Should().HaveCount(2);
+        users.Select(u => u.Id).Should().BeEquivalentTo(["user1", "user2"]);
+    }
+
+    [Fact]
+    public async Task GetUserQueryIterator_QueryDefinition_ReturnsUsers()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+
+        var iterator = db.GetUserQueryIterator<UserProperties>(
+            new QueryDefinition("SELECT * FROM u"));
+        var users = new List<UserProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var response = await iterator.ReadNextAsync();
+            users.AddRange(response);
+        }
+
         users.Should().HaveCount(1);
     }
 
+    [Fact]
+    public async Task User_ReadAsync_ReturnsUserProperties()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+
+        var response = await user.ReadAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.Id.Should().Be("user1");
+    }
+
+    [Fact]
+    public async Task User_ReplaceAsync_UpdatesUser()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+
+        var response = await user.ReplaceAsync(new UserProperties("user1-renamed"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.Id.Should().Be("user1-renamed");
+    }
+
+    [Fact]
+    public async Task User_DeleteAsync_RemovesUser()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+
+        var response = await user.DeleteAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        // Verify user is gone from query results
+        var iterator = db.GetUserQueryIterator<UserProperties>();
+        var users = new List<UserProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            users.AddRange(page);
+        }
+        users.Should().BeEmpty();
+    }
+
+    // ── B15b Permission Management ───────────────────────────────────────────
+
+    [Fact]
+    public async Task Permission_CreateAsync_CreatesPermission()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+        var container = new InMemoryContainer("my-container", "/pk");
+
+        var permProps = new PermissionProperties("perm1", PermissionMode.All, container);
+        var response = await user.CreatePermissionAsync(permProps);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.Resource.Id.Should().Be("perm1");
+        response.Resource.PermissionMode.Should().Be(PermissionMode.All);
+    }
+
+    [Fact]
+    public async Task Permission_CreateAsync_Duplicate_ThrowsConflict()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+        var container = new InMemoryContainer("my-container", "/pk");
+        await user.CreatePermissionAsync(new PermissionProperties("perm1", PermissionMode.All, container));
+
+        var act = () => user.CreatePermissionAsync(new PermissionProperties("perm1", PermissionMode.Read, container));
+
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task Permission_UpsertAsync_CreatesNew()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+        var container = new InMemoryContainer("my-container", "/pk");
+
+        var response = await user.UpsertPermissionAsync(new PermissionProperties("perm1", PermissionMode.Read, container));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Permission_UpsertAsync_UpdatesExisting()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+        var container = new InMemoryContainer("my-container", "/pk");
+        await user.CreatePermissionAsync(new PermissionProperties("perm1", PermissionMode.Read, container));
+
+        var response = await user.UpsertPermissionAsync(new PermissionProperties("perm1", PermissionMode.All, container));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.PermissionMode.Should().Be(PermissionMode.All);
+    }
+
+    [Fact]
+    public async Task Permission_ReadAsync_ReturnsPermission()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+        var container = new InMemoryContainer("my-container", "/pk");
+        await user.CreatePermissionAsync(new PermissionProperties("perm1", PermissionMode.All, container));
+
+        var perm = user.GetPermission("perm1");
+        var response = await perm.ReadAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.Id.Should().Be("perm1");
+        response.Resource.PermissionMode.Should().Be(PermissionMode.All);
+    }
+
+    [Fact]
+    public async Task Permission_ReplaceAsync_UpdatesPermission()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+        var container = new InMemoryContainer("my-container", "/pk");
+        await user.CreatePermissionAsync(new PermissionProperties("perm1", PermissionMode.Read, container));
+
+        var perm = user.GetPermission("perm1");
+        var response = await perm.ReplaceAsync(new PermissionProperties("perm1", PermissionMode.All, container));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.PermissionMode.Should().Be(PermissionMode.All);
+    }
+
+    [Fact]
+    public async Task Permission_DeleteAsync_RemovesPermission()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+        var container = new InMemoryContainer("my-container", "/pk");
+        await user.CreatePermissionAsync(new PermissionProperties("perm1", PermissionMode.All, container));
+
+        var perm = user.GetPermission("perm1");
+        var response = await perm.DeleteAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        // Verify permission is gone
+        var iterator = user.GetPermissionQueryIterator<PermissionProperties>();
+        var perms = new List<PermissionProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            perms.AddRange(page);
+        }
+        perms.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Permission_GetQueryIterator_ReturnsAll()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+        var container = new InMemoryContainer("my-container", "/pk");
+        await user.CreatePermissionAsync(new PermissionProperties("perm1", PermissionMode.All, container));
+        await user.CreatePermissionAsync(new PermissionProperties("perm2", PermissionMode.Read, container));
+
+        var iterator = user.GetPermissionQueryIterator<PermissionProperties>();
+        var perms = new List<PermissionProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            perms.AddRange(page);
+        }
+
+        perms.Should().HaveCount(2);
+        perms.Select(p => p.Id).Should().BeEquivalentTo(["perm1", "perm2"]);
+    }
+
+    [Fact]
+    public async Task Permission_Token_IsSyntheticString()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+        var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+        var container = new InMemoryContainer("my-container", "/pk");
+        await user.CreatePermissionAsync(new PermissionProperties("perm1", PermissionMode.All, container));
+
+        var perm = user.GetPermission("perm1");
+        var response = await perm.ReadAsync();
+
+        response.Resource.Token.Should().NotBeNullOrEmpty();
+        response.Resource.Token.Should().Contain("perm1");
+    }
+
     /// <summary>
-    /// DIVERGENT BEHAVIOR: Real Database supports user management (CreateUserAsync,
-    /// UpsertUserAsync, GetUser, GetUserQueryIterator) for database-level access control.
-    /// InMemoryDatabase throws NotImplementedException for all user operations because
-    /// there is no authentication layer in the in-memory emulator.
-    /// See skipped tests: CreateUserAsync_CreatesUser, UpsertUserAsync_CreatesOrUpdatesUser,
-    /// GetUser_ReturnsUserProxy, GetUserQueryIterator_ReturnsUsers
+    /// DIVERGENT BEHAVIOR: Real Cosmos DB permission tokens are cryptographic resource tokens
+    /// with a specific format, signed by the service, and time-limited. The in-memory emulator
+    /// returns synthetic tokens in the format "type=resource&amp;ver=1&amp;sig=stub_{permissionId}"
+    /// that are non-functional placeholders. Token expiry (tokenExpiryInSeconds) is accepted
+    /// but not enforced. No actual authorization is performed — all operations succeed regardless
+    /// of permission settings.
     /// </summary>
     [Fact]
-    public void DivergentBehavior_UserManagement_AllMethodsThrowNotImplemented()
+    public async Task DivergentBehavior_PermissionTokens_AreSyntheticNotCryptographic()
     {
+        // In real Cosmos DB, permission tokens are cryptographic and time-limited.
+        // The emulator returns synthetic placeholder tokens.
+        // Token expiry is accepted but not enforced.
+        // No authorization is performed — all operations succeed regardless.
         var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
         var db = client.GetDatabase("test-db");
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+        var container = new InMemoryContainer("my-container", "/pk");
+        await user.CreatePermissionAsync(new PermissionProperties("perm1", PermissionMode.All, container));
 
-        ((Func<object>)(() => db.GetUser("user1"))).Should().Throw<NotImplementedException>();
-    }
+        var response = await user.GetPermission("perm1").ReadAsync();
 
-    [Fact]
-    public async Task DivergentBehavior_CreateUserAsync_ThrowsNotImplemented()
-    {
-        var client = new InMemoryCosmosClient();
-        var db = client.GetDatabase("test-db");
-
-        var act = () => db.CreateUserAsync("user1");
-
-        await act.Should().ThrowAsync<NotImplementedException>();
-    }
-
-    [Fact]
-    public async Task DivergentBehavior_UpsertUserAsync_ThrowsNotImplemented()
-    {
-        var client = new InMemoryCosmosClient();
-        var db = client.GetDatabase("test-db");
-
-        var act = () => db.UpsertUserAsync("user1");
-
-        await act.Should().ThrowAsync<NotImplementedException>();
+        // Token is synthetic, not a real resource token
+        response.Resource.Token.Should().StartWith("type=resource&ver=1&sig=stub_");
     }
 
     // ── B16 Client Encryption Keys ───────────────────────────────────────────

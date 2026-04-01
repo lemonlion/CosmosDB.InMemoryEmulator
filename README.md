@@ -10,7 +10,7 @@ Has full support for *all* Cosmos CRUD and SQL querying, including raw querying,
 
 Includes all the other features of CosmosDB like Triggers, Stored Procedures, Change Feed, Transactional Batches, Point-in-time restore, TTL...
 
-User authentication and client encryption are deliberately not implemented as they are generally out of scope for a testing fake.
+Client encryption keys are deliberately not implemented as they require Azure Key Vault integration and are out of scope for a testing fake.
 
 ## Usage
 
@@ -71,6 +71,7 @@ Recommendation is to use **CosmosDB.InMemoryEmulator** for integration/component
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
 - **FeedRange support** — configurable `FeedRangeCount` with scoped queries and change feed iterators
 - **Vector search** — `VECTORDISTANCE` with cosine, dot product, and Euclidean distance; works in `SELECT`, `WHERE`, and `ORDER BY`
+- **Users & permissions** — stub user/permission CRUD with synthetic tokens (no authorization enforced)
 - **1300+ tests** covering all features and performance
 
 For behavioural differences from a real CosmosDB see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)
