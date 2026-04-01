@@ -548,9 +548,16 @@ public class FakeCosmosHandler : HttpMessageHandler
             // Rewritten query — on non-Windows platforms the SDK uses this verbatim.
             // For ORDER BY queries the SDK expects documents wrapped with
             // orderByItems + payload as separate SELECT fields (not SELECT VALUE).
+            // For OFFSET/LIMIT queries, the SDK pipeline applies OFFSET/LIMIT
+            // from the queryInfo fields, so the rewritten query must NOT include them
+            // (otherwise they'd be applied twice: once by the container and once by the SDK).
             if (parsed.OrderByFields is { Length: > 0 })
             {
                 queryInfo["rewrittenQuery"] = BuildOrderByRewrittenQuery(parsed);
+            }
+            else if (parsed.Offset.HasValue || parsed.Limit.HasValue)
+            {
+                queryInfo["rewrittenQuery"] = StripOffsetLimit(sqlQuery);
             }
             else
             {
@@ -798,6 +805,15 @@ public class FakeCosmosHandler : HttpMessageHandler
         }
 
         return documents;
+    }
+
+    /// <summary>
+    /// Strips OFFSET ... LIMIT ... from a SQL query string so the SDK pipeline
+    /// can apply OFFSET/LIMIT itself (avoiding double application).
+    /// </summary>
+    private static string StripOffsetLimit(string sql)
+    {
+        return Regex.Replace(sql, @"\s+OFFSET\s+\d+\s+LIMIT\s+\d+", "", RegexOptions.IgnoreCase).TrimEnd();
     }
 
     /// <summary>
