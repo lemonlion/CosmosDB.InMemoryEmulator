@@ -117,7 +117,12 @@ public class InMemoryDatabase : Database
     {
         var id = containerProperties.Id;
         var pkPath = containerProperties.PartitionKeyPath ?? "/id";
-        return CreateContainerAsync(id, pkPath, throughput, requestOptions, cancellationToken);
+        var result = CreateContainerAsync(id, pkPath, throughput, requestOptions, cancellationToken);
+        if (_containers.TryGetValue(id, out var container))
+        {
+            container.DefaultTimeToLive = containerProperties.DefaultTimeToLive;
+        }
+        return result;
     }
 
     public override Task<ContainerResponse> CreateContainerAsync(
