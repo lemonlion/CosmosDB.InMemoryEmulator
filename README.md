@@ -53,25 +53,25 @@ Recommendation is to use **CosmosDB.InMemoryEmulator** for integration/component
 ## Features
 
 - **Full CRUD** — typed and stream variants with proper status codes and ETags
-- **System metadata** — `_ts` and `_etag` injected into stored items, matching real Cosmos DB
-- **Rich SQL query engine** — 100+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries, full-text search, vector search
-- **LINQ support** — `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` interception
+- **Feature Complete SQL query engine** — 100+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries, full-text search, vector search
+- **Full LINQ support** — `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` interception
+- **Triggers** — pre-trigger and post-trigger execution via C# handlers, with optional JavaScript body interpretation via the `CosmosDB.InMemoryEmulator.JsTriggers` package
 - **Transactional batches** — atomic execution with rollback on failure
 - **Change feed** — iterators, checkpoints, delete tombstones, and `ChangeFeedProcessor`
-- **Patch operations** — all 5 types with deep nested paths and filter predicates
-- **ETag / optimistic concurrency** — `IfMatchEtag`, `IfNoneMatchEtag`, wildcard `*`
+- **Point-in-time restore** — restore a container to any previous point in time via change feed replay
 - **Partition keys** — single and composite, auto-extraction from documents
+- **State persistence** — export/import container state as JSON
 - **TTL / expiration** — container-level and per-item with lazy eviction
+- **ETag / optimistic concurrency** — `IfMatchEtag`, `IfNoneMatchEtag`, wildcard `*`
+- **System metadata** — `_ts` and `_etag` injected into stored items, matching real Cosmos DB
+- **Patch operations** — all 5 types with deep nested paths and filter predicates
 - **Fault injection** — simulate 429 throttling, 503 errors, timeouts
 - **DI integration** — `UseInMemoryCosmosDB()` extension methods for `IServiceCollection`
-- **State persistence** — export/import container state as JSON
-- **Point-in-time restore** — restore a container to any previous point in time via change feed replay
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
-- **Triggers** — pre-trigger and post-trigger execution via C# handlers, with optional JavaScript body interpretation via the `CosmosDB.InMemoryEmulator.JsTriggers` package
 - **FeedRange support** — configurable `FeedRangeCount` with scoped queries and change feed iterators
 - **Vector search** — `VECTORDISTANCE` with cosine, dot product, and Euclidean distance; works in `SELECT`, `WHERE`, and `ORDER BY`
-- **1200+ tests** covering all features
+- **1300+ tests** covering all features and performance
 
 For behavioural differences from a real CosmosDB see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)
 
@@ -83,7 +83,7 @@ For behavioural differences from a real CosmosDB see [Known Limitations](https:/
 | **JavaScript Triggers** | `CosmosDB.InMemoryEmulator.JsTriggers` | Support for JS Triggers | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.JsTriggers) |
 | **Production Extensions** | `CosmosDB.InMemoryEmulator.ProductionExtensions` | Support for use of the *optional* `.ToFeedIteratorOverridable()` alternative to the native `.ToFeedIterator()`* | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.ProductionExtensions) |
 
-* Native `.ToFeedIterator()` method works without any fuss, there is just occasionally some advantages to using `.ToFeedIteratorOverridable()`, hence why this optional package is supplied.  See [Feed Iterator Usage](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feed-Iterator-Usage-Guide).
+* Native `.ToFeedIterator()` method works without any problems, there are just occasionally some advantages to using `.ToFeedIteratorOverridable()`, hence why this optional package is supplied.  See [Feed Iterator Usage](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feed-Iterator-Usage-Guide).
 
 All packages support .NET 8.0+.  .NET 10 specific packages will be created before .NET 8.0 support ends, but it is being deliberately held off to avoid having to fully maintain multiple packages targeting different .NET frameworks, as until then there is little benefit having both.
 

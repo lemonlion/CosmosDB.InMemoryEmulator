@@ -1210,10 +1210,11 @@ public class FakeCosmosHandler : HttpMessageHandler
     private string GetPartitionKeyRanges()
     {
         var ranges = new JArray();
+        var step = 0x1_0000_0000L / _partitionKeyRangeCount;
         for (var i = 0; i < _partitionKeyRangeCount; i++)
         {
-            var minInclusive = i == 0 ? "" : $"{i * (256 / _partitionKeyRangeCount):X2}";
-            var maxExclusive = i == _partitionKeyRangeCount - 1 ? "FF" : $"{(i + 1) * (256 / _partitionKeyRangeCount):X2}";
+            var minInclusive = PartitionKeyHash.RangeBoundaryToHex(i * step);
+            var maxExclusive = i == _partitionKeyRangeCount - 1 ? "FF" : PartitionKeyHash.RangeBoundaryToHex((i + 1) * step);
             ranges.Add(new JObject
             {
                 ["id"] = i.ToString(),
