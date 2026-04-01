@@ -627,7 +627,7 @@ public class InMemoryContainer : Container
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
 
-        if (!_items.ContainsKey(key) || IsExpired(key))
+        if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
         {
             EvictIfExpired(key);
             throw new CosmosException($"Entity with the specified id does not exist. id = {id}",
@@ -635,10 +635,29 @@ public class InMemoryContainer : Container
         }
 
         CheckIfMatch(requestOptions, key);
+
+        ExecutePreTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
+
+        var previousEtag = _etags.TryGetValue(key, out var e) ? e : null;
+        var previousTimestamp = _timestamps.TryGetValue(key, out var ts) ? ts : (DateTimeOffset?)null;
+
         _items.TryRemove(key, out _);
         _etags.TryRemove(key, out _);
         _timestamps.TryRemove(key, out _);
         RecordDeleteTombstone(id, pk);
+
+        try
+        {
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
+        }
+        catch
+        {
+            _items[key] = existingJson;
+            if (previousEtag is not null) _etags[key] = previousEtag;
+            if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
+            throw;
+        }
+
         return Task.FromResult(CreateItemResponse(default(T), HttpStatusCode.NoContent));
     }
 
@@ -822,13 +841,17 @@ public class InMemoryContainer : Container
         bool existed;
         string etag;
         string enrichedJson;
+        string previousJson = null;
+        string previousEtag = null;
+        DateTimeOffset? previousTimestamp = null;
         if (HasUniqueKeys)
         {
             lock (_uniqueKeyWriteLock)
             {
                 if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: itemId))
                     return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
-                existed = _items.ContainsKey(key);
+                existed = _items.TryGetValue(key, out previousJson);
+                if (existed) { previousEtag = _etags.GetValueOrDefault(key); previousTimestamp = _timestamps.GetValueOrDefault(key); }
                 etag = GenerateETag();
                 _etags[key] = etag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
@@ -840,7 +863,8 @@ public class InMemoryContainer : Container
         {
             if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: itemId))
                 return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
-            existed = _items.ContainsKey(key);
+            existed = _items.TryGetValue(key, out previousJson);
+            if (existed) { previousEtag = _etags.GetValueOrDefault(key); previousTimestamp = _timestamps.GetValueOrDefault(key); }
             etag = GenerateETag();
             _etags[key] = etag;
             _timestamps[key] = DateTimeOffset.UtcNow;
@@ -855,9 +879,11 @@ public class InMemoryContainer : Container
         }
         catch
         {
-            if (existed)
+            if (existed && previousJson is not null)
             {
-                // Stream rollback is best-effort — we don't have the previous json
+                _items[key] = previousJson;
+                if (previousEtag is not null) _etags[key] = previousEtag;
+                if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
             }
             else
             {
@@ -880,7 +906,7 @@ public class InMemoryContainer : Container
         ValidateDocumentSize(json);
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
-        if (!_items.ContainsKey(key) || IsExpired(key))
+        if (!_items.TryGetValue(key, out var previousJson) || IsExpired(key))
         {
             EvictIfExpired(key);
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
@@ -890,6 +916,9 @@ public class InMemoryContainer : Container
         {
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
         }
+
+        var previousEtag = _etags.GetValueOrDefault(key);
+        var previousTimestamp = _timestamps.GetValueOrDefault(key);
 
         var jObj = JsonParseHelpers.ParseJson(json);
 
@@ -929,7 +958,9 @@ public class InMemoryContainer : Container
         }
         catch
         {
-            // Stream rollback is best-effort
+            _items[key] = previousJson;
+            if (previousEtag is not null) _etags[key] = previousEtag;
+            _timestamps[key] = previousTimestamp;
             throw;
         }
 
@@ -943,7 +974,7 @@ public class InMemoryContainer : Container
         cancellationToken.ThrowIfCancellationRequested();
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
-        if (!_items.ContainsKey(key) || IsExpired(key))
+        if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
         {
             EvictIfExpired(key);
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
@@ -954,11 +985,28 @@ public class InMemoryContainer : Container
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
         }
 
-        _items.TryRemove(key, out _);
+        ExecutePreTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
 
+        var previousEtag = _etags.TryGetValue(key, out var e) ? e : null;
+        var previousTimestamp = _timestamps.TryGetValue(key, out var ts) ? ts : (DateTimeOffset?)null;
+
+        _items.TryRemove(key, out _);
         _etags.TryRemove(key, out _);
         _timestamps.TryRemove(key, out _);
         RecordDeleteTombstone(id, pk);
+
+        try
+        {
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
+        }
+        catch
+        {
+            _items[key] = existingJson;
+            if (previousEtag is not null) _etags[key] = previousEtag;
+            if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
+            throw;
+        }
+
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
     }
 

@@ -824,7 +824,7 @@ public class JsTriggerTests
             item["preRan"]!.Value<bool>().Should().BeTrue();
         }
 
-        [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+        [Fact]
         public async Task PreTrigger_Js_DeleteOperation_Fires()
         {
             _container.UseJsTriggers();
@@ -1034,7 +1034,7 @@ public class JsTriggerTests
             await readAct.Should().ThrowAsync<CosmosException>();
         }
 
-        [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+        [Fact]
         public async Task PostTrigger_Js_DeleteOperation_Fires()
         {
             _container.UseJsTriggers();
@@ -1062,7 +1062,7 @@ public class JsTriggerTests
             item["id"]!.Value<string>().Should().Be("1");
         }
 
-        [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+        [Fact]
         public async Task PostTrigger_Js_ThrowOnDelete_RollsBackDelete()
         {
             _container.UseJsTriggers();

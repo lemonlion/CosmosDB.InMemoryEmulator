@@ -531,3 +531,135 @@ public class PostTriggerExecutionTests
         postTriggered.Should().BeFalse();
     }
 }
+
+// ─── Phase 4: Delete Trigger Execution ──────────────────────────────────
+
+public class DeleteTriggerTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task PreTrigger_OnDelete_ThrowingTriggerAborts()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        _container.RegisterTrigger("blockDelete", TriggerType.Pre, TriggerOperation.Delete,
+            (Func<JObject, JObject>)(_ => throw new InvalidOperationException("Delete blocked!")));
+
+        var act = () => _container.DeleteItemAsync<JObject>("1", new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "blockDelete" } });
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        // Item should still exist — delete was aborted
+        var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["id"]!.Value<string>().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task PreTrigger_OnDelete_NonThrowingAllowsDeletion()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        var preFired = false;
+        _container.RegisterTrigger("auditDelete", TriggerType.Pre, TriggerOperation.Delete,
+            (Func<JObject, JObject>)(doc => { preFired = true; return doc; }));
+
+        await _container.DeleteItemAsync<JObject>("1", new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "auditDelete" } });
+
+        preFired.Should().BeTrue();
+
+        var readAct = () => _container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        await readAct.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task PostTrigger_FiresAfterDelete()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        var postFired = false;
+        string? deletedId = null;
+        _container.RegisterTrigger("afterDelete", TriggerType.Post, TriggerOperation.Delete,
+            (Action<JObject>)(doc => { postFired = true; deletedId = doc["id"]!.Value<string>(); }));
+
+        await _container.DeleteItemAsync<JObject>("1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "afterDelete" } });
+
+        postFired.Should().BeTrue();
+        deletedId.Should().Be("1");
+    }
+
+    [Fact]
+    public async Task PostTrigger_ExceptionOnDelete_RollsBackDelete()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        _container.RegisterTrigger("failingPostDelete", TriggerType.Post, TriggerOperation.Delete,
+            (Action<JObject>)(_ => throw new InvalidOperationException("Post-trigger failed!")));
+
+        var act = () => _container.DeleteItemAsync<JObject>("1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "failingPostDelete" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+
+        // Item should still exist — the delete was rolled back
+        var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["id"]!.Value<string>().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Stream_RollsBack_OnExceptionDuringUpsertStream()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", value = "original" }),
+            new PartitionKey("a"));
+
+        _container.RegisterTrigger("failUpsert", TriggerType.Post, TriggerOperation.Upsert,
+            (Action<JObject>)(_ => throw new InvalidOperationException("Post-trigger failed!")));
+
+        var json = """{"id":"1","pk":"a","value":"updated"}""";
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+
+        var act = () => _container.UpsertItemStreamAsync(stream, new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "failUpsert" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+
+        // Item should be rolled back to original value
+        var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["value"]!.Value<string>().Should().Be("original");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Stream_RollsBack_OnExceptionDuringReplaceStream()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", value = "original" }),
+            new PartitionKey("a"));
+
+        _container.RegisterTrigger("failReplace", TriggerType.Post, TriggerOperation.Replace,
+            (Action<JObject>)(_ => throw new InvalidOperationException("Post-trigger failed!")));
+
+        var json = """{"id":"1","pk":"a","value":"replaced"}""";
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+
+        var act = () => _container.ReplaceItemStreamAsync(stream, "1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "failReplace" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+
+        // Item should be rolled back to original value
+        var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["value"]!.Value<string>().Should().Be("original");
+    }
+}
