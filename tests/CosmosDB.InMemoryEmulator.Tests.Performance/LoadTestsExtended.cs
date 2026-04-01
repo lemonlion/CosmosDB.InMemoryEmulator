@@ -5,6 +5,7 @@ using System.Text;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Xunit;
 
 namespace CosmosDB.InMemoryEmulator.Tests.Performance;
@@ -1103,7 +1104,7 @@ public class LoadTestsExtended(ITestOutputHelper output)
 
         // New items should still be readable (their TTL just started)
         var newItemErrors = 0;
-        await Task.WhenAll(Enumerable.Range(0, 50).Select(async i =>
+        await Task.WhenAll(Enumerable.Range(1, 50).Select(async i =>
         {
             try
             {
@@ -1164,7 +1165,7 @@ public class LoadTestsExtended(ITestOutputHelper output)
 
         // Read them back through the pipeline
         var readErrors = 0;
-        await Task.WhenAll(Enumerable.Range(0, 200).Select(async i =>
+        await Task.WhenAll(Enumerable.Range(1, 200).Select(async i =>
         {
             try
             {
@@ -1273,7 +1274,7 @@ public class LoadTestsExtended(ITestOutputHelper output)
             {
                 var id = nextId.Increment().ToString();
                 var numPk = int.Parse(id) % 20;
-                var doc = new { id, numericPk = numPk, data = $"data-{id}" };
+                var doc = new JObject { ["id"] = id, ["numericPk"] = numPk, ["data"] = $"data-{id}" };
                 await container.CreateItemAsync(doc, new PartitionKey(numPk));
             }
             catch (Exception)
@@ -1287,12 +1288,12 @@ public class LoadTestsExtended(ITestOutputHelper output)
 
         // Read back with numeric PKs
         var readErrors = 0;
-        await Task.WhenAll(Enumerable.Range(0, 200).Select(async i =>
+        await Task.WhenAll(Enumerable.Range(1, 200).Select(async i =>
         {
             try
             {
                 var numPk = i % 20;
-                await container.ReadItemAsync<dynamic>(i.ToString(), new PartitionKey(numPk));
+                await container.ReadItemAsync<JObject>(i.ToString(), new PartitionKey(numPk));
             }
             catch (Exception)
             {
@@ -1319,7 +1320,7 @@ public class LoadTestsExtended(ITestOutputHelper output)
                 var id = nextId.Increment().ToString();
                 var tenantId = $"tenant-{int.Parse(id) % 5}";
                 var userId = $"user-{int.Parse(id) % 20}";
-                var doc = new { id, tenantId, userId, data = $"data-{id}" };
+                var doc = new JObject { ["id"] = id, ["tenantId"] = tenantId, ["userId"] = userId, ["data"] = $"data-{id}" };
                 var pk = new PartitionKeyBuilder().Add(tenantId).Add(userId).Build();
                 await container.CreateItemAsync(doc, pk);
             }
@@ -1334,14 +1335,14 @@ public class LoadTestsExtended(ITestOutputHelper output)
 
         // Read back with hierarchical PKs
         var readErrors = 0;
-        await Task.WhenAll(Enumerable.Range(0, 200).Select(async i =>
+        await Task.WhenAll(Enumerable.Range(1, 200).Select(async i =>
         {
             try
             {
                 var tenantId = $"tenant-{i % 5}";
                 var userId = $"user-{i % 20}";
                 var pk = new PartitionKeyBuilder().Add(tenantId).Add(userId).Build();
-                await container.ReadItemAsync<dynamic>(i.ToString(), pk);
+                await container.ReadItemAsync<JObject>(i.ToString(), pk);
             }
             catch (Exception)
             {
