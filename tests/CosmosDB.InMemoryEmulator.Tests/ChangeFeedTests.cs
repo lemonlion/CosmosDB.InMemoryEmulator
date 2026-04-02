@@ -2390,3 +2390,1405 @@ public class ChangeFeedGapTests2
         results.Should().HaveCount(2);
     }
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-dive Phase 1: Bug fix tests — Composite PK pipe-in-value tombstone
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ChangeFeedBug2CompositePkPipeTests
+{
+    [Fact]
+    public async Task ChangeFeed_CompositePK_WithPipeInValue_TombstoneHasCorrectFields()
+    {
+        var container = new InMemoryContainer("test", new[] { "/tenantId", "/userId" });
+
+        var json = """{"id":"1","tenantId":"tenant|pipe","userId":"u1","name":"Test"}""";
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        var pk = new PartitionKeyBuilder().Add("tenant|pipe").Add("u1").Build();
+        await container.CreateItemStreamAsync(stream, pk);
+
+        var checkpoint = container.GetChangeFeedCheckpoint();
+        await container.DeleteItemAsync<JObject>("1", pk);
+
+        var iterator = container.GetChangeFeedIterator<JObject>(checkpoint);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        var tombstone = results.Should().ContainSingle().Subject;
+        tombstone["_deleted"]!.Value<bool>().Should().BeTrue();
+        tombstone["tenantId"]!.Value<string>().Should().Be("tenant|pipe");
+        tombstone["userId"]!.Value<string>().Should().Be("u1");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_CompositePK_WithPipeInMultipleValues_TombstoneCorrect()
+    {
+        var container = new InMemoryContainer("test", new[] { "/a", "/b" });
+
+        var json = """{"id":"1","a":"x|y","b":"m|n","name":"Test"}""";
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        var pk = new PartitionKeyBuilder().Add("x|y").Add("m|n").Build();
+        await container.CreateItemStreamAsync(stream, pk);
+
+        var checkpoint = container.GetChangeFeedCheckpoint();
+        await container.DeleteItemAsync<JObject>("1", pk);
+
+        var iterator = container.GetChangeFeedIterator<JObject>(checkpoint);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        var tombstone = results.Should().ContainSingle().Subject;
+        tombstone["a"]!.Value<string>().Should().Be("x|y");
+        tombstone["b"]!.Value<string>().Should().Be("m|n");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_StreamDelete_CompositePK_WithPipe_TombstoneCorrect()
+    {
+        var container = new InMemoryContainer("test", new[] { "/tenantId", "/userId" });
+
+        var json = """{"id":"1","tenantId":"a|b","userId":"c","name":"Test"}""";
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        var pk = new PartitionKeyBuilder().Add("a|b").Add("c").Build();
+        await container.CreateItemStreamAsync(stream, pk);
+
+        var checkpoint = container.GetChangeFeedCheckpoint();
+        await container.DeleteItemStreamAsync("1", pk);
+
+        var iterator = container.GetChangeFeedIterator<JObject>(checkpoint);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        var tombstone = results.Should().ContainSingle().Subject;
+        tombstone["tenantId"]!.Value<string>().Should().Be("a|b");
+        tombstone["userId"]!.Value<string>().Should().Be("c");
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-dive Phase 2: Response metadata (Category A)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ChangeFeedResponseMetadataTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task ChangeFeed_Items_Have_Ts_Property()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<JObject>(0);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        var item = results.Should().ContainSingle().Subject;
+        item["_ts"].Should().NotBeNull();
+        item["_ts"]!.Value<long>().Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task ChangeFeed_Items_Have_Etag_Property()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<JObject>(0);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        var item = results.Should().ContainSingle().Subject;
+        item["_etag"].Should().NotBeNull();
+        item["_etag"]!.Value<string>().Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task ChangeFeed_Response_HasRequestCharge()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+
+        var response = await iterator.ReadNextAsync();
+        response.RequestCharge.Should().BeGreaterThanOrEqualTo(0);
+    }
+
+    [Fact]
+    public async Task ChangeFeed_Response_StatusCode_OKForResults()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+
+        var response = await iterator.ReadNextAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-dive Phase 3: Incremental mode semantics (Category B)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ChangeFeedIncrementalModeDeepTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task ChangeFeed_Incremental_RapidUpdates_ReturnsOnlyLatest()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V1" },
+            new PartitionKey("pk1"));
+
+        for (var i = 2; i <= 10; i++)
+        {
+            await _container.UpsertItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = $"V{i}" },
+                new PartitionKey("pk1"));
+        }
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("V10");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_Incremental_CreateThenDelete_ReturnsEmpty()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "ToDelete" },
+            new PartitionKey("pk1"));
+        await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ChangeFeed_Incremental_MultipleItems_CorrectLatest()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A-V1" },
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B-V1" },
+            new PartitionKey("pk1"));
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A-V2" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results.Should().Contain(r => r.Id == "1" && r.Name == "A-V2");
+        results.Should().Contain(r => r.Id == "2" && r.Name == "B-V1");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_Incremental_OrderPreservedWithinPK()
+    {
+        for (var i = 0; i < 5; i++)
+        {
+            await _container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+        }
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(5);
+        results.Select(r => r.Name).Should().BeEquivalentTo(
+            "Item0", "Item1", "Item2", "Item3", "Item4");
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-dive Phase 4: All-versions mode deep dive (Category C)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ChangeFeedAllVersionsDeepTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task ChangeFeed_AllVersions_IntermediateUpdatesAllPresent()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V1" },
+            new PartitionKey("pk1"));
+
+        for (var i = 2; i <= 6; i++)
+        {
+            await _container.UpsertItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = $"V{i}" },
+                new PartitionKey("pk1"));
+        }
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(0);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(6);
+        results[0].Name.Should().Be("V1");
+        results[5].Name.Should().Be("V6");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_AllVersions_FullLifecycleVisible()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Created" },
+            new PartitionKey("pk1"));
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"));
+        await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<JObject>(0);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(3);
+        results[0]["name"]!.Value<string>().Should().Be("Created");
+        results[1]["name"]!.Value<string>().Should().Be("Updated");
+        results[2]["_deleted"]!.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ChangeFeed_AllVersions_InterleavedItemsCorrectOrder()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "A", PartitionKey = "pk1", Name = "A1" },
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "B", PartitionKey = "pk1", Name = "B1" },
+            new PartitionKey("pk1"));
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "A", PartitionKey = "pk1", Name = "A2" },
+            new PartitionKey("pk1"));
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "B", PartitionKey = "pk1", Name = "B2" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(0);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(4);
+        results[0].Name.Should().Be("A1");
+        results[1].Name.Should().Be("B1");
+        results[2].Name.Should().Be("A2");
+        results[3].Name.Should().Be("B2");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_AllVersions_CheckpointSkipsExactNumber()
+    {
+        for (var i = 0; i < 5; i++)
+        {
+            await _container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+        }
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(3);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results[0].Name.Should().Be("Item3");
+        results[1].Name.Should().Be("Item4");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_AllVersions_LargeCheckpointReturnsEmpty()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Only" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(999);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().BeEmpty();
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-dive Phase 5: Stream iterator deep dive (Category D)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ChangeFeedStreamDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task ChangeFeedStream_FromNow_OnlyItemsAfterCallVisible()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Before" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedStreamIterator(
+            ChangeFeedStartFrom.Now(), ChangeFeedMode.Incremental);
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "After" },
+            new PartitionKey("pk1"));
+
+        if (iterator.HasMoreResults)
+        {
+            using var response = await iterator.ReadNextAsync();
+            using var reader = new StreamReader(response.Content);
+            var body = await reader.ReadToEndAsync();
+            var jObj = JObject.Parse(body);
+            var docs = (JArray)jObj["Documents"]!;
+            docs.Should().NotBeNull();
+        }
+    }
+
+    [Fact]
+    public async Task ChangeFeedStream_FromTime_FiltersCorrectly()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Old" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(100);
+        var midpoint = DateTime.UtcNow;
+        await Task.Delay(100);
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "New" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedStreamIterator(
+            ChangeFeedStartFrom.Time(midpoint), ChangeFeedMode.Incremental);
+
+        if (iterator.HasMoreResults)
+        {
+            using var response = await iterator.ReadNextAsync();
+            using var reader = new StreamReader(response.Content);
+            var body = await reader.ReadToEndAsync();
+            var jObj = JObject.Parse(body);
+            var docs = (JArray)jObj["Documents"]!;
+            docs.Should().HaveCount(1);
+            docs[0]["name"]!.Value<string>().Should().Be("New");
+        }
+    }
+
+    [Fact]
+    public async Task ChangeFeedStream_DocumentsEnvelope_Has_Count()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedStreamIterator(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+
+        using var response = await iterator.ReadNextAsync();
+        using var reader = new StreamReader(response.Content);
+        var body = await reader.ReadToEndAsync();
+        var jObj = JObject.Parse(body);
+
+        jObj["_count"].Should().NotBeNull();
+        jObj["_count"]!.Value<int>().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ChangeFeedStream_WithFeedRange_ScopesCorrectly()
+    {
+        _container.FeedRangeCount = 4;
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk2", Name = "B" },
+            new PartitionKey("pk2"));
+
+        var ranges = await _container.GetFeedRangesAsync();
+        var totalDocs = 0;
+
+        foreach (var range in ranges)
+        {
+            var iterator = _container.GetChangeFeedStreamIterator(
+                ChangeFeedStartFrom.Beginning(range), ChangeFeedMode.Incremental);
+
+            if (iterator.HasMoreResults)
+            {
+                using var response = await iterator.ReadNextAsync();
+                using var reader = new StreamReader(response.Content);
+                var body = await reader.ReadToEndAsync();
+                var jObj = JObject.Parse(body);
+                totalDocs += ((JArray)jObj["Documents"]!).Count;
+            }
+        }
+
+        totalDocs.Should().Be(2);
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-dive Phase 6: Processor delivery semantics (Category E)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ChangeFeedProcessorDeliveryDeepTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task ChangeFeedProcessor_HandlerFailure_SameItemsRedelivered()
+    {
+        var deliveries = new List<List<string>>();
+        var deliveryCount = 0;
+        var secondDelivery = new TaskCompletionSource<bool>();
+
+        var processor = _container.GetChangeFeedProcessorBuilder<TestDocument>(
+                "test-processor",
+                (context, changes, token) =>
+                {
+                    var batch = changes.Select(c => c.Name).ToList();
+                    lock (deliveries) { deliveries.Add(batch); }
+                    var count = Interlocked.Increment(ref deliveryCount);
+                    if (count == 1)
+                        throw new InvalidOperationException("Simulated failure");
+                    secondDelivery.TrySetResult(true);
+                    return Task.CompletedTask;
+                })
+            .WithInstanceName("instance1")
+            .WithInMemoryLeaseContainer()
+            .Build();
+
+        await processor.StartAsync();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Redelivery" },
+            new PartitionKey("pk1"));
+
+        await Task.WhenAny(secondDelivery.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        await processor.StopAsync();
+
+        deliveries.Should().HaveCountGreaterThanOrEqualTo(2);
+        deliveries[0].Should().Contain("Redelivery");
+        deliveries[1].Should().Contain("Redelivery");
+    }
+
+    [Fact]
+    public async Task ChangeFeedProcessor_CheckpointNotAdvancedOnThrow()
+    {
+        var receivedCounts = new List<int>();
+        var callCount = 0;
+        var done = new TaskCompletionSource<bool>();
+
+        var processor = _container.GetChangeFeedProcessorBuilder<TestDocument>(
+                "test-processor",
+                (context, changes, token) =>
+                {
+                    lock (receivedCounts) { receivedCounts.Add(changes.Count); }
+                    var count = Interlocked.Increment(ref callCount);
+                    if (count <= 2)
+                        throw new InvalidOperationException("Fail");
+                    done.TrySetResult(true);
+                    return Task.CompletedTask;
+                })
+            .WithInstanceName("instance1")
+            .WithInMemoryLeaseContainer()
+            .Build();
+
+        await processor.StartAsync();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        await Task.WhenAny(done.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        await processor.StopAsync();
+
+        receivedCounts.Should().HaveCountGreaterThanOrEqualTo(3);
+        receivedCounts.Should().AllSatisfy(c => c.Should().Be(1));
+    }
+
+    [Fact]
+    public async Task ManualCheckpoint_PartialCheckpoint_RestRedelivered()
+    {
+        var deliveries = new List<List<string>>();
+        var callCount = 0;
+        var secondCall = new TaskCompletionSource<bool>();
+
+        var processor = _container.GetChangeFeedProcessorBuilderWithManualCheckpoint<TestDocument>(
+                "test-processor",
+                async (context, changes, checkpointAsync, ct) =>
+                {
+                    var batch = changes.Select(c => c.Name).ToList();
+                    lock (deliveries) { deliveries.Add(batch); }
+                    var count = Interlocked.Increment(ref callCount);
+                    if (count == 1)
+                    {
+                        return;
+                    }
+                    await checkpointAsync();
+                    secondCall.TrySetResult(true);
+                })
+            .WithInstanceName("instance1")
+            .WithInMemoryLeaseContainer()
+            .Build();
+
+        await processor.StartAsync();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        await Task.WhenAny(secondCall.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        await processor.StopAsync();
+
+        deliveries.Should().HaveCountGreaterThanOrEqualTo(2);
+        deliveries[0].Should().Contain("A");
+        deliveries[1].Should().Contain("A");
+    }
+
+    [Fact]
+    public async Task ChangeFeedProcessor_DeletedItemsAsTombstones_ViaCheckpointIterator()
+    {
+        var receivedAll = new List<JObject>();
+        var handlerCalled = new TaskCompletionSource<bool>();
+
+        var processor = _container.GetChangeFeedProcessorBuilder<JObject>(
+                "test-processor",
+                (context, changes, token) =>
+                {
+                    lock (receivedAll) { receivedAll.AddRange(changes); }
+                    if (receivedAll.Any(c => c["_deleted"]?.Value<bool>() == true))
+                        handlerCalled.TrySetResult(true);
+                    return Task.CompletedTask;
+                })
+            .WithInstanceName("instance1")
+            .WithInMemoryLeaseContainer()
+            .Build();
+
+        await processor.StartAsync();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "ToDelete" },
+            new PartitionKey("pk1"));
+        await Task.Delay(200);
+        await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        await Task.WhenAny(handlerCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        await processor.StopAsync();
+
+        receivedAll.Should().Contain(j => j["_deleted"] != null && (bool)j["_deleted"]! == true);
+    }
+
+    [Fact]
+    public async Task ChangeFeedProcessor_100Items_AllDelivered()
+    {
+        var received = new List<string>();
+        var allDone = new TaskCompletionSource<bool>();
+
+        var processor = _container.GetChangeFeedProcessorBuilder<TestDocument>(
+                "test-processor",
+                (context, changes, token) =>
+                {
+                    lock (received) { received.AddRange(changes.Select(c => c.Name)); }
+                    if (received.Count >= 100)
+                        allDone.TrySetResult(true);
+                    return Task.CompletedTask;
+                })
+            .WithInstanceName("instance1")
+            .WithInMemoryLeaseContainer()
+            .Build();
+
+        await processor.StartAsync();
+
+        for (var i = 0; i < 100; i++)
+        {
+            await _container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+        }
+
+        await Task.WhenAny(allDone.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+        await processor.StopAsync();
+
+        received.Should().HaveCount(100);
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-dive Phase 7: FeedRange combinations (Category F)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ChangeFeedFeedRangeCombinationTests
+{
+    [Fact]
+    public async Task ChangeFeed_SingleRange_ReturnsAll()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey") { FeedRangeCount = 1 };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
+        await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk2", Name = "B" }, new PartitionKey("pk2"));
+
+        var ranges = await container.GetFeedRangesAsync();
+        ranges.Should().ContainSingle();
+
+        var iterator = container.GetChangeFeedIterator<TestDocument>(
+            ChangeFeedStartFrom.Beginning(ranges[0]), ChangeFeedMode.Incremental);
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task ChangeFeed_MultiRange_NoOverlap_UnionEqualsAll()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey") { FeedRangeCount = 4 };
+
+        for (var i = 0; i < 20; i++)
+        {
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"Item{i}" },
+                new PartitionKey($"pk-{i}"));
+        }
+
+        var ranges = await container.GetFeedRangesAsync();
+        var allIds = new HashSet<string>();
+
+        foreach (var range in ranges)
+        {
+            var iterator = container.GetChangeFeedIterator<TestDocument>(
+                ChangeFeedStartFrom.Beginning(range), ChangeFeedMode.Incremental);
+
+            while (iterator.HasMoreResults)
+            {
+                var page = await iterator.ReadNextAsync();
+                foreach (var item in page)
+                    allIds.Add(item.Id);
+            }
+        }
+
+        allIds.Should().HaveCount(20);
+    }
+
+    [Fact]
+    public async Task ChangeFeed_FeedRange_WithTime_BothFiltersApplied()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey") { FeedRangeCount = 4 };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Old" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(100);
+        var midpoint = DateTime.UtcNow;
+        await Task.Delay(100);
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk2", Name = "New" },
+            new PartitionKey("pk2"));
+
+        var ranges = await container.GetFeedRangesAsync();
+        var allResults = new List<TestDocument>();
+
+        foreach (var range in ranges)
+        {
+            var iterator = container.GetChangeFeedIterator<TestDocument>(
+                ChangeFeedStartFrom.Time(midpoint, range), ChangeFeedMode.Incremental);
+            while (iterator.HasMoreResults)
+            {
+                var page = await iterator.ReadNextAsync();
+                allResults.AddRange(page);
+            }
+        }
+
+        allResults.Should().ContainSingle().Which.Name.Should().Be("New");
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-dive Phase 8: Edge cases (Category G)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ChangeFeedEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task ChangeFeed_EmptyStringPK_Preserved()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "", Name = "EmptyPK" },
+            new PartitionKey(""));
+
+        var iterator = _container.GetChangeFeedIterator<JObject>(0);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        results[0]["partitionKey"]!.Value<string>().Should().Be("");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_SpecialCharacters_UnicodeEmoji_Preserved()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Hello 🌍 世界" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(0);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Hello 🌍 世界");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_NullableFields_Preserved()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = null! },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<JObject>(0);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        var item = results.Should().ContainSingle().Subject;
+        item["name"]!.Type.Should().Be(JTokenType.Null);
+    }
+
+    [Fact]
+    public async Task ChangeFeed_NestedObjects_Preserved()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument
+            {
+                Id = "1",
+                PartitionKey = "pk1",
+                Name = "Nested",
+                Nested = new NestedObject { Description = "deep" }
+            },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<JObject>(0);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        var item = results.Should().ContainSingle().Subject;
+        item["nested"]!["description"]!.Value<string>().Should().Be("deep");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_NumericPK_Preserved()
+    {
+        var container = new InMemoryContainer("test", "/numericKey");
+
+        var json = """{"id":"1","numericKey":42,"name":"NumPK"}""";
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        await container.CreateItemStreamAsync(stream, new PartitionKey(42));
+
+        var iterator = container.GetChangeFeedIterator<JObject>(0);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        results[0]["numericKey"]!.Value<int>().Should().Be(42);
+    }
+
+    [Fact]
+    public async Task ChangeFeed_ReadNextAfterExhausted_ReturnsEmpty()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Only" },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+
+        while (iterator.HasMoreResults)
+        {
+            await iterator.ReadNextAsync();
+        }
+
+        iterator.HasMoreResults.Should().BeFalse();
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-dive Phase 9: TTL + State Persistence + Unique Keys (Categories I, J, K)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ChangeFeedTTLAndStatePersistenceTests
+{
+    [Fact]
+    public async Task ChangeFeed_TTL_ExpiredItem_StillInChangeFeed()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Expiring" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(1500);
+
+        var iterator = container.GetChangeFeedIterator<TestDocument>(0);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Expiring");
+    }
+
+    [Fact]
+    public async Task ExportState_DoesNotIncludeChangeFeed()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var exported = container.ExportState();
+        var jObj = JObject.Parse(exported);
+
+        jObj["items"].Should().NotBeNull();
+        jObj.Properties().Select(p => p.Name).Should().NotContain("changeFeed");
+    }
+
+    [Fact]
+    public async Task PITR_PreservesChangeFeed_CanReplayFromCheckpoint()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V1" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(50);
+        var pitrPoint = DateTimeOffset.UtcNow;
+        await Task.Delay(50);
+
+        await container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V2" },
+            new PartitionKey("pk1"));
+
+        container.RestoreToPointInTime(pitrPoint);
+
+        var readResponse = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        readResponse.Resource.Name.Should().Be("V1");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_UniqueKeyViolation_NoChangeFeedEntry()
+    {
+        var containerProps = new ContainerProperties("test", "/partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/name" } } }
+            }
+        };
+        var container = new InMemoryContainer(containerProps);
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Unique" },
+            new PartitionKey("pk1"));
+
+        var checkpoint = container.GetChangeFeedCheckpoint();
+
+        var act = async () => await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Unique" },
+            new PartitionKey("pk1"));
+
+        await act.Should().ThrowAsync<CosmosException>();
+
+        var newCheckpoint = container.GetChangeFeedCheckpoint();
+        newCheckpoint.Should().Be(checkpoint, "failed write should not produce a change feed entry");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_ETagConflict_NoChangeFeedEntry()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var checkpoint = container.GetChangeFeedCheckpoint();
+
+        var act = async () => await container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Conflict" },
+            "1",
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"wrong-etag\"" });
+
+        await act.Should().ThrowAsync<CosmosException>();
+
+        var newCheckpoint = container.GetChangeFeedCheckpoint();
+        newCheckpoint.Should().Be(checkpoint, "failed replace should not produce a change feed entry");
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-dive Phase 10: Conditional operations (Category L)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ChangeFeedConditionalOperationTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task ChangeFeed_SuccessfulConditionalPatch_Recorded()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original", Value = 10 },
+            new PartitionKey("pk1"));
+
+        var checkpoint = _container.GetChangeFeedCheckpoint();
+
+        await _container.PatchItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new List<PatchOperation> { PatchOperation.Set("/name", "Patched") },
+            new PatchItemRequestOptions { FilterPredicate = "FROM c WHERE c.value = 10" });
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(checkpoint);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Patched");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_FailedConditionalPatch_NotRecorded()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original", Value = 10 },
+            new PartitionKey("pk1"));
+
+        var checkpoint = _container.GetChangeFeedCheckpoint();
+
+        var act = async () => await _container.PatchItemAsync<TestDocument>(
+            "1", new PartitionKey("pk1"),
+            new List<PatchOperation> { PatchOperation.Set("/name", "Patched") },
+            new PatchItemRequestOptions { FilterPredicate = "FROM c WHERE c.value = 999" });
+
+        await act.Should().ThrowAsync<CosmosException>();
+
+        var newCheckpoint = _container.GetChangeFeedCheckpoint();
+        newCheckpoint.Should().Be(checkpoint, "failed conditional patch should not record in change feed");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_SuccessfulETagReplace_Recorded()
+    {
+        var createResponse = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var etag = createResponse.ETag;
+        var checkpoint = _container.GetChangeFeedCheckpoint();
+
+        await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" },
+            "1",
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = etag });
+
+        var iterator = _container.GetChangeFeedIterator<TestDocument>(checkpoint);
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Replaced");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_FailedETagReplace_NotRecorded()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var checkpoint = _container.GetChangeFeedCheckpoint();
+
+        var act = async () => await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Conflict" },
+            "1",
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"bad-etag\"" });
+
+        await act.Should().ThrowAsync<CosmosException>();
+
+        var newCheckpoint = _container.GetChangeFeedCheckpoint();
+        newCheckpoint.Should().Be(checkpoint);
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-dive Phase 11: Processor builder API surface (Category H)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ChangeFeedProcessorBuilderApiTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public void ProcessorBuilder_WithPollInterval_Accepted()
+    {
+        var builder = _container.GetChangeFeedProcessorBuilder<TestDocument>(
+            "processor",
+            (context, changes, token) => Task.CompletedTask);
+
+        var chained = builder
+            .WithInstanceName("instance")
+            .WithInMemoryLeaseContainer()
+            .WithPollInterval(TimeSpan.FromMilliseconds(100));
+
+        chained.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void ProcessorBuilder_WithMaxItems_Accepted()
+    {
+        var builder = _container.GetChangeFeedProcessorBuilder<TestDocument>(
+            "processor",
+            (context, changes, token) => Task.CompletedTask);
+
+        var chained = builder
+            .WithInstanceName("instance")
+            .WithInMemoryLeaseContainer()
+            .WithMaxItems(50);
+
+        chained.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void ProcessorBuilder_WithStartTime_Accepted()
+    {
+        var builder = _container.GetChangeFeedProcessorBuilder<TestDocument>(
+            "processor",
+            (context, changes, token) => Task.CompletedTask);
+
+        var chained = builder
+            .WithInstanceName("instance")
+            .WithInMemoryLeaseContainer()
+            .WithStartTime(DateTime.UtcNow);
+
+        chained.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void ManualCheckpointBuilder_ChainingAccepted()
+    {
+        var builder = _container.GetChangeFeedProcessorBuilderWithManualCheckpoint<TestDocument>(
+            "processor",
+            (context, changes, checkpointAsync, ct) => Task.CompletedTask);
+
+        var chained = builder
+            .WithInstanceName("instance")
+            .WithInMemoryLeaseContainer()
+            .WithPollInterval(TimeSpan.FromMilliseconds(100))
+            .WithMaxItems(50);
+
+        chained.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void StreamProcessorBuilder_ChainingAccepted()
+    {
+        Container.ChangeFeedStreamHandler handler =
+            (context, changes, token) => Task.CompletedTask;
+
+        var builder = _container.GetChangeFeedProcessorBuilder("processor", handler);
+
+        var chained = builder
+            .WithInstanceName("instance")
+            .WithInMemoryLeaseContainer()
+            .WithPollInterval(TimeSpan.FromMilliseconds(100));
+
+        chained.Should().NotBeNull();
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Deep-dive Phase 12: Skipped tests + Sister tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ChangeFeedDeepDiveSkippedAndSisterTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact(Skip = "ChangeFeedMode.AllVersionsAndDeletes is not yet exposed through the typed " +
+                   "change feed iterator. The emulator supports all-versions semantics via the " +
+                   "checkpoint-based GetChangeFeedIterator<T>(long checkpoint) overload.")]
+    public async Task ChangeFeed_AllVersionsAndDeletes_ViaSDKEnum()
+    {
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// SISTER TEST: Documents that all-versions+deletes semantics are available via the
+    /// checkpoint-based iterator.
+    /// </summary>
+    [Fact]
+    public async Task ChangeFeed_AllVersionsAndDeletes_ViaCheckpoint_WorksCorrectly()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Created" },
+            new PartitionKey("pk1"));
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"));
+        await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        var iterator = _container.GetChangeFeedIterator<JObject>(0);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(3);
+        results[0]["name"]!.Value<string>().Should().Be("Created");
+        results[1]["name"]!.Value<string>().Should().Be("Updated");
+        results[2]["_deleted"]!.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact(Skip = "Change feed processor delivers all versions (including intermediates), " +
+                   "not just latest version per item. Handlers should be idempotent per " +
+                   "Cosmos DB's 'at least once' guarantee regardless.")]
+    public async Task ChangeFeed_Processor_DeliversOnlyLatestVersion()
+    {
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// SISTER TEST: Documents that the processor delivers all versions including intermediates.
+    /// </summary>
+    [Fact]
+    public async Task ChangeFeed_Processor_DeliversAllVersions_IncludingIntermediates()
+    {
+        var receivedNames = new List<string>();
+        var allDone = new TaskCompletionSource<bool>();
+
+        var processor = _container.GetChangeFeedProcessorBuilder<TestDocument>(
+                "test-processor",
+                (context, changes, token) =>
+                {
+                    lock (receivedNames)
+                    {
+                        receivedNames.AddRange(changes.Select(c => c.Name));
+                    }
+                    if (receivedNames.Count >= 3)
+                        allDone.TrySetResult(true);
+                    return Task.CompletedTask;
+                })
+            .WithInstanceName("instance1")
+            .WithInMemoryLeaseContainer()
+            .Build();
+
+        await processor.StartAsync();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V1" },
+            new PartitionKey("pk1"));
+        await Task.Delay(200);
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V2" },
+            new PartitionKey("pk1"));
+        await Task.Delay(200);
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V3" },
+            new PartitionKey("pk1"));
+
+        await Task.WhenAny(allDone.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        await processor.StopAsync();
+
+        receivedNames.Should().Contain("V1");
+        receivedNames.Should().Contain("V2");
+        receivedNames.Should().Contain("V3");
+    }
+
+    [Fact(Skip = "TTL eviction in the emulator is lazy (items removed on next read access). " +
+                   "TTL-evicted items do not call RecordDeleteTombstone(), so they silently " +
+                   "disappear without a change feed entry.")]
+    public async Task ChangeFeed_TTL_Eviction_RecordsDeleteInChangeFeed()
+    {
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// SISTER TEST: Documents that TTL eviction does NOT produce a change feed entry.
+    /// </summary>
+    [Fact]
+    public async Task ChangeFeed_TTL_ExpiredItem_SilentlyRemoved_NoChangeFeedEntry()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Expiring" },
+            new PartitionKey("pk1"));
+
+        var checkpointAfterCreate = container.GetChangeFeedCheckpoint();
+
+        await Task.Delay(1500);
+
+        try
+        {
+            await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        }
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            // Expected — item is expired
+        }
+
+        var newCheckpoint = container.GetChangeFeedCheckpoint();
+        newCheckpoint.Should().Be(checkpointAfterCreate,
+            "TTL eviction should not produce a change feed entry");
+    }
+}

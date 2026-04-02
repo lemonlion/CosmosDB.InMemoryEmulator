@@ -663,7 +663,7 @@ public class InMemoryContainer : Container
         _items.TryRemove(key, out _);
         _etags.TryRemove(key, out _);
         _timestamps.TryRemove(key, out _);
-        RecordDeleteTombstone(id, pk);
+        RecordDeleteTombstone(id, pk, partitionKey);
 
         try
         {
@@ -1025,7 +1025,7 @@ public class InMemoryContainer : Container
         _items.TryRemove(key, out _);
         _etags.TryRemove(key, out _);
         _timestamps.TryRemove(key, out _);
-        RecordDeleteTombstone(id, pk);
+        RecordDeleteTombstone(id, pk, partitionKey);
 
         try
         {
@@ -1803,14 +1803,44 @@ public class InMemoryContainer : Container
         }
     }
 
-    private void RecordDeleteTombstone(string id, string pk)
+    private void RecordDeleteTombstone(string id, string pk, PartitionKey partitionKey = default)
     {
         var tombstone = new JObject { ["id"] = id, ["_deleted"] = true, ["_ts"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds() };
-        var pkValues = pk.Split('|');
-        for (var i = 0; i < PartitionKeyPaths.Count; i++)
+
+        if (PartitionKeyPaths.Count > 1 && partitionKey != default && partitionKey != PartitionKey.None && partitionKey != PartitionKey.Null)
         {
-            tombstone[PartitionKeyPaths[i].TrimStart('/')] = i < pkValues.Length ? pkValues[i] : null;
+            // For composite keys, parse from the PartitionKey object directly to avoid
+            // pipe-delimiter issues when a PK value itself contains '|'.
+            var raw = partitionKey.ToString();
+            try
+            {
+                var arr = JArray.Parse(raw);
+                for (var i = 0; i < PartitionKeyPaths.Count && i < arr.Count; i++)
+                {
+                    tombstone[PartitionKeyPaths[i].TrimStart('/')] = arr[i].Type == JTokenType.String
+                        ? arr[i].Value<string>()
+                        : arr[i].ToString();
+                }
+            }
+            catch
+            {
+                // Fallback to split-based approach
+                var pkValues = pk.Split('|');
+                for (var i = 0; i < PartitionKeyPaths.Count; i++)
+                {
+                    tombstone[PartitionKeyPaths[i].TrimStart('/')] = i < pkValues.Length ? pkValues[i] : null;
+                }
+            }
         }
+        else
+        {
+            var pkValues = pk.Split('|');
+            for (var i = 0; i < PartitionKeyPaths.Count; i++)
+            {
+                tombstone[PartitionKeyPaths[i].TrimStart('/')] = i < pkValues.Length ? pkValues[i] : null;
+            }
+        }
+
         RecordChangeFeed(id, pk, tombstone.ToString(Newtonsoft.Json.Formatting.None), isDelete: true);
     }
 
