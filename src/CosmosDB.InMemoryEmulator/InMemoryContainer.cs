@@ -2484,6 +2484,14 @@ public class InMemoryContainer : Container
     private List<string> FilterItemsByQuery(
         string queryText, IDictionary<string, object> parameters, QueryRequestOptions requestOptions)
     {
+        // Detect ORDER BY RANK RRF(...) early — the parser may silently drop it on some runtimes
+        if (System.Text.RegularExpressions.Regex.IsMatch(
+                queryText, @"\bORDER\s+BY\s+RANK\s+RRF\s*\(", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            throw new NotSupportedException(
+                "ORDER BY RANK RRF() is not implemented in the in-memory emulator.");
+        }
+
         if (_userDefinedFunctions.Count > 0)
         {
             parameters[UdfRegistryKey] = _userDefinedFunctions;

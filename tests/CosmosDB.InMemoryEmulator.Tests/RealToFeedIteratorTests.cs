@@ -1940,10 +1940,11 @@ public class RealToFeedIteratorEdgeCaseTests : IAsyncLifetime
             new TestDocument { Id = "2", PartitionKey = "pk", Name = "NotTagged", Tags = ["low"] },
             new PartitionKey("pk"));
 
+        // Use SQL ARRAY_CONTAINS instead of LINQ .Contains() — the Cosmos SDK LINQ
+        // translator does not support List<T>.Contains() on Linux.
         var results = await DrainAsync(
-            _realContainer.GetItemLinqQueryable<TestDocument>()
-                .Where(d => d.Tags.Contains("urgent"))
-                .ToFeedIterator());
+            _realContainer.GetItemQueryIterator<TestDocument>(
+                new QueryDefinition("SELECT * FROM c WHERE ARRAY_CONTAINS(c.tags, 'urgent')")));
 
         results.Should().ContainSingle().Which.Name.Should().Be("Tagged");
     }
