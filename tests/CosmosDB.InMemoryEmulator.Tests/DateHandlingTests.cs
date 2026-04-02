@@ -1226,3 +1226,923 @@ public class DateComposedQueryTests
         results.Select(r => r["id"]!.ToString()).Should().ContainInOrder("a", "b", "c");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Date Handling Deep Dive — Phase 1: Bug Fix Verification Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DateTimeFromPartsInvalidArgsTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task<JObject?> QuerySingleOrNull(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.SingleOrDefault();
+    }
+
+    [Fact]
+    public async Task DateTimeFromParts_NegativeYear_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeFromParts(-2000, 1, 1) FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeFromParts_InvalidMonth13_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeFromParts(2020, 13, 1) FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeFromParts_InvalidDay32_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeFromParts(2020, 1, 32) FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeFromParts_Feb29NonLeapYear_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeFromParts(2023, 2, 29) FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeFromParts_DocsExample_NegativeArgs_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeFromParts(-2000, -1, -1) FROM c");
+        result.Should().BeNull();
+    }
+}
+
+public class DateTimeAddInvalidPartTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task<JObject?> QuerySingleOrNull(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.SingleOrDefault();
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_InvalidPart_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeAdd('invalid', 1, '2020-01-01T00:00:00.0000000Z') FROM c");
+        result.Should().BeNull();
+    }
+}
+
+public class DateTimeBinBugFixTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task<string?> QuerySingleString(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<string>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.SingleOrDefault();
+    }
+
+    private async Task<JObject?> QuerySingleOrNull(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.SingleOrDefault();
+    }
+
+    [Fact]
+    public async Task DateTimeBin_ZeroBinSize_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeBin('2021-06-28T17:24:29.2991234Z', 'hh', 0) FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeBin_NegativeBinSize_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeBin('2021-06-28T17:24:29.2991234Z', 'hh', -1) FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeBin_Microsecond_BinsCorrectly()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeBin('2021-06-28T17:24:29.1234567Z', 'mcs', 100) FROM c");
+        result.Should().NotBeNull();
+        result.Should().StartWith("2021-06-28T17:24:29.123");
+    }
+
+    [Fact]
+    public async Task DateTimeBin_Nanosecond_BinsCorrectly()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeBin('2021-06-28T17:24:29.1234567Z', 'ns', 1000) FROM c");
+        result.Should().NotBeNull();
+        result.Should().StartWith("2021-06-28T17:24:29.123");
+    }
+
+    [Fact]
+    public async Task DateTimeBin_TwoArgForm_DefaultBinSize1()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeBin('2021-06-28T17:24:29.2991234Z', 'hh') FROM c");
+        result.Should().Be("2021-06-28T17:00:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeBin_OriginBefore1601_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeBin('2021-06-28T17:24:29Z', 'hh', 1, '1500-01-01T00:00:00Z') FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeBin_InvalidPart_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeBin('2021-06-28T17:24:29Z', 'invalid', 1) FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeBin_InvalidDateTime_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeBin('not-a-date', 'hh', 1) FROM c");
+        result.Should().BeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Date Handling Deep Dive — Phase 2: DateTimeAdd Extended
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DateTimeAddExtendedTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task<string> QuerySingleString(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<string>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.Single();
+    }
+
+    private async Task<JObject?> QuerySingleOrNull(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.SingleOrDefault();
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_DayLongAlias_AddsCorrectly()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeAdd('day', 5, '2020-01-01T00:00:00.0000000Z') FROM c");
+        result.Should().Be("2020-01-06T00:00:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_DAlias_AddsCorrectly()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeAdd('d', 5, '2020-01-01T00:00:00.0000000Z') FROM c");
+        result.Should().Be("2020-01-06T00:00:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_HourLongAlias_AddsCorrectly()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeAdd('hour', 3, '2020-01-01T00:00:00.0000000Z') FROM c");
+        result.Should().Be("2020-01-01T03:00:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_SubtractMonthCrossYearBoundary()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeAdd('mm', -2, '2020-01-15T00:00:00.0000000Z') FROM c");
+        result.Should().Be("2019-11-15T00:00:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_AddMonth_Mar31Plus1_ClampsToApr30()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeAdd('mm', 1, '2020-03-31T00:00:00.0000000Z') FROM c");
+        result.Should().Be("2020-04-30T00:00:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_InvalidDateTimeString_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeAdd('dd', 1, 'not-a-date') FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_PreserveSubSecondPrecision()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeAdd('hh', 1, '2020-01-01T00:00:00.1234567Z') FROM c");
+        result.Should().Be("2020-01-01T01:00:00.1234567Z");
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_ZeroAmount_ReturnsUnchanged()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeAdd('dd', 0, '2020-06-15T12:30:00.0000000Z') FROM c");
+        result.Should().Be("2020-06-15T12:30:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_LargeYearAddition()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeAdd('yyyy', 1000, '1020-01-01T00:00:00.0000000Z') FROM c");
+        result.Should().Be("2020-01-01T00:00:00.0000000Z");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Date Handling Deep Dive — Phase 3: DateTimePart Alias Coverage
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DateTimePartAliasTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task<long> QuerySingleLong(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<long>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<long>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.Single();
+    }
+
+    private async Task<JObject?> QuerySingleOrNull(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.SingleOrDefault();
+    }
+
+    [Theory]
+    [InlineData("day", 29)]
+    [InlineData("d", 29)]
+    [InlineData("hour", 8)]
+    [InlineData("hh", 8)]
+    [InlineData("minute", 30)]
+    [InlineData("mi", 30)]
+    [InlineData("n", 30)]
+    [InlineData("second", 0)]
+    [InlineData("ss", 0)]
+    [InlineData("s", 0)]
+    [InlineData("millisecond", 130)]
+    [InlineData("microsecond", 130161)]
+    [InlineData("nanosecond", 130161700)]
+    public async Task DateTimePart_AllAliases(string part, long expected)
+    {
+        var result = await QuerySingleLong(
+            $"SELECT VALUE DateTimePart('{part}', '2016-05-29T08:30:00.1301617Z') FROM c");
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task DateTimePart_InvalidPart_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimePart('invalid', '2020-01-01T00:00:00Z') FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimePart_InvalidDateTime_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimePart('yyyy', 'not-a-date') FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimePart_MidnightZeroValues()
+    {
+        var result = await QuerySingleLong(
+            "SELECT VALUE DateTimePart('hh', '2020-01-01T00:00:00.0000000Z') FROM c");
+        result.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task DateTimePart_EndOfDay_235959()
+    {
+        var result = await QuerySingleLong(
+            "SELECT VALUE DateTimePart('ss', '2020-12-31T23:59:59.9999999Z') FROM c");
+        result.Should().Be(59);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Date Handling Deep Dive — Phase 4: DateTimeDiff Extended
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DateTimeDiffExtendedDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task<long> QuerySingleLong(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<long>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<long>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.Single();
+    }
+
+    private async Task<JObject?> QuerySingleOrNull(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.SingleOrDefault();
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_SameDateTime_ZeroForAllParts()
+    {
+        var result = await QuerySingleLong(
+            "SELECT VALUE DateTimeDiff('yyyy', '2020-01-01T00:00:00Z', '2020-01-01T00:00:00Z') FROM c");
+        result.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_BoundaryCrossing_Minute()
+    {
+        var result = await QuerySingleLong(
+            "SELECT VALUE DateTimeDiff('mi', '2020-01-01T12:59:30Z', '2020-01-01T13:00:30Z') FROM c");
+        result.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_BoundaryCrossing_Second()
+    {
+        var result = await QuerySingleLong(
+            "SELECT VALUE DateTimeDiff('ss', '2020-01-01T00:00:00.9000000Z', '2020-01-01T00:00:01.1000000Z') FROM c");
+        result.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_BoundaryCrossing_Millisecond()
+    {
+        var result = await QuerySingleLong(
+            "SELECT VALUE DateTimeDiff('ms', '2020-01-01T00:00:00.0009000Z', '2020-01-01T00:00:00.0011000Z') FROM c");
+        result.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_VeryLargeSpan_Centuries()
+    {
+        var result = await QuerySingleLong(
+            "SELECT VALUE DateTimeDiff('yyyy', '1900-01-01T00:00:00Z', '2100-01-01T00:00:00Z') FROM c");
+        result.Should().Be(200);
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_InvalidPart_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeDiff('invalid', '2020-01-01T00:00:00Z', '2021-01-01T00:00:00Z') FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_InvalidStartDateTime_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeDiff('dd', 'not-a-date', '2020-01-01T00:00:00Z') FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_InvalidEndDateTime_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeDiff('dd', '2020-01-01T00:00:00Z', 'not-a-date') FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_DayWithPartialDays()
+    {
+        var result = await QuerySingleLong(
+            "SELECT VALUE DateTimeDiff('dd', '2020-01-01T23:59:00Z', '2020-01-02T00:01:00Z') FROM c");
+        result.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_NegativeBoundaryCrossing_Hour()
+    {
+        var result = await QuerySingleLong(
+            "SELECT VALUE DateTimeDiff('hh', '2020-01-01T13:00:30Z', '2020-01-01T12:59:30Z') FROM c");
+        result.Should().Be(-1);
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_MonthPartialMonth()
+    {
+        var result = await QuerySingleLong(
+            "SELECT VALUE DateTimeDiff('mm', '2020-01-31T00:00:00Z', '2020-02-15T00:00:00Z') FROM c");
+        result.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_YearPartialYear()
+    {
+        var result = await QuerySingleLong(
+            "SELECT VALUE DateTimeDiff('yyyy', '2020-12-15T00:00:00Z', '2021-01-15T00:00:00Z') FROM c");
+        result.Should().Be(1);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Date Handling Deep Dive — Phase 5: DateTimeBin Extended
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DateTimeBinExtendedDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task<string> QuerySingleString(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<string>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.Single();
+    }
+
+    [Theory]
+    [InlineData("year", "2021-01-01T00:00:00.0000000Z")]
+    [InlineData("yyyy", "2021-01-01T00:00:00.0000000Z")]
+    [InlineData("month", "2021-06-01T00:00:00.0000000Z")]
+    [InlineData("mm", "2021-06-01T00:00:00.0000000Z")]
+    [InlineData("day", "2021-06-28T00:00:00.0000000Z")]
+    [InlineData("dd", "2021-06-28T00:00:00.0000000Z")]
+    [InlineData("hour", "2021-06-28T17:00:00.0000000Z")]
+    [InlineData("hh", "2021-06-28T17:00:00.0000000Z")]
+    [InlineData("minute", "2021-06-28T17:24:00.0000000Z")]
+    [InlineData("mi", "2021-06-28T17:24:00.0000000Z")]
+    [InlineData("second", "2021-06-28T17:24:29.0000000Z")]
+    [InlineData("ss", "2021-06-28T17:24:29.0000000Z")]
+    public async Task DateTimeBin_LongFormAliases(string part, string expected)
+    {
+        var result = await QuerySingleString(
+            $"SELECT VALUE DateTimeBin('2021-06-28T17:24:29.2991234Z', '{part}', 1) FROM c");
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task DateTimeBin_FiveYearBins()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeBin('2023-06-15T00:00:00Z', 'yyyy', 5) FROM c");
+        result.Should().Be("2020-01-01T00:00:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeBin_MillisecondBins500()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeBin('2021-06-28T17:24:29.7501234Z', 'ms', 500) FROM c");
+        result.Should().Be("2021-06-28T17:24:29.5000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeBin_DocsExample_BinSecond()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeBin('2021-01-08T18:35:00.0000000Z', 'ss', 1) FROM c");
+        result.Should().Be("2021-01-08T18:35:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeBin_DocsExample_BinHour()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeBin('2021-01-08T18:35:00.0000000Z', 'hh', 1) FROM c");
+        result.Should().Be("2021-01-08T18:00:00.0000000Z");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Date Handling Deep Dive — Phase 6: DateTimeFromParts Extended
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DateTimeFromPartsExtendedDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task<string> QuerySingleString(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<string>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.Single();
+    }
+
+    private async Task<JObject?> QuerySingleOrNull(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.SingleOrDefault();
+    }
+
+    [Fact]
+    public async Task DateTimeFromParts_4Args_YearMonthDayHour()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeFromParts(2020, 6, 15, 10) FROM c");
+        result.Should().Be("2020-06-15T10:00:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeFromParts_6Args_NoFraction()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeFromParts(2020, 6, 15, 10, 30, 45) FROM c");
+        result.Should().Be("2020-06-15T10:30:45.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeFromParts_BoundaryValues_Dec31()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeFromParts(2020, 12, 31, 23, 59, 59, 9999999) FROM c");
+        result.Should().Be("2020-12-31T23:59:59.9999999Z");
+    }
+
+    [Fact]
+    public async Task DateTimeFromParts_MinimumDate()
+    {
+        var result = await QuerySingleString(
+            "SELECT VALUE DateTimeFromParts(1, 1, 1) FROM c");
+        result.Should().Be("0001-01-01T00:00:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeFromParts_LessThan3Args_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeFromParts(2020, 6) FROM c");
+        result.Should().BeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Date Handling Deep Dive — Phase 7: Conversion Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DateConversionDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task<T> QuerySingleValue<T>(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<T>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.Single();
+    }
+
+    private async Task<JObject?> QuerySingleOrNull(string sql)
+    {
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results.SingleOrDefault();
+    }
+
+    [Fact]
+    public async Task TicksToDateTime_ZeroTicks_Returns0001_01_01()
+    {
+        var result = await QuerySingleValue<string>(
+            "SELECT VALUE TicksToDateTime(0) FROM c");
+        result.Should().Be("0001-01-01T00:00:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task TimestampToDateTime_ZeroMs_ReturnsUnixEpoch()
+    {
+        var result = await QuerySingleValue<string>(
+            "SELECT VALUE TimestampToDateTime(0) FROM c");
+        result.Should().Be("1970-01-01T00:00:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task TimestampToDateTime_NegativeMs_ReturnsPreEpoch()
+    {
+        var result = await QuerySingleValue<string>(
+            "SELECT VALUE TimestampToDateTime(-86400000) FROM c");
+        result.Should().Be("1969-12-31T00:00:00.0000000Z");
+    }
+
+    [Fact]
+    public async Task DateTimeToTicks_InvalidString_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeToTicks('not-a-date') FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeToTimestamp_InvalidString_ReturnsNull()
+    {
+        var result = await QuerySingleOrNull(
+            "SELECT VALUE DateTimeToTimestamp('not-a-date') FROM c");
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeToTicks_RoundTripWithTicksToDateTime()
+    {
+        var ticks = await QuerySingleValue<long>(
+            "SELECT VALUE DateTimeToTicks('2020-06-15T12:30:00.1234567Z') FROM c");
+        var roundTrip = await QuerySingleValue<string>(
+            $"SELECT VALUE TicksToDateTime({ticks}) FROM c");
+        roundTrip.Should().Be("2020-06-15T12:30:00.1234567Z");
+    }
+
+    [Fact]
+    public async Task DateTimeToTimestamp_RoundTripWithTimestampToDateTime()
+    {
+        var ms = await QuerySingleValue<long>(
+            "SELECT VALUE DateTimeToTimestamp('2020-06-15T12:30:00.0000000Z') FROM c");
+        var roundTrip = await QuerySingleValue<string>(
+            $"SELECT VALUE TimestampToDateTime({ms}) FROM c");
+        roundTrip.Should().Be("2020-06-15T12:30:00.0000000Z");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Date Handling Deep Dive — Phase 8: GetCurrentDateTime
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class GetCurrentDateTimeDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    [Fact]
+    public async Task GetCurrentDateTime_FormatHas7DecimalPlaces()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<string>(
+            "SELECT VALUE GetCurrentDateTime() FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<string>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+
+        results.Single().Should().MatchRegex(@"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z");
+    }
+
+    [Fact]
+    public async Task GetCurrentTicks_TypeIsLong()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<long>(
+            "SELECT VALUE GetCurrentTicks() FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<long>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+
+        results.Single().Should().BeGreaterThan(0);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Date Handling Deep Dive — Phase 9: Composed/Integration Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DateFunctionIntegrationDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    [Fact]
+    public async Task DateTimePart_InWhereClause()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", ts = "2020-06-15T00:00:00Z" }), new PartitionKey("a"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", ts = "2021-06-15T00:00:00Z" }), new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE DateTimePart('yyyy', c.ts) = 2020",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["id"]!.ToString().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_InWhereComparison()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", ts = "2020-01-01T00:00:00Z" }), new PartitionKey("a"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", ts = "2020-12-01T00:00:00Z" }), new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE DateTimeAdd('dd', 30, c.ts) > '2020-01-15T00:00:00Z'",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task MultipleDateFunctions_InSingleSelect()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", ts = "2020-06-15T10:30:00.0000000Z" }), new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT DateTimePart('yyyy', c.ts) as yr, DateTimePart('mm', c.ts) as mo FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+
+        results.Single()["yr"]!.Value<long>().Should().Be(2020);
+        results.Single()["mo"]!.Value<long>().Should().Be(6);
+    }
+
+    [Fact]
+    public async Task DateFunction_WithNullDocumentProperty_ReturnsNull()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", ts = (string?)null }), new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT VALUE DateTimePart('yyyy', c.ts) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+
+        results.SingleOrDefault().Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DateTimeToTicks_InWhereClause()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", ts = "2020-01-01T00:00:00Z" }), new PartitionKey("a"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", ts = "2021-06-15T00:00:00Z" }), new PartitionKey("a"));
+
+        // 2020-06-01 ticks
+        var cutoff = new DateTime(2020, 6, 1, 0, 0, 0, DateTimeKind.Utc).Ticks;
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            $"SELECT * FROM c WHERE DateTimeToTicks(c.ts) > {cutoff}",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["id"]!.ToString().Should().Be("2");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Date Handling Deep Dive — Phase 10: DateTimeOffset Round-trip Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DateTimeOffsetRoundTripDeepDiveTests
+{
+    [Fact]
+    public async Task DateTimeOffset_NegativeOffset_RoundTrips()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var dto = new DateTimeOffset(2020, 6, 15, 10, 30, 0, TimeSpan.FromHours(-5));
+        var doc = new DateDocument { Id = "1", PartitionKey = "pk1", EventDate = dto };
+        await container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var read = await container.ReadItemAsync<DateDocument>("1", new PartitionKey("pk1"));
+        read.Resource.EventDate.Should().Be(dto);
+    }
+
+    [Fact]
+    public async Task DateTimeOffset_MaxOffset_RoundTrips()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var dto = new DateTimeOffset(2020, 6, 15, 10, 30, 0, TimeSpan.FromHours(14));
+        var doc = new DateDocument { Id = "1", PartitionKey = "pk1", EventDate = dto };
+        await container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var read = await container.ReadItemAsync<DateDocument>("1", new PartitionKey("pk1"));
+        read.Resource.EventDate.Should().Be(dto);
+    }
+}

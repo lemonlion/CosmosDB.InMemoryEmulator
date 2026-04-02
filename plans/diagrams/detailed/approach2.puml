@@ -1,0 +1,101 @@
+@startuml approach2-detailed
+title **Approach 2: InMemoryCosmosClient + InMemoryContainer — Query Flow (Detailed)**
+
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+skinparam sequenceParticipantBorderColor #333
+skinparam sequenceLifeLineBorderColor #999
+
+actor "Test Code" as Test
+participant "InMemoryCosmosClient\n(extends CosmosClient)" as Client
+participant "ConcurrentDictionary\n<string, InMemoryDatabase>\n(Client._databases)" as DbDict
+participant "InMemoryDatabase\n(extends Database)" as DB
+participant "ConcurrentDictionary\n<string, InMemoryContainer>\n(DB._containers)" as ContDict
+participant "InMemoryContainer\n(extends Container)" as IMC
+participant "CosmosSqlParser" as Parser
+participant "CosmosSqlQuery\n(AST record)" as AST
+participant "InMemoryContainer\n.FilterItemsByQuery()" as Filter
+participant "InMemoryContainer\n.EvaluateSqlExpression()" as Eval
+participant "InMemoryFeedIterator<T>" as FeedIter
+participant "InMemoryFeedResponse<T>\n(extends FeedResponse<T>)" as FeedResp
+
+== Container Resolution (lazy creation) ==
+
+Test -> Client ++ : GetContainer(databaseId, containerId)
+Client -> DbDict ++ : GetOrAdd(databaseId, …)
+DbDict -> DB ** : new InMemoryDatabase\n(databaseId, client)\n[if not exists — thread-safe\n via ConcurrentDictionary]
+DbDict --> Client -- : InMemoryDatabase
+Client -> DB ++ : GetOrCreateContainer\n(containerId, partitionKeyPath)
+DB -> ContDict ++ : GetOrAdd(containerId, …)
+ContDict -> IMC ** : new InMemoryContainer\n(containerId, partitionKeyPath)\n[if not exists — thread-safe]
+ContDict --> DB -- : InMemoryContainer
+DB --> Client -- : Container
+Client --> Test -- : Container (InMemoryContainer)
+
+note over Client
+  Subsequent GetContainer() calls with
+  same databaseId + containerId return
+  the SAME instance — data is shared.
+end note
+
+== SQL Query Execution (identical pipeline to Approach 1) ==
+
+Test -> IMC ++ : GetItemQueryIterator<T>(queryText,\n  continuationToken, requestOptions)
+IMC -> Filter ++ : FilterItemsByQuery(queryText,\n  parameters, requestOptions)
+Filter -> Parser ++ : Parse(queryText)
+Parser --> AST ** : CosmosSqlQuery\n(SelectFields, Where,\n OrderBy, GroupBy, …)
+Parser --> Filter -- : return parsed query
+Filter -> Filter : GetAllItemsForPartition(requestOptions)\n→ List<string> from in-memory store
+Filter -> Filter : AugmentWithComputedProperties()
+Filter -> Filter : ExpandFromSource()\n(FROM c IN c.field)
+Filter -> Filter : ExpandAllJoins()\n(JOIN expansion)
+
+group WHERE clause evaluation
+  Filter -> Eval ++ : EvaluateWhereExpression\n(expr, JObject item)
+  note right of Eval
+    Recursively evaluates all expression types:
+    Literal, Identifier, PropertyAccess,
+    IndexAccess, Binary, Unary, FunctionCall,
+    Between, In, Like, Ternary, Coalesce,
+    Subquery, ArrayLiteral, ObjectLiteral
+  end note
+  Eval --> Filter -- : bool (include/exclude)
+end
+
+Filter -> Filter : ApplyGroupBy() + aggregates\n(COUNT, SUM, AVG, MIN, MAX)
+Filter -> Filter : ApplyOrderByFields()\n(multi-field, ASC/DESC)
+Filter -> Filter : TOP / OFFSET+LIMIT
+Filter -> Filter : ProjectFields()\n(SELECT projection)
+Filter -> Filter : StripComputedProperties()
+Filter -> Filter : DISTINCT
+Filter -> Filter : UnwrapValueSelect()\n(SELECT VALUE)
+Filter --> IMC -- : List<string> (JSON documents)
+
+IMC -> IMC : Deserialize each JSON →\nJsonConvert.DeserializeObject<T>()
+IMC -> FeedIter ** : new InMemoryFeedIterator<T>\n(items, maxItemCount, initialOffset)
+IMC --> Test -- : FeedIterator<T>
+
+loop while FeedIter.HasMoreResults
+  Test -> FeedIter ++ : ReadNextAsync()
+  FeedIter -> FeedIter : EnsureItems()
+  FeedIter -> FeedIter : Paginate: Skip(offset).Take(maxItemCount)
+  FeedIter -> FeedIter : Generate continuation token
+  FeedIter -> FeedResp ** : new InMemoryFeedResponse<T>\n(page, continuationToken, headers)
+  FeedIter --> Test -- : FeedResponse<T>
+end
+
+== LINQ Query Flow (also identical to Approach 1) ==
+
+note over IMC
+  GetItemLinqQueryable<T>()
+  → GetAllItemsForPartition()
+  → Deserialize → .AsQueryable().OrderBy(x => 0)
+  → IOrderedQueryable<T> (LINQ-to-Objects)
+  → User applies .Where() / .Select() / .OrderBy()
+  → .ToFeedIteratorOverridable()
+  → InMemoryFeedIteratorSetup.CreateInMemoryFeedIterator<T>()
+  → InMemoryFeedIterator<T>
+  → ReadNextAsync() → InMemoryFeedResponse<T>
+end note
+
+@enduml

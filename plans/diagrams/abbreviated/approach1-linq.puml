@@ -1,0 +1,36 @@
+@startuml approach1-linq-abbreviated
+title **Approach 1: InMemoryContainer — LINQ Query Flow (Abbreviated)**
+
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+
+actor "Test Code" as Test
+participant "InMemoryFeedIteratorSetup" as Setup
+participant "InMemoryContainer" as IMC
+participant "IOrderedQueryable<T>" as Queryable
+participant "CosmosOverridable\nFeedIteratorExtensions" as Ext
+participant "InMemoryFeedIterator<T>" as FeedIter
+
+note over Setup
+  Called once per test fixture:
+  InMemoryFeedIteratorSetup.Register()
+end note
+
+Test -> IMC ++ : GetItemLinqQueryable<T>()
+IMC -> IMC : GetAllItemsForPartition()\n→ Deserialize → .AsQueryable()
+IMC -> Queryable ** : IOrderedQueryable<T>\n(LINQ-to-Objects)
+IMC --> Test -- : IOrderedQueryable<T>
+
+Test -> Queryable : .Where() / .Select() / .OrderBy()\n(LINQ-to-Objects operators)
+
+Test -> Ext ++ : .ToFeedIteratorOverridable()
+Ext -> Setup : CreateInMemoryFeedIterator<T>()
+Setup -> FeedIter ** : InMemoryFeedIterator<T>
+Ext --> Test -- : FeedIterator<T>
+
+loop while HasMoreResults
+  Test -> FeedIter ++ : ReadNextAsync()
+  FeedIter --> Test -- : FeedResponse<T>
+end
+
+@enduml

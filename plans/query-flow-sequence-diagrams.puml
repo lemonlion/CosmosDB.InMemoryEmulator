@@ -1,0 +1,485 @@
+@startuml query-flow-approach1-sql
+title **Approach 1: InMemoryContainer — SQL Query Flow**
+
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+skinparam sequenceParticipantBorderColor #333
+skinparam sequenceLifeLineBorderColor #999
+
+actor "Test Code" as Test
+participant "InMemoryContainer\n(extends Container)" as IMC
+participant "CosmosSqlParser" as Parser
+participant "CosmosSqlQuery\n(AST record)" as AST
+participant "InMemoryContainer\n.FilterItemsByQuery()" as Filter
+participant "InMemoryContainer\n.EvaluateSqlExpression()" as Eval
+participant "InMemoryFeedIterator<T>" as FeedIter
+participant "InMemoryFeedResponse<T>\n(extends FeedResponse<T>)" as FeedResp
+
+Test -> IMC ++ : GetItemQueryIterator<T>(queryText,\n  continuationToken, requestOptions)
+IMC -> Filter ++ : FilterItemsByQuery(queryText,\n  parameters, requestOptions)
+Filter -> Parser ++ : Parse(queryText)
+Parser --> AST ** : CosmosSqlQuery\n(SelectFields, Where,\n OrderBy, GroupBy, …)
+Parser --> Filter -- : return parsed query
+Filter -> Filter : GetAllItemsForPartition(requestOptions)\n→ List<string> from in-memory store
+Filter -> Filter : AugmentWithComputedProperties()
+Filter -> Filter : ExpandFromSource()\n(FROM c IN c.field)
+Filter -> Filter : ExpandAllJoins()\n(JOIN expansion)
+
+group WHERE clause evaluation
+  Filter -> Eval ++ : EvaluateWhereExpression\n(expr, JObject item)
+  note right of Eval
+    Recursively evaluates:
+    • LiteralExpression
+    • IdentifierExpression
+    • PropertyAccessExpression
+    • BinaryExpression (=, <, AND, OR…)
+    • FunctionCallExpression (UPPER, CONTAINS…)
+    • SubqueryExpression, InExpression…
+  end note
+  Eval --> Filter -- : bool (include/exclude)
+end
+
+Filter -> Filter : ApplyGroupBy() + aggregates
+Filter -> Filter : ApplyOrderByFields()
+Filter -> Filter : TOP / OFFSET+LIMIT
+Filter -> Filter : ProjectFields()\n(SELECT projection)
+Filter -> Filter : StripComputedProperties()
+Filter -> Filter : DISTINCT
+Filter -> Filter : UnwrapValueSelect()\n(SELECT VALUE)
+Filter --> IMC -- : List<string> (JSON documents)
+
+IMC -> IMC : Deserialize each JSON →\nJsonConvert.DeserializeObject<T>()
+IMC -> FeedIter ** : new InMemoryFeedIterator<T>\n(items, maxItemCount, initialOffset)
+IMC --> Test -- : FeedIterator<T>
+
+loop while FeedIter.HasMoreResults
+  Test -> FeedIter ++ : ReadNextAsync()
+  FeedIter -> FeedResp ** : new InMemoryFeedResponse<T>\n(page of items, continuationToken)
+  FeedIter --> Test -- : FeedResponse<T>
+end
+
+@enduml
+
+
+@startuml query-flow-approach1-linq
+title **Approach 1: InMemoryContainer — LINQ Query Flow**
+
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+
+actor "Test Code" as Test
+participant "InMemoryFeedIteratorSetup" as Setup
+participant "InMemoryContainer\n(extends Container)" as IMC
+participant "IOrderedQueryable<T>\n(LINQ-to-Objects)" as Queryable
+participant "CosmosOverridable\nFeedIteratorExtensions\n(.ToFeedIteratorOverridable)" as Ext
+participant "InMemoryFeedIterator<T>" as FeedIter
+participant "InMemoryFeedResponse<T>" as FeedResp
+
+note over Setup
+  Called once per test fixture:
+  InMemoryFeedIteratorSetup.Register()
+  Sets AsyncLocal<FeedIteratorFactory>
+end note
+
+Test -> IMC ++ : GetItemLinqQueryable<T>\n(allowSynchronousQueryExecution,\n continuationToken, requestOptions)
+IMC -> IMC : GetAllItemsForPartition(requestOptions)\n→ List<string> from in-memory store
+IMC -> IMC : Deserialize each JSON → T
+IMC -> Queryable ** : .AsQueryable()\n.OrderBy(item => 0)\n→ IOrderedQueryable<T>
+IMC --> Test -- : IOrderedQueryable<T>
+
+Test -> Queryable : .Where(x => x.Status == "active")\n.Select(x => x.Name)\n(LINQ-to-Objects operators)
+
+Test -> Ext ++ : .ToFeedIteratorOverridable()
+Ext -> Ext : Check AsyncLocal factory\n(set by InMemoryFeedIteratorSetup)
+Ext -> Setup ++ : CreateInMemoryFeedIterator<T>(queryable)
+Setup -> FeedIter ** : new InMemoryFeedIterator<T>\n(queryable.AsEnumerable())
+Setup --> Ext -- : FeedIterator<T>
+Ext --> Test -- : FeedIterator<T>
+
+loop while FeedIter.HasMoreResults
+  Test -> FeedIter ++ : ReadNextAsync()
+  FeedIter -> FeedResp ** : InMemoryFeedResponse<T>\n(page, continuationToken)
+  FeedIter --> Test -- : FeedResponse<T>
+end
+
+@enduml
+
+
+@startuml query-flow-approach2
+title **Approach 2: InMemoryCosmosClient + InMemoryContainer — Query Flow**
+
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+
+actor "Test Code" as Test
+participant "InMemoryCosmosClient\n(extends CosmosClient)" as Client
+participant "ConcurrentDictionary\n<string, InMemoryDatabase>\n(_databases)" as DbDict
+participant "InMemoryDatabase\n(extends Database)" as DB
+participant "ConcurrentDictionary\n<string, InMemoryContainer>\n(_containers)" as ContDict
+participant "InMemoryContainer\n(extends Container)" as IMC
+participant "CosmosSqlParser" as Parser
+participant "InMemoryContainer\n.FilterItemsByQuery()" as Filter
+participant "InMemoryFeedIterator<T>" as FeedIter
+participant "InMemoryFeedResponse<T>" as FeedResp
+
+== Container Resolution (lazy creation) ==
+
+Test -> Client ++ : GetContainer(databaseId, containerId)
+Client -> DbDict ++ : GetOrAdd(databaseId, …)
+DbDict -> DB ** : new InMemoryDatabase\n(databaseId, client)\n[if not exists]
+DbDict --> Client -- : InMemoryDatabase
+Client -> DB ++ : GetOrCreateContainer\n(containerId, partitionKeyPath)
+DB -> ContDict ++ : GetOrAdd(containerId, …)
+ContDict -> IMC ** : new InMemoryContainer\n(containerId, partitionKeyPath)\n[if not exists]
+ContDict --> DB -- : InMemoryContainer
+DB --> Client -- : Container
+Client --> Test -- : Container (InMemoryContainer)
+
+== SQL Query Execution (identical to Approach 1) ==
+
+Test -> IMC ++ : GetItemQueryIterator<T>(queryText)
+IMC -> Filter ++ : FilterItemsByQuery(queryText,\n  parameters, requestOptions)
+Filter -> Parser ++ : Parse(queryText)
+Parser --> Filter -- : CosmosSqlQuery (AST)
+Filter -> Filter : GetAllItemsForPartition()
+Filter -> Filter : WHERE → EvaluateSqlExpression()
+Filter -> Filter : GROUP BY / ORDER BY / TOP\n/ OFFSET+LIMIT / SELECT / DISTINCT
+Filter --> IMC -- : List<string>
+IMC -> IMC : Deserialize → List<T>
+IMC -> FeedIter ** : new InMemoryFeedIterator<T>
+IMC --> Test -- : FeedIterator<T>
+
+loop while FeedIter.HasMoreResults
+  Test -> FeedIter ++ : ReadNextAsync()
+  FeedIter -> FeedResp ** : InMemoryFeedResponse<T>
+  FeedIter --> Test -- : FeedResponse<T>
+end
+
+note over IMC
+  LINQ flow is also identical to Approach 1:
+  GetItemLinqQueryable<T>() → IOrderedQueryable<T>
+  → LINQ-to-Objects → .ToFeedIteratorOverridable()
+end note
+
+@enduml
+
+
+@startuml query-flow-approach3-sql
+title **Approach 3: CosmosClient + FakeCosmosHandler — SQL Query Flow (High Fidelity)**
+
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+skinparam sequenceGroupBorderThickness 2
+
+actor "Test Code" as Test
+participant "CosmosClient\n(real SDK)" as SDK
+participant "Container\n(real SDK)" as SDKContainer
+participant "HttpClient" as Http
+participant "FakeCosmosHandler\n(extends\nHttpMessageHandler)" as Handler
+participant "CosmosSqlParser" as Parser
+participant "InMemoryContainer" as IMC
+participant "InMemoryContainer\n.FilterItemsByQuery()" as Filter
+participant "InMemoryFeedIterator\n<JToken>" as InternalIter
+participant "FakeCosmosHandler\n.DrainIterator()" as Drain
+participant "QueryResultCache" as Cache
+participant "SDK FeedIterator<T>" as SDKIter
+participant "SDK FeedResponse<T>" as SDKResp
+
+== Setup ==
+Test -> IMC ** : new InMemoryContainer("orders", "/pk")
+Test -> Handler ** : new FakeCosmosHandler(inMemoryContainer)
+Test -> SDK ** : new CosmosClient(connectionString,\n  new CosmosClientOptions {\n    ConnectionMode = Gateway,\n    HttpClientFactory = () =>\n      new HttpClient(handler) })
+
+== Query Plan Phase (SDK-initiated) ==
+
+Test -> SDKContainer ++ : GetItemQueryIterator<T>(queryText)
+SDKContainer -> Http ++ : POST /dbs/{db}/colls/{coll}/docs\nHeader: x-ms-cosmos-is-query-plan-request: True\nBody: { "query": "SELECT …" }
+Http -> Handler ++ : SendAsync(request)
+Handler -> Handler : Route: query plan request detected
+Handler -> Parser ++ : TryParse(queryText)
+Parser --> Handler -- : CosmosSqlQuery (AST)
+Handler -> Handler : Analyze AST:\n• Detect aggregates (COUNT, SUM…)\n• Detect ORDER BY directions\n• Detect DISTINCT type\n• Generate rewrittenQuery
+Handler --> Http -- : 200 OK\nBody: PartitionedQueryExecutionInfo\n{ queryRanges, aggregates,\n  orderBy, distinctType,\n  rewrittenQuery }
+Http --> SDKContainer -- : QueryPlan response
+
+note over SDKContainer
+  SDK builds execution pipeline:
+  • OrderByPipelineStage (if ORDER BY)
+  • AggregatePipelineStage (if aggregates)
+  • DistinctPipelineStage (if DISTINCT)
+  • SkipTakePipelineStage (if OFFSET/LIMIT)
+end note
+
+SDKContainer --> Test -- : FeedIterator<T> (SDK pipeline)
+
+== Query Execution Phase (per page) ==
+
+loop while SDKIter.HasMoreResults
+  Test -> SDKIter ++ : ReadNextAsync()
+
+  SDKIter -> Http ++ : POST /dbs/{db}/colls/{coll}/docs\nHeader: x-ms-documentdb-isquery: True\nHeader: x-ms-max-item-count: {pageSize}\nHeader: x-ms-continuation: {token}\nHeader: x-ms-documentdb-query-partitionkeyrangeid: {rangeId}\nBody: { "query": "…", "parameters": […] }
+  Http -> Handler ++ : SendAsync(request)
+
+  Handler -> Handler : Route: query request detected\n→ HandleQueryAsync()
+  Handler -> Handler : Extract: sqlQuery, partitionKey,\nmaxItemCount, continuationToken, rangeId
+
+  Handler -> Handler : _queryLog.Add(sqlQuery)
+  Handler -> Cache ++ : TryGet(cacheKey)
+
+  alt Cache HIT
+    Cache --> Handler -- : cached results + offset
+  else Cache MISS
+    Cache --> Handler -- : null
+    Handler -> Parser ++ : TryParse(sqlQuery)
+    Parser --> Handler -- : CosmosSqlQuery
+
+    alt ORDER BY query
+      Handler -> Handler : HandleOrderByQueryAsync()
+      Handler -> Parser : SimplifySdkQuery(parsed)\n→ remove orderByItems wrapper
+      Handler -> IMC ++ : GetItemQueryIterator<JObject>\n(simplified QueryDefinition)
+      IMC -> Filter ++ : FilterItemsByQuery()
+      Filter -> Filter : Full SQL pipeline\n(parse → filter → sort → project)
+      Filter --> IMC -- : results
+      IMC -> InternalIter ** : InMemoryFeedIterator<JObject>
+      IMC --> Handler -- : FeedIterator<JObject>
+      Handler -> Drain ++ : DrainIterator()\n→ materialize all results
+      Drain --> Handler -- : List<JToken>
+      Handler -> Handler : Reconstruct with\n{ orderByItems: [...],\n  payload: { …doc… } }
+    else Standard query
+      Handler -> Parser : SimplifySdkQuery(parsed)\n→ simplify SDK-generated SQL
+      Handler -> IMC ++ : GetItemQueryIterator<JToken>\n(QueryDefinition, requestOptions)
+      IMC -> Filter ++ : FilterItemsByQuery()
+      Filter -> Filter : Full SQL pipeline
+      Filter --> IMC -- : results
+      IMC -> InternalIter ** : InMemoryFeedIterator<JToken>
+      IMC --> Handler -- : FeedIterator<JToken>
+      Handler -> Drain ++ : DrainIterator()
+      Drain --> Handler -- : List<JToken>
+      Handler -> Handler : Wrap aggregates for SDK\n(AVG → {sum,count}, etc.)
+    end
+
+    Handler -> Handler : FilterDocumentsByRange\n(documents, rangeId)
+    Handler -> Cache : Set(cacheKey, allDocuments)
+  end
+
+  Handler -> Handler : BuildPagedResponse()\n→ Skip(offset).Take(maxItemCount)\n→ Generate continuation token\n→ Serialize: { _rid, Documents, _count }
+  Handler --> Http -- : 200 OK + headers:\nx-ms-request-charge,\nx-ms-continuation,\nx-ms-item-count,\nx-ms-activity-id
+  Http --> SDKIter -- : HttpResponseMessage
+
+  note over SDKIter
+    SDK pipeline stages process results:
+    • OrderByPipelineStage merges sorted pages
+    • AggregatePipelineStage accumulates
+    • Deserialize JSON → T
+  end note
+
+  SDKIter -> SDKResp ** : FeedResponse<T>
+  SDKIter --> Test -- : FeedResponse<T>
+end
+
+@enduml
+
+
+@startuml query-flow-approach3-linq
+title **Approach 3: CosmosClient + FakeCosmosHandler — LINQ Query Flow (High Fidelity)**
+
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+skinparam sequenceGroupBorderThickness 2
+
+actor "Test Code" as Test
+participant "CosmosClient\n(real SDK)" as SDK
+participant "Container\n(real SDK)" as SDKContainer
+participant "CosmosLinqQuery-\nProvider\n(SDK internal)" as LinqProvider
+participant "IOrderedQueryable<T>\n(SDK LINQ)" as Queryable
+participant "HttpClient" as Http
+participant "FakeCosmosHandler\n(extends\nHttpMessageHandler)" as Handler
+participant "CosmosSqlParser" as Parser
+participant "InMemoryContainer" as IMC
+participant "InMemoryContainer\n.FilterItemsByQuery()" as Filter
+participant "InMemoryFeedIterator\n<JToken>" as InternalIter
+participant "FakeCosmosHandler\n.DrainIterator()" as Drain
+participant "QueryResultCache" as Cache
+participant "SDK FeedIterator<T>" as SDKIter
+participant "SDK FeedResponse<T>" as SDKResp
+
+== Setup ==
+Test -> IMC ** : new InMemoryContainer("orders", "/pk")
+Test -> Handler ** : new FakeCosmosHandler(inMemoryContainer)
+Test -> SDK ** : new CosmosClient(connectionString,\n  new CosmosClientOptions {\n    ConnectionMode = Gateway,\n    HttpClientFactory = () =>\n      new HttpClient(handler) })
+
+== LINQ Expression Building ==
+
+Test -> SDKContainer ++ : GetItemLinqQueryable<T>()
+SDKContainer -> LinqProvider ** : CosmosLinqQueryProvider\n(real SDK query provider)
+SDKContainer -> Queryable ** : IOrderedQueryable<T>\n(backed by CosmosLinqQueryProvider)
+SDKContainer --> Test -- : IOrderedQueryable<T>
+
+Test -> Queryable : .Where(x => x.Status == "active")\n.OrderBy(x => x.Name)\n.Select(x => new { x.Id, x.Name })
+note right
+  LINQ operators build an
+  Expression Tree — no
+  execution yet
+end note
+
+== LINQ-to-SQL Translation ==
+
+Test -> Queryable ++ : .ToFeedIterator()
+note right
+  No production code change needed!
+  Real .ToFeedIterator() works because
+  the queryable is from the real SDK.
+end note
+Queryable -> LinqProvider ++ : Translate expression tree → SQL
+LinqProvider -> LinqProvider : Visit expression tree nodes\n→ Generate Cosmos SQL:\n"SELECT VALUE {\"Id\": c.id,\n  \"Name\": c.name}\nFROM c\nWHERE c.status = 'active'\nORDER BY c.name ASC"
+LinqProvider --> Queryable -- : SQL query text + parameters
+Queryable --> Test -- : FeedIterator<T> (SDK pipeline)
+
+== Query Plan Phase (SDK-initiated) ==
+
+Test -> SDKIter ++ : ReadNextAsync()
+
+SDKIter -> Http ++ : POST /dbs/{db}/colls/{coll}/docs\nHeader: x-ms-cosmos-is-query-plan-request: True\nBody: { "query": "SELECT VALUE\n  {\"Id\": c.id, \"Name\": c.name}\n  FROM c WHERE c.status = 'active'\n  ORDER BY c.name ASC" }
+Http -> Handler ++ : SendAsync(request)
+Handler -> Handler : Route: query plan request detected\n→ HandleQueryPlanAsync()
+Handler -> Parser ++ : TryParse(SDK-generated SQL)
+Parser --> Handler -- : CosmosSqlQuery (AST)
+Handler -> Handler : Analyze AST:\n• Detect aggregates (COUNT, SUM…)\n• Detect ORDER BY → [Ascending]\n• Detect DISTINCT type\n• Generate rewrittenQuery\n  (with orderByItems wrapper)
+Handler --> Http -- : 200 OK\nBody: PartitionedQueryExecutionInfo\n{ queryRanges, aggregates,\n  orderBy: ["Ascending"],\n  distinctType,\n  rewrittenQuery }
+Http --> SDKIter -- : QueryPlan response
+
+note over SDKIter
+  SDK builds execution pipeline:
+  • OrderByPipelineStage (ORDER BY c.name)
+  • AggregatePipelineStage (if aggregates)
+  • DistinctPipelineStage (if DISTINCT)
+  • SkipTakePipelineStage (if OFFSET/LIMIT)
+end note
+
+== Query Execution Phase (per page) ==
+
+loop while SDKIter.HasMoreResults
+  SDKIter -> Http ++ : POST /dbs/{db}/colls/{coll}/docs\nHeader: x-ms-documentdb-isquery: True\nHeader: x-ms-max-item-count: {pageSize}\nHeader: x-ms-continuation: {token}\nHeader: x-ms-documentdb-query-partitionkeyrangeid: {rangeId}\nBody: { "query": "SELECT …\n  (rewritten with orderByItems)",\n  "parameters": […] }
+  Http -> Handler ++ : SendAsync(request)
+
+  Handler -> Handler : Route: query request detected\n→ HandleQueryAsync()
+  Handler -> Handler : Extract from HTTP request:\n• sqlQuery (SDK-generated SQL)\n• partitionKey (from header)\n• maxItemCount (from header)\n• continuationToken (from header)\n• rangeId (from header)
+
+  Handler -> Handler : _queryLog.Add(sqlQuery)
+  Handler -> Cache ++ : TryGet(cacheKey)
+
+  alt Cache HIT
+    Cache --> Handler -- : cached results + offset
+  else Cache MISS
+    Cache --> Handler -- : null
+    Handler -> Parser ++ : TryParse(sqlQuery)
+    Parser --> Handler -- : CosmosSqlQuery (AST)
+
+    alt ORDER BY query (detected from AST)
+      Handler -> Handler : HandleOrderByQueryAsync()
+      Handler -> Parser ++ : SimplifySdkQuery(parsed)\n→ strip orderByItems wrapper\n→ recover original:\n  "SELECT VALUE {\"Id\": c.id,\n    \"Name\": c.name}\n  FROM c WHERE c.status = 'active'\n  ORDER BY c.name ASC"
+      Parser --> Handler -- : simplified SQL string
+
+      Handler -> Handler : BuildQueryDefinition()\n→ QueryDefinition with parameters
+      Handler -> IMC ++ : GetItemQueryIterator<JObject>\n(simplified QueryDefinition,\n  requestOptions)
+      IMC -> Filter ++ : FilterItemsByQuery\n(simplifiedSql, parameters, options)
+      Filter -> Parser ++ : Parse(simplifiedSql)
+      Parser --> Filter -- : CosmosSqlQuery (AST)
+      Filter -> Filter : GetAllItemsForPartition()\n→ List<string> from store
+      Filter -> Filter : AugmentWithComputedProperties()
+      Filter -> Filter : ExpandFromSource()
+      Filter -> Filter : ExpandAllJoins()
+
+      group WHERE clause evaluation
+        Filter -> Filter : EvaluateWhereExpression()\n→ EvaluateSqlExpression()\n  recursive evaluation of\n  c.status = 'active'
+      end
+
+      Filter -> Filter : ApplyGroupBy() + aggregates
+      Filter -> Filter : ApplyOrderByFields()\n→ sort by c.name ASC
+      Filter -> Filter : TOP / OFFSET+LIMIT
+      Filter -> Filter : ProjectFields()\n→ SELECT VALUE {"Id":…,"Name":…}
+      Filter -> Filter : StripComputedProperties()
+      Filter -> Filter : DISTINCT
+      Filter -> Filter : UnwrapValueSelect()
+      Filter --> IMC -- : List<string> (JSON documents)
+
+      IMC -> IMC : Deserialize → List<JObject>
+      IMC -> InternalIter ** : InMemoryFeedIterator<JObject>
+      IMC --> Handler -- : FeedIterator<JObject>
+
+      Handler -> Drain ++ : DrainIterator()\n→ ReadNextAsync() in loop\n→ materialize all results
+      Drain -> InternalIter : ReadNextAsync() (repeated)
+      InternalIter --> Drain : pages of JObject
+      Drain --> Handler -- : List<JToken> (all results)
+
+      Handler -> Handler : Reconstruct each document:\n{ "orderByItems":\n    [{"item": "nameValue"}],\n  "payload": {"Id":…,"Name":…} }\n→ SDK uses orderByItems\n  for merge-sort across ranges
+
+    else Standard query (no ORDER BY)
+      Handler -> Parser ++ : SimplifySdkQuery(parsed)\n→ simplify SDK-generated SQL
+      Parser --> Handler -- : simplified SQL string
+
+      Handler -> Handler : BuildQueryDefinition()\n→ QueryDefinition with parameters
+      Handler -> IMC ++ : GetItemQueryIterator<JToken>\n(QueryDefinition, requestOptions)
+      IMC -> Filter ++ : FilterItemsByQuery\n(sql, parameters, options)
+      Filter -> Parser ++ : Parse(sql)
+      Parser --> Filter -- : CosmosSqlQuery (AST)
+      Filter -> Filter : GetAllItemsForPartition()
+      Filter -> Filter : AugmentWithComputedProperties()
+      Filter -> Filter : ExpandFromSource()
+      Filter -> Filter : ExpandAllJoins()
+
+      group WHERE clause evaluation
+        Filter -> Filter : EvaluateWhereExpression()\n→ EvaluateSqlExpression()\n  recursive evaluation
+      end
+
+      Filter -> Filter : ApplyGroupBy() + aggregates
+      Filter -> Filter : ApplyOrderByFields()
+      Filter -> Filter : TOP / OFFSET+LIMIT
+      Filter -> Filter : ProjectFields()
+      Filter -> Filter : StripComputedProperties()
+      Filter -> Filter : DISTINCT
+      Filter -> Filter : UnwrapValueSelect()
+      Filter --> IMC -- : List<string>
+
+      IMC -> IMC : Deserialize → List<JToken>
+      IMC -> InternalIter ** : InMemoryFeedIterator<JToken>
+      IMC --> Handler -- : FeedIterator<JToken>
+
+      Handler -> Drain ++ : DrainIterator()
+      Drain -> InternalIter : ReadNextAsync() (repeated)
+      InternalIter --> Drain : pages of JToken
+      Drain --> Handler -- : List<JToken>
+
+      Handler -> Handler : Wrap aggregates for SDK\nif needed (AVG → {sum,count},\nCOUNT → {"$1": n}, etc.)
+    end
+
+    Handler -> Handler : FilterDocumentsByRange\n(documents, rangeId,\n payloadPropertyName)
+    Handler -> Cache : Set(cacheKey, allDocuments)
+  end
+
+  Handler -> Handler : BuildPagedResponse()\n→ Skip(offset).Take(maxItemCount)\n→ Generate continuation token\n  (offset-based, or null if last page)\n→ Serialize JSON:\n  { "_rid": "collRid",\n    "Documents": [...],\n    "_count": n }
+  Handler -> Handler : Add response headers:\n• x-ms-request-charge: 1\n• x-ms-activity-id: {guid}\n• x-ms-session-token: 0:0#1\n• x-ms-item-count: {count}\n• x-ms-continuation: {token|null}
+  Handler --> Http -- : HttpResponseMessage (200 OK)
+  Http --> SDKIter -- : HttpResponseMessage
+
+  note over SDKIter
+    SDK pipeline stages process response:
+    • OrderByPipelineStage reads orderByItems,\n      merge-sorts across partition ranges
+    • AggregatePipelineStage accumulates\n      {sum,count} → weighted AVG
+    • Deserialize JSON → T
+  end note
+
+  SDKIter -> SDKResp ** : FeedResponse<T>
+  SDKIter --> Test -- : FeedResponse<T>
+end
+
+note over Test
+  Key difference from Approach 1 & 2:
+  LINQ expressions are translated to SQL
+  by the real SDK's CosmosLinqQueryProvider,
+  then executed through CosmosSqlParser —
+  testing the full LINQ → SQL → HTTP →
+  parse → execute → serialize pipeline
+end note
+
+@enduml

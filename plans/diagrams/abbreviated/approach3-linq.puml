@@ -1,0 +1,57 @@
+@startuml approach3-linq-abbreviated
+title **Approach 3: CosmosClient + FakeCosmosHandler — LINQ Query Flow (Abbreviated)**
+
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+
+actor "Test Code" as Test
+participant "CosmosClient\n(real SDK)" as SDK
+participant "CosmosLinqQuery-\nProvider (SDK)" as LinqProvider
+participant "IOrderedQueryable<T>" as Queryable
+participant "HttpClient" as Http
+participant "FakeCosmosHandler" as Handler
+participant "CosmosSqlParser" as Parser
+participant "InMemoryContainer" as IMC
+participant "QueryResultCache" as Cache
+participant "SDK FeedIterator<T>" as SDKIter
+
+== Setup ==
+Test -> IMC ** : new InMemoryContainer(…)
+Test -> Handler ** : new FakeCosmosHandler(container)
+Test -> SDK ** : new CosmosClient(…, HttpClientFactory)
+
+== LINQ Expression Building ==
+Test -> SDK ++ : container.GetItemLinqQueryable<T>()
+SDK -> LinqProvider ** : CosmosLinqQueryProvider
+SDK -> Queryable ** : IOrderedQueryable<T>
+SDK --> Test -- : IOrderedQueryable<T>
+
+Test -> Queryable : .Where() / .OrderBy() / .Select()\n(builds Expression Tree)
+
+== LINQ-to-SQL Translation ==
+Test -> Queryable ++ : .ToFeedIterator()
+Queryable -> LinqProvider : Translate expression tree → SQL
+LinqProvider --> Queryable : Cosmos SQL + parameters
+Queryable --> Test -- : FeedIterator<T>
+
+== Query Plan + Execution (same as Approach 3 SQL) ==
+loop while HasMoreResults
+  Test -> SDKIter ++ : ReadNextAsync()
+  SDKIter -> Http : POST (query plan, then query)
+  Http -> Handler : SendAsync → HandleQueryPlanAsync()\nthen HandleQueryAsync()
+  Handler -> Parser : TryParse() + SimplifySdkQuery()
+  Handler -> IMC : GetItemQueryIterator → FilterItemsByQuery()
+  Handler -> Handler : DrainIterator() → BuildPagedResponse()
+  Handler -> Cache : cache results
+  Handler --> Http : 200 OK + paginated JSON
+  Http --> SDKIter : response → SDK pipeline merges
+  SDKIter --> Test -- : FeedResponse<T>
+end
+
+note over Test
+  Key: LINQ → SQL by real SDK,
+  then SQL executed through CosmosSqlParser
+  (tests full LINQ-to-SQL translation)
+end note
+
+@enduml

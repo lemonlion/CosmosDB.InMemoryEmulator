@@ -4901,7 +4901,7 @@ public class InMemoryContainer : Container
                     }
 
                     var n = (int)number.Value;
-                    dt = part switch
+                    DateTime? result = part switch
                     {
                         "year" or "yyyy" or "yy" => dt.AddYears(n),
                         "month" or "mm" or "m" => dt.AddMonths(n),
@@ -4912,9 +4912,9 @@ public class InMemoryContainer : Container
                         "millisecond" or "ms" => dt.AddMilliseconds(n),
                         "microsecond" or "mcs" => dt.AddTicks(n * 10L),
                         "nanosecond" or "ns" => dt.AddTicks(n / 100L),
-                        _ => dt,
+                        _ => null,
                     };
-                    return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+                    return result?.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
                 }
             case "DATETIMEPART":
                 {
@@ -4984,24 +4984,35 @@ public class InMemoryContainer : Container
                     var s = args.Length > 5 ? ToLong(args[5]) : 0;
                     var fraction = args.Length > 6 ? ToLong(args[6]) : 0;
                     if (!y.HasValue || !mo.HasValue || !d.HasValue || !h.HasValue || !mi.HasValue || !s.HasValue || !fraction.HasValue) return null;
-                    var dt = new DateTime((int)y.Value, (int)mo.Value, (int)d.Value,
-                        (int)h.Value, (int)mi.Value, (int)s.Value, DateTimeKind.Utc).AddTicks(fraction.Value);
-                    return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+                    try
+                    {
+                        var dt = new DateTime((int)y.Value, (int)mo.Value, (int)d.Value,
+                            (int)h.Value, (int)mi.Value, (int)s.Value, DateTimeKind.Utc).AddTicks(fraction.Value);
+                        return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+                    }
+                    catch (ArgumentOutOfRangeException)
+                    {
+                        return null;
+                    }
                 }
             case "DATETIMEBIN":
                 {
-                    if (args.Length < 3) return null;
+                    if (args.Length < 2) return null;
                     var dtStr = args[0]?.ToString();
                     var part = args[1]?.ToString()?.ToLowerInvariant();
-                    var binSize = ToLong(args[2]);
+                    var binSize = args.Length >= 3 ? ToLong(args[2]) : 1;
                     if (dtStr is null || part is null || !binSize.HasValue) return null;
                     if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return null;
+
+                    var bs = (int)binSize.Value;
+                    if (bs <= 0) return null;
 
                     var origin = args.Length >= 4 && args[3] is string originStr
                         && DateTime.TryParse(originStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var o)
                         ? o : new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
-                    var bs = (int)binSize.Value;
+                    if (origin.Year < 1601) return null;
+
                     if (part is "year" or "yyyy" or "yy")
                     {
                         var yearBin = (int)(Math.Floor((double)(dt.Year - origin.Year) / bs) * bs);
@@ -5015,20 +5026,22 @@ public class InMemoryContainer : Container
                     }
                     else
                     {
-                        dt = part switch
+                        var ticksPerUnit = part switch
                         {
-                            "day" or "dd" or "d" =>
-                                origin.AddDays(Math.Floor((dt - origin).TotalDays / bs) * bs),
-                            "hour" or "hh" =>
-                                origin.AddHours(Math.Floor((dt - origin).TotalHours / bs) * bs),
-                            "minute" or "mi" or "n" =>
-                                origin.AddMinutes(Math.Floor((dt - origin).TotalMinutes / bs) * bs),
-                            "second" or "ss" or "s" =>
-                                origin.AddSeconds(Math.Floor((dt - origin).TotalSeconds / bs) * bs),
-                            "millisecond" or "ms" =>
-                                origin.AddMilliseconds(Math.Floor((dt - origin).TotalMilliseconds / bs) * bs),
-                            _ => dt,
+                            "day" or "dd" or "d" => TimeSpan.TicksPerDay,
+                            "hour" or "hh" => TimeSpan.TicksPerHour,
+                            "minute" or "mi" or "n" => TimeSpan.TicksPerMinute,
+                            "second" or "ss" or "s" => TimeSpan.TicksPerSecond,
+                            "millisecond" or "ms" => TimeSpan.TicksPerMillisecond,
+                            "microsecond" or "mcs" => 10L,
+                            "nanosecond" or "ns" => 1L,
+                            _ => -1L,
                         };
+                        if (ticksPerUnit < 0) return null;
+                        var tickSpan = (dt - origin).Ticks;
+                        var binTicks = ticksPerUnit * bs;
+                        var binnedTicks = (long)Math.Floor((double)tickSpan / binTicks) * binTicks;
+                        dt = origin.AddTicks(binnedTicks);
                     }
                     return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
                 }

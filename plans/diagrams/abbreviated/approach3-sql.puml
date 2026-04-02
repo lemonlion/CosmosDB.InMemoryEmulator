@@ -1,0 +1,45 @@
+@startuml approach3-sql-abbreviated
+title **Approach 3: CosmosClient + FakeCosmosHandler — SQL Query Flow (Abbreviated)**
+
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+
+actor "Test Code" as Test
+participant "CosmosClient\n(real SDK)" as SDK
+participant "HttpClient" as Http
+participant "FakeCosmosHandler" as Handler
+participant "CosmosSqlParser" as Parser
+participant "InMemoryContainer" as IMC
+participant "QueryResultCache" as Cache
+participant "SDK FeedIterator<T>" as SDKIter
+
+== Setup ==
+Test -> IMC ** : new InMemoryContainer(…)
+Test -> Handler ** : new FakeCosmosHandler(container)
+Test -> SDK ** : new CosmosClient(…, HttpClientFactory)
+
+== Query Plan ==
+Test -> SDK ++ : GetItemQueryIterator<T>(queryText)
+SDK -> Http : POST (query plan request)
+Http -> Handler : SendAsync → HandleQueryPlanAsync()
+Handler -> Parser : TryParse() → analyze AST
+Handler --> Http : PartitionedQueryExecutionInfo
+Http --> SDK : plan → build pipeline stages
+SDK --> Test -- : FeedIterator<T>
+
+== Query Execution (per page) ==
+loop while HasMoreResults
+  Test -> SDKIter ++ : ReadNextAsync()
+  SDKIter -> Http : POST (query request)
+  Http -> Handler ++ : SendAsync → HandleQueryAsync()
+  Handler -> Parser : TryParse() + SimplifySdkQuery()
+  Handler -> IMC : GetItemQueryIterator → FilterItemsByQuery()
+  Handler -> Handler : DrainIterator() → FilterDocumentsByRange()
+  Handler -> Cache : cache results
+  Handler -> Handler : BuildPagedResponse()
+  Handler --> Http -- : 200 OK + paginated JSON
+  Http --> SDKIter : response → SDK pipeline merges
+  SDKIter --> Test -- : FeedResponse<T>
+end
+
+@enduml

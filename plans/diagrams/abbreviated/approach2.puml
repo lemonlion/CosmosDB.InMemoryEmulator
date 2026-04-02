@@ -1,0 +1,42 @@
+@startuml approach2-abbreviated
+title **Approach 2: InMemoryCosmosClient + InMemoryContainer — Query Flow (Abbreviated)**
+
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+
+actor "Test Code" as Test
+participant "InMemoryCosmosClient" as Client
+participant "InMemoryDatabase" as DB
+participant "InMemoryContainer" as IMC
+participant "CosmosSqlParser" as Parser
+participant "InMemoryFeedIterator<T>" as FeedIter
+
+== Container Resolution (lazy creation) ==
+
+Test -> Client ++ : GetContainer(databaseId, containerId)
+Client -> DB ** : GetOrAdd → InMemoryDatabase [if new]
+Client -> DB : GetOrCreateContainer()
+DB -> IMC ** : GetOrAdd → InMemoryContainer [if new]
+Client --> Test -- : Container (InMemoryContainer)
+
+== Query Execution (identical to Approach 1) ==
+
+Test -> IMC ++ : GetItemQueryIterator<T>(queryText)
+IMC -> Parser ++ : Parse(queryText)
+Parser --> IMC -- : CosmosSqlQuery (AST)
+IMC -> IMC : FilterItemsByQuery()\n→ WHERE / ORDER BY / SELECT / …
+IMC -> FeedIter ** : InMemoryFeedIterator<T>
+IMC --> Test -- : FeedIterator<T>
+
+loop while HasMoreResults
+  Test -> FeedIter ++ : ReadNextAsync()
+  FeedIter --> Test -- : FeedResponse<T>
+end
+
+note over IMC
+  LINQ flow also identical to Approach 1:
+  GetItemLinqQueryable<T>() → LINQ-to-Objects
+  → .ToFeedIteratorOverridable()
+end note
+
+@enduml

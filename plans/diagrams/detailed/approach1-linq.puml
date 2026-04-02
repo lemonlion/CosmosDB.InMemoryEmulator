@@ -1,0 +1,86 @@
+@startuml approach1-linq-detailed
+title **Approach 1: InMemoryContainer — LINQ Query Flow (Detailed)**
+
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+skinparam sequenceParticipantBorderColor #333
+skinparam sequenceLifeLineBorderColor #999
+
+actor "Test Code" as Test
+participant "InMemoryFeedIteratorSetup" as Setup
+participant "InMemoryContainer\n(extends Container)" as IMC
+participant "In-memory store\n(ConcurrentDictionary)" as Store
+participant "IOrderedQueryable<T>\n(LINQ-to-Objects)" as Queryable
+participant "CosmosOverridable\nFeedIteratorExtensions\n(ProductionExtensions pkg)" as Ext
+participant "AsyncLocal<Func<>>\nFeedIteratorFactory" as AsyncLocal
+participant "InMemoryFeedIterator<T>" as FeedIter
+participant "InMemoryFeedResponse<T>\n(extends FeedResponse<T>)" as FeedResp
+
+== One-time Setup (per test fixture) ==
+
+Test -> Setup ++ : InMemoryFeedIteratorSetup.Register()
+Setup -> AsyncLocal : Set AsyncLocal<FeedIteratorFactory>\n= CreateInMemoryFeedIterator<T>
+Setup --> Test -- : (factory registered)
+
+== Query Building ==
+
+Test -> IMC ++ : GetItemLinqQueryable<T>\n(allowSynchronousQueryExecution,\n continuationToken, requestOptions)
+IMC -> Store ++ : GetAllItemsForPartition(requestOptions)
+Store --> IMC -- : List<string> (JSON documents)\n(filtered by partition key if set,\n TTL-expired items excluded)
+IMC -> IMC : Deserialize each JSON string →\nJsonConvert.DeserializeObject<T>()
+IMC -> IMC : Apply requestOptions.PartitionKey\nfiltering if specified
+IMC -> Queryable ** : items.AsQueryable()\n.OrderBy(item => 0)\n→ IOrderedQueryable<T>
+
+note right of Queryable
+  This is a plain LINQ-to-Objects
+  queryable — NOT the Cosmos SDK's
+  CosmosLinqQueryProvider. Operators
+  execute as C# delegates, not SQL.
+end note
+
+IMC --> Test -- : IOrderedQueryable<T>
+
+== LINQ Operator Composition (no execution yet) ==
+
+Test -> Queryable : .Where(x => x.Status == "active")
+note right : Adds predicate to expression tree\n(LINQ-to-Objects: C# delegate)
+Test -> Queryable : .Select(x => x.Name)
+note right : Adds projection to expression tree
+Test -> Queryable : .OrderBy(x => x.Timestamp)
+note right : Adds sort key to expression tree
+Test -> Queryable : .Take(10)
+note right : Adds limit to expression tree
+
+== Materialization via ToFeedIteratorOverridable ==
+
+Test -> Ext ++ : .ToFeedIteratorOverridable()
+
+Ext -> AsyncLocal ++ : Check AsyncLocal<FeedIteratorFactory>
+AsyncLocal --> Ext -- : factory delegate (non-null,\nset by InMemoryFeedIteratorSetup)
+
+note right of Ext
+  Resolution order:
+  1. AsyncLocal factory (per-async-flow)
+  2. StaticFallbackFactory (static field)
+  3. Real SDK .ToFeedIterator() (production)
+  In tests, step 1 matches.
+end note
+
+Ext -> Setup ++ : factory.Invoke(queryable)\n= CreateInMemoryFeedIterator<T>(queryable)
+Setup -> Setup : queryable.AsEnumerable()\n→ triggers LINQ-to-Objects execution:\n  Where → Select → OrderBy → Take\n  all run as C# delegates
+Setup -> FeedIter ** : new InMemoryFeedIterator<T>\n(materialized IEnumerable<T>,\n maxItemCount from requestOptions)
+Setup --> Ext -- : FeedIterator<T>
+Ext --> Test -- : FeedIterator<T>
+
+== Pagination ==
+
+loop while FeedIter.HasMoreResults
+  Test -> FeedIter ++ : ReadNextAsync()
+  FeedIter -> FeedIter : EnsureItems()\n(materialize enumerable on first call)
+  FeedIter -> FeedIter : Paginate: Skip(offset).Take(maxItemCount)
+  FeedIter -> FeedIter : Generate continuation token\n(offset-based, null if last page)
+  FeedIter -> FeedResp ** : new InMemoryFeedResponse<T>\n(page of items, continuationToken,\n Headers: x-ms-request-charge,\n x-ms-activity-id)
+  FeedIter --> Test -- : FeedResponse<T>
+end
+
+@enduml

@@ -1,0 +1,27 @@
+@startuml approach1-sql-abbreviated
+title **Approach 1: InMemoryContainer — SQL Query Flow (Abbreviated)**
+
+skinparam backgroundColor #FEFEFE
+skinparam sequenceArrowThickness 2
+
+actor "Test Code" as Test
+participant "InMemoryContainer" as IMC
+participant "CosmosSqlParser" as Parser
+participant "InMemoryFeedIterator<T>" as FeedIter
+
+Test -> IMC ++ : GetItemQueryIterator<T>(queryText)
+IMC -> IMC : FilterItemsByQuery()
+IMC -> Parser ++ : Parse(queryText)
+Parser --> IMC -- : CosmosSqlQuery (AST)
+IMC -> IMC : GetAllItemsForPartition()
+IMC -> IMC : WHERE → EvaluateSqlExpression()
+IMC -> IMC : GROUP BY / ORDER BY / TOP\n/ OFFSET+LIMIT / SELECT / DISTINCT
+IMC -> FeedIter ** : InMemoryFeedIterator<T>
+IMC --> Test -- : FeedIterator<T>
+
+loop while HasMoreResults
+  Test -> FeedIter ++ : ReadNextAsync()
+  FeedIter --> Test -- : FeedResponse<T>
+end
+
+@enduml
