@@ -69,6 +69,7 @@ public class InMemoryContainer : Container
     private readonly Scripts _scripts;
     private readonly Dictionary<string, Func<object[], object>> _userDefinedFunctions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Func<PartitionKey, dynamic[], string>> _storedProcedures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, StoredProcedureProperties> _storedProcedureProperties = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RegisteredTrigger> _triggers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TriggerProperties> _triggerProperties = new(StringComparer.Ordinal);
     private volatile (string Name, string FromAlias, SqlExpression Expr)[] _parsedComputedProperties;
@@ -160,7 +161,16 @@ public class InMemoryContainer : Container
     {
         _containerProperties = containerProperties;
         Id = containerProperties.Id;
-        PartitionKeyPaths = containerProperties.PartitionKeyPaths ?? new[] { containerProperties.PartitionKeyPath };
+        var paths = containerProperties.PartitionKeyPaths;
+        if (paths is null || paths.Count == 0)
+        {
+            var singlePath = containerProperties.PartitionKeyPath ?? "/id";
+            PartitionKeyPaths = new[] { singlePath };
+        }
+        else
+        {
+            PartitionKeyPaths = paths;
+        }
         _scripts = ConfigureScripts();
     }
 
@@ -299,7 +309,7 @@ public class InMemoryContainer : Container
 
             var key = kvp.Key;
             var etag = $"\"{Guid.NewGuid()}\"";
-            _items[key] = kvp.Value.Json;
+            _items[key] = EnrichWithSystemProperties(kvp.Value.Json, etag, pointInTime);
             _etags[key] = etag;
             _timestamps[key] = pointInTime;
         }
@@ -559,6 +569,15 @@ public class InMemoryContainer : Container
         ValidateDocumentSize(json);
         var jObj = JsonParseHelpers.ParseJson(json);
 
+        // Validate body id matches parameter id (real Cosmos returns 400 on mismatch)
+        var bodyId = jObj["id"]?.ToString();
+        if (bodyId is not null && bodyId != id)
+        {
+            throw new CosmosException(
+                "The 'id' property in the body does not match the 'id' parameter.",
+                HttpStatusCode.BadRequest, 0, string.Empty, 0);
+        }
+
         jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
 
@@ -671,6 +690,12 @@ public class InMemoryContainer : Container
         if (patchOperations is null || patchOperations.Count == 0)
         {
             throw new CosmosException("Patch request has no operations.",
+                HttpStatusCode.BadRequest, 0, string.Empty, 0);
+        }
+
+        if (patchOperations.Count > 10)
+        {
+            throw new CosmosException("Patch request has too many operations.",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
 
@@ -922,6 +947,13 @@ public class InMemoryContainer : Container
 
         var jObj = JsonParseHelpers.ParseJson(json);
 
+        // Validate body id matches parameter id (real Cosmos returns 400 on mismatch)
+        var bodyId = jObj["id"]?.ToString();
+        if (bodyId is not null && bodyId != id)
+        {
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
+        }
+
         jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
 
@@ -1016,6 +1048,17 @@ public class InMemoryContainer : Container
         PatchItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
+        if (patchOperations is null || patchOperations.Count == 0)
+        {
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
+        }
+
+        if (patchOperations.Count > 10)
+        {
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
+        }
+
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
         if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
@@ -1066,6 +1109,7 @@ public class InMemoryContainer : Container
         IReadOnlyList<(string id, PartitionKey partitionKey)> items,
         ReadManyRequestOptions readManyRequestOptions = null, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(items);
         var results = new List<T>();
         foreach (var (itemId, pk) in items)
         {
@@ -1087,6 +1131,7 @@ public class InMemoryContainer : Container
         IReadOnlyList<(string id, PartitionKey partitionKey)> items,
         ReadManyRequestOptions readManyRequestOptions = null, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(items);
         var results = new JArray();
         foreach (var (itemId, pk) in items)
         {
@@ -1097,7 +1142,7 @@ public class InMemoryContainer : Container
                 results.Add(JsonParseHelpers.ParseJson(json));
             }
         }
-        var envelope = new JObject { ["Documents"] = results };
+        var envelope = new JObject { ["Documents"] = results, ["_count"] = results.Count };
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, envelope.ToString(Formatting.None)));
     }
 
@@ -1545,6 +1590,7 @@ public class InMemoryContainer : Container
     public override Task<ContainerResponse> ReadContainerAsync(
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        _containerProperties.IndexingPolicy = IndexingPolicy;
         var r = Substitute.For<ContainerResponse>();
         r.StatusCode.Returns(HttpStatusCode.OK);
         r.Resource.Returns(_containerProperties);
@@ -1554,7 +1600,10 @@ public class InMemoryContainer : Container
 
     public override Task<ResponseMessage> ReadContainerStreamAsync(
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
-        => Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, JsonConvert.SerializeObject(_containerProperties, JsonSettings)));
+    {
+        _containerProperties.IndexingPolicy = IndexingPolicy;
+        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, JsonConvert.SerializeObject(_containerProperties, JsonSettings)));
+    }
 
     public override Task<ContainerResponse> ReplaceContainerAsync(
         ContainerProperties containerProperties, ContainerRequestOptions requestOptions = null,
@@ -1563,6 +1612,8 @@ public class InMemoryContainer : Container
         _containerProperties = containerProperties;
         _parsedComputedProperties = null;
         DefaultTimeToLive = containerProperties.DefaultTimeToLive;
+        if (containerProperties.IndexingPolicy is not null)
+            IndexingPolicy = containerProperties.IndexingPolicy;
         var r = Substitute.For<ContainerResponse>();
         r.StatusCode.Returns(HttpStatusCode.OK);
         r.Resource.Returns(containerProperties);
@@ -1577,6 +1628,8 @@ public class InMemoryContainer : Container
         _containerProperties = containerProperties;
         _parsedComputedProperties = null;
         DefaultTimeToLive = containerProperties.DefaultTimeToLive;
+        if (containerProperties.IndexingPolicy is not null)
+            IndexingPolicy = containerProperties.IndexingPolicy;
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, JsonConvert.SerializeObject(containerProperties, JsonSettings)));
     }
 
@@ -1586,6 +1639,7 @@ public class InMemoryContainer : Container
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
+        lock (_changeFeedLock) { _changeFeed.Clear(); }
         OnDeleted?.Invoke();
         var r = Substitute.For<ContainerResponse>();
         r.StatusCode.Returns(HttpStatusCode.NoContent);
@@ -1599,6 +1653,7 @@ public class InMemoryContainer : Container
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
+        lock (_changeFeedLock) { _changeFeed.Clear(); }
         OnDeleted?.Invoke();
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
     }
@@ -1680,10 +1735,15 @@ public class InMemoryContainer : Container
         if (PartitionKeyPaths is { Count: > 0 })
         {
             var parts = PartitionKeyPaths.Select(path => jObj.SelectToken(path.TrimStart('/'))?.ToString()).ToList();
-            var nonNull = parts.Where(p => p is not null).ToList();
-            if (nonNull.Count > 0)
+            if (parts.Count > 1)
             {
-                return nonNull.Count == 1 ? nonNull[0] : string.Join("|", nonNull);
+                // Composite key — preserve null positions as empty strings for consistency
+                // with PartitionKeyToString which also uses empty string for null components
+                return string.Join("|", parts.Select(p => p ?? string.Empty));
+            }
+            if (parts[0] is not null)
+            {
+                return parts[0];
             }
         }
 
@@ -2004,6 +2064,7 @@ public class InMemoryContainer : Container
         var msg = new ResponseMessage(statusCode) { Content = json is not null ? ToStream(json) : null };
         msg.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
         msg.Headers["x-ms-request-charge"] = SyntheticRequestCharge.ToString(CultureInfo.InvariantCulture);
+        msg.Headers["x-ms-session-token"] = "0:0#1";
         if (etag is not null)
         {
             msg.Headers["ETag"] = etag;
@@ -2168,9 +2229,64 @@ public class InMemoryContainer : Container
             .Returns(ci =>
             {
                 var props = ci.Arg<StoredProcedureProperties>();
+                if (_storedProcedureProperties.ContainsKey(props.Id))
+                {
+                    throw new CosmosException($"StoredProcedure '{props.Id}' already exists.",
+                        HttpStatusCode.Conflict, 0, string.Empty, 0);
+                }
+                _storedProcedureProperties[props.Id] = props;
                 var r = Substitute.For<StoredProcedureResponse>();
                 r.StatusCode.Returns(HttpStatusCode.Created);
                 r.Resource.Returns(props);
+                return r;
+            });
+
+        scripts.ReadStoredProcedureAsync(
+            Arg.Any<string>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                var sprocId = ci.ArgAt<string>(0);
+                if (!_storedProcedureProperties.TryGetValue(sprocId, out var props))
+                {
+                    throw new CosmosException($"StoredProcedure '{sprocId}' not found.",
+                        HttpStatusCode.NotFound, 0, string.Empty, 0);
+                }
+                var r = Substitute.For<StoredProcedureResponse>();
+                r.StatusCode.Returns(HttpStatusCode.OK);
+                r.Resource.Returns(props);
+                return r;
+            });
+
+        scripts.ReplaceStoredProcedureAsync(
+            Arg.Any<StoredProcedureProperties>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                var props = ci.Arg<StoredProcedureProperties>();
+                if (!_storedProcedureProperties.ContainsKey(props.Id))
+                {
+                    throw new CosmosException($"StoredProcedure '{props.Id}' not found.",
+                        HttpStatusCode.NotFound, 0, string.Empty, 0);
+                }
+                _storedProcedureProperties[props.Id] = props;
+                var r = Substitute.For<StoredProcedureResponse>();
+                r.StatusCode.Returns(HttpStatusCode.OK);
+                r.Resource.Returns(props);
+                return r;
+            });
+
+        scripts.DeleteStoredProcedureAsync(
+            Arg.Any<string>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                var sprocId = ci.ArgAt<string>(0);
+                if (!_storedProcedureProperties.Remove(sprocId))
+                {
+                    throw new CosmosException($"StoredProcedure '{sprocId}' not found.",
+                        HttpStatusCode.NotFound, 0, string.Empty, 0);
+                }
+                _storedProcedures.Remove(sprocId);
+                var r = Substitute.For<StoredProcedureResponse>();
+                r.StatusCode.Returns(HttpStatusCode.NoContent);
                 return r;
             });
 
@@ -2182,12 +2298,22 @@ public class InMemoryContainer : Container
                 var sprocId = ci.ArgAt<string>(0);
                 var pk = ci.Arg<PartitionKey>();
                 var sprocArgs = ci.ArgAt<dynamic[]>(2);
+                // Execute handler BEFORE creating NSubstitute mocks to avoid
+                // nested Returns() context corruption when the handler calls
+                // container methods that internally create NSubstitute mocks.
+                string handlerResult = null;
+                var hasHandler = false;
+                if (_storedProcedures.TryGetValue(sprocId, out var handler))
+                {
+                    handlerResult = handler(pk, sprocArgs);
+                    hasHandler = true;
+                }
                 var r = Substitute.For<StoredProcedureExecuteResponse<string>>();
                 r.StatusCode.Returns(HttpStatusCode.OK);
                 r.RequestCharge.Returns(SyntheticRequestCharge);
-                if (_storedProcedures.TryGetValue(sprocId, out var handler))
+                if (hasHandler)
                 {
-                    r.Resource.Returns(handler(pk, sprocArgs));
+                    r.Resource.Returns(handlerResult);
                 }
                 return r;
             });
@@ -4403,7 +4529,9 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    return IsTruthy(args[0]) ? args[1] : args[2];
+                    // Real Cosmos DB IIF only treats boolean true as truthy.
+                    // Non-boolean values (numbers, strings, arrays, objects) always yield the false branch.
+                    return args[0] is bool b && b ? args[1] : args[2];
                 }
 
             // ── Extended array functions ──
@@ -4488,7 +4616,7 @@ public class InMemoryContainer : Container
                     var arr2 = ResolveJArray(func.Arguments[1], item, fromAlias, parameters);
                     if (arr1 is null || arr2 is null)
                     {
-                        return new JArray();
+                        return UndefinedValue.Instance;
                     }
 
                     var set2 = new HashSet<JToken>(arr2, JTokenValueComparer.Instance);
@@ -4512,6 +4640,10 @@ public class InMemoryContainer : Container
 
                     var arr1 = ResolveJArray(func.Arguments[0], item, fromAlias, parameters);
                     var arr2 = ResolveJArray(func.Arguments[1], item, fromAlias, parameters);
+                    if (arr1 is null || arr2 is null)
+                    {
+                        return UndefinedValue.Instance;
+                    }
                     var result = new JArray();
                     var seen = new HashSet<JToken>(JTokenValueComparer.Instance);
                     if (arr1 is not null)
@@ -4733,6 +4865,8 @@ public class InMemoryContainer : Container
                         "minute" or "mi" or "n" => dt.AddMinutes(n),
                         "second" or "ss" or "s" => dt.AddSeconds(n),
                         "millisecond" or "ms" => dt.AddMilliseconds(n),
+                        "microsecond" or "mcs" => dt.AddTicks(n * 10L),
+                        "nanosecond" or "ns" => dt.AddTicks(n / 100L),
                         _ => dt,
                     };
                     return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
@@ -4765,6 +4899,8 @@ public class InMemoryContainer : Container
                         "minute" or "mi" or "n" => (long)dt.Minute,
                         "second" or "ss" or "s" => (long)dt.Second,
                         "millisecond" or "ms" => (long)dt.Millisecond,
+                        "microsecond" or "mcs" => (long)(dt.Ticks % TimeSpan.TicksPerSecond / 10),
+                        "nanosecond" or "ns" => (long)(dt.Ticks % TimeSpan.TicksPerSecond * 100),
                         _ => null,
                     };
                 }
@@ -4783,26 +4919,28 @@ public class InMemoryContainer : Container
                         "year" or "yyyy" or "yy" => (object)(long)(dtEnd.Year - dtStart.Year),
                         "month" or "mm" or "m" => (long)((dtEnd.Year - dtStart.Year) * 12 + dtEnd.Month - dtStart.Month),
                         "day" or "dd" or "d" => (long)(dtEnd.Date - dtStart.Date).TotalDays,
-                        "hour" or "hh" => (long)(dtEnd - dtStart).TotalHours,
-                        "minute" or "mi" or "n" => (long)(dtEnd - dtStart).TotalMinutes,
-                        "second" or "ss" or "s" => (long)(dtEnd - dtStart).TotalSeconds,
-                        "millisecond" or "ms" => (long)(dtEnd - dtStart).TotalMilliseconds,
+                        "hour" or "hh" => (long)(FloorToUnit(dtEnd, TimeSpan.TicksPerHour) - FloorToUnit(dtStart, TimeSpan.TicksPerHour)),
+                        "minute" or "mi" or "n" => (long)(FloorToUnit(dtEnd, TimeSpan.TicksPerMinute) - FloorToUnit(dtStart, TimeSpan.TicksPerMinute)),
+                        "second" or "ss" or "s" => (long)(FloorToUnit(dtEnd, TimeSpan.TicksPerSecond) - FloorToUnit(dtStart, TimeSpan.TicksPerSecond)),
+                        "millisecond" or "ms" => (long)(FloorToUnit(dtEnd, TimeSpan.TicksPerMillisecond) - FloorToUnit(dtStart, TimeSpan.TicksPerMillisecond)),
+                        "microsecond" or "mcs" => (long)((dtEnd - dtStart).Ticks / 10),
+                        "nanosecond" or "ns" => (long)((dtEnd - dtStart).Ticks * 100),
                         _ => null,
                     };
                 }
             case "DATETIMEFROMPARTS":
                 {
-                    if (args.Length < 7) return null;
+                    if (args.Length < 3) return null;
                     var y = ToLong(args[0]);
                     var mo = ToLong(args[1]);
                     var d = ToLong(args[2]);
-                    var h = ToLong(args[3]);
-                    var mi = ToLong(args[4]);
-                    var s = ToLong(args[5]);
-                    var ms = ToLong(args[6]);
-                    if (!y.HasValue || !mo.HasValue || !d.HasValue || !h.HasValue || !mi.HasValue || !s.HasValue || !ms.HasValue) return null;
+                    var h = args.Length > 3 ? ToLong(args[3]) : 0;
+                    var mi = args.Length > 4 ? ToLong(args[4]) : 0;
+                    var s = args.Length > 5 ? ToLong(args[5]) : 0;
+                    var fraction = args.Length > 6 ? ToLong(args[6]) : 0;
+                    if (!y.HasValue || !mo.HasValue || !d.HasValue || !h.HasValue || !mi.HasValue || !s.HasValue || !fraction.HasValue) return null;
                     var dt = new DateTime((int)y.Value, (int)mo.Value, (int)d.Value,
-                        (int)h.Value, (int)mi.Value, (int)s.Value, (int)ms.Value, DateTimeKind.Utc);
+                        (int)h.Value, (int)mi.Value, (int)s.Value, DateTimeKind.Utc).AddTicks(fraction.Value);
                     return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
                 }
             case "DATETIMEBIN":
@@ -4816,7 +4954,7 @@ public class InMemoryContainer : Container
 
                     var origin = args.Length >= 4 && args[3] is string originStr
                         && DateTime.TryParse(originStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var o)
-                        ? o : new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                        ? o : new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
                     var bs = (int)binSize.Value;
                     if (part is "year" or "yyyy" or "yy")
@@ -4824,7 +4962,7 @@ public class InMemoryContainer : Container
                         var yearBin = (int)(Math.Floor((double)(dt.Year - origin.Year) / bs) * bs);
                         dt = new DateTime(origin.Year + yearBin, 1, 1, 0, 0, 0, DateTimeKind.Utc);
                     }
-                    else if (part is "month" or "mm")
+                    else if (part is "month" or "mm" or "m")
                     {
                         var totalMonths = (dt.Year - origin.Year) * 12 + (dt.Month - origin.Month);
                         var binned = (int)(Math.Floor((double)totalMonths / bs) * bs);
@@ -4855,6 +4993,7 @@ public class InMemoryContainer : Container
                     var dtStr = args[0]?.ToString();
                     if (dtStr is null) return null;
                     if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return null;
+                    if (dt.Kind == DateTimeKind.Unspecified) dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
                     return (object)dt.ToUniversalTime().Ticks;
                 }
             case "TICKSTODATETIME":
@@ -4871,6 +5010,7 @@ public class InMemoryContainer : Container
                     var dtStr = args[0]?.ToString();
                     if (dtStr is null) return null;
                     if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return null;
+                    if (dt.Kind == DateTimeKind.Unspecified) dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
                     return (object)new DateTimeOffset(dt.ToUniversalTime()).ToUnixTimeMilliseconds();
                 }
             case "TIMESTAMPTODATETIME":
@@ -5261,6 +5401,9 @@ public class InMemoryContainer : Container
         _ => null
     };
 
+    private static long FloorToUnit(DateTime dt, long ticksPerUnit)
+        => dt.Ticks / ticksPerUnit;
+
     private static JToken ResolveTokenType(SqlExpression[] arguments, JObject item, string fromAlias)
     {
         if (arguments.Length < 1)
@@ -5364,11 +5507,23 @@ public class InMemoryContainer : Container
     //  Patch operations
     // ═══════════════════════════════════════════════════════════════════════════
 
+    private static readonly HashSet<string> SystemProperties = new(StringComparer.OrdinalIgnoreCase)
+        { "/_ts", "/_etag", "/_rid", "/_self", "/_attachments" };
+
     private static void ApplyPatchOperations(JObject jObj, IReadOnlyList<PatchOperation> patchOperations)
     {
         foreach (var operation in patchOperations)
         {
             var path = GetPatchPath(operation);
+
+            // Reject patches to system-generated properties
+            if (SystemProperties.Contains(path))
+            {
+                throw new CosmosException(
+                    $"Cannot patch system property '{path}'.",
+                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
+            }
+
             var segments = path.TrimStart('/').Split('/');
             var propertyName = segments.Last();
             var parentPath = string.Join(".", segments.Take(segments.Length - 1));
@@ -5387,6 +5542,11 @@ public class InMemoryContainer : Container
                         }
                         else if (int.TryParse(propertyName, out var insertIdx) && rawParent is JArray insertArray)
                         {
+                            if (insertIdx < 0 || insertIdx > insertArray.Count)
+                            {
+                                throw new CosmosException("Array index out of bounds.",
+                                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
+                            }
                             insertArray.Insert(insertIdx, newToken);
                         }
                         else
@@ -5398,17 +5558,71 @@ public class InMemoryContainer : Container
                         break;
                     }
                 case PatchOperationType.Set:
+                    {
+                        var value = GetPatchValue(operation);
+                        var newToken = value is not null ? JToken.FromObject(value) : JValue.CreateNull();
+                        if (int.TryParse(propertyName, out var idx) && rawParent is JArray arr)
+                        {
+                            if (idx < 0 || idx >= arr.Count)
+                            {
+                                throw new CosmosException("Array index out of bounds.",
+                                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
+                            }
+                            arr[idx] = newToken;
+                        }
+                        else
+                        {
+                            var parent = rawParent as JObject ?? jObj;
+                            parent[propertyName] = newToken;
+                        }
+                        break;
+                    }
                 case PatchOperationType.Replace:
                     {
                         var value = GetPatchValue(operation);
-                        var parent = rawParent as JObject ?? jObj;
-                        parent[propertyName] = value is not null ? JToken.FromObject(value) : JValue.CreateNull();
+                        var newToken = value is not null ? JToken.FromObject(value) : JValue.CreateNull();
+                        if (int.TryParse(propertyName, out var idx) && rawParent is JArray arr)
+                        {
+                            if (idx < 0 || idx >= arr.Count)
+                            {
+                                throw new CosmosException("Array index out of bounds.",
+                                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
+                            }
+                            arr[idx] = newToken;
+                        }
+                        else
+                        {
+                            var parent = rawParent as JObject ?? jObj;
+                            if (parent[propertyName] is null)
+                            {
+                                throw new CosmosException("Replace target does not exist.",
+                                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
+                            }
+                            parent[propertyName] = newToken;
+                        }
                         break;
                     }
                 case PatchOperationType.Remove:
                     {
-                        var parent = rawParent as JObject ?? jObj;
-                        parent.Remove(propertyName);
+                        if (int.TryParse(propertyName, out var idx) && rawParent is JArray arr)
+                        {
+                            if (idx < 0 || idx >= arr.Count)
+                            {
+                                throw new CosmosException("Array index out of bounds.",
+                                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
+                            }
+                            arr.RemoveAt(idx);
+                        }
+                        else
+                        {
+                            var parent = rawParent as JObject ?? jObj;
+                            if (parent[propertyName] is null)
+                            {
+                                throw new CosmosException("Remove target does not exist.",
+                                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
+                            }
+                            parent.Remove(propertyName);
+                        }
                         break;
                     }
                 case PatchOperationType.Move:
@@ -5416,6 +5630,14 @@ public class InMemoryContainer : Container
                         var sourcePath = GetPatchSourcePath(operation);
                         if (sourcePath is not null)
                         {
+                            // Reject when destination is a child of source (e.g. move /nested → /nested/child)
+                            if (path.StartsWith(sourcePath + "/", StringComparison.Ordinal))
+                            {
+                                throw new CosmosException(
+                                    "The 'path' attribute can't be a JSON child of the 'from' JSON location.",
+                                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
+                            }
+
                             var sourceSegments = sourcePath.TrimStart('/').Split('/');
                             var sourcePropertyName = sourceSegments.Last();
                             var sourceParentPath = string.Join(".", sourceSegments.Take(sourceSegments.Length - 1));
@@ -5423,12 +5645,14 @@ public class InMemoryContainer : Container
                                 ? jObj.SelectToken(sourceParentPath) as JObject ?? jObj
                                 : jObj;
                             var sourceValue = sourceParent[sourcePropertyName];
-                            if (sourceValue is not null)
+                            if (sourceValue is null)
                             {
-                                sourceParent.Remove(sourcePropertyName);
-                                var parent = rawParent as JObject ?? jObj;
-                                parent[propertyName] = sourceValue;
+                                throw new CosmosException("Move source does not exist.",
+                                    HttpStatusCode.BadRequest, 0, string.Empty, 0);
                             }
+                            sourceParent.Remove(sourcePropertyName);
+                            var parent = rawParent as JObject ?? jObj;
+                            parent[propertyName] = sourceValue;
                         }
 
                         break;
@@ -5436,20 +5660,35 @@ public class InMemoryContainer : Container
                 case PatchOperationType.Increment:
                     {
                         var incrementValue = GetPatchValue(operation);
-                        var parent = rawParent as JObject ?? jObj;
-                        var existingToken = parent[propertyName];
-                        if (existingToken is not null && incrementValue is not null)
+                        if (incrementValue is not null)
                         {
-                            var existingDouble = existingToken.Value<double>();
-                            var incrementDouble = Convert.ToDouble(incrementValue);
-                            var result = existingDouble + incrementDouble;
-                            if (existingToken.Type == JTokenType.Integer && result == Math.Floor(result))
+                            var parent = rawParent as JObject ?? jObj;
+                            var existingToken = parent[propertyName];
+                            if (existingToken is not null)
                             {
-                                parent[propertyName] = (long)result;
+                                var existingDouble = existingToken.Value<double>();
+                                var incrementDouble = Convert.ToDouble(incrementValue);
+                                var result = existingDouble + incrementDouble;
+                                if (existingToken.Type == JTokenType.Integer && result == Math.Floor(result))
+                                {
+                                    parent[propertyName] = (long)result;
+                                }
+                                else
+                                {
+                                    parent[propertyName] = result;
+                                }
                             }
                             else
                             {
-                                parent[propertyName] = result;
+                                var incrementDouble = Convert.ToDouble(incrementValue);
+                                if (incrementDouble == Math.Floor(incrementDouble))
+                                {
+                                    parent[propertyName] = (long)incrementDouble;
+                                }
+                                else
+                                {
+                                    parent[propertyName] = incrementDouble;
+                                }
                             }
                         }
                         break;
@@ -5526,7 +5765,7 @@ public class InMemoryContainer : Container
         public override string IndexMetrics => null;
         public override string ContinuationToken => null;
         public override double RequestCharge => SyntheticRequestCharge;
-        public override string ActivityId => string.Empty;
+        public override string ActivityId { get; } = Guid.NewGuid().ToString();
         public override string ETag => null;
         public override IEnumerator<T> GetEnumerator() => _items.GetEnumerator();
     }
@@ -5558,13 +5797,19 @@ public class InMemoryContainer : Container
             if (df is not null) distanceFunction = df;
         }
 
-        return distanceFunction.ToLowerInvariant() switch
+        var result = distanceFunction.ToLowerInvariant() switch
         {
             "cosine" => CosineSimilarity(vec1, vec2),
             "dotproduct" => (object)DotProduct(vec1, vec2),
             "euclidean" => (object)EuclideanDistance(vec1, vec2),
             _ => CosineSimilarity(vec1, vec2),
         };
+
+        // Guard against Infinity/NaN which are not valid JSON numbers
+        if (result is double d && (double.IsInfinity(d) || double.IsNaN(d)))
+            return null;
+
+        return result;
     }
 
     private static object CosineSimilarity(double[] a, double[] b)
