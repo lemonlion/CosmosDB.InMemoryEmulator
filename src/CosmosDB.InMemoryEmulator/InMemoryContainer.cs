@@ -62,6 +62,7 @@ public class InMemoryContainer : Container
     private readonly List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> _changeFeed = new();
     private readonly object _changeFeedLock = new();
     private readonly object _uniqueKeyWriteLock = new();
+    private int _throughput = 400;
 
     private bool HasUniqueKeys =>
         _containerProperties.UniqueKeyPolicy?.UniqueKeys.Count > 0;
@@ -1609,6 +1610,8 @@ public class InMemoryContainer : Container
         ContainerProperties containerProperties, ContainerRequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
+        if (containerProperties.Id != Id)
+            throw new CosmosException($"Container id '{containerProperties.Id}' does not match the existing container id '{Id}'.", HttpStatusCode.BadRequest, 0, "", 0);
         _containerProperties = containerProperties;
         _parsedComputedProperties = null;
         DefaultTimeToLive = containerProperties.DefaultTimeToLive;
@@ -1625,6 +1628,8 @@ public class InMemoryContainer : Container
         ContainerProperties containerProperties, ContainerRequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
+        if (containerProperties.Id != Id)
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
         _containerProperties = containerProperties;
         _parsedComputedProperties = null;
         DefaultTimeToLive = containerProperties.DefaultTimeToLive;
@@ -1663,20 +1668,21 @@ public class InMemoryContainer : Container
     // ═══════════════════════════════════════════════════════════════════════════
 
     public override Task<int?> ReadThroughputAsync(CancellationToken cancellationToken = default)
-        => Task.FromResult<int?>(400);
+        => Task.FromResult<int?>(_throughput);
 
     public override Task<ThroughputResponse> ReadThroughputAsync(
         RequestOptions requestOptions, CancellationToken cancellationToken = default)
     {
         var r = Substitute.For<ThroughputResponse>();
         r.StatusCode.Returns(HttpStatusCode.OK);
-        r.Resource.Returns(ThroughputProperties.CreateManualThroughput(400));
+        r.Resource.Returns(ThroughputProperties.CreateManualThroughput(_throughput));
         return Task.FromResult(r);
     }
 
     public override Task<ThroughputResponse> ReplaceThroughputAsync(
         int throughput, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        _throughput = throughput;
         var r = Substitute.For<ThroughputResponse>();
         r.StatusCode.Returns(HttpStatusCode.OK);
         r.Resource.Returns(ThroughputProperties.CreateManualThroughput(throughput));

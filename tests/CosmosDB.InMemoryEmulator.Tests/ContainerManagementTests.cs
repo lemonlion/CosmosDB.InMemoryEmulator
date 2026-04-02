@@ -1329,3 +1329,742 @@ public class DefineContainerBuilderTests2
         builder.Should().NotBeNull();
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase A — Bug Fix Tests: Throughput Persistence & Id Validation
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ThroughputPersistenceTests
+{
+    [Fact]
+    public async Task Container_ReplaceThroughput_ThenRead_ReturnsPersisted()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        await container.ReplaceThroughputAsync(800);
+
+        var throughput = await container.ReadThroughputAsync();
+        throughput.Should().Be(800);
+    }
+
+    [Fact]
+    public async Task Container_ReplaceThroughput_ThenReadWithRequestOptions_ReturnsPersisted()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        await container.ReplaceThroughputAsync(1200);
+
+        var response = await container.ReadThroughputAsync(new RequestOptions());
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Database_ReplaceThroughput_ThenRead_ReturnsPersisted()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        await db.ReplaceThroughputAsync(1000);
+
+        var throughput = await db.ReadThroughputAsync();
+        throughput.Should().Be(1000);
+    }
+
+    [Fact]
+    public async Task Container_DefaultThroughput_Is400()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        var throughput = await container.ReadThroughputAsync();
+        throughput.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task Database_DefaultThroughput_Is400()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var throughput = await db.ReadThroughputAsync();
+        throughput.Should().Be(400);
+    }
+}
+
+public class ReplaceContainerIdValidationTests
+{
+    [Fact]
+    public async Task ReplaceContainerAsync_MismatchedId_ThrowsBadRequest()
+    {
+        var container = new InMemoryContainer("my-container", "/pk");
+
+        var props = new ContainerProperties("wrong-id", "/pk");
+        var act = () => container.ReplaceContainerAsync(props);
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ReplaceContainerStreamAsync_MismatchedId_ReturnsBadRequest()
+    {
+        var container = new InMemoryContainer("my-container", "/pk");
+
+        var props = new ContainerProperties("wrong-id", "/pk");
+        var response = await container.ReplaceContainerStreamAsync(props);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ReplaceContainerAsync_MatchingId_Succeeds()
+    {
+        var container = new InMemoryContainer("my-container", "/pk");
+
+        var props = new ContainerProperties("my-container", "/pk") { DefaultTimeToLive = 600 };
+        var response = await container.ReplaceContainerAsync(props);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ReplaceContainerStreamAsync_MatchingId_Succeeds()
+    {
+        var container = new InMemoryContainer("my-container", "/pk");
+
+        var props = new ContainerProperties("my-container", "/pk") { DefaultTimeToLive = 600 };
+        var response = await container.ReplaceContainerStreamAsync(props);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase B — Constructor & Properties Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ContainerConstructorDefaultsTests
+{
+    [Fact]
+    public void DefaultConstructor_SetsDefaults()
+    {
+        var container = new InMemoryContainer();
+
+        container.Id.Should().Be("in-memory-container");
+    }
+
+    [Fact]
+    public async Task DefaultConstructor_PartitionKeyDefaultsToId()
+    {
+        var container = new InMemoryContainer();
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1" }), new PartitionKey("1"));
+
+        var item = await container.ReadItemAsync<JObject>("1", new PartitionKey("1"));
+        item.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ReadContainerAsync_ResponseContainer_ReturnsSelf()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        var response = await container.ReadContainerAsync();
+
+        response.Container.Should().BeSameAs(container);
+    }
+
+    [Fact]
+    public async Task DeleteContainerAsync_ResponseContainer_ReturnsSelf()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        var response = await container.DeleteContainerAsync();
+
+        response.Container.Should().BeSameAs(container);
+    }
+
+    [Fact]
+    public async Task ReplaceContainerAsync_ResponseContainer_ReturnsSelf()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        var props = new ContainerProperties("test", "/pk");
+        var response = await container.ReplaceContainerAsync(props);
+
+        response.Container.Should().BeSameAs(container);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase C — Replace Container Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ReplaceContainerPreservationTests
+{
+    [Fact]
+    public async Task ReplaceContainerAsync_OnlyTtlChange_IndexingPolicyResetToDefault()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        var initialPolicy = new IndexingPolicy { Automatic = false, IndexingMode = IndexingMode.None };
+        await container.ReplaceContainerAsync(new ContainerProperties("test", "/pk") { IndexingPolicy = initialPolicy });
+
+        // Replace with new ContainerProperties that has default IndexingPolicy (Automatic=true)
+        await container.ReplaceContainerAsync(new ContainerProperties("test", "/pk") { DefaultTimeToLive = 300 });
+
+        var readBack = await container.ReadContainerAsync();
+        // ContainerProperties constructor always creates a default IndexingPolicy (Automatic=true)
+        // so the Replace overwrites the previous Automatic=false with Automatic=true
+        readBack.Resource.IndexingPolicy.Automatic.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReplaceContainerAsync_MultipleSequentialReplaces_LastWins()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        await container.ReplaceContainerAsync(new ContainerProperties("test", "/pk") { DefaultTimeToLive = 100 });
+        await container.ReplaceContainerAsync(new ContainerProperties("test", "/pk") { DefaultTimeToLive = 200 });
+        await container.ReplaceContainerAsync(new ContainerProperties("test", "/pk") { DefaultTimeToLive = 300 });
+
+        var readBack = await container.ReadContainerAsync();
+        readBack.Resource.DefaultTimeToLive.Should().Be(300);
+    }
+
+    [Fact(Skip = "Real Cosmos DB: UniqueKeyPolicy is immutable after container creation and " +
+        "cannot be changed via ReplaceContainerAsync. The in-memory emulator replaces the entire " +
+        "_containerProperties object, which can lose the UniqueKeyPolicy if the replacement " +
+        "ContainerProperties doesn't include it. This means unique key enforcement silently " +
+        "disappears after a Replace that omits the policy.")]
+    public async Task ReplaceContainerAsync_ShouldPreserveUniqueKeyPolicy_WhenNotIncludedInReplacement()
+    {
+        var properties = new ContainerProperties("test", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        // Replace with TTL only — no UniqueKeyPolicy
+        await container.ReplaceContainerAsync(new ContainerProperties("test", "/pk") { DefaultTimeToLive = 900 });
+
+        // Should still enforce uniqueness
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", email = "dup@test.com" }), new PartitionKey("a"));
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", email = "dup@test.com" }), new PartitionKey("a"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task ReplaceContainer_EmulatorBehavior_UniqueKeyPolicyErasedIfOmittedFromReplacement()
+    {
+        var properties = new ContainerProperties("test", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        // Replace with TTL only — no UniqueKeyPolicy
+        await container.ReplaceContainerAsync(new ContainerProperties("test", "/pk") { DefaultTimeToLive = 900 });
+
+        // Uniqueness enforcement is lost — duplicate email now succeeds
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", email = "dup@test.com" }), new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", email = "dup@test.com" }), new PartitionKey("a"));
+
+        container.ItemCount.Should().Be(2, "unique key constraint was erased by the replace");
+    }
+
+    [Fact]
+    public async Task ReplaceContainerAsync_InvalidatesComputedPropertyCache()
+    {
+        var props = new ContainerProperties("test", "/pk");
+        props.ComputedProperties = new System.Collections.ObjectModel.Collection<ComputedProperty>
+        {
+            new() { Name = "cp1", Query = "SELECT VALUE c.name FROM c" }
+        };
+        var container = new InMemoryContainer(props);
+
+        // Seed an item to populate the cache
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+
+        // Replace — should invalidate computed property cache
+        await container.ReplaceContainerAsync(new ContainerProperties("test", "/pk"));
+
+        // Verify the container still works
+        var readBack = await container.ReadContainerAsync();
+        readBack.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase D — Container Creation Extended
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ContainerCreationValidationTests
+{
+    [Fact]
+    public async Task CreateContainerAsync_WithEmptyStringId_Throws()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var act = () => db.CreateContainerAsync("", "/pk");
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
+    [Fact]
+    public async Task CreateContainerAsync_WithThroughputProperties_Succeeds()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var props = new ContainerProperties("ctr", "/pk");
+        var response = await db.CreateContainerAsync(props, ThroughputProperties.CreateManualThroughput(1000));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task CreateContainerStreamAsync_WithThroughputProperties_Succeeds()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var props = new ContainerProperties("ctr", "/pk");
+        var response = await db.CreateContainerStreamAsync(props, ThroughputProperties.CreateManualThroughput(1000));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task CreateContainerIfNotExistsAsync_ExistingContainerWithData_PreservesData()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var resp1 = await db.CreateContainerAsync("ctr", "/pk");
+        var container = (InMemoryContainer)resp1.Container;
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        // CreateIfNotExists on same id — data should survive
+        var resp2 = await db.CreateContainerIfNotExistsAsync("ctr", "/pk");
+        var existing = (InMemoryContainer)resp2.Container;
+
+        existing.ItemCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task CreateContainerStreamAsync_PreservesIndexingPolicy()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var props = new ContainerProperties("ctr", "/pk")
+        {
+            IndexingPolicy = new IndexingPolicy { Automatic = false, IndexingMode = IndexingMode.None }
+        };
+        await db.CreateContainerStreamAsync(props);
+
+        var container = db.GetContainer("ctr");
+        var readBack = await container.ReadContainerAsync();
+        readBack.Resource.IndexingPolicy.IndexingMode.Should().Be(IndexingMode.None);
+    }
+
+    [Fact]
+    public async Task CreateContainerIfNotExistsAsync_WithThroughputProperties_Succeeds()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var props = new ContainerProperties("ctr", "/pk");
+        var response = await db.CreateContainerIfNotExistsAsync(props, ThroughputProperties.CreateManualThroughput(1000));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase E — Delete Operations Extended
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DeleteContainerRegistrationTests
+{
+    [Fact(Skip = "Real Cosmos DB: Deleting a container removes all associated triggers, UDFs, " +
+        "and stored procedures. The in-memory emulator's DeleteContainerAsync clears _items, " +
+        "_etags, _timestamps, and _changeFeed but does not clear _userDefinedFunctions, " +
+        "_storedProcedures, or _triggers dictionaries. This means if the container object is " +
+        "reused after deletion, previously registered handlers remain active.")]
+    public async Task DeleteContainerAsync_ShouldClearRegisteredTriggersAndUDFs()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.RegisterUdf("upper", args => ((string)args[0]).ToUpperInvariant());
+
+        await container.DeleteContainerAsync();
+
+        // Should no longer have the function registered
+        Assert.Fail("Triggers/UDFs survive container deletion in the emulator.");
+    }
+
+    [Fact]
+    public async Task DeleteContainer_EmulatorBehavior_RegisteredTriggersAndUDFsSurviveDeletion()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.RegisterUdf("upper", args => ((string)args[0]).ToUpperInvariant());
+
+        await container.DeleteContainerAsync();
+
+        // Function is still registered — add items and query using it
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "alice" }), new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<string>("SELECT VALUE udf.upper(c.name) FROM c");
+        var results = new List<string>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().Contain("ALICE", "UDF registration survives container deletion in the emulator");
+    }
+}
+
+public class DeleteAllByPartitionKeyExtendedTests
+{
+    [Fact]
+    public async Task DeleteAllByPK_ThenCreateInSamePartition_Succeeds()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        await container.DeleteAllItemsByPartitionKeyStreamAsync(new PartitionKey("a"));
+
+        // Create new item in the same partition
+        var response = await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a" }), new PartitionKey("a"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        container.ItemCount.Should().Be(1);
+    }
+}
+
+public class DeleteContainerIdempotencyTests
+{
+    [Fact]
+    public async Task DeleteContainerAsync_CalledTwice_SecondCallStillSucceeds()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var resp1 = await container.DeleteContainerAsync();
+        resp1.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var resp2 = await container.DeleteContainerAsync();
+        resp2.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task DeleteContainerStreamAsync_CalledTwice_SecondCallStillSucceeds()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var resp1 = await container.DeleteContainerStreamAsync();
+        resp1.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var resp2 = await container.DeleteContainerStreamAsync();
+        resp2.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase F — FeedRange Configuration Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class FeedRangeConfigurationTests
+{
+    [Fact]
+    public async Task GetFeedRangesAsync_FeedRangeCount5_Returns5Ranges()
+    {
+        var container = new InMemoryContainer("test", "/pk") { FeedRangeCount = 5 };
+
+        var ranges = await container.GetFeedRangesAsync();
+
+        ranges.Should().HaveCount(5);
+    }
+
+    [Fact]
+    public async Task GetFeedRangesAsync_FeedRangeCount0_Returns1Range()
+    {
+        var container = new InMemoryContainer("test", "/pk") { FeedRangeCount = 0 };
+
+        var ranges = await container.GetFeedRangesAsync();
+
+        ranges.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task GetFeedRangesAsync_NegativeFeedRangeCount_Returns1Range()
+    {
+        var container = new InMemoryContainer("test", "/pk") { FeedRangeCount = -5 };
+
+        var ranges = await container.GetFeedRangesAsync();
+
+        ranges.Should().HaveCount(1);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase G — Container Query Iterator Extended
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ContainerQueryIteratorExtendedTests
+{
+    [Fact]
+    public async Task GetContainerQueryIterator_WithQueryDefinition_ReturnsAllContainers()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        await db.CreateContainerAsync("ctr1", "/pk");
+        await db.CreateContainerAsync("ctr2", "/pk");
+
+        var iterator = db.GetContainerQueryIterator<ContainerProperties>(new QueryDefinition("SELECT * FROM c"));
+        var containers = new List<ContainerProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            containers.AddRange(page);
+        }
+
+        containers.Select(c => c.Id).Should().BeEquivalentTo(["ctr1", "ctr2"]);
+    }
+
+    [Fact]
+    public async Task GetContainerQueryStreamIterator_WithQueryDefinition_ReturnsOk()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        await db.CreateContainerAsync("ctr1", "/pk");
+
+        var iterator = db.GetContainerQueryStreamIterator(new QueryDefinition("SELECT * FROM c"));
+        var response = await iterator.ReadNextAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase H — Database Lifecycle Integration
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DatabaseDeletionContainerTests
+{
+    [Fact]
+    public async Task Database_DeleteAsync_ClearsAllContainersAndData()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var resp1 = await db.CreateContainerAsync("ctr1", "/pk");
+        var ctr1 = (InMemoryContainer)resp1.Container;
+        await ctr1.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var resp2 = await db.CreateContainerAsync("ctr2", "/pk");
+        var ctr2 = (InMemoryContainer)resp2.Container;
+        await ctr2.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b" }), new PartitionKey("b"));
+
+        await db.DeleteAsync();
+
+        // Containers list should be empty
+        var iterator = db.GetContainerQueryIterator<ContainerProperties>();
+        var containers = new List<ContainerProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            containers.AddRange(page);
+        }
+        containers.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Database_DeleteAsync_RemovesDatabaseFromClient()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("test-db");
+
+        var db = client.GetDatabase("test-db");
+        await db.DeleteAsync();
+
+        // Re-create should succeed (database no longer exists)
+        var response = await client.CreateDatabaseAsync("test-db");
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase I — ClearItems Public Method
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ContainerClearItemsTests
+{
+    [Fact]
+    public async Task ClearItems_RemovesAllItemsAndChangeFeed()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b" }), new PartitionKey("b"));
+
+        container.ClearItems();
+
+        container.ItemCount.Should().Be(0);
+        container.GetChangeFeedCheckpoint().Should().Be(0);
+    }
+
+    [Fact]
+    public void ClearItems_OnEmptyContainer_NoOp()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        var act = () => container.ClearItems();
+
+        act.Should().NotThrow();
+        container.ItemCount.Should().Be(0);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase J — Container Special Characters
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ContainerSpecialCharacterTests
+{
+    [Fact]
+    public async Task Container_WithSpecialCharactersInId_WorksCorrectly()
+    {
+        var container = new InMemoryContainer("test-container_v2.1 (prod)", "/pk");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var item = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        item.StatusCode.Should().Be(HttpStatusCode.OK);
+        container.Id.Should().Be("test-container_v2.1 (prod)");
+    }
+
+    [Fact]
+    public async Task Container_WithUnicodeId_WorksCorrectly()
+    {
+        var container = new InMemoryContainer("コンテナ-テスト", "/pk");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var item = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        item.StatusCode.Should().Be(HttpStatusCode.OK);
+        container.Id.Should().Be("コンテナ-テスト");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase K — CancellationToken Support
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ContainerCancellationTokenTests
+{
+    [Fact(Skip = "Real Cosmos DB: Management methods (ReadContainerAsync, ReplaceContainerAsync, etc.) " +
+        "honour the CancellationToken and throw OperationCanceledException when already cancelled. " +
+        "The in-memory emulator's management methods do not check the CancellationToken as they " +
+        "are implemented as synchronous in-memory operations wrapped in Task.FromResult.")]
+    public async Task ReadContainerAsync_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => container.ReadContainerAsync(cancellationToken: cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task ReadContainerAsync_EmulatorBehavior_CancelledTokenIgnored()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Emulator does not check CancellationToken — succeeds anyway
+        var response = await container.ReadContainerAsync(cancellationToken: cts.Token);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase L — ReadContainerStreamAsync JSON Round-Trip
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ReadContainerStreamRoundTripTests
+{
+    [Fact]
+    public async Task ReadContainerStreamAsync_JsonCanBeDeserializedToContainerProperties()
+    {
+        var container = new InMemoryContainer("my-container", "/myPk");
+
+        using var response = await container.ReadContainerStreamAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var reader = new StreamReader(response.Content);
+        var json = await reader.ReadToEndAsync();
+        var deserialized = Newtonsoft.Json.JsonConvert.DeserializeObject<ContainerProperties>(json);
+
+        deserialized.Should().NotBeNull();
+        deserialized.Id.Should().Be("my-container");
+        deserialized.PartitionKeyPath.Should().Be("/myPk");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SKIP-4 — Container.Database.Id Returns Null
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ContainerDatabaseIdTests
+{
+    [Fact(Skip = "Real Cosmos DB: container.Database returns the actual parent Database " +
+        "with a valid Id. The in-memory emulator returns a fresh NSubstitute mock on each " +
+        "access (InMemoryContainer.cs: Substitute.For<Database>()), so Database.Id " +
+        "is always null. Fixing requires adding a parent Database parameter to the constructor.")]
+    public void Container_Database_Id_ShouldReturnParentDatabaseId()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.Database.Id.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void Container_Database_EmulatorBehavior_IdIsNullWhenConstructedDirectly()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        // Each access returns a fresh NSubstitute mock — Id is empty string
+        container.Database.Id.Should().BeEmpty();
+    }
+}

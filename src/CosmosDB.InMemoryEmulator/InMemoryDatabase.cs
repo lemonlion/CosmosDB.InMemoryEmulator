@@ -26,6 +26,7 @@ public class InMemoryDatabase : Database
     private readonly ConcurrentDictionary<string, InMemoryContainer> _containers = new();
     private readonly ConcurrentDictionary<string, InMemoryUser> _users = new();
     private readonly InMemoryCosmosClient _client;
+    private int _throughput = 400;
 
     /// <summary>
     /// Creates a new <see cref="InMemoryDatabase"/> with no parent client.
@@ -264,18 +265,19 @@ public class InMemoryDatabase : Database
     // ── Throughput (not meaningful for in-memory, but returns sensible defaults) ─
 
     public override Task<int?> ReadThroughputAsync(CancellationToken cancellationToken = default)
-        => Task.FromResult<int?>(400);
+        => Task.FromResult<int?>(_throughput);
 
     public override Task<ThroughputResponse> ReadThroughputAsync(RequestOptions requestOptions, CancellationToken cancellationToken = default)
     {
         var response = Substitute.For<ThroughputResponse>();
         response.StatusCode.Returns(HttpStatusCode.OK);
-        response.Resource.Returns(ThroughputProperties.CreateManualThroughput(400));
+        response.Resource.Returns(ThroughputProperties.CreateManualThroughput(_throughput));
         return Task.FromResult(response);
     }
 
     public override Task<ThroughputResponse> ReplaceThroughputAsync(int throughput, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        _throughput = throughput;
         var response = Substitute.For<ThroughputResponse>();
         response.StatusCode.Returns(HttpStatusCode.OK);
         response.Resource.Returns(ThroughputProperties.CreateManualThroughput(throughput));

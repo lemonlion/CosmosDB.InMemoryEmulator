@@ -86,20 +86,18 @@ public class BehavioralDifferenceTests
     // ── Throughput ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB returns the actual provisioned
-    /// throughput. InMemoryContainer always returns a hardcoded value of 400 RU/s
-    /// regardless of any ReplaceThroughputAsync calls. The replace operation
-    /// appears to succeed but the read does not reflect the change.
+    /// FIXED: Throughput is now persisted. ReplaceThroughput stores the value
+    /// and ReadThroughput returns it, matching real Cosmos DB behavior.
     /// </summary>
     [Fact]
-    public async Task ReadThroughput_AlwaysReturns400_RegardlessOfReplace()
+    public async Task ReadThroughput_ReturnsPreviouslyReplacedValue()
     {
         await _container.ReplaceThroughputAsync(1000);
 
         var throughput = await _container.ReadThroughputAsync();
 
-        // InMemoryContainer always returns 400, not the value set by ReplaceThroughputAsync
-        throughput.Should().Be(400);
+        // Now correctly returns the replaced value
+        throughput.Should().Be(1000);
     }
 
     // ── ETag format ──────────────────────────────────────────────────────────
