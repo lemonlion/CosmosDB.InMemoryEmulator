@@ -470,7 +470,7 @@ public class InMemoryContainer : Container
         if (!_items.TryGetValue(key, out var json) || IsExpired(key))
         {
             EvictIfExpired(key);
-            throw new CosmosException($"Entity with the specified id or name already exists. id = {id}",
+            throw new CosmosException($"Entity with the specified id does not exist in the system. id = {id}",
                 HttpStatusCode.NotFound, 0, string.Empty, 0);
         }
 
@@ -1713,6 +1713,7 @@ public class InMemoryContainer : Container
             _items.TryRemove(key, out _);
             _etags.TryRemove(key, out _);
             _timestamps.TryRemove(key, out _);
+            RecordDeleteTombstone(key.Id, pk, partitionKey);
         }
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK));
     }
@@ -1831,14 +1832,14 @@ public class InMemoryContainer : Container
             catch
             {
                 // Fallback to split-based approach
-                var pkValues = pk.Split('|');
+                var pkValues = (pk ?? string.Empty).Split('|');
                 for (var i = 0; i < PartitionKeyPaths.Count; i++)
                 {
                     tombstone[PartitionKeyPaths[i].TrimStart('/')] = i < pkValues.Length ? pkValues[i] : null;
                 }
             }
         }
-        else
+        else if (pk is not null)
         {
             var pkValues = pk.Split('|');
             for (var i = 0; i < PartitionKeyPaths.Count; i++)

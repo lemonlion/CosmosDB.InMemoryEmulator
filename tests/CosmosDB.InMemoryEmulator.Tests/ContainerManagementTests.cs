@@ -1160,17 +1160,9 @@ public class ContainerThroughputEdgeCaseTests
 
 public class DeleteAllByPartitionKeyEdgeCaseTests
 {
-    [Fact(Skip = "Real Cosmos DB records delete tombstones in the change feed for items " +
-        "deleted by DeleteAllItemsByPartitionKeyStreamAsync, visible via AllVersionsAndDeletes " +
-        "mode. The in-memory emulator removes items without recording tombstones. Implementing " +
-        "this would require iterating all affected items before removal and calling " +
-        "RecordDeleteTombstone for each.")]
-    public async Task DeleteAllByPK_ShouldRecordChangeFeedTombstones()
+    [Fact]
+    public async Task DeleteAllByPK_RecordsChangeFeedTombstones()
     {
-        // Real Cosmos DB behaviour:
-        // When DeleteAllItemsByPartitionKeyStreamAsync is called, the change feed in
-        // AllVersionsAndDeletes mode will show delete tombstones for each removed item.
-        // This allows downstream consumers to detect bulk-deleted items.
         var container = new InMemoryContainer("test", "/pk");
 
         await container.CreateItemAsync(
@@ -1183,23 +1175,16 @@ public class DeleteAllByPartitionKeyEdgeCaseTests
 
         // Expect 2 additional tombstone entries
         container.GetChangeFeedCheckpoint().Should().Be(checkpointBefore + 2);
-        Assert.Fail("Tombstones are not recorded for DeleteAllByPartitionKey in the emulator.");
     }
 
     /// <summary>
     /// Sister test documenting the emulator's actual behavior for DeleteAllByPK change feed.
     /// </summary>
     [Fact]
-    public async Task DeleteAllByPK_EmulatorBehavior_NoChangeFeedTombstonesRecorded()
+    public async Task DeleteAllByPK_ChangeFeedTombstones_NowRecorded()
     {
-        // ── Divergent behavior documentation ──
-        // Real Cosmos DB: DeleteAllItemsByPartitionKeyStreamAsync records delete tombstones
-        //   in the change feed for each removed item. These are visible via
-        //   AllVersionsAndDeletes mode and allow downstream consumers to detect bulk deletes.
-        // In-Memory Emulator: Items are removed from _items, _etags, _timestamps but no
-        //   tombstone entries are added to the change feed. The change feed checkpoint
-        //   does not advance. Consumers relying on delete detection via change feed will
-        //   not see these deletions.
+        // FIXED: DeleteAllItemsByPartitionKeyStreamAsync now records change feed tombstones
+        // for each deleted item, matching real Cosmos DB behavior.
         var container = new InMemoryContainer("test", "/pk");
 
         await container.CreateItemAsync(
@@ -1210,8 +1195,8 @@ public class DeleteAllByPartitionKeyEdgeCaseTests
         var checkpointBefore = container.GetChangeFeedCheckpoint();
         await container.DeleteAllItemsByPartitionKeyStreamAsync(new PartitionKey("a"));
 
-        container.GetChangeFeedCheckpoint().Should().Be(checkpointBefore,
-            "emulator does not record change feed tombstones for DeleteAllByPartitionKey");
+        container.GetChangeFeedCheckpoint().Should().Be(checkpointBefore + 2,
+            "tombstones are now recorded for each deleted item");
         container.ItemCount.Should().Be(0, "items are still removed");
     }
 
