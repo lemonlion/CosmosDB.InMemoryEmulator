@@ -771,7 +771,8 @@ public class InMemoryContainer : Container
     {
         cancellationToken.ThrowIfCancellationRequested();
         var json = ReadStream(streamPayload);
-        ValidateDocumentSize(json);
+        var sizeError = ValidateDocumentSizeStream(json);
+        if (sizeError is not null) return Task.FromResult(sizeError);
         var jObj = JsonParseHelpers.ParseJson(json);
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Create");
@@ -848,7 +849,8 @@ public class InMemoryContainer : Container
     {
         cancellationToken.ThrowIfCancellationRequested();
         var json = ReadStream(streamPayload);
-        ValidateDocumentSize(json);
+        var sizeError = ValidateDocumentSizeStream(json);
+        if (sizeError is not null) return Task.FromResult(sizeError);
         var jObj = JsonParseHelpers.ParseJson(json);
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Upsert");
@@ -929,7 +931,8 @@ public class InMemoryContainer : Container
     {
         cancellationToken.ThrowIfCancellationRequested();
         var json = ReadStream(streamPayload);
-        ValidateDocumentSize(json);
+        var sizeError = ValidateDocumentSizeStream(json);
+        if (sizeError is not null) return Task.FromResult(sizeError);
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
         if (!_items.TryGetValue(key, out var previousJson) || IsExpired(key))
@@ -1092,7 +1095,8 @@ public class InMemoryContainer : Container
 
         ApplyPatchOperations(jObj, patchOperations);
         var updatedJson = jObj.ToString(Formatting.None);
-        ValidateDocumentSize(updatedJson);
+        var sizeError = ValidateDocumentSizeStream(updatedJson);
+        if (sizeError is not null) return Task.FromResult(sizeError);
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
@@ -2112,10 +2116,23 @@ public class InMemoryContainer : Container
 
     private static void ValidateDocumentSize(string json)
     {
-        if (Encoding.UTF8.GetByteCount(json) > MaxDocumentSizeBytes)
+        var byteCount = Encoding.UTF8.GetByteCount(json);
+        if (byteCount > MaxDocumentSizeBytes)
         {
-            throw new CosmosException("Request size is too large.", HttpStatusCode.RequestEntityTooLarge, 0, string.Empty, 0);
+            throw new CosmosException(
+                $"Request size is too large. Max allowed size in bytes: {MaxDocumentSizeBytes}. Found: {byteCount}.",
+                HttpStatusCode.RequestEntityTooLarge, 0, string.Empty, 0);
         }
+    }
+
+    private ResponseMessage ValidateDocumentSizeStream(string json)
+    {
+        var byteCount = Encoding.UTF8.GetByteCount(json);
+        if (byteCount > MaxDocumentSizeBytes)
+        {
+            return CreateResponseMessage(HttpStatusCode.RequestEntityTooLarge);
+        }
+        return null;
     }
 
     private void ValidateUniqueKeys(JObject jObj, string partitionKey, string excludeItemId = null)

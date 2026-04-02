@@ -1055,11 +1055,10 @@ public class BulkOperationTests
     }
 
     [Fact]
-    public async Task BulkCreate_OversizedDocuments_Stream_AllThrow413()
+    public async Task BulkCreate_OversizedDocuments_Stream_AllReturn413()
     {
-        // Stream methods call ValidateDocumentSize which throws rather than returning
-        // a ResponseMessage — this is a divergent behaviour from real Cosmos DB where
-        // stream methods always return a ResponseMessage and never throw.
+        // Stream methods return a ResponseMessage with 413 status code
+        // instead of throwing CosmosException.
         var container = new InMemoryContainer("test", "/partitionKey");
 
         var bigValue = new string('x', 2 * 1024 * 1024);
@@ -1069,11 +1068,10 @@ public class BulkOperationTests
             {
                 var json = JsonConvert.SerializeObject(
                     new { id = $"{i}", partitionKey = "pk1", data = bigValue });
-                var ex = await Assert.ThrowsAsync<CosmosException>(() =>
-                    container.CreateItemStreamAsync(
-                        new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)),
-                        new PartitionKey("pk1")));
-                return ex.StatusCode;
+                var response = await container.CreateItemStreamAsync(
+                    new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)),
+                    new PartitionKey("pk1"));
+                return response.StatusCode;
             }));
 
         var results = await Task.WhenAll(tasks);
