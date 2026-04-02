@@ -129,6 +129,13 @@ public class InMemoryCosmosClient : CosmosClient
         return Task.FromResult(new ResponseMessage(HttpStatusCode.Created));
     }
 
+    public Task<ResponseMessage> CreateDatabaseStreamAsync(
+        DatabaseProperties databaseProperties, ThroughputProperties throughputProperties,
+        RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+    {
+        return CreateDatabaseStreamAsync(databaseProperties, (int?)null, requestOptions, cancellationToken);
+    }
+
     /// <summary>
     /// Gets or creates an <see cref="InMemoryDatabase"/> with the given <paramref name="id"/>.
     /// The database is created lazily on first access.

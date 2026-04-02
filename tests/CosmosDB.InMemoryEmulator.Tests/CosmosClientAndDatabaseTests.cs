@@ -2536,3 +2536,852 @@ public class ThroughputNotPersistedDivergentTests
         throughput.Should().Be(1000); // Now correctly returns 1000
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 0 — Bug Fix Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class CreateDatabaseStreamThroughputPropertiesTests
+{
+    [Fact]
+    public async Task CreateDatabaseStreamAsync_WithThroughputProperties_ReturnsCreated()
+    {
+        var client = new InMemoryCosmosClient();
+        var props = new DatabaseProperties("test-db");
+        var tp = ThroughputProperties.CreateManualThroughput(1000);
+
+        var response = await client.CreateDatabaseStreamAsync(props, tp);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task CreateDatabaseStreamAsync_WithThroughputProperties_DuplicateId_ReturnsConflict()
+    {
+        var client = new InMemoryCosmosClient();
+        var props = new DatabaseProperties("test-db");
+        var tp = ThroughputProperties.CreateManualThroughput(1000);
+
+        await client.CreateDatabaseStreamAsync(props, tp);
+        var response = await client.CreateDatabaseStreamAsync(props, tp);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+}
+
+public class ClientEncryptionKeyQueryIteratorTests
+{
+    [Fact]
+    public async Task GetClientEncryptionKeyQueryIterator_ThrowsNotImplemented()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (InMemoryDatabase)(await client.CreateDatabaseAsync("test-db")).Database;
+
+        var act = () => db.GetClientEncryptionKeyQueryIterator(new QueryDefinition("SELECT * FROM c"));
+
+        act.Should().Throw<NotImplementedException>();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 1 — Naming & Validation Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DatabaseNameSpecialCharsTests
+{
+    [Fact]
+    public async Task CreateDatabaseAsync_NameWithSpaces_Succeeds()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseAsync("my database");
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task CreateDatabaseAsync_NameWithUnicode_Succeeds()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseAsync("données");
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task CreateDatabaseAsync_NameWithEmoji_Succeeds()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseAsync("test-🚀-db");
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+}
+
+public class DatabaseNameForbiddenCharsDivergentTests
+{
+    private const string SkipReason = "Real Cosmos DB rejects database names containing `/`, `\\`, " +
+        "`#`, or `?` characters with 400 BadRequest (Resource IDs cannot contain these characters per " +
+        "the REST API spec). The in-memory emulator does not validate resource ID character restrictions.";
+
+    [Fact(Skip = SkipReason)]
+    public async Task CreateDatabaseAsync_NameWithForwardSlash_ShouldThrowBadRequest()
+    {
+        var client = new InMemoryCosmosClient();
+        var act = () => client.CreateDatabaseAsync("db/name");
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_CreateDatabaseAsync_NameWithForwardSlash_Accepted()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseAsync("db/name");
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact(Skip = SkipReason)]
+    public async Task CreateDatabaseAsync_NameWithBackslash_ShouldThrowBadRequest()
+    {
+        var client = new InMemoryCosmosClient();
+        var act = () => client.CreateDatabaseAsync("db\\name");
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_CreateDatabaseAsync_NameWithBackslash_Accepted()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseAsync("db\\name");
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact(Skip = SkipReason)]
+    public async Task CreateDatabaseAsync_NameWithHash_ShouldThrowBadRequest()
+    {
+        var client = new InMemoryCosmosClient();
+        var act = () => client.CreateDatabaseAsync("db#name");
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_CreateDatabaseAsync_NameWithHash_Accepted()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseAsync("db#name");
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact(Skip = SkipReason)]
+    public async Task CreateDatabaseAsync_NameWithQuestionMark_ShouldThrowBadRequest()
+    {
+        var client = new InMemoryCosmosClient();
+        var act = () => client.CreateDatabaseAsync("db?name");
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_CreateDatabaseAsync_NameWithQuestionMark_Accepted()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseAsync("db?name");
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+}
+
+public class DatabaseNameLengthDivergentTests
+{
+    private const string SkipReason = "Real Cosmos DB enforces a 255-character maximum for database " +
+        "names. The in-memory emulator does not enforce this limit.";
+
+    [Fact(Skip = SkipReason)]
+    public async Task CreateDatabaseAsync_NameExceeds255Chars_ShouldThrowBadRequest()
+    {
+        var client = new InMemoryCosmosClient();
+        var longName = new string('a', 256);
+        var act = () => client.CreateDatabaseAsync(longName);
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_CreateDatabaseAsync_LongName_Accepted()
+    {
+        var client = new InMemoryCosmosClient();
+        var longName = new string('a', 256);
+        var response = await client.CreateDatabaseAsync(longName);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+}
+
+public class ContainerNameForbiddenCharsDivergentTests
+{
+    private const string SkipReason = "Real Cosmos DB rejects container names containing `/`, `\\`, " +
+        "`#`, or `?` characters with 400 BadRequest. The in-memory emulator does not validate resource ID " +
+        "character restrictions.";
+
+    [Fact(Skip = SkipReason)]
+    public async Task CreateContainerAsync_NameWithForwardSlash_ShouldThrowBadRequest()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        var act = () => db.CreateContainerAsync("ctr/name", "/pk");
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_CreateContainerAsync_NameWithForwardSlash_Accepted()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        var response = await db.CreateContainerAsync("ctr/name", "/pk");
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 2 — Lifecycle Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ReadAfterDeleteDivergentTests
+{
+    private const string SkipReason = "Real Cosmos DB's Database.ReadAsync returns 404 NotFound when " +
+        "the database has been deleted and you use a stale reference. InMemoryDatabase.ReadAsync always " +
+        "returns 200 OK because the InMemoryDatabase object still exists in memory after deletion.";
+
+    [Fact(Skip = SkipReason)]
+    public async Task ReadAsync_AfterDelete_ShouldThrowNotFound()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        await db.DeleteAsync();
+
+        var act = () => db.ReadAsync();
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+}
+
+public class ConcurrentDeleteDatabaseTests
+{
+    [Fact]
+    public async Task ConcurrentDeleteAsync_SameDatabase_AllSucceed()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var tasks = Enumerable.Range(0, 10).Select(_ => db.DeleteAsync());
+        var results = await Task.WhenAll(tasks);
+
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.NoContent);
+    }
+}
+
+public class ContainerOpsAfterDbDeleteDivergentTests
+{
+    private const string SkipReason = "Real Cosmos DB returns 404 on any container operation when the " +
+        "parent database has been deleted. InMemoryDatabase.DeleteAsync clears the internal _containers " +
+        "dictionary but the stale InMemoryDatabase reference remains functional.";
+
+    [Fact(Skip = SkipReason)]
+    public async Task ContainerOps_AfterDatabaseDelete_ShouldThrowNotFound()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        await db.CreateContainerAsync("ctr1", "/pk");
+        await db.DeleteAsync();
+
+        var act = () => db.GetContainer("ctr1").ReadContainerAsync();
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_ContainerOps_AfterDatabaseDelete_ContainersCleared()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        await db.CreateContainerAsync("ctr1", "/pk");
+        await db.DeleteAsync();
+
+        // Containers are cleared but the DB object is alive — GetContainer auto-creates
+        var iterator = db.GetContainerQueryIterator<ContainerProperties>();
+        var containers = new List<ContainerProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            containers.AddRange(page);
+        }
+        containers.Should().BeEmpty("containers were cleared by DeleteAsync");
+    }
+}
+
+public class GetContainerAutoCreateDivergentTests
+{
+    private const string SkipReason = "Real Cosmos DB's Database.GetContainer returns a lightweight " +
+        "proxy reference. It does NOT create the container. The first data operation on a non-existent " +
+        "container throws CosmosException with 404 NotFound. InMemoryDatabase.GetContainer uses " +
+        "ConcurrentDictionary.GetOrAdd, creating the container lazily.";
+
+    [Fact(Skip = SkipReason)]
+    public async Task GetContainer_NonExistent_ShouldBeProxyOnly()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        var container = db.GetContainer("nonexistent");
+
+        var act = () => container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_GetContainer_AutoCreatesContainer()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        var container = db.GetContainer("auto-created");
+
+        // Emulator auto-creates the container — CRUD works immediately
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var item = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        item.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+public class CreateDbIfNotExistsNullGuardTests
+{
+    [Fact]
+    public async Task CreateDatabaseIfNotExistsAsync_NullId_Throws()
+    {
+        var client = new InMemoryCosmosClient();
+        var act = () => client.CreateDatabaseIfNotExistsAsync(null!);
+        await act.Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task CreateDatabaseIfNotExistsAsync_EmptyId_Throws()
+    {
+        var client = new InMemoryCosmosClient();
+        var act = () => client.CreateDatabaseIfNotExistsAsync("");
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 3 — Query Iterator Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class QueryIteratorFilteringDivergentTests
+{
+    private const string SkipReason = "Real Cosmos DB supports SQL queries on database/container " +
+        "metadata. The in-memory emulator's query iterators ignore the query text entirely — all " +
+        "databases/containers are returned regardless of WHERE clause.";
+
+    [Fact(Skip = SkipReason)]
+    public async Task GetDatabaseQueryIterator_WithWhereClause_ShouldFilter()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("db1");
+        await client.CreateDatabaseAsync("db2");
+
+        var iterator = client.GetDatabaseQueryIterator<DatabaseProperties>(
+            "SELECT * FROM c WHERE c.id = 'db1'");
+        var results = new List<DatabaseProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        results.Should().ContainSingle(d => d.Id == "db1");
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_GetDatabaseQueryIterator_WhereClause_IgnoresFilter()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("db1");
+        await client.CreateDatabaseAsync("db2");
+
+        var iterator = client.GetDatabaseQueryIterator<DatabaseProperties>(
+            "SELECT * FROM c WHERE c.id = 'db1'");
+        var results = new List<DatabaseProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        results.Should().HaveCount(2, "emulator returns ALL databases regardless of WHERE clause");
+    }
+
+    [Fact(Skip = SkipReason)]
+    public async Task GetContainerQueryIterator_WithWhereClause_ShouldFilter()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        await db.CreateContainerAsync("ctr1", "/pk");
+        await db.CreateContainerAsync("ctr2", "/pk");
+
+        var iterator = db.GetContainerQueryIterator<ContainerProperties>(
+            "SELECT * FROM c WHERE c.id = 'ctr1'");
+        var results = new List<ContainerProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        results.Should().ContainSingle(c => c.Id == "ctr1");
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_GetContainerQueryIterator_WhereClause_IgnoresFilter()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        await db.CreateContainerAsync("ctr1", "/pk");
+        await db.CreateContainerAsync("ctr2", "/pk");
+
+        var iterator = db.GetContainerQueryIterator<ContainerProperties>(
+            "SELECT * FROM c WHERE c.id = 'ctr1'");
+        var results = new List<ContainerProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        results.Should().HaveCount(2, "emulator returns ALL containers regardless of WHERE clause");
+    }
+}
+
+public class QueryIteratorPagingDivergentTests
+{
+    private const string SkipReasonPaging = "Real Cosmos DB respects QueryRequestOptions.MaxItemCount " +
+        "for database and container query iterators. The in-memory emulator returns all items in a " +
+        "single page and does not support MaxItemCount-based paging for metadata queries.";
+
+    [Fact(Skip = SkipReasonPaging)]
+    public async Task GetDatabaseQueryIterator_WithMaxItemCount_Pages()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("db1");
+        await client.CreateDatabaseAsync("db2");
+        await client.CreateDatabaseAsync("db3");
+
+        var iterator = client.GetDatabaseQueryIterator<DatabaseProperties>(
+            requestOptions: new QueryRequestOptions { MaxItemCount = 1 });
+        var firstPage = await iterator.ReadNextAsync();
+        firstPage.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_GetDatabaseQueryIterator_MaxItemCount_IgnoredReturnsAllInOnePage()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("db1");
+        await client.CreateDatabaseAsync("db2");
+        await client.CreateDatabaseAsync("db3");
+
+        var iterator = client.GetDatabaseQueryIterator<DatabaseProperties>(
+            requestOptions: new QueryRequestOptions { MaxItemCount = 1 });
+        var firstPage = await iterator.ReadNextAsync();
+        firstPage.Count.Should().Be(3, "emulator returns all items in a single page regardless of MaxItemCount");
+    }
+}
+
+public class QueryIteratorContinuationTokenDivergentTests
+{
+    private const string SkipReason = "Real Cosmos DB supports continuation tokens for database " +
+        "query iterators. InMemoryFeedIterator returns all items in a single page and ignores the " +
+        "continuationToken parameter.";
+
+    [Fact(Skip = SkipReason)]
+    public async Task GetDatabaseQueryIterator_WithContinuationToken_Resumes()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("db1");
+        await client.CreateDatabaseAsync("db2");
+
+        var iterator = client.GetDatabaseQueryIterator<DatabaseProperties>(continuationToken: "someToken");
+        var page = await iterator.ReadNextAsync();
+        page.Count.Should().BeLessThan(2);
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_GetDatabaseQueryIterator_ContinuationToken_Ignored()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("db1");
+        await client.CreateDatabaseAsync("db2");
+
+        var iterator = client.GetDatabaseQueryIterator<DatabaseProperties>(continuationToken: "someToken");
+        var page = await iterator.ReadNextAsync();
+        page.Count.Should().Be(2, "emulator ignores continuation token and returns all items");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 4 — Stream API Response Bodies
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class CreateDatabaseStreamResponseBodyDivergentTests
+{
+    private const string SkipReason = "Real Cosmos DB includes the resource properties JSON in the " +
+        "response body of CreateDatabaseStreamAsync. The in-memory emulator returns ResponseMessage " +
+        "with Content = null.";
+
+    [Fact(Skip = SkipReason)]
+    public async Task CreateDatabaseStreamAsync_ResponseBody_ShouldContainJson()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseStreamAsync(new DatabaseProperties("test-db"));
+        response.Content.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_CreateDatabaseStreamAsync_ResponseBodyIsNull()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseStreamAsync(new DatabaseProperties("test-db"));
+        response.Content.Should().BeNull("emulator returns ResponseMessage with no content body");
+    }
+}
+
+public class DeleteStreamAsyncResponseBodyDivergentTests
+{
+    [Fact]
+    public async Task DivergentBehavior_DeleteStreamAsync_ResponseBodyIsNull()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (InMemoryDatabase)(await client.CreateDatabaseAsync("test-db")).Database;
+        var response = await db.DeleteStreamAsync();
+        response.Content.Should().BeNull("emulator returns ResponseMessage with no content body");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 5 — Permission Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class PermissionDeleteNonExistentDivergentTests
+{
+    private const string SkipReason = "Real Cosmos DB returns 404 NotFound when deleting a permission " +
+        "that doesn't exist. InMemoryPermission.DeleteAsync uses TryRemove which is a no-op for " +
+        "non-existent keys, always returning 204 NoContent.";
+
+    [Fact(Skip = SkipReason)]
+    public async Task Permission_DeleteAsync_NonExistent_ShouldThrowNotFound()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        var user = (await db.CreateUserAsync("user1")).User;
+        await user.CreatePermissionAsync(new PermissionProperties("p1", PermissionMode.All, db.GetContainer("c1")));
+
+        var perm = user.GetPermission("p1");
+        await perm.DeleteAsync();
+
+        var act = () => perm.DeleteAsync();
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_Permission_DeleteAsync_NonExistent_Returns204()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        var user = (await db.CreateUserAsync("user1")).User;
+        await user.CreatePermissionAsync(new PermissionProperties("p1", PermissionMode.All, db.GetContainer("c1")));
+
+        var perm = user.GetPermission("p1");
+        await perm.DeleteAsync();
+
+        // Second delete — emulator returns 204 silently
+        var response = await perm.DeleteAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent,
+            "emulator returns 204 even for non-existent permissions");
+    }
+}
+
+public class PermissionQueryDefinitionOverloadTests
+{
+    [Fact]
+    public async Task Permission_GetQueryIterator_QueryDefinition_ReturnsAll()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        var user = (await db.CreateUserAsync("user1")).User;
+        await user.CreatePermissionAsync(new PermissionProperties("p1", PermissionMode.All, db.GetContainer("c1")));
+        await user.CreatePermissionAsync(new PermissionProperties("p2", PermissionMode.Read, db.GetContainer("c2")));
+
+        var iterator = user.GetPermissionQueryIterator<PermissionProperties>(
+            new QueryDefinition("SELECT * FROM c"));
+        var results = new List<PermissionProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+    }
+}
+
+public class UserReplaceIdDivergentTests
+{
+    [Fact]
+    public async Task User_ReplaceAsync_DoesNotRenameInParentDictionary()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        await db.CreateUserAsync("user1");
+
+        var user = db.GetUser("user1");
+        await user.ReplaceAsync(new UserProperties("user1-renamed"));
+
+        // The user's Id changed internally...
+        user.Id.Should().Be("user1-renamed");
+
+        // ...but the old key still works in the parent DB
+        var sameUser = db.GetUser("user1");
+        sameUser.Should().NotBeNull();
+    }
+
+    private const string SkipReason = "Real Cosmos DB's User.ReplaceAsync does not allow changing the " +
+        "user Id. The Id in the replacement UserProperties must match the existing user's Id.";
+
+    [Fact(Skip = SkipReason)]
+    public async Task User_ReplaceAsync_ChangingId_ShouldPreserveConsistency()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+        // Real SDK would reject this
+        var act = () => user.ReplaceAsync(new UserProperties("user1-renamed"));
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_User_ReplaceAsync_ChangingId_InternalStateOnly()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+
+        await user.ReplaceAsync(new UserProperties("user1-renamed"));
+
+        // Internal Id changed
+        user.Id.Should().Be("user1-renamed");
+        // But stored under old key — new key auto-creates a different user
+        var newUser = db.GetUser("user1-renamed");
+        newUser.Id.Should().Be("user1-renamed", "GetUser auto-creates with the new name");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 6 — CancellationToken Behavior
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DatabaseCancellationTokenDivergentTests
+{
+    private const string SkipReason = "Real Cosmos DB SDK respects CancellationToken on all async " +
+        "operations. The in-memory emulator returns Task.FromResult(...) synchronously, bypassing " +
+        "cancellation token checks entirely.";
+
+    [Fact(Skip = SkipReason)]
+    public async Task CreateDatabaseAsync_WithCancelledToken_ShouldThrow()
+    {
+        var client = new InMemoryCosmosClient();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => client.CreateDatabaseAsync("test-db", cancellationToken: cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_CreateDatabaseAsync_CancellationToken_Ignored()
+    {
+        var client = new InMemoryCosmosClient();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Emulator ignores CancellationToken — succeeds anyway
+        var response = await client.CreateDatabaseAsync("test-db", cancellationToken: cts.Token);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 8 — Multi-Database Isolation
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class MultiDatabaseIsolationTests
+{
+    [Fact]
+    public async Task SameContainerName_DifferentDatabases_Isolated()
+    {
+        var client = new InMemoryCosmosClient();
+        var db1 = (await client.CreateDatabaseAsync("db1")).Database;
+        var db2 = (await client.CreateDatabaseAsync("db2")).Database;
+
+        var ctr1 = (InMemoryContainer)(await db1.CreateContainerAsync("orders", "/pk")).Container;
+        var ctr2 = (InMemoryContainer)(await db2.CreateContainerAsync("orders", "/pk")).Container;
+
+        await ctr1.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", source = "db1" }), new PartitionKey("a"));
+
+        ctr1.ItemCount.Should().Be(1);
+        ctr2.ItemCount.Should().Be(0, "db2's 'orders' container should be empty — data is isolated");
+    }
+
+    [Fact]
+    public async Task DeleteAsync_OneDatabase_DoesNotAffectOther()
+    {
+        var client = new InMemoryCosmosClient();
+        var db1 = (await client.CreateDatabaseAsync("db1")).Database;
+        var db2 = (await client.CreateDatabaseAsync("db2")).Database;
+
+        var ctr1 = (InMemoryContainer)(await db1.CreateContainerAsync("ctr", "/pk")).Container;
+        var ctr2 = (InMemoryContainer)(await db2.CreateContainerAsync("ctr", "/pk")).Container;
+        await ctr2.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        await db1.DeleteAsync();
+
+        ctr2.ItemCount.Should().Be(1, "db2's data should be unaffected by db1's deletion");
+    }
+
+    [Fact]
+    public async Task GetContainer_TwoArg_AcrossDatabases_Isolated()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("db1");
+        await client.CreateDatabaseAsync("db2");
+
+        var ctr1 = client.GetContainer("db1", "shared");
+        var ctr2 = client.GetContainer("db2", "shared");
+
+        await ctr1.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var item = await ctr1.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        item.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var act = () => ctr2.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 9 — Response Metadata Completeness
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class DatabaseResponseMetadataTests
+{
+    [Fact]
+    public async Task CreateDatabaseAsync_Response_HasResourceWithId()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseAsync("test-db");
+
+        response.Resource.Should().NotBeNull();
+        response.Resource.Id.Should().Be("test-db");
+    }
+
+    [Fact]
+    public async Task CreateDatabaseIfNotExistsAsync_Response_HasResourceWithId_OnBothCalls()
+    {
+        var client = new InMemoryCosmosClient();
+
+        var first = await client.CreateDatabaseIfNotExistsAsync("test-db");
+        first.Resource.Should().NotBeNull();
+        first.Resource.Id.Should().Be("test-db");
+
+        var second = await client.CreateDatabaseIfNotExistsAsync("test-db");
+        second.Resource.Should().NotBeNull();
+        second.Resource.Id.Should().Be("test-db");
+    }
+}
+
+public class ContainerResponseMetadataTests
+{
+    [Fact]
+    public async Task CreateContainerAsync_ResponseContainer_SameAsGetContainer()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var response = await db.CreateContainerAsync("ctr", "/pk");
+
+        var fromGet = db.GetContainer("ctr");
+        response.Container.Should().BeSameAs(fromGet);
+    }
+
+    [Fact]
+    public async Task CreateContainerIfNotExistsAsync_NewContainer_ResponseHasContainerReference()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var response = await db.CreateContainerIfNotExistsAsync("ctr", "/pk");
+        response.Container.Should().NotBeNull();
+        response.Container.Id.Should().Be("ctr");
+    }
+
+    [Fact]
+    public async Task CreateContainerIfNotExistsAsync_ExistingContainer_ResponseHasContainerReference()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+        await db.CreateContainerAsync("ctr", "/pk");
+
+        var response = await db.CreateContainerIfNotExistsAsync("ctr", "/pk");
+        response.Container.Should().NotBeNull();
+        response.Container.Id.Should().Be("ctr");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 10 — User Management Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class UserManagementEdgeCaseTests
+{
+    [Fact]
+    public async Task UpsertUserAsync_ThreeTimes_Returns201Then200Then200()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var r1 = await db.UpsertUserAsync("user1");
+        r1.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var r2 = await db.UpsertUserAsync("user1");
+        r2.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var r3 = await db.UpsertUserAsync("user1");
+        r3.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task User_DeleteAsync_ThenCreateUserAsync_SameId_Succeeds()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        await db.CreateUserAsync("user1");
+        var user = db.GetUser("user1");
+        await user.DeleteAsync();
+
+        var response = await db.CreateUserAsync("user1");
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task ConcurrentCreateUserAsync_DifferentIds_AllSucceed()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("test-db")).Database;
+
+        var tasks = Enumerable.Range(0, 10)
+            .Select(i => db.CreateUserAsync($"user-{i}"));
+        var results = await Task.WhenAll(tasks);
+
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.Created);
+    }
+}
