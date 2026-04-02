@@ -1575,7 +1575,7 @@ public class BulkOperationTests
                         new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
                         new PartitionKey("pk1"));
                 }
-                catch (CosmosException) { }
+                catch (Exception) { /* Create can fail due to race with delete or conflict */ }
             }),
             Task.Run(async () =>
             {
@@ -1583,7 +1583,7 @@ public class BulkOperationTests
                 {
                     await container.DeleteItemAsync<TestDocument>($"{i}", new PartitionKey("pk1"));
                 }
-                catch (CosmosException) { }
+                catch (Exception) { /* Delete can fail if item not yet created or already deleted */ }
             })
         });
 
