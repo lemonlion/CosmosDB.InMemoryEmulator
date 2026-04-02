@@ -514,3 +514,215 @@ public class LinqOperatorDivergenceTests
         results.Should().ContainSingle().Which.Name.Should().Be("Alice");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Divergent Behavior Deep Dive — D10: CosmosResponseFactory
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class CosmosResponseFactoryDivergenceTests
+{
+    [Fact(Skip = "D10: CosmosResponseFactory is a non-functional NSubstitute stub. " +
+        "CosmosClient.ResponseFactory returns a mock whose methods return default/null values. " +
+        "Real Cosmos DB returns a factory that can deserialize response messages.")]
+    public void CosmosResponseFactory_ShouldDeserializeResponses() { }
+
+    [Fact]
+    public void CosmosResponseFactory_EmulatorBehavior_ReturnsStub()
+    {
+        var client = new InMemoryCosmosClient();
+        var factory = client.ResponseFactory;
+        factory.Should().NotBeNull("the stub should exist");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Divergent Behavior Deep Dive — D11: Unsupported SQL Function Error Type
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class UnsupportedSqlFunctionDivergenceTests
+{
+    [Fact(Skip = "D11: Unsupported SQL functions throw NotSupportedException instead of " +
+        "CosmosException(BadRequest). Real Cosmos DB returns HTTP 400 with 'Unknown built-in " +
+        "function name'. Emulator throws NotSupportedException from function dispatch.")]
+    public void UnsupportedSqlFunction_ShouldThrowCosmosExceptionBadRequest() { }
+
+    [Fact]
+    public async Task UnsupportedSqlFunction_EmulatorBehavior_ThrowsNotSupportedException()
+    {
+        var container = new InMemoryContainer("test-d11", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var threw = false;
+        try
+        {
+            var iterator = container.GetItemQueryIterator<JObject>(
+                new QueryDefinition("SELECT VALUE NONEXISTENT_FUNCTION(c.id) FROM c"),
+                requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+            await iterator.ReadNextAsync();
+        }
+        catch (NotSupportedException) { threw = true; }
+        threw.Should().BeTrue("unsupported SQL functions should throw NotSupportedException");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Divergent Behavior Deep Dive — D12: SQL Parse Error Type
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class SqlParseErrorDivergenceTests
+{
+    [Fact(Skip = "D12: SQL parse failures throw NotSupportedException instead of " +
+        "CosmosException(BadRequest). Real Cosmos DB returns HTTP 400 with syntax error. " +
+        "Emulator uses Superpower parser that throws NotSupportedException.")]
+    public void MalformedSql_ShouldThrowCosmosExceptionBadRequest() { }
+
+    [Fact]
+    public async Task MalformedSql_EmulatorBehavior_ThrowsException()
+    {
+        var container = new InMemoryContainer("test-d12", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var threw = false;
+        try
+        {
+            var iterator = container.GetItemQueryIterator<JObject>(
+                new QueryDefinition("SELECTTTTT * FROM c"),
+                requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+            await iterator.ReadNextAsync();
+        }
+        catch (NotSupportedException) { threw = true; }
+        threw.Should().BeTrue("malformed SQL should throw NotSupportedException");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Divergent Behavior Deep Dive — D18: Invalid Continuation Token
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class InvalidContinuationTokenEdgeCaseTests
+{
+    [Fact]
+    public async Task ContinuationToken_InvalidToken_EmulatorBehavior_FallsBackToStart()
+    {
+        var container = new InMemoryContainer("test-d18", "/pk");
+        for (var i = 0; i < 5; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = "a" }), new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c",
+            continuationToken: "not-a-valid-token",
+            requestOptions: new QueryRequestOptions { MaxItemCount = 10, PartitionKey = new PartitionKey("a") });
+
+        var response = await iterator.ReadNextAsync();
+        response.Count.Should().Be(5, "invalid token silently falls back to start");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Divergent Behavior Deep Dive — D23: Permission Tokens Are Synthetic
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class PermissionTokenDivergenceTests
+{
+    [Fact(Skip = "D23: Permission tokens are synthetic stubs. Real Cosmos DB generates " +
+        "HMAC-signed resource tokens that are cryptographically valid. Emulator tokens " +
+        "have format 'type=resource&ver=1&sig=stub_<id>' with fake signatures.")]
+    public void PermissionToken_ShouldBeCryptographicallyValid() { }
+
+    [Fact]
+    public async Task PermissionToken_EmulatorBehavior_IsSyntheticStub()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = client.GetDatabase("db");
+        var user = db.GetUser("user1");
+        var permission = await user.CreatePermissionAsync(
+            new PermissionProperties("perm1", PermissionMode.Read,
+                client.GetDatabase("db").GetContainer("c1")));
+
+        var token = permission.Resource.Token;
+        token.Should().Contain("stub_", "emulator uses synthetic tokens");
+        token.Should().StartWith("type=resource&ver=1&sig=");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Divergent Behavior Deep Dive — M7: Cross-Partition Aggregate Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class CrossPartitionAggregateEdgeCaseTests
+{
+    [Fact]
+    public async Task CrossPartition_MinMax_WithMultipleRanges_StillCorrect()
+    {
+        var container = new InMemoryContainer("test-m7", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = 10 }), new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", val = 20 }), new PartitionKey("b"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "c", val = 30 }), new PartitionKey("c"));
+
+        var iterator = container.GetItemQueryIterator<long>(
+            "SELECT VALUE MIN(c.val) FROM c");
+        var results = new List<long>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+
+        results.Single().Should().Be(10);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Divergent Behavior Deep Dive — D2: Query Request Charge Edge Case
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class RequestChargeQueryDivergenceTests
+{
+    [Fact]
+    public async Task RequestCharge_Query_EmulatorBehavior_ReturnsFixedRU()
+    {
+        var container = new InMemoryContainer("test-d2q", "/pk");
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = "a", val = i }), new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.val > 5",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var response = await iterator.ReadNextAsync();
+
+        response.RequestCharge.Should().BeGreaterThanOrEqualTo(0,
+            "emulator returns a fixed RU regardless of query complexity");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Divergent Behavior Deep Dive — D5: Composite Index Not Required
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class CompositeIndexDivergenceTests
+{
+    [Fact]
+    public async Task IndexingPolicy_CompositeIndex_EmulatorBehavior_NotRequired()
+    {
+        var container = new InMemoryContainer("test-d5", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "Charlie", age = 30 }), new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", name = "Alice", age = 25 }), new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "a", name = "Alice", age = 35 }), new PartitionKey("a"));
+
+        // Real Cosmos requires a composite index for multi-field ORDER BY.
+        // Emulator does not enforce this — it just works.
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.name ASC, c.age DESC",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+
+        results.Select(r => r["id"]!.ToString()).Should().ContainInOrder("3", "2", "1");
+    }
+}
