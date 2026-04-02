@@ -2039,7 +2039,7 @@ public class ClientEncryptionKeyTests
 
 public class DeleteAsyncClearsUsersTests
 {
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DeleteAsync_ClearsUsersFromDatabase()
     {
         var client = new InMemoryCosmosClient();
@@ -2060,7 +2060,7 @@ public class DeleteAsyncClearsUsersTests
         users.Should().BeEmpty();
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DeleteStreamAsync_ClearsUsersFromDatabase()
     {
         var client = new InMemoryCosmosClient();

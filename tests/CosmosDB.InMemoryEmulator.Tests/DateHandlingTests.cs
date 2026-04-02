@@ -645,16 +645,16 @@ public class DateTimeAddTests
         results.Should().HaveCount(1);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimeAdd_Microsecond_AddsCorrectly()
     {
-        // 1 microsecond = 10 ticks = 0.0000010 seconds
+        // 1 microsecond = 10 ticks = 0.0000010 seconds; 500 µs = 5000 ticks = 0.0005000s
         var result = await QuerySingleValue<string>(
             "SELECT VALUE DateTimeAdd('mcs', 500, '2020-01-01T00:00:00.0000000') FROM c");
-        result.Should().Be("2020-01-01T00:00:00.0050000Z");
+        result.Should().Be("2020-01-01T00:00:00.0005000Z");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimeAdd_Nanosecond_AddsCorrectly()
     {
         // 1 nanosecond = 0.01 ticks; .NET rounds to 100ns resolution
@@ -723,7 +723,7 @@ public class DateTimePartTests
         result.Should().Be(expected);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimePart_Microsecond_ExtractsCorrectly()
     {
         // Cosmos docs: DateTimePart("mcs", "2016-05-29T08:30:00.1301617") → 130161
@@ -732,7 +732,7 @@ public class DateTimePartTests
         result.Should().Be(130161);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimePart_Nanosecond_ExtractsCorrectly()
     {
         // Cosmos docs: DateTimePart("ns", "2016-05-29T08:30:00.1301617") → 130161700
@@ -784,7 +784,7 @@ public class DateTimeBinExtendedTests
         return results.Single();
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimeBin_7DayBins_DefaultOriginUnixEpoch()
     {
         // Cosmos DB docs example: DATETIMEBIN("2021-01-08T18:35:00.0000000", "dd", 7) → "2021-01-07T00:00:00.0000000Z"
@@ -803,7 +803,7 @@ public class DateTimeBinExtendedTests
         result.Should().Be("2021-01-04T00:00:00.0000000Z");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimeBin_Month_WithMAlias_BinsCorrectly()
     {
         // BUG-2 regression: "m" alias should bin by month, not return unchanged
@@ -812,7 +812,7 @@ public class DateTimeBinExtendedTests
         result.Should().Be("2023-07-01T00:00:00.0000000Z");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimeBin_5Hour_BinsCorrectly()
     {
         // Cosmos DB docs: DATETIMEBIN("2021-01-08T18:35:00.0000000", "hh", 5) → "2021-01-08T15:00:00.0000000Z"
@@ -871,7 +871,7 @@ public class DateTimeFromPartsExtendedTests
         return token.Type == JTokenType.Null ? null : token.ToString();
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimeFromParts_MinArgs_YearMonthDay()
     {
         // BUG-3: Cosmos docs: DATETIMEFROMPARTS(2017, 4, 20) → "2017-04-20T00:00:00.0000000Z"
@@ -880,7 +880,7 @@ public class DateTimeFromPartsExtendedTests
         result.Should().Be("2017-04-20T00:00:00.0000000Z");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimeFromParts_PartialArgs_5()
     {
         // BUG-3: DATETIMEFROMPARTS(2017, 4, 20, 13, 15) → "2017-04-20T13:15:00.0000000Z"
@@ -889,7 +889,7 @@ public class DateTimeFromPartsExtendedTests
         result.Should().Be("2017-04-20T13:15:00.0000000Z");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimeFromParts_AllArgs_WithSubSecondFraction()
     {
         // BUG-4: DATETIMEFROMPARTS(2017, 4, 20, 13, 15, 20, 3456789) → "2017-04-20T13:15:20.3456789Z"
@@ -983,7 +983,7 @@ public class DateTimeDiffExtendedTests
         resultLong.Should().Be(resultShort);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimeDiff_Microsecond_CalculatesCorrectly()
     {
         // 500ms = 500000 microseconds
@@ -992,7 +992,7 @@ public class DateTimeDiffExtendedTests
         result.Should().Be(500000);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimeDiff_Nanosecond_CalculatesCorrectly()
     {
         // 500ms = 500000000 nanoseconds (limited by 100ns tick precision)
@@ -1022,19 +1022,9 @@ public class DateTimeDiffBoundaryCrossingTests
     // Our emulator uses (long)TotalHours which truncates the 0.033h interval to 0.
     // Implementing boundary-crossing semantics for all sub-day parts is complex
     // and the interval-based approach matches for all whole-unit intervals.
-    [Fact(Skip = "BUG-5: DateTimeDiff uses interval truncation (TotalHours cast to long) for sub-day " +
-        "parts instead of Cosmos DB's boundary-crossing semantics. 23:59→00:01 should return 1 (boundary " +
-        "crossed) but returns 0 (interval truncation). Low practical impact — results match for all " +
-        "whole-unit intervals. See date-handling-tdd-plan.md BUG-5.")]
-    public void DateTimeDiff_BoundaryCrossing_Hour_ShouldReturn1() { }
-
     [Fact]
-    public async Task DateTimeDiff_BoundaryCrossing_Hour_EmulatorBehavior()
+    public async Task DateTimeDiff_BoundaryCrossing_Hour_ShouldReturn1()
     {
-        // Divergent behaviour: emulator returns 0 for a 2-minute span crossing the hour boundary.
-        // Real Cosmos DB would return 1 because the 00:00 hour mark is crossed.
-        // This is caused by: (long)(00:01 - 23:59).TotalHours = (long)0.033 = 0
-        // whereas Cosmos DB counts floor(end.Hour) - floor(start.Hour) adjusted for day rollover = 1.
         try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
         catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
 
@@ -1045,8 +1035,26 @@ public class DateTimeDiffBoundaryCrossingTests
         while (iterator.HasMoreResults)
             results.AddRange(await iterator.ReadNextAsync());
 
-        // Emulator returns 0 (interval truncation), real Cosmos returns 1 (boundary crossing)
-        results.Should().ContainSingle().Which.Should().Be(0);
+        results.Should().ContainSingle().Which.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_BoundaryCrossing_Hour_EmulatorBehavior_NowCorrect()
+    {
+        // Previously divergent: emulator returned 0 for a 2-minute span crossing the hour boundary.
+        // Now fixed: uses boundary-crossing semantics matching real Cosmos DB.
+        try { await _container.ReadItemAsync<JObject>("1", new PartitionKey("a")); }
+        catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
+
+        var iterator = _container.GetItemQueryIterator<long>(
+            "SELECT VALUE DateTimeDiff('hh', '2020-01-01T23:59:00.0000000', '2020-01-02T00:01:00.0000000') FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<long>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        // Emulator now correctly returns 1 (boundary crossing), matching real Cosmos DB
+        results.Should().ContainSingle().Which.Should().Be(1);
     }
 }
 
@@ -1062,7 +1070,7 @@ public class DateTimeConversionExtendedTests
         catch { await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a")); }
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimeToTicks_And_TicksToDateTime_RoundTrip()
     {
         await EnsureSeedItem();
@@ -1082,7 +1090,7 @@ public class DateTimeConversionExtendedTests
         dates.Single().Should().Be("2023-06-15T10:30:45.1234567Z");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DateTimeToTimestamp_And_TimestampToDateTime_RoundTrip()
     {
         await EnsureSeedItem();

@@ -81,8 +81,19 @@ public class InMemoryDatabase : Database
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         var id = containerProperties.Id;
-        var pkPath = containerProperties.PartitionKeyPath ?? "/id";
-        return CreateContainerIfNotExistsAsync(id, pkPath, throughput, requestOptions, cancellationToken);
+        if (string.IsNullOrEmpty(containerProperties.PartitionKeyPath) && containerProperties.PartitionKeyPaths is null)
+            containerProperties.PartitionKeyPath = "/id";
+        var isNew = !_containers.ContainsKey(id);
+        var container = _containers.GetOrAdd(id, _ => new InMemoryContainer(containerProperties));
+        container.OnDeleted ??= () => _containers.TryRemove(id, out _);
+        if (isNew)
+        {
+            container.DefaultTimeToLive = containerProperties.DefaultTimeToLive;
+            if (containerProperties.IndexingPolicy is not null)
+                container.IndexingPolicy = containerProperties.IndexingPolicy;
+        }
+        var response = BuildContainerResponse(container, containerProperties, isNew ? HttpStatusCode.Created : HttpStatusCode.OK);
+        return Task.FromResult(response);
     }
 
     public override Task<ContainerResponse> CreateContainerIfNotExistsAsync(
@@ -116,13 +127,19 @@ public class InMemoryDatabase : Database
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         var id = containerProperties.Id;
-        var pkPath = containerProperties.PartitionKeyPath ?? "/id";
-        var result = CreateContainerAsync(id, pkPath, throughput, requestOptions, cancellationToken);
-        if (_containers.TryGetValue(id, out var container))
+        if (string.IsNullOrEmpty(containerProperties.PartitionKeyPath) && containerProperties.PartitionKeyPaths is null)
+            containerProperties.PartitionKeyPath = "/id";
+        var container = new InMemoryContainer(containerProperties);
+        container.OnDeleted = () => _containers.TryRemove(id, out _);
+        container.DefaultTimeToLive = containerProperties.DefaultTimeToLive;
+        if (containerProperties.IndexingPolicy is not null)
+            container.IndexingPolicy = containerProperties.IndexingPolicy;
+        if (!_containers.TryAdd(id, container))
         {
-            container.DefaultTimeToLive = containerProperties.DefaultTimeToLive;
+            throw new CosmosException("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
         }
-        return result;
+        var response = BuildContainerResponse(container, containerProperties, HttpStatusCode.Created);
+        return Task.FromResult(response);
     }
 
     public override Task<ContainerResponse> CreateContainerAsync(
@@ -139,9 +156,13 @@ public class InMemoryDatabase : Database
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         var id = containerProperties.Id;
-        var pkPath = containerProperties.PartitionKeyPath ?? "/id";
-        var container = new InMemoryContainer(id, pkPath);
+        if (string.IsNullOrEmpty(containerProperties.PartitionKeyPath) && containerProperties.PartitionKeyPaths is null)
+            containerProperties.PartitionKeyPath = "/id";
+        var container = new InMemoryContainer(containerProperties);
         container.OnDeleted = () => _containers.TryRemove(id, out _);
+        container.DefaultTimeToLive = containerProperties.DefaultTimeToLive;
+        if (containerProperties.IndexingPolicy is not null)
+            container.IndexingPolicy = containerProperties.IndexingPolicy;
         if (!_containers.TryAdd(id, container))
         {
             return Task.FromResult(new ResponseMessage(HttpStatusCode.Conflict));
@@ -204,6 +225,7 @@ public class InMemoryDatabase : Database
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         _containers.Clear();
+        _users.Clear();
         _client?.RemoveDatabase(Id);
         var response = Substitute.For<DatabaseResponse>();
         response.StatusCode.Returns(HttpStatusCode.NoContent);
@@ -214,6 +236,7 @@ public class InMemoryDatabase : Database
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         _containers.Clear();
+        _users.Clear();
         _client?.RemoveDatabase(Id);
         return Task.FromResult(new ResponseMessage(HttpStatusCode.NoContent));
     }
@@ -226,6 +249,15 @@ public class InMemoryDatabase : Database
         response.Container.Returns(container);
         response.StatusCode.Returns(statusCode);
         response.Resource.Returns(new ContainerProperties(container.Id, partitionKeyPath ?? "/id"));
+        return response;
+    }
+
+    private static ContainerResponse BuildContainerResponse(Container container, ContainerProperties properties, HttpStatusCode statusCode)
+    {
+        var response = Substitute.For<ContainerResponse>();
+        response.Container.Returns(container);
+        response.StatusCode.Returns(statusCode);
+        response.Resource.Returns(properties);
         return response;
     }
 

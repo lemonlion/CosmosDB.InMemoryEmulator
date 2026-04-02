@@ -227,7 +227,7 @@ public class ReadManyTests
         ((JArray)jObj["Documents"]!).Should().BeEmpty();
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task ReadManyStream_ContainsCountField()
     {
         await SeedItems();
@@ -300,7 +300,7 @@ public class ReadManyTests
 
     #region Error Handling
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task ReadMany_NullList_ThrowsArgumentNullException()
     {
         var act = () => _container.ReadManyItemsAsync<TestDocument>(null!);
@@ -308,7 +308,7 @@ public class ReadManyTests
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task ReadManyStream_NullList_ThrowsArgumentNullException()
     {
         var act = () => _container.ReadManyItemsStreamAsync(null!);
@@ -399,11 +399,11 @@ public class ReadManyTests
 
     #region Partition Key Edge Cases
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task ReadMany_HierarchicalPartitionKey_ReturnsItems()
     {
         var container = new InMemoryContainer("hierarchical-container", ["/tenantId", "/userId"]);
-        var doc = new { id = "1", tenantId = "t1", userId = "u1", name = "Alice" };
+        var doc = JObject.FromObject(new { id = "1", tenantId = "t1", userId = "u1", name = "Alice" });
         var pk = new PartitionKeyBuilder().Add("t1").Add("u1").Build();
         await container.CreateItemAsync(doc, pk);
 

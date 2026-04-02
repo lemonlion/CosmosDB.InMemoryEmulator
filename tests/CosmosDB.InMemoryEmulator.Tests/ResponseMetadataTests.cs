@@ -627,8 +627,7 @@ public class FeedResponseMetadataTests
         page.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    [Fact(Skip = "BUG-2: InMemoryFeedResponse.ActivityId returns empty string instead of a " +
-        "GUID. Real Cosmos SDK returns a valid GUID for each feed response.")]
+    [Fact]
     public async Task FeedResponse_ActivityId_IsValidGuid()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
@@ -643,11 +642,9 @@ public class FeedResponseMetadataTests
     }
 
     [Fact]
-    public async Task FeedResponse_ActivityId_EmulatorBehavior_IsEmpty()
+    public async Task FeedResponse_ActivityId_EmulatorBehavior_IsValidGuid()
     {
-        // ── Divergent behavior documentation ──
-        // Real Cosmos DB: FeedResponse.ActivityId is a valid GUID.
-        // In-Memory Emulator: ActivityId returns empty string.
+        // Previously divergent: ActivityId was empty string. Now returns a valid GUID.
         var container = new InMemoryContainer("test", "/partitionKey");
         await container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" },
@@ -656,7 +653,7 @@ public class FeedResponseMetadataTests
         var iterator = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
         var page = await iterator.ReadNextAsync();
 
-        page.ActivityId.Should().BeEmpty("emulator returns empty string for FeedResponse.ActivityId");
+        Guid.TryParse(page.ActivityId, out _).Should().BeTrue("emulator now returns a valid GUID for FeedResponse.ActivityId");
     }
 }
 
@@ -820,11 +817,10 @@ public class ResponseMetadataDivergentBehaviorTests
     }
 
     [Fact]
-    public async Task SessionToken_EmulatorBehavior_RandomPerResponse()
+    public async Task SessionToken_EmulatorBehavior_FixedPerResponse()
     {
-        // ── Divergent behavior documentation ──
-        // Real Cosmos: Session tokens are LSN-based and cumulative.
-        // Emulator: Random GUID per response, no cumulative tracking.
+        // Emulator returns a fixed session token on all stream responses.
+        // Real Cosmos DB uses LSN-based cumulative tokens.
         var container = new InMemoryContainer("test", "/partitionKey");
 
         var json = """{"id":"1","partitionKey":"pk"}""";
@@ -838,10 +834,7 @@ public class ResponseMetadataDivergentBehaviorTests
         var token1 = r1.Headers["x-ms-session-token"];
         var token2 = r2.Headers["x-ms-session-token"];
 
-        // Tokens should be different (random) — no cumulative LSN state
-        if (token1 != null && token2 != null)
-        {
-            token1.Should().NotBe(token2);
-        }
+        token1.Should().NotBeNullOrEmpty();
+        token2.Should().NotBeNullOrEmpty();
     }
 }

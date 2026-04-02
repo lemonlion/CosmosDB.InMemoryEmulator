@@ -1219,76 +1219,61 @@ public class TransactionalBatchDivergentBehaviourTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "ResourceStream is an abstract property on TransactionalBatchOperationResult. " +
-                 "The InMemoryBatchResponse uses NSubstitute to mock operation results, and wiring up " +
-                 "ResourceStream to return coherent MemoryStream instances for every write operation would " +
-                 "require significant refactoring to use concrete result objects instead of mocks. " +
-                 "Real Cosmos DB populates ResourceStream with the serialized document body for writes and reads.")]
+    [Fact]
     public async Task Batch_ResourceStream_AvailableOnResults()
     {
         // Real Cosmos DB: ResourceStream on each operation result contains the serialized document body.
-        // This test would verify that Create/Replace/Upsert/Read results have a non-null ResourceStream
-        // containing valid JSON that deserializes to the correct document.
         var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
         batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" });
 
         using var response = await batch.ExecuteAsync();
 
-        // Would assert: response[0].ResourceStream.Should().NotBeNull();
-        // Would assert: reading the stream yields {"id":"1","partitionKey":"pk1","name":"Alice",...}
-        await Task.CompletedTask;
+        response[0].ResourceStream.Should().NotBeNull();
+        using var reader = new StreamReader(response[0].ResourceStream);
+        var json = await reader.ReadToEndAsync();
+        var doc = JObject.Parse(json);
+        doc["name"]!.Value<string>().Should().Be("Alice");
     }
 
     // Sister test documenting actual in-memory behaviour for ResourceStream
     [Fact]
-    public async Task Batch_ResourceStream_InMemory_IsNotPopulatedOnMockedResults()
+    public async Task Batch_ResourceStream_InMemory_IsPopulatedOnResults()
     {
-        // InMemoryBatchResponse uses NSubstitute mocks for TransactionalBatchOperationResult.
-        // NSubstitute returns default(Stream) = null for ResourceStream since it's not configured.
-        // This documents the known divergence from real Cosmos DB where ResourceStream is always populated.
+        // Previously divergent: NSubstitute mocks returned null for ResourceStream.
+        // Now ResourceStream is wired up and returns the serialized document body.
         var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
         batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" });
 
         using var response = await batch.ExecuteAsync();
 
         response.IsSuccessStatusCode.Should().BeTrue();
-        // In the real SDK, ResourceStream would be non-null.
-        // In the emulator, it's null because NSubstitute returns default for unmocked properties.
-        response[0].ResourceStream.Should().BeNull();
+        response[0].ResourceStream.Should().NotBeNull();
     }
 
-    [Fact(Skip = "CancellationToken is accepted by ExecuteAsync but not propagated to individual container " +
-                 "operations. Implementing this would require threading the token through each operation lambda " +
-                 "and checking it between operations. The real Cosmos SDK checks cancellation between operations " +
-                 "and throws OperationCanceledException.")]
+    [Fact]
     public async Task Batch_CancellationToken_Respected()
     {
         // Real Cosmos DB: Passing a cancelled CancellationToken to ExecuteAsync throws OperationCanceledException.
-        // The SDK also checks the token between individual batch operations.
         var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
         batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" });
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        // Would assert: await batch.ExecuteAsync(cts.Token) throws OperationCanceledException
-        await Task.CompletedTask;
+        var act = () => batch.ExecuteAsync(cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     // Sister test documenting actual in-memory behaviour for CancellationToken
     [Fact]
-    public async Task Batch_CancellationToken_NotCheckedBetweenOperations()
+    public async Task Batch_CancellationToken_NotCancelled_Succeeds()
     {
-        // The InMemoryTransactionalBatch accepts a CancellationToken on ExecuteAsync but does not
-        // propagate it to individual operations or check it between operations. A pre-cancelled token
-        // still allows the batch to complete successfully. This is a known divergence from real Cosmos DB.
+        // Verify that a non-cancelled token allows the batch to complete normally.
         var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
         batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" });
 
         using var cts = new CancellationTokenSource();
-        cts.Cancel();
 
-        // In the emulator, the batch completes despite the cancelled token
         using var response = await batch.ExecuteAsync(cts.Token);
         response.IsSuccessStatusCode.Should().BeTrue();
 

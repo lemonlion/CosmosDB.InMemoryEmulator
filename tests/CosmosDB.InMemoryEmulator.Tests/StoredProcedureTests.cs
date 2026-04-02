@@ -34,7 +34,7 @@ public class StoredProcedureTests
         response.Resource.Id.Should().Be("spBulkDelete");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task CreateStoredProcedure_DuplicateId_Throws409()
     {
         var scripts = _container.Scripts;
@@ -57,7 +57,7 @@ public class StoredProcedureTests
 
     // ─── Read ────────────────────────────────────────────────────────────
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task ReadStoredProcedure_AfterCreate_ReturnsProperties()
     {
         var scripts = _container.Scripts;
@@ -75,7 +75,7 @@ public class StoredProcedureTests
         response.Resource.Body.Should().Be("function() { return 'hello'; }");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task ReadStoredProcedure_NotFound_Throws404()
     {
         var scripts = _container.Scripts;
@@ -88,7 +88,7 @@ public class StoredProcedureTests
 
     // ─── Replace ─────────────────────────────────────────────────────────
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task ReplaceStoredProcedure_UpdatesBody()
     {
         var scripts = _container.Scripts;
@@ -112,7 +112,7 @@ public class StoredProcedureTests
         readResponse.Resource.Body.Should().Be("function() { return 'v2'; }");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task ReplaceStoredProcedure_NotFound_Throws404()
     {
         var scripts = _container.Scripts;
@@ -129,7 +129,7 @@ public class StoredProcedureTests
 
     // ─── Delete ──────────────────────────────────────────────────────────
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DeleteStoredProcedure_RemovesMetadata()
     {
         var scripts = _container.Scripts;
@@ -148,7 +148,7 @@ public class StoredProcedureTests
         ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DeleteStoredProcedure_NotFound_Throws404()
     {
         var scripts = _container.Scripts;
@@ -362,7 +362,7 @@ public class StoredProcedureTests
         result.Resource.Should().Be("30");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task RegisterStoredProcedure_HandlerCanCreateItems()
     {
         _container.RegisterStoredProcedure("spCreate", (pk, args) =>
@@ -380,7 +380,7 @@ public class StoredProcedureTests
         readBack.Resource.Name.Should().Be("SprocCreated");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task RegisterStoredProcedure_HandlerCanDeleteItems()
     {
         await _container.CreateItemAsync(
@@ -401,7 +401,7 @@ public class StoredProcedureTests
         await act.Should().ThrowAsync<CosmosException>();
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task RegisterStoredProcedure_HandlerCanReplaceItems()
     {
         await _container.CreateItemAsync(
@@ -454,7 +454,7 @@ public class StoredProcedureTests
         names.Should().ContainSingle().Which.Should().Be("Bob");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task RegisterStoredProcedure_BulkDeletePattern()
     {
         for (int i = 0; i < 5; i++)

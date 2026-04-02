@@ -92,8 +92,15 @@ internal sealed class InMemoryChangeFeedProcessor<T> : ChangeFeedProcessor
 
             if (changes.Count > 0)
             {
-                _checkpoint += changes.Count;
-                await _handler(context, changes, cancellationToken);
+                try
+                {
+                    await _handler(context, changes, cancellationToken);
+                    _checkpoint += changes.Count;
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Handler threw — do not advance checkpoint so the same batch is redelivered
+                }
             }
         }
     }
@@ -156,11 +163,18 @@ internal sealed class InMemoryChangeFeedStreamProcessor : ChangeFeedProcessor
 
             if (changes.Count > 0)
             {
-                _checkpoint += changes.Count;
-                var array = new JArray(changes);
-                var bytes = System.Text.Encoding.UTF8.GetBytes(array.ToString());
-                using var stream = new MemoryStream(bytes);
-                await _handler(context, stream, cancellationToken);
+                try
+                {
+                    var array = new JArray(changes);
+                    var bytes = System.Text.Encoding.UTF8.GetBytes(array.ToString());
+                    using var stream = new MemoryStream(bytes);
+                    await _handler(context, stream, cancellationToken);
+                    _checkpoint += changes.Count;
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Handler threw — do not advance checkpoint so the same batch is redelivered
+                }
             }
         }
     }
@@ -225,7 +239,14 @@ internal sealed class InMemoryManualCheckpointChangeFeedProcessor<T> : ChangeFee
             {
                 var pendingCheckpoint = _checkpoint + changes.Count;
                 var checkpointed = false;
-                await _handler(context, changes, async () => { checkpointed = true; await Task.CompletedTask; }, cancellationToken);
+                try
+                {
+                    await _handler(context, changes, async () => { checkpointed = true; await Task.CompletedTask; }, cancellationToken);
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Handler threw — do not advance checkpoint
+                }
                 if (checkpointed)
                     _checkpoint = pendingCheckpoint;
             }
@@ -292,10 +313,17 @@ internal sealed class InMemoryManualCheckpointStreamChangeFeedProcessor : Change
             {
                 var pendingCheckpoint = _checkpoint + changes.Count;
                 var checkpointed = false;
-                var array = new JArray(changes);
-                var bytes = System.Text.Encoding.UTF8.GetBytes(array.ToString());
-                using var stream = new MemoryStream(bytes);
-                await _handler(context, stream, async () => { checkpointed = true; await Task.CompletedTask; }, cancellationToken);
+                try
+                {
+                    var array = new JArray(changes);
+                    var bytes = System.Text.Encoding.UTF8.GetBytes(array.ToString());
+                    using var stream = new MemoryStream(bytes);
+                    await _handler(context, stream, async () => { checkpointed = true; await Task.CompletedTask; }, cancellationToken);
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Handler threw — do not advance checkpoint
+                }
                 if (checkpointed)
                     _checkpoint = pendingCheckpoint;
             }

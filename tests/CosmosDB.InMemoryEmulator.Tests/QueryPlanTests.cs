@@ -307,7 +307,7 @@ public class QueryPlanTests : IDisposable
         ((bool)info["hasNonStreamingOrderBy"]!).Should().BeTrue();
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task QueryPlan_OrderByFunctionExpression_SetsExpression()
     {
         // When ORDER BY uses a function expression, the parser creates OrderByField
@@ -395,7 +395,7 @@ public class QueryPlanTests : IDisposable
     // C. Aggregate edge cases
     // ──────────────────────────────────────────────────────────────
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task QueryPlan_AggregateInArithmeticExpression_DetectsAggregate()
     {
         // Bug test: SUM(c.a) * 2 AS total — the aggregate is inside a BinaryExpression.

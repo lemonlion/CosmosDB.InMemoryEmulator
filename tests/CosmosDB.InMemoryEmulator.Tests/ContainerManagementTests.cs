@@ -610,7 +610,7 @@ public class ConflictResolutionPolicyTests
 
 public class DeleteContainerChangeFeedTests
 {
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DeleteContainerAsync_ClearsChangeFeed()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -624,7 +624,7 @@ public class DeleteContainerChangeFeedTests
         container.GetChangeFeedCheckpoint().Should().Be(0, "change feed should be empty after DeleteContainerAsync");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DeleteContainerStreamAsync_ClearsChangeFeed()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -638,7 +638,7 @@ public class DeleteContainerChangeFeedTests
         container.GetChangeFeedCheckpoint().Should().Be(0, "change feed should be empty after DeleteContainerStreamAsync");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DeleteContainer_ThenAddItems_ChangeFeedOnlyHasNewEntries()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -660,7 +660,7 @@ public class DeleteContainerChangeFeedTests
 
 public class DatabaseContainerCreationPropertyTests
 {
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task CreateContainerAsync_WithContainerProperties_PreservesUniqueKeyPolicy()
     {
         var client = new InMemoryCosmosClient();
@@ -708,7 +708,7 @@ public class DatabaseContainerCreationPropertyTests
         container.DefaultTimeToLive.Should().Be(3600);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task CreateContainerIfNotExistsAsync_WithContainerProperties_PreservesUniqueKeyPolicy()
     {
         var client = new InMemoryCosmosClient();
@@ -737,7 +737,7 @@ public class DatabaseContainerCreationPropertyTests
         ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task CreateContainerStreamAsync_WithContainerProperties_PreservesUniqueKeyPolicy()
     {
         var client = new InMemoryCosmosClient();
@@ -841,7 +841,7 @@ public class ContainerLifecycleTests
         resp2.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task DeleteContainer_ClearsAllItems_AndChangeFeed()
     {
         var container = new InMemoryContainer("test", "/pk");

@@ -56,7 +56,11 @@ internal static class PartitionKeyHash
     {
         if (rangeCount <= 1) return 0;
         var hash = MurmurHash3(partitionKeyValue);
-        return (int)(hash % (uint)rangeCount);
+        // Use interval-based assignment matching FeedRange boundaries
+        // which divide the uint32 hash space [0, 0x100000000) into N equal intervals
+        var step = 0x1_0000_0000L / rangeCount;
+        var index = (int)(hash / step);
+        return Math.Min(index, rangeCount - 1);
     }
 
     /// <summary>

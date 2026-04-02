@@ -457,7 +457,7 @@ public class FeedRangeChangeFeedEdgeCaseTests
 
 public class FakeCosmosHandlerConsistencyTests
 {
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task FakeCosmosHandler_PerRange_MatchesInMemoryContainer_PerRange()
     {
         // BUG-1: FakeCosmosHandler.FilterDocumentsByRange uses hash % rangeCount (modulo)

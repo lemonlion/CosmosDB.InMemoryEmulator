@@ -521,18 +521,19 @@ public class ReplaceItemGapTests2
     }
 
     [Fact]
-    public async Task Replace_IdParameterUsedForLookup()
+    public async Task Replace_IdParameterDiffersFromBody_ThrowsBadRequest()
     {
         // Create an item with id "1"
         var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
         await _container.CreateItemAsync(item, new PartitionKey("pk1"));
 
         // Replace with id parameter = "1" but item body has id = "different"
+        // Real Cosmos DB returns 400 BadRequest when body id differs from parameter id
         var replacement = new TestDocument { Id = "different", PartitionKey = "pk1", Name = "Replaced" };
-        var response = await _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
+        var act = () => _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
 
-        // Operation should succeed using the id parameter for lookup
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }
 
@@ -1032,15 +1033,15 @@ public class CrudNullGuardTests
     }
 
     [Fact]
-    public async Task ReplaceItemAsync_WithEmptyId_ThrowsNotFound()
+    public async Task ReplaceItemAsync_WithEmptyId_ThrowsBadRequest()
     {
         var act = () => _container.ReplaceItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
             "", new PartitionKey("pk1"));
 
-        // Empty ID won't match any item, so NotFound is expected
+        // Body id "1" differs from parameter id "" — returns BadRequest
         var ex = await act.Should().ThrowAsync<CosmosException>();
-        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]

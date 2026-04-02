@@ -962,8 +962,7 @@ public class StreamDivergentBehaviorTests
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
     private static async Task<string> ReadStreamAsync(Stream s) { using var r = new StreamReader(s); return await r.ReadToEndAsync(); }
 
-    [Fact(Skip = "Real Cosmos DB returns 400 when body id differs from parameter id. " +
-        "InMemoryContainer uses parameter id for lookup; body id is not validated.")]
+    [Fact]
     public async Task ReplaceStream_IdMismatch_Returns400()
     {
         var container = new InMemoryContainer("mismatch", "/partitionKey");
@@ -977,19 +976,18 @@ public class StreamDivergentBehaviorTests
     }
 
     [Fact]
-    public async Task Divergent_ReplaceStream_IdMismatch_UsesParameterId()
+    public async Task Divergent_ReplaceStream_IdMismatch_AlsoReturns400()
     {
-        // Sister test: emulator uses parameter id, not body id
+        // The emulator now correctly validates body id matches parameter id,
+        // matching real Cosmos DB behavior.
         var container = new InMemoryContainer("mismatch-div", "/partitionKey");
         await container.CreateItemStreamAsync(
             ToStream("""{"id":"1","partitionKey":"pk1","name":"orig"}"""), new PartitionKey("pk1"));
 
-        // Body says id="wrong" but parameter says "1" — emulator uses parameter id
         using var response = await container.ReplaceItemStreamAsync(
             ToStream("""{"id":"wrong","partitionKey":"pk1","name":"replaced"}"""),
             "1", new PartitionKey("pk1"));
-        response.StatusCode.Should().Be(HttpStatusCode.OK,
-            "emulator uses parameter id for key lookup, body id is ignored");
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact(Skip = "Real Cosmos DB includes _rid, _self, _attachments system properties. " +

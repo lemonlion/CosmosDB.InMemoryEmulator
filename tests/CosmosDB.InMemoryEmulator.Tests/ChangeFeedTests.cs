@@ -1114,7 +1114,7 @@ public class ChangeFeedProcessorHandlerExceptionTests
     /// catch handler exceptions and NOT advance the checkpoint, causing the same batch to be
     /// redelivered on the next poll cycle.
     /// </summary>
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task ChangeFeedProcessor_HandlerThrows_ContinuesPolling()
     {
         var callCount = 0;
@@ -1148,7 +1148,7 @@ public class ChangeFeedProcessorHandlerExceptionTests
             "processor should continue polling after handler exception and redeliver the batch");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task ChangeFeedStreamProcessor_HandlerThrows_ContinuesPolling()
     {
         var callCount = 0;
@@ -1181,7 +1181,7 @@ public class ChangeFeedProcessorHandlerExceptionTests
         callCount.Should().BeGreaterThanOrEqualTo(2);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task ManualCheckpointProcessor_HandlerThrows_ContinuesPolling()
     {
         var callCount = 0;
@@ -1213,7 +1213,7 @@ public class ChangeFeedProcessorHandlerExceptionTests
         callCount.Should().BeGreaterThanOrEqualTo(2);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task ManualCheckpointStreamProcessor_HandlerThrows_ContinuesPolling()
     {
         var callCount = 0;
@@ -2097,7 +2097,8 @@ public class ChangeFeedStartFromTests
         results.Should().HaveCount(2);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact(Skip = "ChangeFeed FromNow with FeedRange interaction requires deeper investigation " +
+        "into lazy evaluation timing with range filtering.")]
     public async Task ChangeFeed_FromNow_WithFeedRange_ScopesToRange()
     {
         _container.FeedRangeCount = 4;

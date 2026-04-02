@@ -128,7 +128,7 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
         public override string IndexMetrics => null!;
         public override string ContinuationToken { get; }
         public override double RequestCharge => 1;
-        public override string ActivityId => string.Empty;
+        public override string ActivityId { get; } = Guid.NewGuid().ToString();
         public override string ETag => null!;
 
         public override IEnumerator<TItem> GetEnumerator() => _items.GetEnumerator();

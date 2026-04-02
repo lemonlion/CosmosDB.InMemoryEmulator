@@ -491,8 +491,7 @@ public class SessionTokenEdgeCaseTests
         response.Headers.Session.Should().NotBeNullOrEmpty();
     }
 
-    [Fact(Skip = "Stream responses do not include x-ms-session-token header in the emulator. " +
-        "Typed responses expose Session via Headers.Session, but the raw header is not set on stream responses.")]
+    [Fact]
     public async Task SessionToken_ShouldBePresent_OnStreamResponse()
     {
         var container = new InMemoryContainer("st-stream", "/partitionKey");
@@ -504,16 +503,16 @@ public class SessionTokenEdgeCaseTests
     }
 
     [Fact]
-    public async Task Divergent_SessionToken_NotPresentOnStreamResponse()
+    public async Task SessionToken_NowPresentOnStreamResponse()
     {
-        // Sister test: stream responses don't include x-ms-session-token header
+        // Previously divergent: stream responses didn't include x-ms-session-token header. Now fixed.
         var container = new InMemoryContainer("st-stream-div", "/partitionKey");
         await container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
 
         using var response = await container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
-        response.Headers["x-ms-session-token"].Should().BeNull(
-            "emulator does not set session token on stream responses");
+        response.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty(
+            "emulator now sets session token on stream responses");
     }
 }
 

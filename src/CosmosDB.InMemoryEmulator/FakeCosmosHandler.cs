@@ -482,7 +482,7 @@ public class FakeCosmosHandler : HttpMessageHandler
                 foreach (var field in parsed.OrderByFields)
                 {
                     orderByArr.Add(field.Ascending ? "Ascending" : "Descending");
-                    orderByExprArr.Add(field.Field);
+                    orderByExprArr.Add(field.Field ?? CosmosSqlParser.ExprToString(field.Expression));
                 }
 
                 queryInfo["orderBy"] = orderByArr;
@@ -616,12 +616,12 @@ public class FakeCosmosHandler : HttpMessageHandler
         }
         else if (expr is BinaryExpression bin)
         {
-            DetectAggregates(bin.Left, aggregates, groupByAliasToAgg, null);
-            DetectAggregates(bin.Right, aggregates, groupByAliasToAgg, null);
+            DetectAggregates(bin.Left, aggregates, groupByAliasToAgg, alias);
+            DetectAggregates(bin.Right, aggregates, groupByAliasToAgg, alias);
         }
         else if (expr is UnaryExpression unary)
         {
-            DetectAggregates(unary.Operand, aggregates, groupByAliasToAgg, null);
+            DetectAggregates(unary.Operand, aggregates, groupByAliasToAgg, alias);
         }
     }
 
@@ -1221,6 +1221,11 @@ public class FakeCosmosHandler : HttpMessageHandler
     private string GetCollectionMetadata()
     {
         var paths = new JArray(_container.PartitionKeyPaths.Select(path => (JToken)path));
+        var policy = _container.IndexingPolicy;
+        var includedPaths = new JArray(policy.IncludedPaths.Select(p => new JObject { ["path"] = p.Path }));
+        var excludedPaths = new JArray(policy.ExcludedPaths.Select(p => new JObject { ["path"] = p.Path }));
+        if (excludedPaths.Count == 0)
+            excludedPaths = new JArray(new JObject { ["path"] = "/\"_etag\"/?" });
         var metadata = new JObject
         {
             ["id"] = _container.Id,
@@ -1236,10 +1241,10 @@ public class FakeCosmosHandler : HttpMessageHandler
             },
             ["indexingPolicy"] = new JObject
             {
-                ["indexingMode"] = "consistent",
-                ["automatic"] = true,
-                ["includedPaths"] = new JArray(new JObject { ["path"] = "/*" }),
-                ["excludedPaths"] = new JArray(new JObject { ["path"] = "/\"_etag\"/?" })
+                ["indexingMode"] = policy.IndexingMode.ToString().ToLowerInvariant(),
+                ["automatic"] = policy.Automatic,
+                ["includedPaths"] = includedPaths,
+                ["excludedPaths"] = excludedPaths
             },
             ["geospatialConfig"] = new JObject { ["type"] = "Geography" }
         };

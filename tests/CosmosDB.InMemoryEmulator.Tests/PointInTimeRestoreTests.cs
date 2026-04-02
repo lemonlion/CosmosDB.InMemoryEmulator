@@ -237,10 +237,7 @@ public class PointInTimeRestoreTests
 
 public class PitrEtagConsistencyTests
 {
-    [Fact(Skip = "BUG 1: After PITR, _etags dictionary gets a fresh ETag but _items JSON " +
-        "still contains the original _etag value from the change feed. response.ETag and " +
-        "response.Resource._etag will differ. Fix: call EnrichWithSystemProperties on " +
-        "restored JSON.")]
+    [Fact]
     public async Task RestoreToPointInTime_ETagsAreConsistentAfterRestore()
     {
         var container = new InMemoryContainer("test", "/partitionKey");

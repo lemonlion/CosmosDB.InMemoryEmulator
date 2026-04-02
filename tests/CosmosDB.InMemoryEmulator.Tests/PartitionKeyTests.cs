@@ -480,9 +480,7 @@ public class CompositePartitionKeyEdgeCaseTests
 
 public class PartitionKeyBugDocumentationTests
 {
-    [Fact(Skip = "BUG 3: ExtractPartitionKeyValue drops null components from composite keys. " +
-        "Composite key (/a, /b, /c) with null middle → 'x|z' (2 parts) instead of 'x||z' (3 parts). " +
-        "This can cause collisions between different composite key schemas.")]
+    [Fact]
     public async Task CompositeKey_WithNullComponent_PreservesPosition()
     {
         var container = new InMemoryContainer("test", ["/a", "/b", "/c"]);
@@ -496,30 +494,30 @@ public class PartitionKeyBugDocumentationTests
     }
 
     [Fact]
-    public async Task CompositeKey_WithNullComponent_EmulatorBehavior_DropsNulls()
+    public async Task CompositeKey_WithNullComponent_EmulatorBehavior_PreservesPosition()
     {
-        // ── Divergent behavior documentation ──
-        // Real Cosmos DB: Null is a valid component in hierarchical partition keys and
-        //   is preserved positionally. ("x", null, "z") != ("x", "z").
-        // In-Memory Emulator: ExtractPartitionKeyValue filters out null components
-        //   (line: `var nonNull = parts.Where(p => p is not null).ToList()`).
-        //   This means ("x", null, "z") is stored as "x|z" — same as 2-path ("x", "z").
+        // Null is a valid component in hierarchical partition keys and
+        // is preserved positionally. ("x", null, "z") != ("x", "z").
+        // ExtractPartitionKeyValue now preserves null positions as empty strings
+        // for composite keys, matching PartitionKeyToString behavior.
         var container = new InMemoryContainer("test", ["/a", "/b", "/c"]);
 
         // PartitionKeyBuilder with null still produces a valid PK for the SDK
         var pk = new PartitionKeyBuilder().Add("x").Add(null as string).Add("z").Build();
 
-        // The emulator accepts the item, but the storage key loses the null position
+        // The emulator preserves null positions in composite keys
         var response = await container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes(
                 """{"id":"1","a":"x","c":"z"}""")),
             pk);
         response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // Verify round-trip: can read back with the same composite PK
+        var read = await container.ReadItemStreamAsync("1", pk);
+        read.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    [Fact(Skip = "BUG 4: ExtractPartitionKeyValue (CRUD path) and ExtractPartitionKeyValueFromJson " +
-        "(FeedRange path) produce different PK strings for the same document. CRUD filters out nulls " +
-        "and falls back to id; FeedRange keeps nulls as empty string with no fallback.")]
+    [Fact]
     public async Task FeedRange_FilterConsistentWithCrudPartitionKey()
     {
         var container = new InMemoryContainer("test", "/partitionKey");

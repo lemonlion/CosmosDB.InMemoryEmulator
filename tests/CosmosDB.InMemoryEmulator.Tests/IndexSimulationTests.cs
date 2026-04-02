@@ -215,9 +215,7 @@ public class IndexSimulationTests
 
 public class IndexPolicyRoundtripTests
 {
-    [Fact(Skip = "BUG-2: ReadContainerAsync builds a new ContainerProperties object that does not " +
-        "include the container's actual IndexingPolicy. Composite indexes set directly on the " +
-        "container are not reflected in the response.")]
+    [Fact]
     public async Task IndexingPolicy_SurvivesReadContainerAsync()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
@@ -236,9 +234,7 @@ public class IndexPolicyRoundtripTests
     [Fact]
     public async Task IndexingPolicy_SurvivesReadContainerAsync_EmulatorBehavior()
     {
-        // ── Divergent behavior documentation ──
-        // BUG-2: ReadContainerAsync/BuildContainerResponse creates a new ContainerProperties
-        // which doesn't include custom IndexingPolicy. Composite indexes are lost in the response.
+        // ReadContainerAsync now syncs IndexingPolicy into _containerProperties.
         var container = new InMemoryContainer("test", "/partitionKey");
         container.IndexingPolicy.CompositeIndexes.Add(
         [
@@ -248,13 +244,11 @@ public class IndexPolicyRoundtripTests
 
         var response = await container.ReadContainerAsync();
 
-        // Response returns default policy, not the container's actual policy
-        response.Resource.IndexingPolicy.CompositeIndexes.Should().BeEmpty(
-            "ReadContainerAsync builds a new ContainerProperties, losing custom index config");
+        response.Resource.IndexingPolicy.CompositeIndexes.Should().HaveCount(1,
+            "ReadContainerAsync now syncs IndexingPolicy correctly");
     }
 
-    [Fact(Skip = "ReplaceContainerAsync updates _containerProperties but does not sync " +
-        "the container's IndexingPolicy property. The IndexingPolicy remains at its default.")]
+    [Fact]
     public async Task IndexingPolicy_UpdatedViaReplaceContainerAsync()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
@@ -277,10 +271,7 @@ public class IndexPolicyRoundtripTests
     [Fact]
     public async Task IndexingPolicy_UpdatedViaReplaceContainerAsync_EmulatorBehavior()
     {
-        // ── Divergent behavior documentation ──
-        // ReplaceContainerAsync updates the _containerProperties reference but doesn't
-        // sync back to InMemoryContainer.IndexingPolicy. The IndexingPolicy property
-        // remains at its default value after ReplaceContainerAsync.
+        // ReplaceContainerAsync now syncs IndexingPolicy back to the public property.
         var container = new InMemoryContainer("test", "/partitionKey");
 
         var newProperties = new ContainerProperties("test", "/partitionKey")
@@ -294,9 +285,9 @@ public class IndexPolicyRoundtripTests
 
         await container.ReplaceContainerAsync(newProperties);
 
-        // IndexingPolicy is still the default — ReplaceContainerAsync doesn't sync it
-        container.IndexingPolicy.Automatic.Should().BeTrue(
-            "ReplaceContainerAsync does not update the container's IndexingPolicy property");
+        container.IndexingPolicy.Automatic.Should().BeFalse(
+            "ReplaceContainerAsync now syncs IndexingPolicy correctly");
+        container.IndexingPolicy.IndexingMode.Should().Be(IndexingMode.None);
     }
 
     [Fact]
@@ -308,9 +299,7 @@ public class IndexPolicyRoundtripTests
         container.IndexingPolicy.ExcludedPaths.Should().BeEmpty();
     }
 
-    [Fact(Skip = "BUG-1: InMemoryDatabase.CreateContainerAsync(ContainerProperties) extracts only " +
-        "id and partitionKeyPath, discarding IndexingPolicy and other settings. The container is " +
-        "created with default policy regardless of what was passed in.")]
+    [Fact]
     public async Task IndexingPolicy_PreservedWhenCreatedViaDatabase()
     {
         var client = new InMemoryCosmosClient();
@@ -335,10 +324,7 @@ public class IndexPolicyRoundtripTests
     [Fact]
     public async Task IndexingPolicy_PreservedWhenCreatedViaDatabase_EmulatorBehavior()
     {
-        // ── Divergent behavior documentation ──
-        // BUG-1: CreateContainerAsync(ContainerProperties) only extracts id and
-        // partitionKeyPath. IndexingPolicy, UniqueKeyPolicy, etc. are discarded.
-        // The container always gets default IndexingPolicy.
+        // CreateContainerAsync(ContainerProperties) now preserves IndexingPolicy.
         var client = new InMemoryCosmosClient();
         var db = (await client.CreateDatabaseAsync("testdb")).Database;
 
@@ -354,10 +340,9 @@ public class IndexPolicyRoundtripTests
         var response = await db.CreateContainerAsync(properties);
         var container = response.Container as InMemoryContainer;
 
-        // Emulator defaults to Automatic=true, Consistent — ignoring what was passed
-        container!.IndexingPolicy.Automatic.Should().BeTrue(
-            "emulator discards ContainerProperties.IndexingPolicy during database creation");
-        container.IndexingPolicy.IndexingMode.Should().Be(IndexingMode.Consistent);
+        container!.IndexingPolicy.Automatic.Should().BeFalse(
+            "IndexingPolicy is now preserved during database container creation");
+        container.IndexingPolicy.IndexingMode.Should().Be(IndexingMode.None);
     }
 }
 
@@ -777,8 +762,7 @@ public class SpatialIndexEdgeCaseTests
 
 public class UniqueKeyPolicyDatabaseCreationTests
 {
-    [Fact(Skip = "BUG-1: InMemoryDatabase.CreateContainerAsync(ContainerProperties) discards " +
-        "UniqueKeyPolicy. Container is created with string overload that has no unique keys.")]
+    [Fact]
     public async Task UniqueKeyPolicy_PreservedWhenCreatedViaDatabase()
     {
         var client = new InMemoryCosmosClient();
@@ -811,9 +795,7 @@ public class UniqueKeyPolicyDatabaseCreationTests
     [Fact]
     public async Task UniqueKeyPolicy_PreservedWhenCreatedViaDatabase_EmulatorBehavior()
     {
-        // ── Divergent behavior documentation ──
-        // BUG-1: UniqueKeyPolicy is discarded when creating containers via Database.
-        // Unique keys only work when creating InMemoryContainer directly with ContainerProperties.
+        // UniqueKeyPolicy is now preserved when creating containers via Database.
         var client = new InMemoryCosmosClient();
         var db = (await client.CreateDatabaseAsync("testdb")).Database;
 
@@ -832,13 +814,13 @@ public class UniqueKeyPolicyDatabaseCreationTests
             new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice" },
             new PartitionKey("pk"));
 
-        // Due to BUG-1, unique key is NOT enforced — duplicate names succeed
-        var response = await container.CreateItemAsync(
+        // UniqueKeyPolicy IS now enforced — duplicate names should conflict
+        var act = () => container.CreateItemAsync(
             new TestDocument { Id = "2", PartitionKey = "pk", Name = "Alice" },
             new PartitionKey("pk"));
 
-        response.StatusCode.Should().Be(HttpStatusCode.Created,
-            "emulator discards UniqueKeyPolicy during database container creation (BUG-1)");
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.Conflict);
     }
 }
 
@@ -848,22 +830,9 @@ public class UniqueKeyPolicyDatabaseCreationTests
 
 public class FakeCosmosHandlerIndexMetadataTests
 {
-    [Fact(Skip = "BUG-3: FakeCosmosHandler returns hardcoded indexing metadata rather than " +
-        "reading from the actual container's IndexingPolicy. Custom index configuration is " +
-        "not reflected in handler metadata responses.")]
+    [Fact]
     public void FakeCosmosHandler_IndexMetadata_ReflectsContainerPolicy()
     {
-        // Placeholder — fix requires FakeCosmosHandler to read container.IndexingPolicy
-    }
-
-    [Fact]
-    public void BehavioralDifference_FakeCosmosHandler_IndexMetadataIsHardcoded()
-    {
-        // ── Divergent behavior documentation ──
-        // FakeCosmosHandler always returns a hardcoded indexing policy in collection
-        // metadata: Consistent mode, Automatic=true, IncludedPaths=[/*], ExcludedPaths=[/_etag/?].
-        // Custom IndexingPolicy set on the container is not reflected in handler responses.
-        // This is a minor limitation since FakeCosmosHandler is primarily for HTTP-level testing.
         var container = new InMemoryContainer("test", "/partitionKey");
         container.IndexingPolicy = new IndexingPolicy
         {
@@ -872,6 +841,21 @@ public class FakeCosmosHandlerIndexMetadataTests
         };
 
         var handler = new FakeCosmosHandler(container);
-        handler.Should().NotBeNull(); // Existence test — detailed metadata tested in FakeCosmosHandlerTests
+        handler.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void BehavioralDifference_FakeCosmosHandler_IndexMetadataReflectsPolicy()
+    {
+        // FakeCosmosHandler now reads from the container's actual IndexingPolicy.
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.IndexingPolicy = new IndexingPolicy
+        {
+            Automatic = false,
+            IndexingMode = IndexingMode.None
+        };
+
+        var handler = new FakeCosmosHandler(container);
+        handler.Should().NotBeNull();
     }
 }

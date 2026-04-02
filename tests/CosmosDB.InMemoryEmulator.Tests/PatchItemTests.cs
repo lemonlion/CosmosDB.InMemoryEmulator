@@ -352,7 +352,7 @@ public class PatchGapTests
         return item;
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Patch_Remove_OnNonExistentPath_ThrowsBadRequest()
     {
         await CreateTestItem();
@@ -544,7 +544,7 @@ public class PatchIncrementAutoCreateTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Increment_NonExistentField_CreatesWithValue()
     {
         await _container.CreateItemAsync(
@@ -557,7 +557,7 @@ public class PatchIncrementAutoCreateTests
         response.Resource["counter"]!.Value<int>().Should().Be(5);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Increment_NonExistentField_NegativeValue_CreatesNegative()
     {
         await _container.CreateItemAsync(
@@ -570,7 +570,7 @@ public class PatchIncrementAutoCreateTests
         response.Resource["counter"]!.Value<int>().Should().Be(-3);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Increment_NonExistentNestedField_CreatesField()
     {
         await _container.CreateItemAsync(
@@ -596,7 +596,7 @@ public class PatchReplaceStrictSemanticsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Replace_NonExistentProperty_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
@@ -623,7 +623,7 @@ public class PatchReplaceStrictSemanticsTests
         response.Resource.Name.Should().Be("Replaced");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Replace_NonExistentNestedProperty_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
@@ -649,7 +649,7 @@ public class PatchRemoveStrictSemanticsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Remove_NonExistentProperty_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
@@ -663,7 +663,7 @@ public class PatchRemoveStrictSemanticsTests
         ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Remove_NonExistentNestedProperty_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
@@ -678,7 +678,7 @@ public class PatchRemoveStrictSemanticsTests
         ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Remove_ArrayElement_ByIndex_RemovesAndShifts()
     {
         await _container.CreateItemAsync(
@@ -692,7 +692,7 @@ public class PatchRemoveStrictSemanticsTests
         tags.Should().BeEquivalentTo(["a", "c"]);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Remove_ArrayElement_IndexOutOfBounds_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
@@ -717,7 +717,7 @@ public class PatchSetArrayIndexTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Set_ArrayIndex_UpdatesExistingElement()
     {
         await _container.CreateItemAsync(
@@ -732,7 +732,7 @@ public class PatchSetArrayIndexTests
         tags.Should().HaveCount(3);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Set_ArrayIndex_OutOfBounds_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
@@ -757,7 +757,7 @@ public class PatchAddArrayBoundsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Add_ArrayIndex_BeyondLength_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
@@ -797,7 +797,7 @@ public class PatchMoveValidationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Move_NonExistentSource_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
@@ -818,9 +818,7 @@ public class PatchMoveValidationTests
     /// The emulator does not validate path ancestry — it silently processes the move
     /// which may produce unexpected results.
     /// </summary>
-    [Fact(Skip = "Real Cosmos DB rejects Move when path is a JSON child of from. " +
-                  "Implementing JSON path ancestry detection adds complexity with very low practical value. " +
-                  "See sister test: Move_PathIsChildOfFrom_EmulatorBehavior_SilentlyProcesses")]
+    [Fact]
     public async Task Move_PathIsChildOfFrom_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
@@ -842,24 +840,20 @@ public class PatchMoveValidationTests
     /// In practice, this is an extremely rare edge case.
     /// </summary>
     [Fact]
-    public async Task Move_PathIsChildOfFrom_EmulatorBehavior_SilentlyProcesses()
+    public async Task Move_PathIsChildOfFrom_EmulatorBehavior_AlsoRejectsBadRequest()
     {
-        // DIVERGENT BEHAVIOR:
-        // Real Cosmos DB: Rejects with 400 Bad Request ("The 'path' attribute can't be a JSON child of the 'from' JSON location")
-        // Emulator: Silently processes the move. The source is removed first, then the destination
-        // assignment may fail or produce unexpected results since the parent no longer exists.
-        // Impact: Extremely low — this is a pathological edge case that no real app should use.
+        // The emulator now correctly rejects Move when path is a child of from,
+        // matching real Cosmos DB behavior.
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test",
                 Nested = new NestedObject { Description = "N", Score = 5.0 } },
             new PartitionKey("pk1"));
 
-        // This doesn't throw in the emulator — it just silently processes (source removed,
-        // destination assignment has no effect since the parent was the source)
-        var response = await _container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
+        var act = () => _container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
             [PatchOperation.Move("/nested", "/nested/child")]);
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
@@ -887,7 +881,7 @@ public class PatchOperationsLimitTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Patch_MoreThan10Operations_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
@@ -936,9 +930,7 @@ public class PatchSystemPropertyProtectionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "Real Cosmos DB rejects patches to system-generated properties (_ts, _etag, _rid, _self) with 400. " +
-                  "The emulator overwrites _ts and _etag post-patch via EnrichWithSystemProperties making mutation harmless. " +
-                  "Low-impact: no real app patches system properties. See sister test: Patch_SystemProperty_Ts_EmulatorOverwrites_ButDoesNotReject")]
+    [Fact]
     public async Task Patch_SystemProperty_Ts_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
@@ -959,28 +951,19 @@ public class PatchSystemPropertyProtectionTests
     /// so the net effect is harmless — the patched _ts value is discarded.
     /// </summary>
     [Fact]
-    public async Task Patch_SystemProperty_Ts_EmulatorOverwrites_ButDoesNotReject()
+    public async Task Patch_SystemProperty_Ts_EmulatorAlsoRejectsBadRequest()
     {
-        // DIVERGENT BEHAVIOR:
-        // Real Cosmos DB: Rejects with 400 Bad Request ("Partial Document Update does not support
-        //   system-generated properties like _id, _ts, _etag, _rid")
-        // Emulator: Allows the patch but then EnrichWithSystemProperties overwrites _ts with the
-        //   actual server timestamp, so the patched value is silently discarded.
-        // Impact: None — no real application should patch system properties. The end result
-        //   (correct _ts values) is identical; only the error response is missing.
+        // The emulator now correctly rejects patches to system properties,
+        // matching real Cosmos DB behavior.
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
             new PartitionKey("pk1"));
 
-        // This succeeds in the emulator (doesn't throw)
-        var response = await _container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
+        var act = () => _container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
             [PatchOperation.Set("/_ts", 9999999)]);
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        // But the _ts is correct (overwritten by EnrichWithSystemProperties)
-        var read = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
-        read.Resource["_ts"]!.Value<long>().Should().NotBe(9999999);
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }
 
@@ -1043,7 +1026,7 @@ public class PatchStreamVariantTests
         response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task PatchItemStreamAsync_EmptyOperations_ReturnsBadRequest()
     {
         await _container.CreateItemAsync(

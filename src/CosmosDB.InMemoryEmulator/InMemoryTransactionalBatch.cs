@@ -62,6 +62,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
         {
             var result = await _container.CreateItemAsync(item, _partitionKey, ToItemRequestOptions(requestOptions));
             _writeEtags[opIndex] = result.ETag;
+            _readResults[opIndex] = JsonConvert.SerializeObject(result.Resource, JsonSettings);
         }, BatchOpType.Create));
         return this;
     }
@@ -76,6 +77,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             var result = await _container.UpsertItemAsync(item, _partitionKey, ToItemRequestOptions(requestOptions));
             _writeEtags[opIndex] = result.ETag;
             _opStatusCodes[opIndex] = result.StatusCode;
+            _readResults[opIndex] = JsonConvert.SerializeObject(result.Resource, JsonSettings);
         }, BatchOpType.Upsert));
         return this;
     }
@@ -89,6 +91,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
         {
             var result = await _container.ReplaceItemAsync(item, id, _partitionKey, ToItemRequestOptions(requestOptions));
             _writeEtags[opIndex] = result.ETag;
+            _readResults[opIndex] = JsonConvert.SerializeObject(result.Resource, JsonSettings);
         }, BatchOpType.Replace));
         return this;
     }
@@ -127,6 +130,8 @@ public class InMemoryTransactionalBatch : TransactionalBatch
 
     public override async Task<TransactionalBatchResponse> ExecuteAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (_operations.Count > MaxBatchOperations)
         {
             throw new CosmosException("Batch request has more operations than what is supported.",
@@ -306,6 +311,10 @@ public class InMemoryTransactionalBatch : TransactionalBatch
                 if (_writeEtags.TryGetValue(index, out var etag))
                 {
                     result.ETag.Returns(etag);
+                }
+                if (_readResults.TryGetValue(index, out var json))
+                {
+                    result.ResourceStream.Returns(_ => new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)));
                 }
                 return result;
             }

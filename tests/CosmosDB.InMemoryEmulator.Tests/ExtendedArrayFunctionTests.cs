@@ -910,11 +910,7 @@ public class ExtendedArrayFunctionTests
     // DIVERGENT: SetIntersect returns empty array [] instead of undefined when
     // the source property doesn't exist. Real Cosmos DB would return undefined
     // (omit the property from the result).
-    [Fact(Skip = "SetIntersect returns empty array [] instead of undefined when source property " +
-                  "doesn't exist. Real Cosmos DB returns undefined (property omitted from result). " +
-                  "Fixing requires returning UndefinedValue.Instance from SetIntersect when input " +
-                  "is null, which may cascade through the expression pipeline. Low impact since " +
-                  "querying non-existent array properties is rare.")]
+    [Fact]
     public async Task SetIntersect_NonExistentProperty_ReturnsUndefined()
     {
         await SeedTypeDiverseItems();
@@ -925,30 +921,22 @@ public class ExtendedArrayFunctionTests
         results[0]["common"].Should().BeNull(); // property should be absent
     }
 
-    // Sister test showing actual emulator behavior
+    // Sister test: emulator now matches real Cosmos behavior
     [Fact]
-    public async Task SetIntersect_NonExistentProperty_EmulatorReturnsEmptyArray()
+    public async Task SetIntersect_NonExistentProperty_EmulatorAlsoReturnsUndefined()
     {
-        // DIVERGENT BEHAVIOR: The emulator returns an empty array [] when the source
-        // property doesn't exist, because ResolveJArray returns null and the SetIntersect
-        // implementation returns new JArray() for null inputs. Real Cosmos DB would return
-        // undefined, omitting the property entirely from the SELECT projection.
-        // This affects: SetIntersect, SetUnion when either input array property is missing.
-        // Impact: Low — querying non-existent array properties is an uncommon pattern.
+        // The emulator now correctly returns undefined (property absent) when input
+        // array property doesn't exist, matching real Cosmos DB behavior.
         await SeedTypeDiverseItems();
         var query = new QueryDefinition("SELECT SetIntersect(c.nonExistent, ['a']) AS common FROM c WHERE c.id = '8'");
 
         var results = await QueryAll<JObject>(query);
 
         results.Should().ContainSingle();
-        var common = (JArray)results[0]["common"]!;
-        common.Should().BeEmpty();
+        results[0]["common"].Should().BeNull(); // property absent
     }
 
-    [Fact(Skip = "SetUnion returns empty/partial array instead of undefined when source property " +
-                  "doesn't exist. Real Cosmos DB returns undefined (property omitted from result). " +
-                  "Same root cause as SetIntersect — ResolveJArray returns null for non-existent " +
-                  "properties and the function gracefully handles null instead of propagating undefined.")]
+    [Fact]
     public async Task SetUnion_NonExistentProperty_ReturnsUndefined()
     {
         await SeedTypeDiverseItems();
@@ -958,22 +946,19 @@ public class ExtendedArrayFunctionTests
         results[0]["combined"].Should().BeNull();
     }
 
-    // Sister test showing actual emulator behavior
+    // Sister test: emulator now matches real Cosmos behavior
     [Fact]
-    public async Task SetUnion_NonExistentProperty_EmulatorReturnsSecondArray()
+    public async Task SetUnion_NonExistentProperty_EmulatorAlsoReturnsUndefined()
     {
-        // DIVERGENT BEHAVIOR: The emulator returns the second array (["a"]) when the first
-        // array property doesn't exist. Real Cosmos DB would return undefined. The SetUnion
-        // implementation gracefully skips null arrays, so it just processes the non-null one.
-        // Impact: Low — querying non-existent array properties is uncommon.
+        // The emulator now correctly returns undefined (property absent) when input
+        // array property doesn't exist, matching real Cosmos DB behavior.
         await SeedTypeDiverseItems();
         var query = new QueryDefinition("SELECT SetUnion(c.nonExistent, ['a']) AS combined FROM c WHERE c.id = '8'");
 
         var results = await QueryAll<JObject>(query);
 
         results.Should().ContainSingle();
-        var combined = (JArray)results[0]["combined"]!;
-        combined.Select(t => t.ToString()).Should().Equal("a");
+        results[0]["combined"].Should().BeNull(); // property absent
     }
 
     private async Task<List<T>> QueryAll<T>(QueryDefinition query)

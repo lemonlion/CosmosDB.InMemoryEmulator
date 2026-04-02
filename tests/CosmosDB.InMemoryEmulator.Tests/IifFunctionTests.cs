@@ -110,7 +110,7 @@ public class IifFunctionTests
     //  See: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/iif
     // ═══════════════════════════════════════════════════════════════════════════
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Iif_NumericNonZeroCondition_ReturnsFalseBranch()
     {
         await SeedItems();
@@ -136,7 +136,7 @@ public class IifFunctionTests
         results[0]["result"]!.ToString().Should().Be("no");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Iif_StringCondition_ReturnsFalseBranch()
     {
         await SeedItems();
@@ -162,7 +162,7 @@ public class IifFunctionTests
         results[0]["result"]!.ToString().Should().Be("no");
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Iif_NumericFieldAsCondition_ReturnsFalseBranch()
     {
         await SeedItems();
@@ -177,7 +177,7 @@ public class IifFunctionTests
         results[2]["result"]!.ToString().Should().Be("no"); // value=0  — not boolean
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Iif_StringFieldAsCondition_ReturnsFalseBranch()
     {
         await SeedItems();
@@ -192,7 +192,7 @@ public class IifFunctionTests
         results[2]["result"]!.ToString().Should().Be("no"); // name=Charlie — not boolean
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Iif_ArrayFieldAsCondition_ReturnsFalseBranch()
     {
         await SeedItems();
@@ -208,7 +208,7 @@ public class IifFunctionTests
         results[2]["result"]!.ToString().Should().Be("no"); // tags=[]            — not boolean
     }
 
-    [Fact(Skip = "Pre-existing failure - to be fixed at end of Plan X")]
+    [Fact]
     public async Task Iif_ObjectFieldAsCondition_ReturnsFalseBranch()
     {
         await SeedItems();
