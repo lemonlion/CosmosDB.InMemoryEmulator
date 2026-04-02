@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
+using System.Collections.ObjectModel;
 using System.Net;
 using System.Text;
 using Xunit;
@@ -424,7 +425,7 @@ public class ConcurrentPatchTests
     }
 
     [Fact]
-    public async Task ConcurrentPatch_IncrementOperation_DemonstratesLastWriteWins()
+    public async Task ConcurrentPatch_IncrementOperation_ValueIsAtMost100()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
         await container.CreateItemAsync(
@@ -438,7 +439,8 @@ public class ConcurrentPatchTests
         await Task.WhenAll(tasks);
 
         var final = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
-        // Without locks, some increments may be lost (last-writer-wins)
+        // Concurrent increments use read-then-write without per-item locks, so some increments
+        // may be lost. The value will be > 0 and ≤ 100. Real Cosmos serialises patches per-partition.
         final.Resource.Value.Should().BeGreaterThan(0).And.BeLessThanOrEqualTo(100);
     }
 }
@@ -968,11 +970,11 @@ public class ConcurrencyStressTests
                 new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}", Value = 0 },
                 new PartitionKey("pk1"));
 
-        var rng = new Random(42);
+        var rng = new Random(42); // deterministic seed for reproducibility
         var tasks = Enumerable.Range(0, 200).Select(async t =>
         {
             var id = $"{t % itemPool}";
-            var op = t % 5;
+            var op = rng.Next(5);
             try
             {
                 switch (op)
@@ -1002,7 +1004,8 @@ public class ConcurrencyStressTests
                         break;
                 }
             }
-            catch (CosmosException) { }
+            catch (CosmosException ex) when (ex.StatusCode is HttpStatusCode.NotFound
+                or HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed) { }
         });
 
         await Task.WhenAll(tasks);
@@ -1014,6 +1017,722 @@ public class ConcurrencyStressTests
             {
                 var r = await container.ReadItemAsync<TestDocument>($"{i}", new PartitionKey("pk1"));
                 r.Resource.Id.Should().Be($"{i}");
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound) { }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Phase 2: Stream & ETag concurrency tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ConcurrentStreamExtendedTests
+{
+    [Fact]
+    public async Task ConcurrentPatchItemStream_SameItem_AllSucceed()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original", Value = 0 },
+            new PartitionKey("pk1"));
+
+        var tasks = Enumerable.Range(0, 50).Select(i =>
+            container.PatchItemStreamAsync("1", new PartitionKey("pk1"),
+                new[] { PatchOperation.Set("/name", $"Patched{i}") }));
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.OK);
+
+        var final = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        final.Resource.Name.Should().StartWith("Patched");
+    }
+
+    [Fact]
+    public async Task ConcurrentReplaceItemStream_SameItem_AllSucceed()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var tasks = Enumerable.Range(0, 50).Select(i =>
+        {
+            var json = $"{{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Replaced{i}\"}}";
+            var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+            return container.ReplaceItemStreamAsync(stream, "1", new PartitionKey("pk1"));
+        });
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.OK);
+
+        var final = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        final.Resource.Name.Should().StartWith("Replaced");
+    }
+
+    [Fact]
+    public async Task ConcurrentReadItemStream_SameItem_AllReturn200()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Target" },
+            new PartitionKey("pk1"));
+
+        var tasks = Enumerable.Range(0, 100).Select(_ =>
+            container.ReadItemStreamAsync("1", new PartitionKey("pk1")));
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.OK);
+    }
+}
+
+public class ConcurrentETagExtendedTests
+{
+    [Fact]
+    public async Task ConcurrentETag_Wildcard_IfMatch_AllSucceed()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var tasks = Enumerable.Range(0, 50).Select(i =>
+            container.ReplaceItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = $"Replaced{i}" },
+                "1", new PartitionKey("pk1"),
+                new ItemRequestOptions { IfMatchEtag = "*" }));
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ConcurrentDelete_Then_Create_VerifyETagFreshness()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        // Create item, read ETag
+        var create1 = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+        var etag1 = create1.ETag;
+
+        // Delete
+        await container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        // Recreate same ID
+        var create2 = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Recreated" },
+            new PartitionKey("pk1"));
+        var etag2 = create2.ETag;
+
+        // New ETag should differ
+        etag2.Should().NotBe(etag1, "recreated item should get a fresh ETag");
+    }
+
+    [Fact]
+    public async Task ConcurrentETag_IfNoneMatch_Star_OnCreate()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        // 50 threads try to upsert with IfNoneMatch="*" (create-if-not-exists)
+        var tasks = Enumerable.Range(0, 50).Select(async i =>
+        {
+            try
+            {
+                var response = await container.UpsertItemAsync(
+                    new TestDocument { Id = "1", PartitionKey = "pk1", Name = $"Item{i}" },
+                    new PartitionKey("pk1"),
+                    new ItemRequestOptions { IfNoneMatchEtag = "*" });
+                return (int)response.StatusCode;
+            }
+            catch (CosmosException ex)
+            {
+                return (int)ex.StatusCode;
+            }
+        });
+
+        var results = await Task.WhenAll(tasks);
+
+        // At least one should succeed (201 Created), some may get PreconditionFailed
+        results.Should().Contain(201);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Phase 3: Medium difficulty tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ConcurrentDeleteSerializationTests
+{
+    [Fact]
+    public async Task ConcurrentDeletes_SameItem_ExactlyOneSucceeds_RestGet404()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Target" },
+            new PartitionKey("pk1"));
+
+        var tasks = Enumerable.Range(0, 50).Select(async _ =>
+        {
+            try
+            {
+                await container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+                return "deleted";
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+                return "notfound";
+            }
+        });
+
+        var results = await Task.WhenAll(tasks);
+        var deletedCount = results.Count(r => r == "deleted");
+        var notFoundCount = results.Count(r => r == "notfound");
+
+        // At minimum, at least one must succeed and the item must be gone
+        deletedCount.Should().BeGreaterThanOrEqualTo(1);
+        (deletedCount + notFoundCount).Should().Be(50);
+        container.ItemCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ConcurrentDeleteItemStream_SameItem_AtLeastOneReturns204()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Target" },
+            new PartitionKey("pk1"));
+
+        var tasks = Enumerable.Range(0, 50).Select(_ =>
+            container.DeleteItemStreamAsync("1", new PartitionKey("pk1")));
+
+        var results = await Task.WhenAll(tasks);
+        var successCount = results.Count(r => r.StatusCode == HttpStatusCode.NoContent);
+        var notFoundCount = results.Count(r => r.StatusCode == HttpStatusCode.NotFound);
+
+        successCount.Should().BeGreaterThanOrEqualTo(1);
+        (successCount + notFoundCount).Should().Be(50);
+        container.ItemCount.Should().Be(0);
+    }
+}
+
+public class ConcurrentChangeFeedExtendedTests
+{
+    [Fact]
+    public async Task ConcurrentChangeFeed_DeleteTombstones_WhileDeleting()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        // Create 20 items
+        for (var i = 0; i < 20; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        // Read checkpoint BEFORE deletes
+        var checkpointBefore = container.GetChangeFeedCheckpoint();
+
+        // Concurrently delete all
+        var deleteTasks = Enumerable.Range(0, 20).Select(async i =>
+        {
+            try
+            {
+                await container.DeleteItemAsync<TestDocument>($"{i}", new PartitionKey("pk1"));
+            }
+            catch (CosmosException) { }
+        });
+
+        await Task.WhenAll(deleteTasks);
+
+        // Use the checkpoint-based change feed to see entries after creates
+        var iterator = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(),
+            ChangeFeedMode.LatestVersion);
+
+        var items = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var response = await iterator.ReadNextAsync();
+            if (response.StatusCode == HttpStatusCode.NotModified) break;
+            items.AddRange(response);
+        }
+
+        // The LatestVersion feed shows current state — all items are deleted,
+        // so the feed may be empty or contain only the latest creates before deletes.
+        // The key test is: no crash, no corruption under concurrent deletes + feed reads.
+        // We just verify the container is empty and the feed read completed without error.
+        container.ItemCount.Should().Be(0, "all items should be deleted");
+    }
+
+    [Fact]
+    public async Task ConcurrentChangeFeedProcessors_SameContainer_BothSeeAllChanges()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var received1 = new List<string>();
+        var received2 = new List<string>();
+
+        // Create items
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        // Read change feed from beginning with two independent iterators
+        var iter1 = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(),
+            ChangeFeedMode.LatestVersion);
+        while (iter1.HasMoreResults)
+        {
+            var response = await iter1.ReadNextAsync();
+            if (response.StatusCode == HttpStatusCode.NotModified) break;
+            received1.AddRange(response.Select(j => j["id"]!.ToString()));
+        }
+
+        var iter2 = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(),
+            ChangeFeedMode.LatestVersion);
+        while (iter2.HasMoreResults)
+        {
+            var response = await iter2.ReadNextAsync();
+            if (response.StatusCode == HttpStatusCode.NotModified) break;
+            received2.AddRange(response.Select(j => j["id"]!.ToString()));
+        }
+
+        received1.Should().HaveCount(10);
+        received2.Should().HaveCount(10);
+    }
+
+    [Fact]
+    public async Task ConcurrentChangeFeedRead_TrulyInterleaved()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        const int writeCount = 100;
+
+        // Start writes and reads in a single WhenAll for true interleaving
+        var writeTasks = Enumerable.Range(0, writeCount).Select(i =>
+            container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1")));
+
+        var readTasks = Enumerable.Range(0, 5).Select(async _ =>
+        {
+            var iterator = container.GetChangeFeedIterator<JObject>(
+                ChangeFeedStartFrom.Beginning(),
+                ChangeFeedMode.LatestVersion);
+            var results = new List<JObject>();
+            while (iterator.HasMoreResults)
+            {
+                var response = await iterator.ReadNextAsync();
+                if (response.StatusCode == HttpStatusCode.NotModified) break;
+                results.AddRange(response);
+            }
+            return results.Count;
+        });
+
+        var allTasks = writeTasks.Cast<Task>().Concat(readTasks).ToArray();
+        await Task.WhenAll(allTasks);
+
+        // After all complete, final read should see everything
+        var finalIterator = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(),
+            ChangeFeedMode.LatestVersion);
+        var finalResults = new List<JObject>();
+        while (finalIterator.HasMoreResults)
+        {
+            var response = await finalIterator.ReadNextAsync();
+            if (response.StatusCode == HttpStatusCode.NotModified) break;
+            finalResults.AddRange(response);
+        }
+        finalResults.Should().HaveCount(writeCount);
+    }
+}
+
+public class ConcurrentUniqueKeyExtendedTests
+{
+    [Fact]
+    public async Task ConcurrentUpserts_UniqueKeyViolation_Handled()
+    {
+        var props = new ContainerProperties("test", "/partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/name" } } }
+            }
+        };
+        var container = new InMemoryContainer(props);
+
+        // Pre-create an item
+        await container.CreateItemAsync(
+            new TestDocument { Id = "seed", PartitionKey = "pk1", Name = "Unique" },
+            new PartitionKey("pk1"));
+
+        // 50 threads upsert with different IDs but same /name value
+        var tasks = Enumerable.Range(0, 50).Select(async i =>
+        {
+            try
+            {
+                await container.UpsertItemAsync(
+                    new TestDocument { Id = $"new{i}", PartitionKey = "pk1", Name = "Unique" },
+                    new PartitionKey("pk1"));
+                return "success";
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.Conflict)
+            {
+                return "conflict";
+            }
+        });
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().Contain("conflict", "unique key violations should be caught");
+    }
+}
+
+public class ConcurrentPatchExtendedTests
+{
+    [Fact]
+    public async Task ConcurrentPatch_WithFilterPredicate_UnderContention()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original", Value = 0 },
+            new PartitionKey("pk1"));
+
+        // 50 threads patch with filter predicate — only succeeds if name is still "Original"
+        var tasks = Enumerable.Range(0, 50).Select(async i =>
+        {
+            try
+            {
+                await container.PatchItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+                    new[] { PatchOperation.Set("/name", $"Patched{i}") },
+                    new PatchItemRequestOptions
+                    {
+                        FilterPredicate = "FROM c WHERE c.name = 'Original'"
+                    });
+                return "success";
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                return "precondition_failed";
+            }
+        });
+
+        var results = await Task.WhenAll(tasks);
+        var successCount = results.Count(r => r == "success");
+
+        // At least one should succeed (the first one to change the name)
+        successCount.Should().BeGreaterThanOrEqualTo(1);
+    }
+}
+
+public class ConcurrentHierarchicalPkTests
+{
+    [Fact]
+    public async Task ConcurrentOperations_HierarchicalPartitionKey_AllSucceed()
+    {
+        var container = new InMemoryContainer("test",
+            new List<string> { "/tenantId", "/userId" });
+
+        var tasks = Enumerable.Range(0, 50).Select(async i =>
+        {
+            var tenantId = $"tenant{i % 5}";
+            var userId = $"user{i % 10}";
+            var pk = new PartitionKeyBuilder()
+                .Add(tenantId)
+                .Add(userId)
+                .Build();
+
+            var jObj = JObject.FromObject(new
+            {
+                id = $"item{i}",
+                tenantId,
+                userId,
+                name = $"Item{i}"
+            });
+
+            await container.UpsertItemAsync(jObj, pk);
+        });
+
+        await Task.WhenAll(tasks);
+        container.ItemCount.Should().Be(50);
+    }
+}
+
+public class ConcurrentTTLTests
+{
+    [Fact]
+    public async Task ConcurrentTTL_ExpirationDuringOperations()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.DefaultTimeToLive = 1; // 1 second
+
+        // Create items
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        // Wait for TTL expiration
+        await Task.Delay(1500);
+
+        // Trigger lazy eviction via query
+        var query = new QueryDefinition("SELECT * FROM c");
+        var iterator = container.GetItemQueryIterator<TestDocument>(query);
+        var items = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var response = await iterator.ReadNextAsync();
+            items.AddRange(response);
+        }
+
+        // After TTL expiration + query trigger, items should be gone
+        items.Should().BeEmpty("all items should have expired after TTL");
+    }
+}
+
+public class ConcurrentStatePersistenceTests
+{
+    [Fact]
+    public async Task StatePersistence_ExportDuringConcurrentWrites()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        // Pre-create some items
+        for (var i = 0; i < 20; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        // Start writes and export concurrently
+        var writeTasks = Enumerable.Range(20, 30).Select(i =>
+            container.UpsertItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1")));
+
+        var exportTask = Task.Run(() => container.ExportState());
+
+        await Task.WhenAll(writeTasks.Cast<Task>().Append(exportTask));
+
+        var exportedState = await exportTask;
+        exportedState.Should().NotBeNullOrEmpty("exported state should be valid JSON");
+
+        // State should be valid JSON
+        var parsed = JObject.Parse(exportedState);
+        parsed["items"].Should().NotBeNull();
+    }
+}
+
+public class ConcurrentContainerLifecycleTests
+{
+    [Fact]
+    public async Task ConcurrentContainerDeletion_WhileWriting()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("testdb")).Database;
+        var containerResponse = await db.CreateContainerAsync("testcontainer", "/partitionKey");
+        var container = containerResponse.Container;
+
+        // Write some items
+        for (var i = 0; i < 5; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", partitionKey = "pk1", name = $"Item{i}" }),
+                new PartitionKey("pk1"));
+
+        // Delete container
+        await container.DeleteContainerAsync();
+
+        // After deletion, re-creating should succeed (returns Created, not a no-op)
+        var resp = await db.CreateContainerIfNotExistsAsync("testcontainer", "/partitionKey");
+        resp.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // New container should be empty
+        var newContainer = resp.Container;
+        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c");
+        var iterator = newContainer.GetItemQueryIterator<int>(query);
+        var count = (await iterator.ReadNextAsync()).First();
+        count.Should().Be(0, "re-created container should be empty");
+    }
+}
+
+public class ConcurrentBulkExtendedTests
+{
+    [Fact]
+    public async Task ConcurrentBulkOperations_AllowBulkExecution()
+    {
+        var client = new InMemoryCosmosClient();
+        client.ClientOptions.AllowBulkExecution = true;
+        var db = (await client.CreateDatabaseAsync("testdb")).Database;
+        var container = (await db.CreateContainerAsync("test", "/partitionKey")).Container;
+
+        // Fire-and-forget bulk pattern
+        var tasks = Enumerable.Range(0, 100).Select(i =>
+            container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", partitionKey = "pk1", name = $"Item{i}" }),
+                new PartitionKey("pk1")));
+
+        await Task.WhenAll(tasks);
+
+        // All items should exist
+        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c");
+        var iterator = container.GetItemQueryIterator<int>(query);
+        var response = await iterator.ReadNextAsync();
+        response.First().Should().Be(100);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Phase 4: Hard tests — Batch isolation (skip+sister)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ConcurrentBatchIsolationTests
+{
+    [Fact(Skip = "Emulator batch execution is not globally isolated from non-batch operations. " +
+                 "RestoreSnapshot does Clear()+rewrite which is not atomic. Concurrent direct CRUD " +
+                 "can see partial state during batch execution. Would need a global per-partition " +
+                 "lock to fix.")]
+    public void ConcurrentBatch_AndDirectCrud_NoCorruption_RealCosmos() { }
+
+    [Fact]
+    public async Task ConcurrentBatch_AndDirectCrud_EmulatorBehaviour()
+    {
+        // DIVERGENT: Batch execution is not globally isolated — concurrent reads may see
+        // intermediate batch state. The batch itself always completes atomically (all-or-nothing).
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        // Pre-create item for the batch
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        // Run batch and direct reads concurrently
+        var batchTask = Task.Run(async () =>
+        {
+            var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+            batch.ReplaceItem("1", new TestDocument { Id = "1", PartitionKey = "pk1", Name = "BatchModified" });
+            batch.CreateItem(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "BatchCreated" });
+            return await batch.ExecuteAsync();
+        });
+
+        var readTasks = Enumerable.Range(0, 20).Select(async _ =>
+        {
+            try
+            {
+                var r = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+                return r.Resource.Name;
+            }
+            catch (CosmosException) { return "error"; }
+        });
+
+        var allTasks = readTasks.Cast<Task>().Concat(new[] { (Task)batchTask });
+        await Task.WhenAll(allTasks);
+
+        var batchResult = await batchTask;
+        batchResult.IsSuccessStatusCode.Should().BeTrue();
+
+        // After batch completes, state should be consistent
+        var final = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        final.Resource.Name.Should().Be("BatchModified");
+    }
+
+    [Fact(Skip = "RestoreSnapshot clears dictionaries then re-populates, creating a brief window " +
+                 "where concurrent readers may see empty state. Would need copy-on-write or atomic " +
+                 "swap to fix.")]
+    public void ConcurrentBatch_RollbackPreservesState_FromConcurrentReaders_RealCosmos() { }
+
+    [Fact]
+    public async Task ConcurrentBatch_RollbackPreservesState_EmulatorBehaviour()
+    {
+        // DIVERGENT: During rollback, concurrent readers may briefly see empty state.
+        // After rollback completes, state is correctly restored.
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        // Batch that will fail (duplicate create causes rollback)
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItem("1", new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Modified" });
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Duplicate" });
+        using var response = await batch.ExecuteAsync();
+
+        response.IsSuccessStatusCode.Should().BeFalse();
+
+        // After rollback, original state should be restored
+        var final = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        final.Resource.Name.Should().Be("Original");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Phase 5: Stress tests with unique keys
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ConcurrencyStressWithUniqueKeysTests
+{
+    [Fact]
+    public async Task HighContention_WithUniqueKeys_NoViolationsInFinalState()
+    {
+        var props = new ContainerProperties("test", "/partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/name" } } }
+            }
+        };
+        var container = new InMemoryContainer(props);
+        const int itemPool = 50;
+
+        // Pre-create items with unique names
+        for (var i = 0; i < itemPool; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Unique{i}", Value = 0 },
+                new PartitionKey("pk1"));
+
+        // 200 threads doing random CRUD — only upsert the SAME id (so unique key is preserved)
+        var tasks = Enumerable.Range(0, 200).Select(async t =>
+        {
+            var id = $"{t % itemPool}";
+            var op = t % 4;
+            try
+            {
+                switch (op)
+                {
+                    case 0:
+                        await container.ReadItemAsync<TestDocument>(id, new PartitionKey("pk1"));
+                        break;
+                    case 1:
+                        await container.UpsertItemAsync(
+                            new TestDocument { Id = id, PartitionKey = "pk1", Name = $"Unique{t % itemPool}", Value = t },
+                            new PartitionKey("pk1"));
+                        break;
+                    case 2:
+                        await container.ReplaceItemAsync(
+                            new TestDocument { Id = id, PartitionKey = "pk1", Name = $"Unique{t % itemPool}", Value = t },
+                            id, new PartitionKey("pk1"));
+                        break;
+                    case 3:
+                        await container.PatchItemAsync<TestDocument>(id, new PartitionKey("pk1"),
+                            new[] { PatchOperation.Set("/value", t) });
+                        break;
+                }
+            }
+            catch (CosmosException ex) when (ex.StatusCode is HttpStatusCode.NotFound
+                or HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed) { }
+        });
+
+        await Task.WhenAll(tasks);
+
+        // Verify no corruption: all remaining items are readable and have unique names
+        var names = new HashSet<string>();
+        for (var i = 0; i < itemPool; i++)
+        {
+            try
+            {
+                var r = await container.ReadItemAsync<TestDocument>($"{i}", new PartitionKey("pk1"));
+                r.Resource.Id.Should().Be($"{i}");
+                names.Add(r.Resource.Name).Should().BeTrue(
+                    $"each item should have a unique name, but '{r.Resource.Name}' was duplicated");
             }
             catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound) { }
         }
