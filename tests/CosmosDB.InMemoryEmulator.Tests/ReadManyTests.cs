@@ -526,3 +526,368 @@ public class ReadManyTests
 
     #endregion
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: ReadMany TTL Interaction
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ReadManyTtlDeepDiveTests
+{
+    [Fact]
+    public async Task ReadMany_TTLExpiredItem_ExcludesExpiredItem()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.DefaultTimeToLive = 1;
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        await Task.Delay(1500);
+        var result = await container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        result.Count.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ReadMany_MixOfExpiredAndLive_ReturnsOnlyLive()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.DefaultTimeToLive = 1;
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        await Task.Delay(1500);
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a" }), new PartitionKey("a"));
+        var result = await container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)>
+        {
+            ("1", new PartitionKey("a")),
+            ("2", new PartitionKey("a"))
+        });
+        result.Count.Should().Be(1);
+        result.First()["id"]!.ToString().Should().Be("2");
+    }
+
+    [Fact]
+    public async Task ReadManyStream_TTLExpiredItem_ExcludesExpiredItem()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.DefaultTimeToLive = 1;
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        await Task.Delay(1500);
+        var response = await container.ReadManyItemsStreamAsync(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        var body = JObject.Parse(await new StreamReader(response.Content).ReadToEndAsync());
+        ((int)body["_count"]!).Should().Be(0);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: ReadMany Partition Key Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ReadManyPartitionKeyDeepDiveTests
+{
+    [Fact]
+    public async Task ReadMany_NumericPartitionKey_ReturnsItems()
+    {
+        var container = new InMemoryContainer("test", "/numPk");
+        var item = JObject.FromObject(new { id = "1", numPk = 42 });
+        await container.CreateItemAsync(item, new PartitionKey(42));
+        var result = await container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey(42)) });
+        result.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReadMany_BooleanPartitionKey_ReturnsItems()
+    {
+        var container = new InMemoryContainer("test", "/boolPk");
+        var item = JObject.FromObject(new { id = "1", boolPk = true });
+        await container.CreateItemAsync(item, new PartitionKey(true));
+        var result = await container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey(true)) });
+        result.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReadMany_SameIdDifferentPartitionKeys_ReturnsBoth()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "b", name = "Bob" }), new PartitionKey("b"));
+        var result = await container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)>
+        {
+            ("1", new PartitionKey("a")),
+            ("1", new PartitionKey("b"))
+        });
+        result.Count.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ReadMany_PartitionKeyNull_ReturnsNullPkItems()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        var item = JObject.Parse("{\"id\":\"1\",\"pk\":null}");
+        await container.CreateItemAsync(item, PartitionKey.Null);
+        var result = await container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", PartitionKey.Null) });
+        result.Count.Should().Be(1);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: ReadMany Request Options & CancellationToken
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ReadManyOptionsDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    [Fact]
+    public async Task ReadMany_WithRequestOptions_DoesNotThrow()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        var options = new ReadManyRequestOptions();
+        var result = await _container.ReadManyItemsAsync<JObject>(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) }, options);
+        result.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReadManyStream_WithRequestOptions_DoesNotThrow()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        var options = new ReadManyRequestOptions();
+        var response = await _container.ReadManyItemsStreamAsync(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) }, options);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact(Skip = "CancellationToken not honored — emulator ReadMany is synchronous via Task.FromResult. " +
+                 "Real Cosmos throws OperationCanceledException. " +
+                 "See sister test: ReadMany_CancelledToken_StillReturnsResults_Divergent")]
+    public async Task ReadMany_CancelledToken_ThrowsOperationCanceledException()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var act = () => _container.ReadManyItemsAsync<JObject>(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) }, cancellationToken: cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task ReadMany_CancelledToken_StillReturnsResults_Divergent()
+    {
+        // DIVERGENT BEHAVIOR: Emulator ignores CancellationToken — ReadMany is synchronous.
+        // Real Cosmos SDK throws OperationCanceledException during network I/O.
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var result = await _container.ReadManyItemsAsync<JObject>(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) }, cancellationToken: cts.Token);
+        result.Count.Should().Be(1);
+    }
+
+    [Fact(Skip = "IfNoneMatchEtag is ignored. Emulator always returns 200 OK. " +
+                 "See sister test: ReadMany_WithIfNoneMatchEtag_AlwaysReturns200_Divergent")]
+    public async Task ReadMany_WithIfNoneMatchEtag_Returns304WhenUnchanged()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        var first = await _container.ReadManyItemsAsync<JObject>(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+        // Real Cosmos would return 304 on second call with matching ETag
+    }
+
+    [Fact]
+    public async Task ReadMany_WithIfNoneMatchEtag_AlwaysReturns200_Divergent()
+    {
+        // DIVERGENT BEHAVIOR: IfNoneMatchEtag is silently ignored.
+        // The emulator does not compute composite response ETags across multiple items.
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        var result = await _container.ReadManyItemsAsync<JObject>(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        result.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: ReadMany After Mutations Extended
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ReadManyMutationDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    [Fact]
+    public async Task ReadMany_AfterPatchOperation_ReturnsPatchedVersion()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await _container.PatchItemAsync<JObject>("1", new PartitionKey("a"),
+            new[] { PatchOperation.Set("/name", "Alicia") });
+        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        result.First()["name"]!.ToString().Should().Be("Alicia");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: ReadMany Response Properties
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ReadManyResponseDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+    }
+
+    [Fact]
+    public async Task ReadMany_Diagnostics_IsNotNull()
+    {
+        await Seed();
+        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        result.Diagnostics.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ReadMany_ETag_IsNull()
+    {
+        await Seed();
+        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        result.ETag.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadMany_ContinuationToken_IsNull()
+    {
+        await Seed();
+        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        result.ContinuationToken.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadMany_IndexMetrics_IsNull()
+    {
+        await Seed();
+        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        result.IndexMetrics.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadMany_ResponseIsEnumerable()
+    {
+        await Seed();
+        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        var count = 0;
+        foreach (var _ in result) count++;
+        count.Should().Be(1);
+    }
+
+    [Fact(Skip = "Response Headers are empty. Use response.RequestCharge property instead. " +
+                 "See sister test: ReadMany_Headers_AreEmpty_Divergent")]
+    public async Task ReadMany_Headers_ContainRequestCharge()
+    {
+        await Seed();
+        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        result.Headers["x-ms-request-charge"].Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ReadMany_Headers_AreEmpty_Divergent()
+    {
+        // DIVERGENT BEHAVIOR: Response Headers dictionary is empty.
+        // Use response.RequestCharge and response.ActivityId properties instead.
+        await Seed();
+        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        result.RequestCharge.Should().BeGreaterThan(0); // Works via property
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: ReadMany Deserialization & Stream Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ReadManyDeserializationDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    [Fact]
+    public async Task ReadMany_ComplexNestedDocument_Roundtrips()
+    {
+        var complex = JObject.FromObject(new { id = "1", pk = "a", nested = new { inner = new { value = 42 } }, tags = new[] { "x", "y" } });
+        await _container.CreateItemAsync(complex, new PartitionKey("a"));
+        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        result.First()["nested"]!["inner"]!["value"]!.Value<int>().Should().Be(42);
+        ((JArray)result.First()["tags"]!).Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task ReadMany_VeryLongId_ReturnsItem()
+    {
+        var longId = new string('x', 255);
+        await _container.CreateItemAsync(JObject.FromObject(new { id = longId, pk = "a" }), new PartitionKey("a"));
+        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { (longId, new PartitionKey("a")) });
+        result.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReadMany_EmptyContainer_ReturnsEmpty()
+    {
+        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        result.Count.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ReadManyStream_EmptyContainer_ReturnsEmptyEnvelope()
+    {
+        var response = await _container.ReadManyItemsStreamAsync(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = JObject.Parse(await new StreamReader(response.Content).ReadToEndAsync());
+        ((int)body["_count"]!).Should().Be(0);
+        ((JArray)body["Documents"]!).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ReadManyStream_HasRidField()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        var response = await _container.ReadManyItemsStreamAsync(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        var body = JObject.Parse(await new StreamReader(response.Content).ReadToEndAsync());
+        body["_rid"].Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ReadManyStream_ContentIsValidJson()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        var response = await _container.ReadManyItemsStreamAsync(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        var body = await new StreamReader(response.Content).ReadToEndAsync();
+        var parsed = JObject.Parse(body); // Should not throw
+        parsed["Documents"].Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ReadMany_TypedAndStream_ReturnSameLogicalResults()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "Bob" }), new PartitionKey("a"));
+        var items = new List<(string, PartitionKey)> { ("1", new PartitionKey("a")), ("2", new PartitionKey("a")) };
+
+        var typed = await _container.ReadManyItemsAsync<JObject>(items);
+        var stream = await _container.ReadManyItemsStreamAsync(items);
+        var streamBody = JObject.Parse(await new StreamReader(stream.Content).ReadToEndAsync());
+
+        typed.Count.Should().Be(((JArray)streamBody["Documents"]!).Count);
+    }
+
+    [Fact]
+    public async Task ReadMany_ResultOrderMatchesRequestOrder()
+    {
+        // Emulator returns items in request order (real Cosmos may not guarantee order)
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a" }), new PartitionKey("a"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a" }), new PartitionKey("a"));
+
+        var items = new List<(string, PartitionKey)>
+        {
+            ("2", new PartitionKey("a")),
+            ("3", new PartitionKey("a")),
+            ("1", new PartitionKey("a"))
+        };
+        var result = await _container.ReadManyItemsAsync<JObject>(items);
+        result.Select(r => r["id"]!.ToString()).Should().ContainInConsecutiveOrder("2", "3", "1");
+    }
+}

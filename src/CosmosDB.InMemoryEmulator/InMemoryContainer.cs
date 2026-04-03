@@ -1189,7 +1189,7 @@ public class InMemoryContainer : Container
                 results.Add(JsonParseHelpers.ParseJson(json));
             }
         }
-        var envelope = new JObject { ["Documents"] = results, ["_count"] = results.Count };
+        var envelope = new JObject { ["_rid"] = "", ["Documents"] = results, ["_count"] = results.Count };
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, envelope.ToString(Formatting.None)));
     }
 
