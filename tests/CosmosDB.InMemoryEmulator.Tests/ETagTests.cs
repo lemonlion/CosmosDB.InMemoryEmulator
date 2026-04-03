@@ -139,3 +139,493 @@ public class ETagGapTests3
         ex.Which.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
     }
 }
+
+#region ETag Response Tests
+
+public class ETagResponseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Delete_TypedResponse_ETag_ShouldBeNull()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        response.ETag.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Replace_ResponseETag_ChangesFromCreate()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+        var createETag = create.ETag;
+
+        var replace = await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            "1", new PartitionKey("pk1"));
+
+        replace.ETag.Should().NotBeNullOrEmpty();
+        replace.ETag.Should().NotBe(createETag);
+    }
+
+    [Fact]
+    public async Task Patch_ResponseETag_ChangesFromCreate()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original", Value = 1 },
+            new PartitionKey("pk1"));
+        var createETag = create.ETag;
+
+        var patch = await _container.PatchItemAsync<TestDocument>(
+            "1", new PartitionKey("pk1"),
+            [PatchOperation.Set("/name", "Patched")]);
+
+        patch.ETag.Should().NotBeNullOrEmpty();
+        patch.ETag.Should().NotBe(createETag);
+    }
+
+    [Fact]
+    public async Task ETag_Format_IsQuotedGuid_OnAllWriteOperations()
+    {
+        var guidPattern = "^\"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\"$";
+
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Value = 1 },
+            new PartitionKey("pk1"));
+        create.ETag.Should().MatchRegex(guidPattern);
+
+        var upsert = await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Upserted" },
+            new PartitionKey("pk1"));
+        upsert.ETag.Should().MatchRegex(guidPattern);
+
+        var replace = await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" },
+            "1", new PartitionKey("pk1"));
+        replace.ETag.Should().MatchRegex(guidPattern);
+
+        var patch = await _container.PatchItemAsync<TestDocument>(
+            "1", new PartitionKey("pk1"),
+            [PatchOperation.Set("/name", "Patched")]);
+        patch.ETag.Should().MatchRegex(guidPattern);
+    }
+
+    [Fact]
+    public async Task DocumentBody_ETag_MatchesResponseETag()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var read = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var bodyETag = read.Resource["_etag"]?.ToString();
+
+        bodyETag.Should().Be(create.ETag);
+    }
+
+    [Fact]
+    public async Task DocumentBody_ETag_UpdatesOnEveryWrite()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "First" },
+            new PartitionKey("pk1"));
+
+        var read1 = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var etag1 = read1.Resource["_etag"]?.ToString();
+
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Second" },
+            new PartitionKey("pk1"));
+
+        var read2 = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var etag2 = read2.Resource["_etag"]?.ToString();
+
+        etag1.Should().NotBe(etag2);
+    }
+}
+
+#endregion
+
+#region IfMatch Wildcard Tests
+
+public class ETagIfMatchWildcardTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task IfMatch_Wildcard_OnReplace_Succeeds()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" },
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "*" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task IfMatch_Wildcard_OnDelete_Succeeds()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.DeleteItemAsync<TestDocument>(
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "*" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task IfMatch_Wildcard_OnPatch_Succeeds()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Value = 1 },
+            new PartitionKey("pk1"));
+
+        var response = await _container.PatchItemAsync<TestDocument>(
+            "1", new PartitionKey("pk1"),
+            [PatchOperation.Set("/name", "Patched")],
+            new PatchItemRequestOptions { IfMatchEtag = "*" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+#endregion
+
+#region IfNoneMatch Edge Cases
+
+public class ETagIfNoneMatchEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task IfNoneMatch_Wildcard_OnRead_WhenItemDoesNotExist_Returns404()
+    {
+        var act = () => _container.ReadItemAsync<TestDocument>("nonexistent", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = "*" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task IfNoneMatch_StaleETag_OnRead_Returns200()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "First" },
+            new PartitionKey("pk1"));
+        var oldETag = create.ETag;
+
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Second" },
+            new PartitionKey("pk1"));
+
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = oldETag });
+
+        read.StatusCode.Should().Be(HttpStatusCode.OK);
+        read.Resource.Name.Should().Be("Second");
+    }
+
+    [Fact]
+    public async Task IfNoneMatch_OnUpsert_IsIgnored()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        // Real Cosmos ignores IfNoneMatch on write operations
+        var response = await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = "*" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task IfNoneMatch_OnReplace_IsIgnored()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" },
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = "*" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+#endregion
+
+#region ETag Lifecycle Tests
+
+public class ETagLifecycleTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task CreateDeleteRecreate_GetsNewETag()
+    {
+        var create1 = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "First" },
+            new PartitionKey("pk1"));
+        var etag1 = create1.ETag;
+
+        await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        var create2 = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Second" },
+            new PartitionKey("pk1"));
+        var etag2 = create2.ETag;
+
+        etag1.Should().NotBe(etag2);
+    }
+
+    [Fact]
+    public async Task Upsert_WithIfMatch_WhenItemDoesNotExist_Returns404()
+    {
+        var act = () => _container.UpsertItemAsync(
+            new TestDocument { Id = "new", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
+
+        // IfMatch on non-existent item: 404 (not 412)
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Delete_WithIfMatch_NonExistentItem_Returns404_Not412()
+    {
+        var act = () => _container.DeleteItemAsync<TestDocument>(
+            "nonexistent", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Replace_WithIfMatch_NonExistentItem_Returns404_Not412()
+    {
+        var act = () => _container.ReplaceItemAsync(
+            new TestDocument { Id = "nonexistent", PartitionKey = "pk1", Name = "Test" },
+            "nonexistent", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+}
+
+#endregion
+
+#region ETag Stream Tests
+
+public class ETagStreamTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task StreamRead_IfNoneMatch_Wildcard_WhenExists_Returns304()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Test\"}"),
+            new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = "*" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotModified);
+    }
+
+    [Fact]
+    public async Task StreamRead_IfNoneMatch_StaleETag_Returns200()
+    {
+        var createResp = await _container.CreateItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"First\"}"),
+            new PartitionKey("pk1"));
+        var oldETag = createResp.Headers["ETag"];
+
+        await _container.UpsertItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Second\"}"),
+            new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = oldETag });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task StreamReplace_IfMatch_Wildcard_Succeeds()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Original\"}"),
+            new PartitionKey("pk1"));
+
+        var response = await _container.ReplaceItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Replaced\"}"),
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "*" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task StreamDelete_IfMatch_Wildcard_Succeeds()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Test\"}"),
+            new PartitionKey("pk1"));
+
+        var response = await _container.DeleteItemStreamAsync(
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "*" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task StreamPatch_WithCurrentETag_Succeeds()
+    {
+        var createResp = await _container.CreateItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Test\"}"),
+            new PartitionKey("pk1"));
+        var currentETag = createResp.Headers["ETag"];
+
+        var response = await _container.PatchItemStreamAsync(
+            "1", new PartitionKey("pk1"),
+            [PatchOperation.Set("/name", "Patched")],
+            new PatchItemRequestOptions { IfMatchEtag = currentETag });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task StreamDelete_Response_HasNoETagHeader()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Test\"}"),
+            new PartitionKey("pk1"));
+
+        var response = await _container.DeleteItemStreamAsync("1", new PartitionKey("pk1"));
+
+        response.Headers["ETag"].Should().BeNull();
+    }
+}
+
+#endregion
+
+#region ETag Batch Tests
+
+public class ETagBatchStreamTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task BatchStream_Replace_WithStaleETag_FailsBatch()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+        var oldETag = create.ETag;
+
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Changed" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItemStream("1",
+            ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"BatchReplaced\"}"),
+            new TransactionalBatchItemRequestOptions { IfMatchEtag = oldETag });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task BatchStream_Upsert_WithStaleETag_FailsBatch()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+        var oldETag = create.ETag;
+
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Changed" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItemStream(
+            ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"BatchUpserted\"}"),
+            new TransactionalBatchItemRequestOptions { IfMatchEtag = oldETag });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task Batch_Delete_WithIfMatch_StaleETag_FailsBatch()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+        var oldETag = create.ETag;
+
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Changed" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.DeleteItem("1", new TransactionalBatchItemRequestOptions { IfMatchEtag = oldETag });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task Batch_Delete_WithIfMatch_CurrentETag_Succeeds()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.DeleteItem("1", new TransactionalBatchItemRequestOptions { IfMatchEtag = create.ETag });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        // Confirm item is deleted
+        var readAct = () => _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        var ex = await readAct.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+}
+
+#endregion

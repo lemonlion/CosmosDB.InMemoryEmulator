@@ -216,7 +216,9 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             var jObj = JsonParseHelpers.ParseJson(json);
             var id = jObj["id"]?.ToString() ?? Guid.NewGuid().ToString();
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
-            await _container.CreateItemStreamAsync(stream, _partitionKey);
+            var response = await _container.CreateItemStreamAsync(stream, _partitionKey, ToItemRequestOptions(requestOptions));
+            if (!response.IsSuccessStatusCode)
+                throw new CosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
         }, BatchOpType.Create));
         return this;
     }
@@ -228,7 +230,9 @@ public class InMemoryTransactionalBatch : TransactionalBatch
         _operations.Add((async () =>
         {
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
-            await _container.UpsertItemStreamAsync(stream, _partitionKey);
+            var response = await _container.UpsertItemStreamAsync(stream, _partitionKey, ToItemRequestOptions(requestOptions));
+            if (!response.IsSuccessStatusCode)
+                throw new CosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
         }, BatchOpType.Upsert));
         return this;
     }
@@ -240,7 +244,9 @@ public class InMemoryTransactionalBatch : TransactionalBatch
         _operations.Add((async () =>
         {
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
-            await _container.ReplaceItemStreamAsync(stream, id, _partitionKey);
+            var response = await _container.ReplaceItemStreamAsync(stream, id, _partitionKey, ToItemRequestOptions(requestOptions));
+            if (!response.IsSuccessStatusCode)
+                throw new CosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
         }, BatchOpType.Replace));
         return this;
     }

@@ -2096,7 +2096,7 @@ public class InMemoryContainer : Container
         r.Diagnostics.Returns(FakeDiagnostics);
         r.RequestCharge.Returns(SyntheticRequestCharge);
         r.ActivityId.Returns(Guid.NewGuid().ToString());
-        r.ETag.Returns(etag ?? $"\"{Guid.NewGuid()}\"");
+        r.ETag.Returns(etag);
         return r;
     }
 
