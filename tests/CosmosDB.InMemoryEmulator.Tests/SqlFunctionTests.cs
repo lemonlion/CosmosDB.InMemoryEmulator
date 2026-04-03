@@ -1984,3 +1984,628 @@ public class SqlFunctionGapTests4
         results[0]["isNum"]!.Value<bool>().Should().BeFalse();
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: Bug Fix Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SqlFunctionBugFixTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<JObject>> Query(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<JObject>(sql);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice Anderson", value = 10, isActive = true, tags = new[] { "dot", "net" } }), new PartitionKey("pk1"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", name = "Bob Brown", value = 20, isActive = false }), new PartitionKey("pk1"));
+    }
+
+    // Bug 1: LOG with base argument
+    [Fact]
+    public async Task Log_WithBase_ReturnsCustomBaseLog()
+    {
+        await Seed();
+        var results = await Query("SELECT LOG(8, 2) AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.Value<double>().Should().BeApproximately(3.0, 0.0001);
+    }
+
+    // Bug 2: ROUND with precision
+    [Fact]
+    public async Task Round_WithPrecision_RoundsToDecimalPlaces()
+    {
+        await Seed();
+        var results = await Query("SELECT ROUND(3.14159, 2) AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.Value<double>().Should().BeApproximately(3.14, 0.0001);
+    }
+
+    [Fact]
+    public async Task Round_NoPrecision_RoundsToInteger()
+    {
+        await Seed();
+        var results = await Query("SELECT ROUND(3.7) AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.Value<double>().Should().BeApproximately(4.0, 0.0001);
+    }
+
+    // Bug 3: INDEX_OF with start position
+    [Fact]
+    public async Task IndexOf_WithStartPosition_ReturnsCorrectIndex()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", text = "hello hello" }), new PartitionKey("pk1"));
+        var results = await Query("SELECT INDEX_OF(c.text, 'hello', 1) AS val FROM c");
+        results[0]["val"]!.Value<long>().Should().Be(6);
+    }
+
+    // Bug 6: StringToNumber rejects NaN/Infinity
+    [Fact]
+    public async Task StringToNumber_NaN_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await Query("SELECT StringToNumber('NaN') AS val FROM c WHERE c.id = '1'");
+        results[0]["val"].Should().BeNull(); // undefined → omitted from JSON
+    }
+
+    [Fact]
+    public async Task StringToNumber_Infinity_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await Query("SELECT StringToNumber('Infinity') AS val FROM c WHERE c.id = '1'");
+        results[0]["val"].Should().BeNull();
+    }
+
+    // Bug 7: COALESCE skips undefined
+    [Fact]
+    public async Task Coalesce_SkipsUndefined_ReturnsDefined()
+    {
+        await Seed();
+        var results = await Query("SELECT COALESCE(c.nonExistent, c.name) AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.ToString().Should().Be("Alice Anderson");
+    }
+
+    [Fact]
+    public async Task Coalesce_AllNull_ReturnsNull()
+    {
+        await Seed();
+        var results = await Query("SELECT COALESCE(null, null) AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.Type.Should().Be(JTokenType.Null);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: Missing Function Coverage
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SqlFunctionMissingCoverageTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<JObject>> Query(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<JObject>(sql);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice", value = 10, nested = new { description = "D1", score = 3.14 } }), new PartitionKey("pk1"));
+    }
+
+    // COT
+    [Fact]
+    public async Task Cot_ReturnsCorrectValue()
+    {
+        await Seed();
+        var results = await Query("SELECT COT(1) AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.Value<double>().Should().BeApproximately(1.0 / Math.Tan(1), 0.0001);
+    }
+
+    // CHOOSE
+    [Fact]
+    public async Task Choose_ReturnsCorrectElement()
+    {
+        await Seed();
+        var results = await Query("SELECT CHOOSE(2, 'a', 'b', 'c') AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.ToString().Should().Be("b");
+    }
+
+    [Fact]
+    public async Task Choose_OutOfRange_ReturnsNull()
+    {
+        await Seed();
+        var results = await Query("SELECT CHOOSE(5, 'a', 'b') AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.Type.Should().Be(JTokenType.Null);
+    }
+
+    // OBJECTTOARRAY / ARRAYTOOBJECT
+    [Fact]
+    public async Task ObjectToArray_ReturnsKeyValuePairs()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", data = new { x = 1, y = 2 } }), new PartitionKey("pk1"));
+        var results = await Query("SELECT ObjectToArray(c.data) AS val FROM c");
+        var arr = (JArray)results[0]["val"]!;
+        arr.Should().HaveCount(2);
+        arr[0]["k"]!.ToString().Should().Be("x");
+    }
+
+    [Fact]
+    public async Task ArrayToObject_ReturnsObject()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", arr = new[] { new { k = "name", v = "Alice" } } }), new PartitionKey("pk1"));
+        var results = await Query("SELECT VALUE ArrayToObject(c.arr) FROM c");
+        results[0]["name"]!.ToString().Should().Be("Alice");
+    }
+
+    // STRINGJOIN / STRINGSPLIT
+    [Fact]
+    public async Task StringJoin_JoinsArrayWithSeparator()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", tags = new[] { "a", "b", "c" } }), new PartitionKey("pk1"));
+        var results = await Query("SELECT StringJoin(c.tags, '-') AS val FROM c");
+        results[0]["val"]!.ToString().Should().Be("a-b-c");
+    }
+
+    [Fact]
+    public async Task StringSplit_SplitsStringByDelimiter()
+    {
+        await Seed();
+        var results = await Query("SELECT StringSplit('a-b-c', '-') AS val FROM c WHERE c.id = '1'");
+        var arr = (JArray)results[0]["val"]!;
+        arr.Select(t => t.ToString()).Should().BeEquivalentTo(["a", "b", "c"]);
+    }
+
+    // STRINGTONULL
+    [Fact]
+    public async Task StringToNull_ParsesNullLiteral()
+    {
+        await Seed();
+        var results = await Query("SELECT StringToNull('null') AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.Type.Should().Be(JTokenType.Null);
+    }
+
+    [Fact]
+    public async Task StringToNull_InvalidInput_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await Query("SELECT StringToNull('hello') AS val FROM c WHERE c.id = '1'");
+        results[0]["val"].Should().BeNull(); // undefined → omitted
+    }
+
+    // DOCUMENTID
+    [Fact]
+    public async Task DocumentId_ReturnsDocumentId()
+    {
+        await Seed();
+        var results = await Query("SELECT DOCUMENTID(c) AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.ToString().Should().Be("1");
+    }
+
+    // ENDSWITH case-insensitive
+    [Fact]
+    public async Task EndsWith_CaseInsensitive_ReturnsTrue()
+    {
+        await Seed();
+        var results = await Query("SELECT ENDSWITH(c.name, 'ALICE', true) AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.Value<bool>().Should().BeTrue();
+    }
+
+    // COUNT aggregate
+    [Fact]
+    public async Task CountAggregate_ReturnsCorrectCount()
+    {
+        await Seed();
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1" }), new PartitionKey("pk1"));
+        var results = await Query("SELECT COUNT(1) AS val FROM c");
+        results[0]["val"]!.Value<long>().Should().Be(2);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: String Function Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SqlFunctionStringEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<JObject>> Query(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<JObject>(sql);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice", value = 10 }), new PartitionKey("pk1"));
+    }
+
+    [Fact]
+    public async Task Contains_EmptySubstring_ReturnsTrue()
+    {
+        await Seed();
+        var results = await Query("SELECT CONTAINS(c.name, '') AS val FROM c");
+        results[0]["val"]!.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task StartsWith_EmptyPrefix_ReturnsTrue()
+    {
+        await Seed();
+        var results = await Query("SELECT STARTSWITH(c.name, '') AS val FROM c");
+        results[0]["val"]!.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EndsWith_EmptySuffix_ReturnsTrue()
+    {
+        await Seed();
+        var results = await Query("SELECT ENDSWITH(c.name, '') AS val FROM c");
+        results[0]["val"]!.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task IndexOf_EmptySubstring_ReturnsZero()
+    {
+        await Seed();
+        var results = await Query("SELECT INDEX_OF(c.name, '') AS val FROM c");
+        results[0]["val"]!.Value<long>().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Reverse_EmptyString_ReturnsEmpty()
+    {
+        await Seed();
+        var results = await Query("SELECT REVERSE('') AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.ToString().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Left_CountExceedsLength_ReturnsFullString()
+    {
+        await Seed();
+        var results = await Query("SELECT LEFT(c.name, 100) AS val FROM c");
+        results[0]["val"]!.ToString().Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task Right_CountExceedsLength_ReturnsFullString()
+    {
+        await Seed();
+        var results = await Query("SELECT RIGHT(c.name, 100) AS val FROM c");
+        results[0]["val"]!.ToString().Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task Concat_NoArgs_ReturnsEmpty()
+    {
+        await Seed();
+        var results = await Query("SELECT CONCAT() AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.ToString().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task StringToBoolean_MixedCase_ReturnsUndefined()
+    {
+        await Seed();
+        // Cosmos DB StringToBoolean is case-sensitive: "True" != "true"
+        var results = await Query("SELECT StringToBoolean('True') AS val FROM c WHERE c.id = '1'");
+        results[0]["val"].Should().BeNull(); // undefined → omitted
+    }
+
+    [Fact]
+    public async Task StringToArray_InvalidJson_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await Query("SELECT StringToArray('not json') AS val FROM c WHERE c.id = '1'");
+        results[0]["val"].Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ToString_NullInput_ReturnsNull()
+    {
+        await Seed();
+        var results = await Query("SELECT ToString(null) AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.Type.Should().Be(JTokenType.Null);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: Math Function Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SqlFunctionMathEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<JObject>> Query(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<JObject>(sql);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+    }
+
+    [Fact]
+    public async Task Power_ZeroExponent_ReturnsOne()
+    {
+        await Seed();
+        var results = await Query("SELECT POWER(5, 0) AS val FROM c");
+        results[0]["val"]!.Value<double>().Should().Be(1.0);
+    }
+
+    [Fact]
+    public async Task Sign_Zero_ReturnsZero()
+    {
+        await Seed();
+        var results = await Query("SELECT SIGN(0) AS val FROM c");
+        results[0]["val"]!.Value<double>().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Trunc_NegativeDecimal_TruncatesTowardZero()
+    {
+        await Seed();
+        var results = await Query("SELECT TRUNC(-3.7) AS val FROM c");
+        results[0]["val"]!.Value<double>().Should().Be(-3.0);
+    }
+
+    [Fact]
+    public async Task Exp_Zero_ReturnsOne()
+    {
+        await Seed();
+        var results = await Query("SELECT EXP(0) AS val FROM c");
+        results[0]["val"]!.Value<double>().Should().Be(1.0);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: Integer Math Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SqlFunctionIntegerEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<JObject>> Query(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<JObject>(sql);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+    }
+
+    [Fact]
+    public async Task IntMod_ByZero_ReturnsNull()
+    {
+        await Seed();
+        var results = await Query("SELECT IntMod(10, 0) AS val FROM c");
+        results[0]["val"]!.Type.Should().Be(JTokenType.Null);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: Type Checking Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SqlFunctionTypeCheckEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<JObject>> Query(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<JObject>(sql);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task IsArray_ReturnsFalseForString()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", val = "hello" }), new PartitionKey("pk1"));
+        var results = await Query("SELECT IS_ARRAY(c.val) AS val FROM c");
+        results[0]["val"]!.Value<bool>().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsBool_ReturnsFalseForNumber()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", val = 42 }), new PartitionKey("pk1"));
+        var results = await Query("SELECT IS_BOOL(c.val) AS val FROM c");
+        results[0]["val"]!.Value<bool>().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsNumber_ReturnsFalseForBoolean()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", val = true }), new PartitionKey("pk1"));
+        var results = await Query("SELECT IS_NUMBER(c.val) AS val FROM c");
+        results[0]["val"]!.Value<bool>().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsString_ReturnsFalseForNumber()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", val = 42 }), new PartitionKey("pk1"));
+        var results = await Query("SELECT IS_STRING(c.val) AS val FROM c");
+        results[0]["val"]!.Value<bool>().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsObject_ReturnsFalseForArray()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", val = new[] { 1, 2 } }), new PartitionKey("pk1"));
+        var results = await Query("SELECT IS_OBJECT(c.val) AS val FROM c");
+        results[0]["val"]!.Value<bool>().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsObject_ReturnsFalseForNull()
+    {
+        await _container.CreateItemAsync(JObject.Parse("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"val\":null}"), new PartitionKey("pk1"));
+        var results = await Query("SELECT IS_OBJECT(c.val) AS val FROM c");
+        results[0]["val"]!.Value<bool>().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsDefined_TrueForNullProperty()
+    {
+        await _container.CreateItemAsync(JObject.Parse("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"val\":null}"), new PartitionKey("pk1"));
+        var results = await Query("SELECT IS_DEFINED(c.val) AS val FROM c");
+        results[0]["val"]!.Value<bool>().Should().BeTrue();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: Array Function Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SqlFunctionArrayEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<JObject>> Query(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<JObject>(sql);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task ArraySlice_NegativeStart_FromEnd()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", arr = new[] { 1, 2, 3, 4 } }), new PartitionKey("pk1"));
+        var results = await Query("SELECT ARRAY_SLICE(c.arr, -2) AS val FROM c");
+        var arr = (JArray)results[0]["val"]!;
+        arr.Select(t => t.Value<int>()).Should().BeEquivalentTo([3, 4]);
+    }
+
+    [Fact]
+    public async Task ArraySlice_StartBeyondLength_ReturnsEmpty()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", arr = new[] { 1, 2 } }), new PartitionKey("pk1"));
+        var results = await Query("SELECT ARRAY_SLICE(c.arr, 10) AS val FROM c");
+        ((JArray)results[0]["val"]!).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ArrayConcat_EmptyArrays_ReturnsEmpty()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+        var results = await Query("SELECT ARRAY_CONCAT([], []) AS val FROM c");
+        ((JArray)results[0]["val"]!).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ArrayContains_NullElement_MatchesNull()
+    {
+        await _container.CreateItemAsync(JObject.Parse("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"arr\":[1,null,3]}"), new PartitionKey("pk1"));
+        var results = await Query("SELECT ARRAY_CONTAINS(c.arr, null) AS val FROM c");
+        results[0]["val"]!.Value<bool>().Should().BeTrue();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: Aggregate Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SqlFunctionAggregateEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<JObject>> Query(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<JObject>(sql);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task CountWithFilter_ReturnsFilteredCount()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", active = true }), new PartitionKey("pk1"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", active = false }), new PartitionKey("pk1"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "3", partitionKey = "pk1", active = true }), new PartitionKey("pk1"));
+
+        var results = await Query("SELECT COUNT(1) AS val FROM c WHERE c.active = true");
+        results[0]["val"]!.Value<long>().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task MaxWithStrings_ReturnsLexMax()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Banana" }), new PartitionKey("pk1"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", name = "Apple" }), new PartitionKey("pk1"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "3", partitionKey = "pk1", name = "Cherry" }), new PartitionKey("pk1"));
+
+        var results = await Query("SELECT MAX(c.name) AS val FROM c");
+        results[0]["val"]!.ToString().Should().Be("Cherry");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive: Conversion Function Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SqlFunctionConversionEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<JObject>> Query(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<JObject>(sql);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+    }
+
+    [Fact]
+    public async Task ToNumber_InvalidString_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await Query("SELECT ToNumber('abc') AS val FROM c WHERE c.id = '1'");
+        results[0]["val"].Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ToNumber_NullInput_ReturnsNull()
+    {
+        await Seed();
+        var results = await Query("SELECT ToNumber(null) AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.Type.Should().Be(JTokenType.Null);
+    }
+
+    [Fact]
+    public async Task ToBoolean_NullInput_ReturnsNull()
+    {
+        await Seed();
+        var results = await Query("SELECT ToBoolean(null) AS val FROM c WHERE c.id = '1'");
+        results[0]["val"]!.Type.Should().Be(JTokenType.Null);
+    }
+}

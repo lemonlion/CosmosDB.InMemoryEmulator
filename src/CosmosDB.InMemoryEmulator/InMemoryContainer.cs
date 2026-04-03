@@ -4192,7 +4192,15 @@ public class InMemoryContainer : Container
                     }
 
                     var s = args[0]?.ToString(); var sub = args[1]?.ToString();
-                    return s != null && sub != null ? (object)(long)s.IndexOf(sub, StringComparison.Ordinal) : null;
+                    if (s != null && sub != null)
+                    {
+                        if (args.Length >= 3 && double.TryParse(args[2]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var startPos))
+                        {
+                            return (object)(long)s.IndexOf(sub, (int)startPos, StringComparison.Ordinal);
+                        }
+                        return (object)(long)s.IndexOf(sub, StringComparison.Ordinal);
+                    }
+                    return null;
                 }
             case "REGEXMATCH":
                 {
@@ -4326,6 +4334,8 @@ public class InMemoryContainer : Container
 
                     if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var doubleVal))
                     {
+                        if (double.IsNaN(doubleVal) || double.IsInfinity(doubleVal))
+                            return UndefinedValue.Instance;
                         return doubleVal;
                     }
 
@@ -4362,17 +4372,22 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
+                    if (args[0] is null)
+                    {
+                        return null;
+                    }
+
                     if (args[0] is long or double)
                     {
                         return args[0];
                     }
 
-                    if (args[0] != null && double.TryParse(args[0].ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var n))
+                    if (double.TryParse(args[0].ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var n))
                     {
                         return n;
                     }
 
-                    return null;
+                    return UndefinedValue.Instance;
                 }
             case "TOBOOLEAN" or "ToBoolean":
                 {
@@ -4423,12 +4438,12 @@ public class InMemoryContainer : Container
                             return ArrayContainsMatchJObject(jArray, searchObj, partial);
                         }
 
-                        var searchStr = searchValue?.ToString();
-                        if (searchStr is null)
+                        if (searchValue is null)
                         {
-                            return false;
+                            return jArray.Any(t => t.Type == JTokenType.Null);
                         }
 
+                        var searchStr = searchValue.ToString();
                         return ArrayContainsMatch(jArray, searchStr, partial);
                     }
                     return false;
@@ -4525,12 +4540,24 @@ public class InMemoryContainer : Container
             case "ABS": return args.Length > 0 ? MathOp(args[0], Math.Abs) : null;
             case "CEILING": return args.Length > 0 ? MathOp(args[0], Math.Ceiling) : null;
             case "FLOOR": return args.Length > 0 ? MathOp(args[0], Math.Floor) : null;
-            case "ROUND": return args.Length > 0 ? MathOp(args[0], Math.Round) : null;
+            case "ROUND":
+                if (args.Length >= 2 && double.TryParse(args[0]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var roundVal)
+                    && double.TryParse(args[1]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var roundPrec))
+                {
+                    return Math.Round(roundVal, (int)roundPrec, MidpointRounding.AwayFromZero);
+                }
+                return args.Length > 0 ? MathOp(args[0], v => Math.Round(v, MidpointRounding.AwayFromZero)) : null;
             case "SQRT": return args.Length > 0 ? MathOp(args[0], Math.Sqrt) : null;
             case "SQUARE": return args.Length > 0 ? MathOp(args[0], v => v * v) : null;
             case "POWER": return args.Length >= 2 ? ArithmeticOp(args[0], args[1], Math.Pow) : null;
             case "EXP": return args.Length > 0 ? MathOp(args[0], Math.Exp) : null;
-            case "LOG": return args.Length > 0 ? MathOp(args[0], Math.Log) : null;
+            case "LOG":
+                if (args.Length >= 2 && double.TryParse(args[0]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var logVal)
+                    && double.TryParse(args[1]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var logBase))
+                {
+                    return Math.Log(logVal, logBase);
+                }
+                return args.Length > 0 ? MathOp(args[0], Math.Log) : null;
             case "LOG10": return args.Length > 0 ? MathOp(args[0], Math.Log10) : null;
             case "SIGN": return args.Length > 0 ? MathOp(args[0], v => Math.Sign(v)) : null;
             case "TRUNC": return args.Length > 0 ? MathOp(args[0], Math.Truncate) : null;
@@ -4817,7 +4844,7 @@ public class InMemoryContainer : Container
                     JObject obj;
                     if (args[0] is JObject jo) obj = jo;
                     else if (args[0] is string s) { try { obj = JObject.Parse(s); } catch { return null; } }
-                    else return null;
+                    else return UndefinedValue.Instance;
                     var result = new JArray();
                     foreach (var prop in obj.Properties())
                     {
@@ -4851,11 +4878,11 @@ public class InMemoryContainer : Container
             case "STRINGJOIN":
                 {
                     if (args.Length < 2) return null;
-                    var separator = args[0]?.ToString();
+                    var separator = args[1]?.ToString();
                     if (separator is null) return null;
                     JArray joinArr;
-                    if (args[1] is JArray ja) joinArr = ja;
-                    else if (args[1] is string s) { try { joinArr = JArray.Parse(s); } catch { return null; } }
+                    if (args[0] is JArray ja) joinArr = ja;
+                    else if (args[0] is string s) { try { joinArr = JArray.Parse(s); } catch { return null; } }
                     else return null;
                     return string.Join(separator, joinArr.Select(t => t.Value<string>()));
                 }
@@ -5175,7 +5202,7 @@ public class InMemoryContainer : Container
                 {
                     foreach (var arg in args)
                     {
-                        if (arg is not null)
+                        if (arg is not null and not UndefinedValue)
                         {
                             return arg;
                         }

@@ -3086,7 +3086,7 @@ public class StringJoinFunctionTests
             new PartitionKey("a"));
 
         var iterator = _container.GetItemQueryIterator<string>(
-            "SELECT VALUE StringJoin(',', c.tags) FROM c",
+            "SELECT VALUE StringJoin(c.tags, ',') FROM c",
             requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
         var results = new List<string>();
         while (iterator.HasMoreResults)
