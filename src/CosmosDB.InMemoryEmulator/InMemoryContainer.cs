@@ -1501,7 +1501,7 @@ public class InMemoryContainer : Container
 
         return entries.Where(entry =>
         {
-            var hash = PartitionKeyHash.MurmurHash3(entry.PartitionKey);
+            var hash = PartitionKeyHash.MurmurHash3(entry.PartitionKey ?? "");
             return IsHashInRange(hash, min.Value, max.Value);
         }).ToList();
     }
