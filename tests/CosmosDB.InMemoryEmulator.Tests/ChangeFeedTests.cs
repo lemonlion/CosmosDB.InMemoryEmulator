@@ -690,8 +690,12 @@ public class ChangeFeedManualCheckpointStreamTests
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Redelivery" },
             new PartitionKey("pk1"));
 
-        // Wait for multiple poll cycles — if checkpoint not called, changes are redelivered
-        await Task.Delay(300);
+        // Wait until at least 2 deliveries occur (poll interval is 50ms, so this
+        // should happen quickly, but CI runners may be slow — use generous timeout)
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (Volatile.Read(ref deliveryCount) < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
         await processor.StopAsync();
 
         deliveryCount.Should().BeGreaterThan(1,
