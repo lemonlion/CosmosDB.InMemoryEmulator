@@ -120,8 +120,31 @@ public class InMemoryContainer : Container
                 JTokenType.String => HashCode.Combine(obj.Type, obj.Value<string>()?.GetHashCode() ?? 0),
                 JTokenType.Boolean => HashCode.Combine(obj.Type, obj.Value<bool>()),
                 JTokenType.Null => HashCode.Combine(obj.Type),
+                JTokenType.Object => HashObjectOrderInsensitive((JObject)obj),
+                JTokenType.Array => HashArrayElements((JArray)obj),
                 _ => HashCode.Combine(obj.Type, obj.ToString().GetHashCode())
             };
+        }
+
+        private static int HashObjectOrderInsensitive(JObject obj)
+        {
+            int hash = 0;
+            foreach (var prop in obj.Properties())
+            {
+                hash ^= HashCode.Combine(prop.Name.GetHashCode(), Instance.GetHashCode(prop.Value));
+            }
+            return HashCode.Combine(JTokenType.Object, hash);
+        }
+
+        private static int HashArrayElements(JArray arr)
+        {
+            var hash = new HashCode();
+            hash.Add(JTokenType.Array);
+            foreach (var element in arr)
+            {
+                hash.Add(Instance.GetHashCode(element));
+            }
+            return hash.ToHashCode();
         }
     }
 
@@ -4726,6 +4749,32 @@ public class InMemoryContainer : Container
                             {
                                 result.Add(element.DeepClone());
                             }
+                        }
+                    }
+                    return result;
+                }
+            case "SETDIFFERENCE":
+                {
+                    if (func.Arguments.Length < 2)
+                    {
+                        return new JArray();
+                    }
+
+                    var arr1 = ResolveJArray(func.Arguments[0], item, fromAlias, parameters);
+                    var arr2 = ResolveJArray(func.Arguments[1], item, fromAlias, parameters);
+                    if (arr1 is null || arr2 is null)
+                    {
+                        return UndefinedValue.Instance;
+                    }
+
+                    var exclude = new HashSet<JToken>(arr2, JTokenValueComparer.Instance);
+                    var result = new JArray();
+                    var seen = new HashSet<JToken>(JTokenValueComparer.Instance);
+                    foreach (var element in arr1)
+                    {
+                        if (!exclude.Contains(element) && seen.Add(element))
+                        {
+                            result.Add(element.DeepClone());
                         }
                     }
                     return result;
