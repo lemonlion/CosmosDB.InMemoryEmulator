@@ -6,9 +6,8 @@ skinparam ActivityBorderColor #333
 skinparam ActivityBackgroundColor #E8F4FD
 skinparam PartitionBorderColor #666
 
-start
-
 |Test Code|
+start
 :Call **InMemoryContainer.GetItemQueryIterator<T>**
 (queryText, continuationToken, requestOptions);
 

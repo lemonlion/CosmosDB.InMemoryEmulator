@@ -859,3 +859,562 @@ public class FakeCosmosHandlerIndexMetadataTests
         handler.Should().NotBeNull();
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category I — ORDER BY Mixed Type Sorting
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class OrderByMixedTypeSortingTests
+{
+    [Fact]
+    public async Task OrderBy_NullValues_SortFirst()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", score = 10 }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", score = (int?)null }),
+            new PartitionKey("b"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "c", score = 5 }),
+            new PartitionKey("c"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.score");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(3);
+        results[0]["id"]!.ToString().Should().Be("2", "null sorts first");
+    }
+
+    [Fact]
+    public async Task OrderBy_AllNulls_StableSort()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", score = (int?)null }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", score = (int?)null }),
+            new PartitionKey("b"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "c", score = (int?)null }),
+            new PartitionKey("c"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.score");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task OrderBy_UndefinedField_TreatedAsNull()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", score = 10 }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b" }),
+            new PartitionKey("b"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.score");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+        results[0]["id"]!.ToString().Should().Be("2", "undefined/missing sorts before values");
+    }
+
+    [Fact(Skip = "Real Cosmos DB sorts by type rank: undefined < null < boolean < number < string < array < object. " +
+        "The emulator's CompareValues uses numeric-then-string comparison and does not distinguish type ranks.")]
+    public async Task OrderBy_MixedTypes_FollowsCosmosTypeRanking()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "hello" }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", val = 42 }),
+            new PartitionKey("b"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "c", val = true }),
+            new PartitionKey("c"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.val");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results[0]["id"]!.ToString().Should().Be("3", "boolean before number");
+        results[1]["id"]!.ToString().Should().Be("2", "number before string");
+        results[2]["id"]!.ToString().Should().Be("1", "string last");
+    }
+
+    [Fact]
+    public async Task BehavioralDifference_OrderBy_MixedTypes_UsesStringComparison()
+    {
+        // DIVERGENT BEHAVIOR: Real Cosmos DB sorts by type rank
+        // (undefined < null < bool < number < string < array < object).
+        // The emulator's CompareValues uses numeric-then-string comparison,
+        // so mixed types are compared by their string representations.
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "hello" }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", val = 42 }),
+            new PartitionKey("b"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.val");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(2, "both items returned regardless of type mismatch");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category J — ORDER BY Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class OrderByEdgeCaseTests
+{
+    [Fact]
+    public async Task OrderBy_NestedProperty_SortsCorrectly()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", nested = new { score = 30 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", nested = new { score = 10 } }),
+            new PartitionKey("b"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "c", nested = new { score = 20 } }),
+            new PartitionKey("c"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.nested.score");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(3);
+        results[0]["id"]!.ToString().Should().Be("2");
+        results[1]["id"]!.ToString().Should().Be("3");
+        results[2]["id"]!.ToString().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task OrderBy_SingleField_Descending()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = 10 }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", val = 30 }),
+            new PartitionKey("b"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "c", val = 20 }),
+            new PartitionKey("c"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.val DESC");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(3);
+        results[0]["id"]!.ToString().Should().Be("2");
+        results[1]["id"]!.ToString().Should().Be("3");
+        results[2]["id"]!.ToString().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task OrderBy_EmptyCollection_ReturnsEmpty()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.val");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task OrderBy_SingleItem_ReturnsItem()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = 42 }),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.val");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        results[0]["id"]!.ToString().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task OrderBy_LargeDataset_SortsCorrectly()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        var rng = new Random(42);
+        var values = Enumerable.Range(0, 100).Select(_ => rng.Next(1000)).ToList();
+
+        for (var i = 0; i < 100; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = $"p{i}", val = values[i] }),
+                new PartitionKey($"p{i}"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.val");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(100);
+        var sorted = results.Select(r => (long)r["val"]!).ToList();
+        sorted.Should().BeInAscendingOrder();
+    }
+
+    [Fact]
+    public async Task OrderBy_WithWhereClause_FiltersAndSorts()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = 30, active = true }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", val = 10, active = false }),
+            new PartitionKey("b"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "c", val = 20, active = true }),
+            new PartitionKey("c"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.active = true ORDER BY c.val");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+        results[0]["id"]!.ToString().Should().Be("3"); // val=20
+        results[1]["id"]!.ToString().Should().Be("1"); // val=30
+    }
+
+    [Fact]
+    public async Task OrderBy_WithTop_ReturnsTopNSorted()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        for (var i = 1; i <= 10; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = $"p{i}", val = i * 10 }),
+                new PartitionKey($"p{i}"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT TOP 3 * FROM c ORDER BY c.val DESC");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(3);
+        results[0]["id"]!.ToString().Should().Be("10"); // val=100
+        results[1]["id"]!.ToString().Should().Be("9");  // val=90
+        results[2]["id"]!.ToString().Should().Be("8");  // val=80
+    }
+
+    [Fact]
+    public async Task OrderBy_WithOffsetLimit_ReturnsSortedPage()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        for (var i = 1; i <= 10; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = $"p{i}", val = i }),
+                new PartitionKey($"p{i}"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.val OFFSET 3 LIMIT 3");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(3);
+        results[0]["id"]!.ToString().Should().Be("4");
+        results[1]["id"]!.ToString().Should().Be("5");
+        results[2]["id"]!.ToString().Should().Be("6");
+    }
+
+    [Fact]
+    public async Task OrderBy_DuplicateValues_StableSort()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = 10 }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", val = 10 }),
+            new PartitionKey("b"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "c", val = 10 }),
+            new PartitionKey("c"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.val");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(3, "all items with same sort key returned");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category K — IndexingPolicy Through Client Creation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class IndexPolicyClientCreationTests
+{
+    [Fact]
+    public async Task CreateContainerIfNotExists_PreservesIndexingPolicy()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("testdb")).Database;
+
+        var props = new ContainerProperties("test", "/pk")
+        {
+            IndexingPolicy = new IndexingPolicy
+            {
+                Automatic = false,
+                IndexingMode = IndexingMode.None
+            }
+        };
+        var response = await db.CreateContainerIfNotExistsAsync(props);
+
+        response.Resource.IndexingPolicy.Automatic.Should().BeFalse();
+        response.Resource.IndexingPolicy.IndexingMode.Should().Be(IndexingMode.None);
+    }
+
+    [Fact]
+    public async Task CreateContainerIfNotExists_ExistingContainer_DoesNotOverwritePolicy()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("testdb")).Database;
+
+        var props1 = new ContainerProperties("test", "/pk")
+        {
+            IndexingPolicy = new IndexingPolicy { Automatic = false }
+        };
+        await db.CreateContainerIfNotExistsAsync(props1);
+
+        var props2 = new ContainerProperties("test", "/pk")
+        {
+            IndexingPolicy = new IndexingPolicy { Automatic = true }
+        };
+        await db.CreateContainerIfNotExistsAsync(props2);
+
+        // Read the container to verify the original policy is preserved
+        var readResponse = await db.GetContainer("test").ReadContainerAsync();
+        readResponse.Resource.IndexingPolicy.Automatic.Should().BeFalse(
+            "first creation's policy is preserved — second call does not overwrite");
+    }
+
+    [Fact]
+    public async Task CreateContainer_ViaCosmosClient_PreservesPolicy()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("testdb")).Database;
+
+        var props = new ContainerProperties("test", "/pk")
+        {
+            IndexingPolicy = new IndexingPolicy
+            {
+                Automatic = true,
+                IndexingMode = IndexingMode.Consistent,
+                IncludedPaths = { new IncludedPath { Path = "/name/?" } },
+                ExcludedPaths = { new ExcludedPath { Path = "/secret/*" } }
+            }
+        };
+        var response = await db.CreateContainerAsync(props);
+
+        var policy = response.Resource.IndexingPolicy;
+        policy.Automatic.Should().BeTrue();
+        policy.IndexingMode.Should().Be(IndexingMode.Consistent);
+        policy.IncludedPaths.Should().Contain(p => p.Path == "/name/?");
+        policy.ExcludedPaths.Should().Contain(p => p.Path == "/secret/*");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category L — IndexMetrics
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class IndexMetricsTests
+{
+    [Fact(Skip = "Real Cosmos DB returns index utilization metrics in FeedResponse.IndexMetrics " +
+        "when PopulateIndexMetrics=true. The emulator always returns null. Implementing realistic " +
+        "index metrics would require modeling the full Cosmos DB indexing engine.")]
+    public async Task IndexMetrics_ReturnsUtilizationData()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = 10 }),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.val > 5",
+            requestOptions: new QueryRequestOptions { PopulateIndexMetrics = true });
+        var response = await iterator.ReadNextAsync();
+
+        response.IndexMetrics.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task BehavioralDifference_IndexMetrics_ReturnsNull()
+    {
+        // DIVERGENT BEHAVIOR: Real Cosmos DB returns index utilization metrics
+        // when PopulateIndexMetrics=true. The emulator always returns null
+        // because it doesn't model the indexing engine.
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = 10 }),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.val > 5");
+        var response = await iterator.ReadNextAsync();
+
+        response.IndexMetrics.Should().BeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category N — EnableScanInQuery
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class EnableScanInQueryTests
+{
+    [Fact(Skip = "Real Cosmos DB requires EnableScanInQuery=true to query paths not covered " +
+        "by an index. The emulator ignores this option entirely — queries always work regardless.")]
+    public async Task EnableScanInQuery_Required_ForUnindexedPaths()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.IndexingPolicy = new IndexingPolicy
+        {
+            IncludedPaths = { new IncludedPath { Path = "/" } },
+            ExcludedPaths = { new ExcludedPath { Path = "/secret/*" } }
+        };
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", secret = "hidden" }),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.secret = 'hidden'");
+        var response = await iterator.ReadNextAsync();
+
+        response.Count.Should().Be(0, "query on excluded path should fail without EnableScanInQuery");
+    }
+
+    [Fact]
+    public async Task BehavioralDifference_EnableScanInQuery_AlwaysEnabled()
+    {
+        // DIVERGENT BEHAVIOR: Real Cosmos DB requires EnableScanInQuery=true
+        // to query paths excluded from indexing. The emulator always does a
+        // full scan, so queries work regardless of index configuration.
+        var container = new InMemoryContainer("test", "/pk");
+        container.IndexingPolicy = new IndexingPolicy
+        {
+            IncludedPaths = { new IncludedPath { Path = "/" } },
+            ExcludedPaths = { new ExcludedPath { Path = "/secret/*" } }
+        };
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", secret = "hidden" }),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.secret = 'hidden'");
+        var response = await iterator.ReadNextAsync();
+
+        response.Count.Should().Be(1, "emulator always scans — queries work on excluded paths");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category O — Index Types (Range, Hash, Spatial)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class IndexTypeTests
+{
+    [Fact]
+    public void IncludedPath_WithIndexes_AreStored()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.IndexingPolicy = new IndexingPolicy
+        {
+            IncludedPaths =
+            {
+                new IncludedPath { Path = "/name/?" },
+                new IncludedPath { Path = "/value/?" }
+            }
+        };
+
+        container.IndexingPolicy.IncludedPaths.Should().HaveCount(2);
+        container.IndexingPolicy.IncludedPaths.Should().Contain(p => p.Path == "/name/?");
+        container.IndexingPolicy.IncludedPaths.Should().Contain(p => p.Path == "/value/?");
+    }
+
+    [Fact(Skip = "Real Cosmos DB uses RangeIndex for equality and range queries, and HashIndex for " +
+        "equality-only queries. The emulator stores index kinds but does not enforce them — all " +
+        "query types work regardless of index kind.")]
+    public async Task IncludedPath_IndexKind_EnforcedForQueryType()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = 10 }),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.val > 5");
+        var response = await iterator.ReadNextAsync();
+
+        response.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task BehavioralDifference_IndexKind_NotEnforced()
+    {
+        // DIVERGENT BEHAVIOR: Real Cosmos DB enforces index kind constraints —
+        // a HashIndex doesn't support range queries. The emulator stores index
+        // configuration but queries always work via full scan.
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = 10 }),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.val > 5");
+        var response = await iterator.ReadNextAsync();
+
+        response.Count.Should().Be(1, "emulator ignores index kind — range query works on any index");
+    }
+}

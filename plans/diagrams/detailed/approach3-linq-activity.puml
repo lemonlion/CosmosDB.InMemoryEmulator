@@ -6,9 +6,8 @@ skinparam ActivityBorderColor #333
 skinparam ActivityBackgroundColor #E8F4FD
 skinparam PartitionBorderColor #666
 
-start
-
 |Setup|
+start
 :Create **new InMemoryContainer**("orders", "/pk");
 :Create **new FakeCosmosHandler**(inMemoryContainer);
 :Create **new CosmosClient**(connectionString,
@@ -29,7 +28,7 @@ end note
 |Test Code|
 :Call **client.GetContainer**(databaseId, containerId)
 → Container (real SDK proxy —
-no HTTP call, lightweight);|
+no HTTP call, lightweight);
 
 #FFF3E0:=== LINQ Expression Building ===|
 
