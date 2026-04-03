@@ -510,15 +510,31 @@ public class FakeCosmosHandler : HttpMessageHandler
             // DISTINCT
             if (parsed.IsDistinct)
             {
-                queryInfo["distinctType"] = parsed.OrderByFields is { Length: > 0 }
-                    ? "Ordered"
-                    : "Unordered";
+                // "Ordered" only when SELECT DISTINCT VALUE <expr> ORDER BY <same-expr>
+                var isOrdered = false;
+                if (parsed.IsValueSelect && parsed.OrderByFields is { Length: > 0 } && parsed.SelectFields.Length == 1)
+                {
+                    var selectExpr = CosmosSqlParser.ExprToString(parsed.SelectFields[0].SqlExpr);
+                    var orderExpr = parsed.OrderByFields[0].Field ?? CosmosSqlParser.ExprToString(parsed.OrderByFields[0].Expression);
+                    isOrdered = string.Equals(selectExpr, orderExpr, StringComparison.OrdinalIgnoreCase);
+                }
+                queryInfo["distinctType"] = isOrdered ? "Ordered" : "Unordered";
             }
 
             // GROUP BY
             if (parsed.GroupByFields is { Length: > 0 })
             {
                 queryInfo["groupByExpressions"] = new JArray(parsed.GroupByFields);
+                // Populate groupByAliases from SELECT fields
+                var aliases = new JArray();
+                foreach (var sf in parsed.SelectFields)
+                {
+                    if (sf.Alias is not null)
+                        aliases.Add(sf.Alias);
+                    else if (sf.Expression is not null)
+                        aliases.Add(sf.Expression);
+                }
+                queryInfo["groupByAliases"] = aliases;
             }
 
             // Aggregates — detect COUNT, SUM, MIN, MAX, AVG in SELECT fields
@@ -813,7 +829,7 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// </summary>
     private static string StripOffsetLimit(string sql)
     {
-        return Regex.Replace(sql, @"\s+OFFSET\s+\d+\s+LIMIT\s+\d+", "", RegexOptions.IgnoreCase).TrimEnd();
+        return Regex.Replace(sql, @"\s*OFFSET\s+\S+\s+LIMIT\s+\S+", "", RegexOptions.IgnoreCase).TrimEnd();
     }
 
     /// <summary>
@@ -826,7 +842,7 @@ public class FakeCosmosHandler : HttpMessageHandler
 
         // Build orderByItems array: [{"item": c.field1}, {"item": c.field2}]
         var orderByItemsParts = parsed.OrderByFields!
-            .Select(field => $"{{\"item\": {field.Field}}}")
+            .Select(field => $"{{\"item\": {field.Field ?? CosmosSqlParser.ExprToString(field.Expression)}}}")
             .ToList();
         var orderByItemsArray = $"[{string.Join(", ", orderByItemsParts)}]";
 
@@ -848,7 +864,7 @@ public class FakeCosmosHandler : HttpMessageHandler
 
         // ORDER BY clause
         var orderByStr = string.Join(", ", parsed.OrderByFields!.Select(field =>
-            $"{field.Field} {(field.Ascending ? "ASC" : "DESC")}"));
+            $"{field.Field ?? CosmosSqlParser.ExprToString(field.Expression)} {(field.Ascending ? "ASC" : "DESC")}"));
         sb.Append($" ORDER BY {orderByStr}");
 
         return sb.ToString();
