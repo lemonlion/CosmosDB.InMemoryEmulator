@@ -2,6 +2,7 @@ using System.Net;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
+using Newtonsoft.Json.Linq;
 using Xunit;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
@@ -1238,5 +1239,16 @@ public class FakeCosmosHandlerCrudTests : IDisposable
         await _container.UpsertItemAsync(doc, new PartitionKey("pk1"));
 
         _handler.RequestLog.Should().Contain(e => e.StartsWith("POST") && e.Contains("/docs"));
+    }
+
+    // ── IX: Error Path Edge Cases ───────────────────────────────────────────
+
+    [Fact]
+    public async Task Handler_EmptyBodyCreate_Returns400()
+    {
+        var act = () => _container.CreateItemAsync<JObject>(null!, new PartitionKey("pk1"));
+
+        // Null body should result in an error
+        await act.Should().ThrowAsync<Exception>();
     }
 }

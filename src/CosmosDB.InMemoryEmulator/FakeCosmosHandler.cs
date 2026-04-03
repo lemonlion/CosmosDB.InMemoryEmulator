@@ -1468,6 +1468,8 @@ public class FakeCosmosHandler : HttpMessageHandler
 
         public RoutingHandler(IReadOnlyDictionary<string, FakeCosmosHandler> handlers)
         {
+            if (!handlers.Any())
+                throw new ArgumentException("At least one handler must be registered with CreateRouter().", nameof(handlers));
             _handlers = new(handlers, StringComparer.Ordinal);
             _default = handlers.Values.First();
         }
