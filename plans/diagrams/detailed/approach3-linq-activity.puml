@@ -24,6 +24,13 @@ note right
   go to FakeCosmosHandler in-process.
 end note
 
+#FFF3E0:=== Get Container ===|
+
+|Test Code|
+:Call **client.GetContainer**(databaseId, containerId)
+→ Container (real SDK proxy —
+no HTTP call, lightweight);|
+
 #FFF3E0:=== LINQ Expression Building ===|
 
 |CosmosClient (real SDK)|

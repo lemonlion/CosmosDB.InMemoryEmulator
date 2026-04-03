@@ -190,9 +190,17 @@ Test -> IMC ** : new InMemoryContainer("orders", "/pk")
 Test -> Handler ** : new FakeCosmosHandler(inMemoryContainer)
 Test -> SDK ** : new CosmosClient(connectionString,\n  new CosmosClientOptions {\n    ConnectionMode = Gateway,\n    HttpClientFactory = () =>\n      new HttpClient(handler) })
 
+== Get Container ==
+
+Test -> SDK ++ : client.GetContainer(databaseId, containerId)
+note right of SDK
+  Lightweight proxy — no HTTP call.
+end note
+SDK --> Test -- : Container (real SDK proxy)
+
 == Query Plan Phase (SDK-initiated) ==
 
-Test -> SDKContainer ++ : GetItemQueryIterator<T>(queryText)
+Test -> SDKContainer ++ : container.GetItemQueryIterator<T>(queryText)
 SDKContainer -> Http ++ : POST /dbs/{db}/colls/{coll}/docs\nHeader: x-ms-cosmos-is-query-plan-request: True\nBody: { "query": "SELECT …" }
 Http -> Handler ++ : SendAsync(request)
 Handler -> Handler : Route: query plan request detected
@@ -308,9 +316,17 @@ Test -> IMC ** : new InMemoryContainer("orders", "/pk")
 Test -> Handler ** : new FakeCosmosHandler(inMemoryContainer)
 Test -> SDK ** : new CosmosClient(connectionString,\n  new CosmosClientOptions {\n    ConnectionMode = Gateway,\n    HttpClientFactory = () =>\n      new HttpClient(handler) })
 
+== Get Container ==
+
+Test -> SDK ++ : client.GetContainer(databaseId, containerId)
+note right of SDK
+  Lightweight proxy — no HTTP call.
+end note
+SDK --> Test -- : Container (real SDK proxy)
+
 == LINQ Expression Building ==
 
-Test -> SDKContainer ++ : GetItemLinqQueryable<T>()
+Test -> SDKContainer ++ : container.GetItemLinqQueryable<T>()
 SDKContainer -> LinqProvider ** : CosmosLinqQueryProvider\n(real SDK query provider)
 SDKContainer -> Queryable ** : IOrderedQueryable<T>\n(backed by CosmosLinqQueryProvider)
 SDKContainer --> Test -- : IOrderedQueryable<T>

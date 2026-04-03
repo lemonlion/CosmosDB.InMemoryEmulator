@@ -6,6 +6,7 @@ skinparam sequenceArrowThickness 2
 
 actor "Test Code" as Test
 participant "CosmosClient\n(real SDK)" as SDK
+participant "Container\n(real SDK)" as SDKContainer
 participant "CosmosLinqQuery-\nProvider (SDK)" as LinqProvider
 participant "IOrderedQueryable<T>" as Queryable
 participant "HttpClient" as Http
@@ -20,11 +21,15 @@ Test -> IMC ** : new InMemoryContainer(…)
 Test -> Handler ** : new FakeCosmosHandler(container)
 Test -> SDK ** : new CosmosClient(…, HttpClientFactory)
 
+== Get Container ==
+Test -> SDK ++ : client.GetContainer(databaseId, containerId)
+SDK --> Test -- : Container (real SDK proxy)
+
 == LINQ Expression Building ==
-Test -> SDK ++ : container.GetItemLinqQueryable<T>()
-SDK -> LinqProvider ** : CosmosLinqQueryProvider
-SDK -> Queryable ** : IOrderedQueryable<T>
-SDK --> Test -- : IOrderedQueryable<T>
+Test -> SDKContainer ++ : container.GetItemLinqQueryable<T>()
+SDKContainer -> LinqProvider ** : CosmosLinqQueryProvider
+SDKContainer -> Queryable ** : IOrderedQueryable<T>
+SDKContainer --> Test -- : IOrderedQueryable<T>
 
 Test -> Queryable : .Where() / .OrderBy() / .Select()\n(builds Expression Tree)
 

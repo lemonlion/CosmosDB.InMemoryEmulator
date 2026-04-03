@@ -36,9 +36,19 @@ note over SDK
   to FakeCosmosHandler, never to network.
 end note
 
+== Get Container ==
+
+Test -> SDK ++ : client.GetContainer(databaseId, containerId)
+note right of SDK
+  Lightweight proxy — no HTTP call.
+  Returns a real SDK Container that
+  routes all operations through HttpClient.
+end note
+SDK --> Test -- : Container (real SDK proxy)
+
 == LINQ Expression Building ==
 
-Test -> SDKContainer ++ : GetItemLinqQueryable<T>()
+Test -> SDKContainer ++ : container.GetItemLinqQueryable<T>()
 
 SDKContainer -> LinqProvider ** : CosmosLinqQueryProvider\n(real SDK query provider —\n NOT LINQ-to-Objects)
 

@@ -17,7 +17,9 @@ partition "Setup" {
 }
 
 partition "CosmosClient (real SDK)" <<sdk>> {
-  :GetItemQueryIterator<T>(queryText);
+  :client.**GetContainer**(databaseId, containerId)
+  → Container (real SDK proxy);
+  :container.**GetItemQueryIterator<T>**(queryText);
   :SDK builds HTTP POST
   (query plan request);
 }

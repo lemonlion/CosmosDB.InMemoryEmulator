@@ -34,9 +34,19 @@ note over SDK
   to FakeCosmosHandler, never to network.
 end note
 
+== Get Container ==
+
+Test -> SDK ++ : client.GetContainer(databaseId, containerId)
+note right of SDK
+  Lightweight proxy — no HTTP call.
+  Returns a real SDK Container that
+  routes all operations through HttpClient.
+end note
+SDK --> Test -- : Container (real SDK proxy)
+
 == Query Plan Phase (SDK-initiated) ==
 
-Test -> SDKContainer ++ : GetItemQueryIterator<T>(queryText)
+Test -> SDKContainer ++ : container.GetItemQueryIterator<T>(queryText)
 
 SDKContainer -> Http ++ : POST /dbs/{db}/colls/{coll}/docs\nHeader: x-ms-cosmos-is-query-plan-request: True\nHeader: Content-Type: application/query+json\nBody: { "query": "SELECT * FROM c\n  WHERE c.status = 'active'\n  ORDER BY c.timestamp DESC" }
 Http -> Handler ++ : SendAsync(request)

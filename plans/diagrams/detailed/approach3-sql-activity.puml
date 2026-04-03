@@ -25,6 +25,10 @@ note right
 end note
 
 |Test Code|
+:Call **client.GetContainer**(databaseId, containerId)
+→ Container (real SDK proxy —
+no HTTP call, lightweight);|
+
 :Call **container.GetItemQueryIterator<T>**(queryText);
 
 #FFF3E0:=== Query Plan Phase (SDK-initiated) ===|

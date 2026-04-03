@@ -3888,7 +3888,7 @@ public class InMemoryContainer : Container
                 like.EscapeChar),
             ExistsExpression exists => EvaluateExists(new ExistsCondition(exists.RawSubquery), item, fromAlias, parameters, null),
             CoalesceExpression coal => EvalCoalesce(coal, item, fromAlias, parameters),
-            TernaryExpression tern => IsTruthy(EvaluateSqlExpression(tern.Condition, item, fromAlias, parameters))
+            TernaryExpression tern => EvaluateSqlExpression(tern.Condition, item, fromAlias, parameters) is bool tb && tb
                 ? EvaluateSqlExpression(tern.IfTrue, item, fromAlias, parameters)
                 : EvaluateSqlExpression(tern.IfFalse, item, fromAlias, parameters),
             ObjectLiteralExpression obj => EvaluateObjectLiteral(obj, item, fromAlias, parameters),

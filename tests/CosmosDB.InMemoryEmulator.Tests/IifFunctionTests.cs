@@ -554,6 +554,261 @@ public class IifFunctionTests
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    //  Group 8: Non-boolean condition edge cases (Category A)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Iif_NegativeNumberCondition_ReturnsFalseBranch()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(-1, 'yes', 'no') AS result FROM c WHERE c.id = '1'");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().ContainSingle();
+        results[0]["result"]!.ToString().Should().Be("no");
+    }
+
+    [Fact]
+    public async Task Iif_FloatCondition_ReturnsFalseBranch()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(3.14, 'yes', 'no') AS result FROM c WHERE c.id = '1'");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().ContainSingle();
+        results[0]["result"]!.ToString().Should().Be("no");
+    }
+
+    [Fact]
+    public async Task Iif_BooleanTrueLiteral_ReturnsTrueBranch()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(true, 'yes', 'no') AS result FROM c WHERE c.id = '1'");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().ContainSingle();
+        results[0]["result"]!.ToString().Should().Be("yes");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Group 9: Type-checking function conditions (Category B)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Iif_WithIsNullCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(IS_NULL(c.nested), 'null', 'not null') AS result FROM c ORDER BY c.id");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().HaveCount(3);
+        results[0]["result"]!.ToString().Should().Be("not null"); // nested = object
+        results[1]["result"]!.ToString().Should().Be("null");     // nested = null
+        results[2]["result"]!.ToString().Should().Be("null");     // nested = null
+    }
+
+    [Fact]
+    public async Task Iif_WithIsNumberCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(IS_NUMBER(c.value), 'number', 'not number') AS result FROM c ORDER BY c.id");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().HaveCount(3);
+        results.Should().AllSatisfy(r => r["result"]!.ToString().Should().Be("number"));
+    }
+
+    [Fact]
+    public async Task Iif_WithIsBoolCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(IS_BOOL(c.isActive), 'bool', 'not bool') AS result FROM c ORDER BY c.id");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().HaveCount(3);
+        results.Should().AllSatisfy(r => r["result"]!.ToString().Should().Be("bool"));
+    }
+
+    [Fact]
+    public async Task Iif_WithIsStringCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(IS_STRING(c.name), 'string', 'not string') AS result FROM c ORDER BY c.id");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().HaveCount(3);
+        results.Should().AllSatisfy(r => r["result"]!.ToString().Should().Be("string"));
+    }
+
+    [Fact]
+    public async Task Iif_WithIsArrayCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(IS_ARRAY(c.tags), 'array', 'not array') AS result FROM c ORDER BY c.id");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().HaveCount(3);
+        results.Should().AllSatisfy(r => r["result"]!.ToString().Should().Be("array"));
+    }
+
+    [Fact]
+    public async Task Iif_WithStartsWithCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(STARTSWITH(c.name, 'A'), 'A-name', 'other') AS result FROM c ORDER BY c.id");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().HaveCount(3);
+        results[0]["result"]!.ToString().Should().Be("A-name"); // Alice
+        results[1]["result"]!.ToString().Should().Be("other");  // Bob
+        results[2]["result"]!.ToString().Should().Be("other");  // Charlie
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Group 10: Complex expression conditions (Category C)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Iif_WithArithmeticCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.value + 5 > 12, 'yes', 'no') AS result FROM c ORDER BY c.id");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().HaveCount(3);
+        results[0]["result"]!.ToString().Should().Be("yes"); // 10+5=15 > 12
+        results[1]["result"]!.ToString().Should().Be("yes"); // 20+5=25 > 12
+        results[2]["result"]!.ToString().Should().Be("no");  // 0+5=5 NOT > 12
+    }
+
+    [Fact]
+    public async Task Iif_WithNestedPropertyCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition(
+            "SELECT IIF(IS_DEFINED(c.nested) AND NOT IS_NULL(c.nested) AND c.nested.score > 5, 'high', 'low') AS result FROM c ORDER BY c.id");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().HaveCount(3);
+        results[0]["result"]!.ToString().Should().Be("high"); // score=9.5
+        results[1]["result"]!.ToString().Should().Be("low");  // nested=null
+        results[2]["result"]!.ToString().Should().Be("low");  // nested=null
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Group 11: Undefined property in return branches (Category D)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Iif_TrueCondition_UndefinedInUnselectedBranch_ReturnsValue()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(true, 'value', c.nonExistent) AS r FROM c WHERE c.id = '1'");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().ContainSingle();
+        results[0]["r"]!.ToString().Should().Be("value");
+    }
+
+    [Fact]
+    public async Task Iif_FalseCondition_UndefinedInUnselectedBranch_ReturnsValue()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(false, c.nonExistent, 'fallback') AS r FROM c WHERE c.id = '1'");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().ContainSingle();
+        results[0]["r"]!.ToString().Should().Be("fallback");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Group 12: Complex return values (Category E)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Iif_WithNestedPropertyReturnValue_ReturnsNestedValue()
+    {
+        await SeedItems();
+        var query = new QueryDefinition(
+            "SELECT IIF(IS_DEFINED(c.nested) AND NOT IS_NULL(c.nested), c.nested.score, 0) AS result FROM c ORDER BY c.id");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().HaveCount(3);
+        ((double)results[0]["result"]!).Should().Be(9.5);
+        ((long)results[1]["result"]!).Should().Be(0);
+        ((long)results[2]["result"]!).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Iif_WithFloatReturnValues_ReturnsFloat()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(true, 3.14, 0) AS result FROM c WHERE c.id = '1'");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().ContainSingle();
+        ((double)results[0]["result"]!).Should().Be(3.14);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Group 13: Composition with other SQL features (Category F)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Iif_WithCoalesce_ComposesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT COALESCE(IIF(false, null, null), 'default') AS r FROM c WHERE c.id = '1'");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().ContainSingle();
+        results[0]["r"]!.ToString().Should().Be("default");
+    }
+
+    [Fact]
+    public async Task Iif_MultipleInWhereWithAnd_FiltersCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT c.name FROM c WHERE IIF(c.isActive, true, false) = true AND c.value > 5");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().ContainSingle();
+        results[0]["name"]!.ToString().Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task Iif_WithStringConcatInBothBranches_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition(
+            "SELECT IIF(c.isActive, CONCAT('Active-', c.name), CONCAT('Inactive-', c.name)) AS label FROM c ORDER BY c.id");
+
+        var results = await QueryAll<JObject>(query);
+
+        results.Should().HaveCount(3);
+        results[0]["label"]!.ToString().Should().Be("Active-Alice");
+        results[1]["label"]!.ToString().Should().Be("Inactive-Bob");
+        results[2]["label"]!.ToString().Should().Be("Active-Charlie");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     //  Helper
     // ═══════════════════════════════════════════════════════════════════════════
 
