@@ -1162,27 +1162,25 @@ public class DocumentSizeErrorResponseDetailTests
     }
 
     [Fact]
-    public async Task Create_OverSizeLimit_ActivityIdIsNull()
+    public async Task Create_OverSizeLimit_ActivityIdIsPopulated()
     {
         var doc = new TestDocument { Id = "large", PartitionKey = "pk1", Name = MakeOversizedValue() };
 
         var act = () => _container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
         var ex = await act.Should().ThrowAsync<CosmosException>();
-        // CosmosException ActivityId is null when constructed with string.Empty
-        ex.And.ActivityId.Should().BeNull();
+        ex.And.ActivityId.Should().NotBeNullOrEmpty();
     }
 
     [Fact]
-    public async Task Create_OverSizeLimit_RequestChargeIsZero()
+    public async Task Create_OverSizeLimit_RequestChargeIsGreaterThanZero()
     {
         var doc = new TestDocument { Id = "large", PartitionKey = "pk1", Name = MakeOversizedValue() };
 
         var act = () => _container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
         var ex = await act.Should().ThrowAsync<CosmosException>();
-        // Emulator returns 0 RU charge (6th param to CosmosException constructor)
-        ex.And.RequestCharge.Should().Be(0);
+        ex.And.RequestCharge.Should().BeGreaterThan(0);
     }
 }
 

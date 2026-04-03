@@ -30,6 +30,9 @@ internal sealed class InMemoryStreamFeedIterator : FeedIterator
 
         var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
         var response = new ResponseMessage(System.Net.HttpStatusCode.OK) { Content = stream };
+        response.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
+        response.Headers["x-ms-request-charge"] = "1";
+        response.Headers["x-ms-session-token"] = "0:0#1";
         return Task.FromResult(response);
     }
 }

@@ -124,9 +124,18 @@ public class InMemoryCosmosClient : CosmosClient
         var database = new InMemoryDatabase(id, this);
         if (!_databases.TryAdd(id, database))
         {
-            return Task.FromResult(new ResponseMessage(HttpStatusCode.Conflict));
+            return Task.FromResult(CreateStreamResponse(HttpStatusCode.Conflict));
         }
-        return Task.FromResult(new ResponseMessage(HttpStatusCode.Created));
+        return Task.FromResult(CreateStreamResponse(HttpStatusCode.Created));
+    }
+
+    private static ResponseMessage CreateStreamResponse(HttpStatusCode statusCode)
+    {
+        var msg = new ResponseMessage(statusCode);
+        msg.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
+        msg.Headers["x-ms-request-charge"] = "1";
+        msg.Headers["x-ms-session-token"] = "0:0#1";
+        return msg;
     }
 
     public Task<ResponseMessage> CreateDatabaseStreamAsync(

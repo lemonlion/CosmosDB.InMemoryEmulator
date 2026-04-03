@@ -166,9 +166,9 @@ public class InMemoryDatabase : Database
             container.IndexingPolicy = containerProperties.IndexingPolicy;
         if (!_containers.TryAdd(id, container))
         {
-            return Task.FromResult(new ResponseMessage(HttpStatusCode.Conflict));
+            return Task.FromResult(CreateStreamResponse(HttpStatusCode.Conflict));
         }
-        return Task.FromResult(new ResponseMessage(HttpStatusCode.Created));
+        return Task.FromResult(CreateStreamResponse(HttpStatusCode.Created));
     }
 
     public override Task<ResponseMessage> CreateContainerStreamAsync(
@@ -219,7 +219,7 @@ public class InMemoryDatabase : Database
     public override Task<ResponseMessage> ReadStreamAsync(
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
-        return Task.FromResult(new ResponseMessage(HttpStatusCode.OK));
+        return Task.FromResult(CreateStreamResponse(HttpStatusCode.OK));
     }
 
     public override Task<DatabaseResponse> DeleteAsync(
@@ -239,7 +239,16 @@ public class InMemoryDatabase : Database
         _containers.Clear();
         _users.Clear();
         _client?.RemoveDatabase(Id);
-        return Task.FromResult(new ResponseMessage(HttpStatusCode.NoContent));
+        return Task.FromResult(CreateStreamResponse(HttpStatusCode.NoContent));
+    }
+
+    private static ResponseMessage CreateStreamResponse(HttpStatusCode statusCode)
+    {
+        var msg = new ResponseMessage(statusCode);
+        msg.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
+        msg.Headers["x-ms-request-charge"] = "1";
+        msg.Headers["x-ms-session-token"] = "0:0#1";
+        return msg;
     }
 
     // ── Response builder (reuses NSubstitute pattern from BuildDatabaseResponse) ─

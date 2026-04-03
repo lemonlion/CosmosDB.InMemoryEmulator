@@ -118,9 +118,15 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
         {
             _items = items;
             ContinuationToken = continuationToken;
+            ActivityId = Guid.NewGuid().ToString();
+            var headers = new Headers();
+            headers["x-ms-activity-id"] = ActivityId;
+            headers["x-ms-request-charge"] = RequestCharge.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (continuationToken != null) headers["x-ms-continuation"] = continuationToken;
+            Headers = headers;
         }
 
-        public override Headers Headers { get; } = new();
+        public override Headers Headers { get; }
         public override IEnumerable<TItem> Resource => _items;
         public override HttpStatusCode StatusCode => HttpStatusCode.OK;
         public override CosmosDiagnostics Diagnostics => FakeDiagnostics;
@@ -128,7 +134,7 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
         public override string IndexMetrics => null!;
         public override string ContinuationToken { get; }
         public override double RequestCharge => 1;
-        public override string ActivityId { get; } = Guid.NewGuid().ToString();
+        public override string ActivityId { get; }
         public override string ETag => null!;
 
         public override IEnumerator<TItem> GetEnumerator() => _items.GetEnumerator();
