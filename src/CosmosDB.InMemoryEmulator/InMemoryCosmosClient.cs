@@ -228,7 +228,7 @@ public class InMemoryCosmosClient : CosmosClient
             idProp?.SetValue(account, "in-memory-emulator");
             return Task.FromResult(account);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is MissingMethodException or MissingMemberException or System.Reflection.TargetInvocationException)
         {
             Trace.TraceWarning(
                 "InMemoryCosmosClient: AccountProperties reflection failed " +

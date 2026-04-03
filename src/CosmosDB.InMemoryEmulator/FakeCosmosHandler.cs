@@ -405,7 +405,11 @@ public class FakeCosmosHandler : HttpMessageHandler
         var operations = new List<PatchOperation>();
         var condition = jObj["condition"]?.ToString();
 
-        foreach (var op in jObj["operations"]!.ToObject<JArray>()!)
+        var opsToken = jObj["operations"];
+        if (opsToken is null)
+            throw new InvalidOperationException("Patch body missing 'operations' array.");
+
+        foreach (var op in opsToken.ToObject<JArray>()!)
         {
             var opType = op["op"]!.ToString().ToLowerInvariant();
             var opPath = op["path"]!.ToString();
@@ -959,7 +963,10 @@ public class FakeCosmosHandler : HttpMessageHandler
             return documents;
         }
 
-        var rangeIndex = int.Parse(rangeId);
+        if (!int.TryParse(rangeId, out var rangeIndex))
+        {
+            return documents;
+        }
         return documents.Where(document => GetRangeIndex(document, payloadPropertyName) == rangeIndex).ToList();
     }
 
