@@ -1120,11 +1120,30 @@ public class InMemoryContainer : Container
         var updatedJson = jObj.ToString(Formatting.None);
         var sizeError = ValidateDocumentSizeStream(updatedJson);
         if (sizeError is not null) return Task.FromResult(sizeError);
-        var etag = GenerateETag();
-        _etags[key] = etag;
-        _timestamps[key] = DateTimeOffset.UtcNow;
-        var enrichedJson = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
-        _items[key] = enrichedJson;
+
+        string etag;
+        if (HasUniqueKeys)
+        {
+            lock (_uniqueKeyWriteLock)
+            {
+                if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
+                    return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+                etag = GenerateETag();
+                _etags[key] = etag;
+                _timestamps[key] = DateTimeOffset.UtcNow;
+                var enriched = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
+                _items[key] = enriched;
+            }
+        }
+        else
+        {
+            etag = GenerateETag();
+            _etags[key] = etag;
+            _timestamps[key] = DateTimeOffset.UtcNow;
+            var enriched = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
+            _items[key] = enriched;
+        }
+        var enrichedJson = _items[key];
         RecordChangeFeed(id, pk, enrichedJson);
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, enrichedJson, etag));
     }
@@ -5795,6 +5814,12 @@ public class InMemoryContainer : Container
                             var existingToken = parent[propertyName];
                             if (existingToken is not null)
                             {
+                                if (existingToken.Type is not (JTokenType.Integer or JTokenType.Float))
+                                {
+                                    throw new CosmosException(
+                                        $"Cannot increment non-numeric field '{path}'. Field type is {existingToken.Type}.",
+                                        HttpStatusCode.BadRequest, 0, string.Empty, 0);
+                                }
                                 var existingDouble = existingToken.Value<double>();
                                 var incrementDouble = Convert.ToDouble(incrementValue);
                                 var result = existingDouble + incrementDouble;

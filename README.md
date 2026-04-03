@@ -67,7 +67,7 @@ See the **[Feature Comparison With Alternatives](https://github.com/lemonlion/Co
 - **TTL / expiration** — container-level and per-item with lazy eviction
 - **ETag / optimistic concurrency** — `IfMatchEtag`, `IfNoneMatchEtag`, wildcard `*`
 - **System metadata** — `_ts` and `_etag` injected into stored items, matching real Cosmos DB
-- **Patch operations** — all 5 types with deep nested paths and filter predicates
+- **Patch operations** — all 6 types with deep nested paths and filter predicates
 - **Fault injection** — simulate 429 throttling, 503 errors, timeouts
 - **DI integration** — `UseInMemoryCosmosDB()` extension methods for `IServiceCollection`
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
