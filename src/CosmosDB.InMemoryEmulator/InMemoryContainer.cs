@@ -802,7 +802,7 @@ public class InMemoryContainer : Container
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
 
         var itemId = jObj["id"]?.ToString() ?? Guid.NewGuid().ToString();
-        var pk = PartitionKeyToString(partitionKey);
+        var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
 
         EvictIfExpired(key);
@@ -883,7 +883,7 @@ public class InMemoryContainer : Container
             "Item must have an 'id' property (case-sensitive, lowercase). " +
             "If your C# model uses PascalCase 'Id', ensure CosmosClientOptions.Serializer is configured " +
             "with camelCase naming (e.g. CosmosJsonDotNetSerializer with CamelCasePropertyNamesContractResolver).");
-        var pk = PartitionKeyToString(partitionKey);
+        var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
         if (!CheckIfMatchStream(requestOptions, key))
         {
@@ -2486,8 +2486,7 @@ public class InMemoryContainer : Container
     private List<string> GetAllItemsForPartition(QueryRequestOptions requestOptions)
     {
         if (requestOptions?.PartitionKey is not null
-            && requestOptions.PartitionKey != PartitionKey.None
-            && requestOptions.PartitionKey != PartitionKey.Null)
+            && requestOptions.PartitionKey != PartitionKey.None)
         {
             var pk = PartitionKeyToString(requestOptions.PartitionKey.Value);
             return _items.Where(kvp => kvp.Key.PartitionKey == pk && !IsExpired(kvp.Key)).Select(kvp => kvp.Value).ToList();
