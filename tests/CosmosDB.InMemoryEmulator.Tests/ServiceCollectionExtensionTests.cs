@@ -1728,3 +1728,660 @@ public class HttpMessageHandlerWrapperTests : IDisposable
         wrappedHandler.Should().BeOfType<FakeCosmosHandler>();
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 36 — Phase A: Bug Investigation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class ServiceCollectionBugInvestigationTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public void Idempotent_CalledTwice_NoExistingRegistrations_VerifyBehavior()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB();
+        services.UseInMemoryCosmosDB();
+
+        using var provider = services.BuildServiceProvider();
+        var clients = provider.GetServices<CosmosClient>().ToList();
+        clients.Should().ContainSingle();
+
+        var containers = provider.GetServices<Container>().ToList();
+        containers.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void UseInMemoryCosmosDB_RegisterFeedIteratorSetup_HasNoEffect()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB(o => o.RegisterFeedIteratorSetup = true);
+
+        using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<CosmosClient>();
+        client.Should().NotBeNull();
+        // FeedIteratorSetup is NOT registered by UseInMemoryCosmosDB — it's only
+        // relevant for UseInMemoryCosmosDB<T> and UseInMemoryCosmosContainers
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 36 — Phase B: Callback Coverage
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class ServiceCollectionCallbackTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public void OnContainerCreated_DefaultContainer_StillFires()
+    {
+        InMemoryContainer? captured = null;
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosContainers(o =>
+        {
+            o.OnContainerCreated = c => captured = c;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        _ = provider.GetRequiredService<Container>();
+
+        captured.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void OnHandlerCreated_DefaultContainer_StillFires()
+    {
+        FakeCosmosHandler? captured = null;
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.OnHandlerCreated = (name, handler) => captured = handler;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        _ = provider.GetRequiredService<Container>();
+
+        captured.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void OnHandlerCreated_AutoDetectMode_StillFires()
+    {
+        FakeCosmosHandler? captured = null;
+        var services = new ServiceCollection();
+        services.AddSingleton<Container>(sp =>
+        {
+            var client = sp.GetRequiredService<CosmosClient>();
+            return client.GetContainer("db", "existing");
+        });
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.OnHandlerCreated = (name, handler) => captured = handler;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        _ = provider.GetRequiredService<Container>();
+
+        captured.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void OnHandlerCreated_MultipleContainers_FiresForEach()
+    {
+        var names = new List<string>();
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.AddContainer("orders", "/pk")
+             .AddContainer("events", "/pk")
+             .AddContainer("users", "/pk");
+            o.OnHandlerCreated = (name, handler) => names.Add(name);
+        });
+
+        using var provider = services.BuildServiceProvider();
+        _ = provider.GetServices<Container>().ToList();
+
+        names.Should().HaveCount(3);
+        names.Should().Contain("orders");
+        names.Should().Contain("events");
+        names.Should().Contain("users");
+    }
+
+    [Fact]
+    public void TypedClient_OnClientCreated_ReturnsDIInstance()
+    {
+        EmployeeCosmosClient? captured = null;
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o =>
+        {
+            o.OnClientCreated = c => captured = (EmployeeCosmosClient)c;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var resolved = provider.GetRequiredService<EmployeeCosmosClient>();
+
+        captured.Should().BeSameAs(resolved);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 36 — Phase C: Idempotency & Multiple Calls
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class ServiceCollectionIdempotencyTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public void Idempotent_CalledTwice_AutoDetectMode()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<Container>(sp =>
+        {
+            var client = sp.GetRequiredService<CosmosClient>();
+            return client.GetContainer("db", "existing");
+        });
+        services.UseInMemoryCosmosDB();
+        services.UseInMemoryCosmosDB();
+
+        using var provider = services.BuildServiceProvider();
+        var clients = provider.GetServices<CosmosClient>().ToList();
+        clients.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void CalledTwice_DifferentContainers_SecondWins()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB(o => o.AddContainer("orders", "/pk"));
+        services.UseInMemoryCosmosDB(o => o.AddContainer("events", "/pk"));
+
+        using var provider = services.BuildServiceProvider();
+        var containers = provider.GetServices<Container>().ToList();
+        // Second call removes all containers and adds its own
+        containers.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void CalledTwice_DifferentDatabaseNames()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.DatabaseName = "db1";
+            o.AddContainer("orders", "/pk");
+        });
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.DatabaseName = "db2";
+            o.AddContainer("events", "/pk");
+        });
+
+        using var provider = services.BuildServiceProvider();
+        // Second call wins — client is replaced
+        var client = provider.GetRequiredService<CosmosClient>();
+        client.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void UseInMemoryCosmosContainers_CalledTwice_DifferentContainers()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosContainers(o => o.AddContainer("orders", "/pk"));
+        services.UseInMemoryCosmosContainers(o => o.AddContainer("events", "/pk"));
+
+        using var provider = services.BuildServiceProvider();
+        // Both registrations add; last is resolved for "Container"
+        var container = provider.GetRequiredService<Container>();
+        container.Should().NotBeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 36 — Phase D: Null / Edge Case / Validation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class ServiceCollectionEdgeCaseDeepDiveTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public void UseInMemoryCosmosDB_ExplicitNullConfigure()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB(null);
+
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<CosmosClient>().Should().NotBeNull();
+        provider.GetRequiredService<Container>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void UseInMemoryCosmosContainers_ExplicitNullConfigure()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosContainers(null);
+
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<Container>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void UseInMemoryCosmosDB_TypedClient_ExplicitNullConfigure()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(null);
+
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<EmployeeCosmosClient>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void ContainerConfig_DefaultValues()
+    {
+        var config = new ContainerConfig("my-container");
+        config.ContainerName.Should().Be("my-container");
+        config.PartitionKeyPath.Should().Be("/id");
+        config.DatabaseName.Should().BeNull();
+    }
+
+    [Fact]
+    public void ContainerConfig_WithDeconstruction()
+    {
+        var config = new ContainerConfig("my-container", "/pk", "mydb");
+        var (name, pkPath, dbName) = config;
+        name.Should().Be("my-container");
+        pkPath.Should().Be("/pk");
+        dbName.Should().Be("mydb");
+    }
+
+    [Fact]
+    public void ContainerConfig_EmptyContainerName()
+    {
+        var config = new ContainerConfig("");
+        config.ContainerName.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ContainerConfig_PartitionKeyPathWithoutLeadingSlash()
+    {
+        var config = new ContainerConfig("test", "id");
+        config.PartitionKeyPath.Should().Be("id");
+        // InMemoryContainer handles the path normalization
+    }
+
+    [Fact]
+    public void DoesNotAffectUnrelatedServices()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton("hello-world");
+        services.AddSingleton<object>(42);
+        services.UseInMemoryCosmosDB();
+
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<string>().Should().Be("hello-world");
+        provider.GetRequiredService<object>().Should().Be(42);
+        provider.GetRequiredService<CosmosClient>().Should().NotBeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 36 — Phase E: Query & CRUD Integration Through DI
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class ServiceCollectionQueryIntegrationTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public async Task UseInMemoryCosmosContainers_LinqQuery_ViaToFeedIteratorOverridable()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosContainers();
+
+        using var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice" }, new PartitionKey("pk"));
+
+        var iter = container.GetItemLinqQueryable<TestDocument>()
+            .Where(d => d.Name == "Alice")
+            .ToFeedIteratorOverridable();
+        var page = await iter.ReadNextAsync();
+        page.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task UseInMemoryCosmosDB_SqlQuery()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB();
+
+        using var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var iter = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        var results = await iter.ReadNextAsync();
+        results.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task UseInMemoryCosmosContainers_SqlQuery()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosContainers();
+
+        using var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var iter = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        var results = await iter.ReadNextAsync();
+        results.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task TypedClient_SqlQuery()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o =>
+            o.AddContainer("biometrics", "/partitionKey", "BiometricDb"));
+
+        using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<EmployeeCosmosClient>();
+        var container = client.GetContainer("BiometricDb", "biometrics");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var iter = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        var results = await iter.ReadNextAsync();
+        results.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task TypedClient_LinqQuery_ViaToFeedIteratorOverridable()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o =>
+            o.AddContainer("biometrics", "/partitionKey", "BiometricDb"));
+
+        using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<EmployeeCosmosClient>();
+        var container = client.GetContainer("BiometricDb", "biometrics");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice" }, new PartitionKey("pk"));
+
+        var iter = container.GetItemLinqQueryable<TestDocument>()
+            .Where(d => d.Name == "Alice")
+            .ToFeedIteratorOverridable();
+        var page = await iter.ReadNextAsync();
+        page.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task MultiContainer_DataIsolation_UseInMemoryCosmosDB()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB(o =>
+        {
+            o.AddContainer("orders", "/partitionKey");
+            o.AddContainer("events", "/partitionKey");
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<CosmosClient>();
+        var orders = client.GetContainer("in-memory-db", "orders");
+        var events = client.GetContainer("in-memory-db", "events");
+
+        await orders.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Order1" }, new PartitionKey("pk"));
+
+        var ordersIter = orders.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        var orderResults = await ordersIter.ReadNextAsync();
+        orderResults.Count.Should().Be(1);
+
+        var eventsIter = events.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        var eventResults = await eventsIter.ReadNextAsync();
+        eventResults.Count.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task UseInMemoryCosmosDB_StreamCrud()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB();
+
+        using var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+
+        var createResp = await container.CreateItemStreamAsync(
+            new MemoryStream(System.Text.Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk","name":"A"}""")),
+            new PartitionKey("pk"));
+        createResp.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var readResp = await container.ReadItemStreamAsync("1", new PartitionKey("pk"));
+        readResp.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 36 — Phase F: DI Patterns & Auto-Detect Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class AutoDetectEdgeCaseTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public void AutoDetect_ExistingInstanceRegistration_IsPreserved()
+    {
+        var instance = new InMemoryContainer("standalone", "/id");
+        var services = new ServiceCollection();
+        services.AddSingleton<Container>(instance);
+        services.UseInMemoryCosmosDB();
+
+        using var provider = services.BuildServiceProvider();
+        // Auto-detect preserves existing registrations
+        var containers = provider.GetServices<Container>().ToList();
+        containers.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void AutoDetect_FactoryWithAdditionalDependency_Resolves()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton("test-config-value");
+        services.AddSingleton<Container>(sp =>
+        {
+            var config = sp.GetRequiredService<string>();
+            var client = sp.GetRequiredService<CosmosClient>();
+            return client.GetContainer("db", config);
+        });
+        services.UseInMemoryCosmosDB();
+
+        using var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+        container.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void UseInMemoryCosmosContainers_ExistingCosmosClientFactory_StillResolvable()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<CosmosClient>(new InMemoryCosmosClient());
+        services.UseInMemoryCosmosContainers();
+
+        using var provider = services.BuildServiceProvider();
+        // CosmosClient is NOT removed by UseInMemoryCosmosContainers
+        provider.GetRequiredService<CosmosClient>().Should().NotBeNull();
+        provider.GetRequiredService<Container>().Should().NotBeNull();
+    }
+
+    [Fact]
+    public void UseInMemoryCosmosContainers_ContainerNotFromClient()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosContainers();
+
+        using var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+        // Container is a standalone InMemoryContainer, not from CosmosClient.GetContainer
+        container.Should().BeOfType<InMemoryContainer>();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 36 — Phase G: Lifecycle & Thread Safety
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class ServiceCollectionLifecycleTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public void ServiceProviderDisposal_DoesNotThrow()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB();
+
+        var provider = services.BuildServiceProvider();
+        _ = provider.GetRequiredService<CosmosClient>();
+        _ = provider.GetRequiredService<Container>();
+
+        var act = () => provider.Dispose();
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void ServiceProviderDisposal_TypedClient_DoesNotThrow()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
+
+        var provider = services.BuildServiceProvider();
+        _ = provider.GetRequiredService<EmployeeCosmosClient>();
+
+        var act = () => provider.Dispose();
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void ServiceProviderDisposal_ContainersOnly_DoesNotThrow()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosContainers();
+
+        var provider = services.BuildServiceProvider();
+        _ = provider.GetRequiredService<Container>();
+
+        var act = () => provider.Dispose();
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public async Task ConcurrentScopeResolution_SameBackingData()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB(o => o.AddContainer("shared", "/partitionKey"));
+
+        using var provider = services.BuildServiceProvider();
+
+        // Write from main scope
+        var container = provider.GetRequiredService<Container>();
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Shared" }, new PartitionKey("pk"));
+
+        // Read from concurrent "scopes" (singletons share the same instance)
+        var tasks = Enumerable.Range(0, 5).Select(async _ =>
+        {
+            var c = provider.GetRequiredService<Container>();
+            var iter = c.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+            var page = await iter.ReadNextAsync();
+            return page.Count;
+        });
+
+        var counts = await Task.WhenAll(tasks);
+        counts.Should().AllSatisfy(c => c.Should().Be(1));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 36 — Phase H: Fluent API & Options Model
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class ServiceCollectionFluentApiTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public void FluentChaining_InMemoryCosmosOptions_AddContainer_WithDatabaseName()
+    {
+        var options = new InMemoryCosmosOptions();
+        options.AddContainer("orders", "/pk", "db1")
+               .AddContainer("events", "/pk", "db2");
+
+        options.Containers.Should().HaveCount(2);
+        options.Containers[0].DatabaseName.Should().Be("db1");
+        options.Containers[1].DatabaseName.Should().Be("db2");
+    }
+
+    [Fact]
+    public void FluentChaining_WithHttpMessageHandlerWrapper_ChainedWithAddContainer()
+    {
+        HttpMessageHandler? captured = null;
+        var options = new InMemoryCosmosOptions();
+        var result = options
+            .AddContainer("orders", "/pk")
+            .WithHttpMessageHandlerWrapper(h => { captured = h; return h; })
+            .AddContainer("events", "/pk");
+
+        result.Containers.Should().HaveCount(2);
+        result.HttpMessageHandlerWrapper.Should().NotBeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 36 — Phase I: CosmosClient Properties
+// ═══════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class ServiceCollectionClientPropertyTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public void CosmosClient_Endpoint()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB();
+
+        using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<CosmosClient>();
+        client.Endpoint.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void TypedClient_IsInMemoryCosmosClientSubclass()
+    {
+        var services = new ServiceCollection();
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
+
+        using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<EmployeeCosmosClient>();
+        client.Should().BeAssignableTo<InMemoryCosmosClient>();
+    }
+}
