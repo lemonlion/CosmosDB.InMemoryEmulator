@@ -11,11 +11,11 @@ start
 :Create **new InMemoryContainer**("orders", "/pk");
 :Create **new FakeCosmosHandler**(inMemoryContainer);
 :Create **new CosmosClient**(connectionString,
-new CosmosClientOptions {
+new CosmosClientOptions ~{
   ConnectionMode = Gateway,
-  HttpClientFactory = () =>
+  HttpClientFactory = () →
     new HttpClient(handler)
-});
+~});
 
 note right
   Connection string is syntactically valid
@@ -34,12 +34,12 @@ no HTTP call, lightweight);
 
 |CosmosClient (real SDK)|
 :SDK builds **HTTP POST** request:
-**POST** /dbs/{db}/colls/{coll}/docs
+**POST** /dbs/~{db~}/colls/~{coll~}/docs
 Header: x-ms-cosmos-is-query-plan-request: True
 Header: Content-Type: application/query+json
-Body: { "query": "SELECT * FROM c
+Body: ~{ "query": "SELECT * FROM c
   WHERE c.status = 'active'
-  ORDER BY c.timestamp DESC" };
+  ORDER BY c.timestamp DESC" ~};
 
 |FakeCosmosHandler|
 :**SendAsync**(request);
@@ -64,13 +64,13 @@ x-ms-cosmos-is-query-plan-request
   + payload for SDK merge-sort);
 
 :Return **200 OK** with JSON body:
-{
-  queryRanges: [{min:"",max:"FF"}],
+~{
+  queryRanges: [~{min:"",max:"FF"~}],
   aggregates: [],
   orderBy: ["Descending"],
   distinctType: "None",
   rewrittenQuery: "SELECT …"
-};
+~};
 
 |CosmosClient (real SDK)|
 :Receive query plan response;
@@ -89,14 +89,14 @@ while (SDKIter.HasMoreResults?) is (yes)
 
   |CosmosClient (real SDK)|
   :SDK builds **HTTP POST** request:
-  **POST** /dbs/{db}/colls/{coll}/docs
+  **POST** /dbs/~{db~}/colls/~{coll~}/docs
   Header: x-ms-documentdb-isquery: True
-  Header: x-ms-max-item-count: {pageSize}
-  Header: x-ms-continuation: {token}
-  Header: x-ms-documentdb-query-partitionkeyrangeid: {rangeId}
+  Header: x-ms-max-item-count: ~{pageSize~}
+  Header: x-ms-continuation: ~{token~}
+  Header: x-ms-documentdb-query-partitionkeyrangeid: ~{rangeId~}
   Header: x-ms-documentdb-partitionkey: ["pkValue"]
-  Body: { "query": "… (rewritten)",
-    "parameters": [{"name":"@p1","value":"active"}] };
+  Body: ~{ "query": "… (rewritten)",
+    "parameters": [~{"name":"@p1","value":"active"~}] ~};
 
   |FakeCosmosHandler|
   :**SendAsync**(request);
@@ -198,12 +198,12 @@ while (SDKIter.HasMoreResults?) is (yes)
       |FakeCosmosHandler|
       :Reconstruct each document
       for SDK's OrderByPipelineStage:
-      {
+      ~{
         "orderByItems": [
-          {"item": timestampValue}
+          ~{"item": timestampValue~}
         ],
-        "payload": { …full document… }
-      };
+        "payload": ~{ …full document… ~}
+      ~};
 
     else (no — standard query)
 
@@ -252,9 +252,9 @@ while (SDKIter.HasMoreResults?) is (yes)
 
       |FakeCosmosHandler|
       :Wrap aggregates for SDK if needed:
-      • AVG → {"sum": val, "count": 1}
-      • COUNT → {"$1": n}
-      • SUM/MIN/MAX → {"$1": val}
+      • AVG → ~{"sum": val, "count": 1~}
+      • COUNT → ~{"$1": n~}
+      • SUM/MIN/MAX → ~{"$1": val~}
       (SDK's AggregatePipelineStage
       merges across partitions);
 
@@ -280,16 +280,16 @@ while (SDKIter.HasMoreResults?) is (yes)
     offset-based if more results,
     null if last page
   → Serialize JSON body:
-    { "_rid": "collectionRid",
+    ~{ "_rid": "collectionRid",
       "Documents": [ …page… ],
-      "_count": pageSize };
+      "_count": pageSize ~};
 
   :Set response headers:
   • x-ms-request-charge: 1
-  • x-ms-activity-id: {new Guid}
+  • x-ms-activity-id: ~{new Guid~}
   • x-ms-session-token: 0:0#1
-  • x-ms-item-count: {count}
-  • x-ms-continuation: {token|null};
+  • x-ms-item-count: ~{count~}
+  • x-ms-continuation: ~{token|null~};
 
   :Return **HttpResponseMessage** (200 OK);
 
@@ -299,7 +299,7 @@ while (SDKIter.HasMoreResults?) is (yes)
   • OrderByPipelineStage reads orderByItems,
     merge-sorts across partition ranges
   • AggregatePipelineStage accumulates
-    {sum,count} → weighted AVG
+    ~{sum,count~} → weighted AVG
   • DistinctPipelineStage deduplicates
   • Deserialize JSON → T;
 

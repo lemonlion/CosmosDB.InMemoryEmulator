@@ -9,8 +9,8 @@ skinparam PartitionBorderColor #666
 |Test Setup|
 start
 :**InMemoryFeedIteratorSetup.Register()**
-→ sets AsyncLocal<FeedIteratorFactory>
-= CreateInMemoryFeedIterator<T>
+→ sets **AsyncLocal<FeedIteratorFactory>**
+= **CreateInMemoryFeedIterator<T>**
 (one-time, per test fixture);
 
 note right

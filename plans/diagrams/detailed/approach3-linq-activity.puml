@@ -11,11 +11,11 @@ start
 :Create **new InMemoryContainer**("orders", "/pk");
 :Create **new FakeCosmosHandler**(inMemoryContainer);
 :Create **new CosmosClient**(connectionString,
-new CosmosClientOptions {
+new CosmosClientOptions ~{
   ConnectionMode = Gateway,
-  HttpClientFactory = () =>
+  HttpClientFactory = () →
     new HttpClient(handler)
-});
+~});
 
 note right
   Connection string is syntactically valid
@@ -47,7 +47,7 @@ expression tree rooted here);
 → MethodCallExpression added
 .**OrderBy**(x => x.Name)
 → OrderBy node added
-.**Select**(x => new { x.Id, x.Name })
+.**Select**(x => new ~{ x.Id, x.Name ~})
 → Select projection added;
 
 note right
@@ -84,7 +84,7 @@ end note
 
 :Generate Cosmos SQL:
 "SELECT VALUE
-  {"Id": c.id, "Name": c.name}
+  ~{"Id": c.id, "Name": c.name~}
 FROM c
 WHERE c.status = 'active'
 ORDER BY c.name ASC";
@@ -98,13 +98,13 @@ ORDER BY c.name ASC";
 
 |CosmosClient (real SDK)|
 :SDK builds **HTTP POST** (query plan request):
-**POST** /dbs/{db}/colls/{coll}/docs
+**POST** /dbs/~{db~}/colls/~{coll~}/docs
 Header: x-ms-cosmos-is-query-plan-request: True
 Header: Content-Type: application/query+json
-Body: { "query": "SELECT VALUE
-    {"Id": c.id, "Name": c.name}
+Body: ~{ "query": "SELECT VALUE
+    ~{"Id": c.id, "Name": c.name~}
   FROM c WHERE c.status = 'active'
-  ORDER BY c.name ASC" };
+  ORDER BY c.name ASC" ~};
 
 |FakeCosmosHandler|
 :**SendAsync**(request);
@@ -130,13 +130,13 @@ x-ms-cosmos-is-query-plan-request
   for SDK merge-sort);
 
 :Return **200 OK** with JSON body:
-{
-  queryRanges: [{min:"",max:"FF"}],
+~{
+  queryRanges: [~{min:"",max:"FF"~}],
   aggregates: [],
   orderBy: ["Ascending"],
   distinctType: "None",
   rewrittenQuery: "SELECT …"
-};
+~};
 
 |CosmosClient (real SDK)|
 :Receive query plan;
@@ -151,15 +151,15 @@ while (SDKIter.HasMoreResults?) is (yes)
 
   |CosmosClient (real SDK)|
   :SDK builds **HTTP POST** (query request):
-  **POST** /dbs/{db}/colls/{coll}/docs
+  **POST** /dbs/~{db~}/colls/~{coll~}/docs
   Header: x-ms-documentdb-isquery: True
-  Header: x-ms-max-item-count: {pageSize}
-  Header: x-ms-continuation: {token}
-  Header: x-ms-documentdb-query-partitionkeyrangeid: {rangeId}
+  Header: x-ms-max-item-count: ~{pageSize~}
+  Header: x-ms-continuation: ~{token~}
+  Header: x-ms-documentdb-query-partitionkeyrangeid: ~{rangeId~}
   Header: Content-Type: application/query+json
-  Body: { "query": "… (rewritten
+  Body: ~{ "query": "… (rewritten
     with orderByItems)",
-    "parameters": [{"name":"@p1","value":"active"}] };
+    "parameters": [~{"name":"@p1","value":"active"~}] ~};
 
   |FakeCosmosHandler|
   :**SendAsync**(request);
@@ -200,7 +200,7 @@ while (SDKIter.HasMoreResults?) is (yes)
       → strip orderByItems/payload wrapper
       → recover original LINQ-generated SQL:
       "SELECT VALUE
-        {"Id": c.id, "Name": c.name}
+        ~{"Id": c.id, "Name": c.name~}
       FROM c WHERE c.status = 'active'
       ORDER BY c.name ASC";
 
@@ -238,7 +238,7 @@ while (SDKIter.HasMoreResults?) is (yes)
       → sort by c.name ASC;
       :TOP / OFFSET+LIMIT;
       :ProjectFields()
-      → SELECT VALUE {"Id": c.id, "Name": c.name};
+      → SELECT VALUE ~{"Id": c.id, "Name": c.name~};
       :StripComputedProperties();
       :DISTINCT;
       :UnwrapValueSelect()
@@ -259,14 +259,14 @@ while (SDKIter.HasMoreResults?) is (yes)
 
       |FakeCosmosHandler|
       :Reconstruct each document:
-      {
+      ~{
         "orderByItems": [
-          {"item": "nameValue"}
+          ~{"item": "nameValue"~}
         ],
-        "payload": {
+        "payload": ~{
           "Id": "…", "Name": "…"
-        }
-      }
+        ~}
+      ~}
       → SDK uses orderByItems
         for cross-partition merge-sort;
 
@@ -315,9 +315,9 @@ while (SDKIter.HasMoreResults?) is (yes)
 
       |FakeCosmosHandler|
       :Wrap aggregates for SDK if needed:
-      • AVG → {"sum": val, "count": 1}
-      • COUNT → {"$1": n}
-      • SUM/MIN/MAX → {"$1": val};
+      • AVG → ~{"sum": val, "count": 1~}
+      • COUNT → ~{"$1": n~}
+      • SUM/MIN/MAX → ~{"$1": val~};
 
     endif
 
@@ -338,16 +338,16 @@ while (SDKIter.HasMoreResults?) is (yes)
   → Skip(offset).Take(maxItemCount)
   → continuation token (offset-based)
   → Serialize JSON:
-    { "_rid": "collRid",
+    ~{ "_rid": "collRid",
       "Documents": [ …page… ],
-      "_count": n };
+      "_count": n ~};
 
   :Set response headers:
   • x-ms-request-charge: 1
-  • x-ms-activity-id: {guid}
+  • x-ms-activity-id: ~{guid~}
   • x-ms-session-token: 0:0#1
-  • x-ms-item-count: {count}
-  • x-ms-continuation: {token|null};
+  • x-ms-item-count: ~{count~}
+  • x-ms-continuation: ~{token|null~};
 
   :Return **HttpResponseMessage** (200 OK);
 

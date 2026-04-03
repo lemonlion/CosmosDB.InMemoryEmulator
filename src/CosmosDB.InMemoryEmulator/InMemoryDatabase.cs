@@ -70,10 +70,10 @@ public class InMemoryDatabase : Database
         string id, string partitionKeyPath, int? throughput = null,
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
-        var isNew = !_containers.ContainsKey(id);
-        var container = _containers.GetOrAdd(id, name => new InMemoryContainer(name, partitionKeyPath));
+        var created = false;
+        var container = _containers.GetOrAdd(id, name => { created = true; return new InMemoryContainer(name, partitionKeyPath); });
         container.OnDeleted ??= () => _containers.TryRemove(id, out _);
-        var response = BuildContainerResponse(container, partitionKeyPath, isNew ? HttpStatusCode.Created : HttpStatusCode.OK);
+        var response = BuildContainerResponse(container, partitionKeyPath, created ? HttpStatusCode.Created : HttpStatusCode.OK);
         return Task.FromResult(response);
     }
 
@@ -84,16 +84,16 @@ public class InMemoryDatabase : Database
         var id = containerProperties.Id;
         if (string.IsNullOrEmpty(containerProperties.PartitionKeyPath) && containerProperties.PartitionKeyPaths is null)
             containerProperties.PartitionKeyPath = "/id";
-        var isNew = !_containers.ContainsKey(id);
-        var container = _containers.GetOrAdd(id, _ => new InMemoryContainer(containerProperties));
+        var created = false;
+        var container = _containers.GetOrAdd(id, _ => { created = true; return new InMemoryContainer(containerProperties); });
         container.OnDeleted ??= () => _containers.TryRemove(id, out _);
-        if (isNew)
+        if (created)
         {
             container.DefaultTimeToLive = containerProperties.DefaultTimeToLive;
             if (containerProperties.IndexingPolicy is not null)
                 container.IndexingPolicy = containerProperties.IndexingPolicy;
         }
-        var response = BuildContainerResponse(container, containerProperties, isNew ? HttpStatusCode.Created : HttpStatusCode.OK);
+        var response = BuildContainerResponse(container, containerProperties, created ? HttpStatusCode.Created : HttpStatusCode.OK);
         return Task.FromResult(response);
     }
 
@@ -333,11 +333,11 @@ public class InMemoryDatabase : Database
 
     public override Task<UserResponse> UpsertUserAsync(string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
-        var isNew = !_users.ContainsKey(id);
-        var user = _users.GetOrAdd(id, uid => new InMemoryUser(uid, () => _users.TryRemove(uid, out _)));
+        var created = false;
+        var user = _users.GetOrAdd(id, uid => { created = true; return new InMemoryUser(uid, () => _users.TryRemove(uid, out _)); });
 
         var response = Substitute.For<UserResponse>();
-        response.StatusCode.Returns(isNew ? HttpStatusCode.Created : HttpStatusCode.OK);
+        response.StatusCode.Returns(created ? HttpStatusCode.Created : HttpStatusCode.OK);
         response.Resource.Returns(new UserProperties(id));
         response.User.Returns(user);
         return Task.FromResult(response);

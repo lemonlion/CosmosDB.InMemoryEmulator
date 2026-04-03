@@ -69,9 +69,9 @@ public class InMemoryCosmosClient : CosmosClient
     {
         ArgumentNullException.ThrowIfNull(id);
         ArgumentException.ThrowIfNullOrEmpty(id);
-        var isNew = !_databases.ContainsKey(id);
-        var database = _databases.GetOrAdd(id, name => new InMemoryDatabase(name, this));
-        var response = BuildDatabaseResponse(database, isNew ? HttpStatusCode.Created : HttpStatusCode.OK);
+        var created = false;
+        var database = _databases.GetOrAdd(id, name => { created = true; return new InMemoryDatabase(name, this); });
+        var response = BuildDatabaseResponse(database, created ? HttpStatusCode.Created : HttpStatusCode.OK);
         return Task.FromResult(response);
     }
 

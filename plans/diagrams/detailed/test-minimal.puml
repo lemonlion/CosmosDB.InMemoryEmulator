@@ -1,0 +1,8 @@
+@startuml test6
+|Lane1|
+start
+:Register()
+sets AsyncLocal **<Factory>**
+text;
+stop
+@enduml
