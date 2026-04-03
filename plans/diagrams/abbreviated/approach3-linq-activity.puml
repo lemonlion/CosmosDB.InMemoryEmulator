@@ -1,0 +1,78 @@
+@startuml approach3-linq-abbreviated-activity
+title **Approach 3: CosmosClient + FakeCosmosHandler — LINQ Query Flow (Abbreviated)**
+
+skinparam backgroundColor #FEFEFE
+skinparam ActivityBorderColor #333
+skinparam ActivityBackgroundColor #E8F4FD
+skinparam ActivityBackgroundColor<<sdk>> #FFF3E0
+skinparam ActivityBackgroundColor<<handler>> #E8F5E9
+skinparam PartitionBorderColor #666
+
+start
+
+partition "Setup" {
+  :new InMemoryContainer(…);
+  :new FakeCosmosHandler(container);
+  :new CosmosClient(…, HttpClientFactory);
+}
+
+partition "CosmosClient (real SDK)" <<sdk>> {
+  :GetItemLinqQueryable<T>()
+  → **CosmosLinqQueryProvider**
+  → **IOrderedQueryable<T>**;
+}
+
+partition "Test Code" {
+  :Apply .Where() / .OrderBy() / .Select()
+  (builds Expression Tree — no execution);
+}
+
+partition "CosmosClient (real SDK)" <<sdk>> {
+  :.ToFeedIterator()
+  (no production code change needed!);
+  :CosmosLinqQueryProvider translates
+  expression tree → Cosmos SQL;
+  :Return FeedIterator<T>;
+}
+
+partition "Per-page loop" {
+  while (HasMoreResults?) is (yes)
+
+    partition "CosmosClient (real SDK)" <<sdk>> {
+      :SDK builds HTTP POST
+      (query plan, then query);
+    }
+
+    partition "FakeCosmosHandler" <<handler>> {
+      :HandleQueryPlanAsync()
+      then HandleQueryAsync();
+      :TryParse() + SimplifySdkQuery();
+    }
+
+    partition "InMemoryContainer" {
+      :GetItemQueryIterator → FilterItemsByQuery()
+      → full SQL pipeline;
+    }
+
+    partition "FakeCosmosHandler" <<handler>> {
+      :DrainIterator() → BuildPagedResponse();
+      :Cache results → 200 OK + JSON;
+    }
+
+    partition "CosmosClient (real SDK)" <<sdk>> {
+      :SDK pipeline merges
+      → **FeedResponse<T>**;
+    }
+
+  endwhile (no)
+}
+
+note right
+  Key: LINQ → SQL by real SDK,
+  then SQL executed through CosmosSqlParser
+  (tests full LINQ-to-SQL translation)
+end note
+
+stop
+
+@enduml

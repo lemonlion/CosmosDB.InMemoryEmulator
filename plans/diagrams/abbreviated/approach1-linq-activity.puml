@@ -1,0 +1,49 @@
+@startuml approach1-linq-abbreviated-activity
+title **Approach 1: InMemoryContainer — LINQ Query Flow (Abbreviated)**
+
+skinparam backgroundColor #FEFEFE
+skinparam ActivityBorderColor #333
+skinparam ActivityBackgroundColor #E8F4FD
+skinparam PartitionBorderColor #666
+
+start
+
+partition "Setup (once per fixture)" {
+  :**InMemoryFeedIteratorSetup.Register()**
+  Sets AsyncLocal<FeedIteratorFactory>;
+}
+
+partition "InMemoryContainer" {
+  :GetItemLinqQueryable<T>()
+  → GetAllItemsForPartition()
+  → Deserialize → .AsQueryable();
+  :Return **IOrderedQueryable<T>**
+  (LINQ-to-Objects);
+}
+
+partition "Test Code" {
+  :Apply .Where() / .Select() / .OrderBy()
+  (LINQ-to-Objects operators);
+}
+
+partition "ProductionExtensions" {
+  :.ToFeedIteratorOverridable()
+  → check AsyncLocal factory;
+}
+
+partition "InMemoryFeedIteratorSetup" {
+  :CreateInMemoryFeedIterator<T>(queryable)
+  → materialize enumerable
+  → **InMemoryFeedIterator<T>**;
+}
+
+partition "Test Code" {
+  while (HasMoreResults?) is (yes)
+    :ReadNextAsync()
+    → **FeedResponse<T>** (page);
+  endwhile (no)
+}
+
+stop
+
+@enduml

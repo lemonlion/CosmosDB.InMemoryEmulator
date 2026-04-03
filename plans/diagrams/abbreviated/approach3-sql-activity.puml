@@ -1,0 +1,71 @@
+@startuml approach3-sql-abbreviated-activity
+title **Approach 3: CosmosClient + FakeCosmosHandler — SQL Query Flow (Abbreviated)**
+
+skinparam backgroundColor #FEFEFE
+skinparam ActivityBorderColor #333
+skinparam ActivityBackgroundColor #E8F4FD
+skinparam ActivityBackgroundColor<<sdk>> #FFF3E0
+skinparam ActivityBackgroundColor<<handler>> #E8F5E9
+skinparam PartitionBorderColor #666
+
+start
+
+partition "Setup" {
+  :new InMemoryContainer(…);
+  :new FakeCosmosHandler(container);
+  :new CosmosClient(…, HttpClientFactory);
+}
+
+partition "CosmosClient (real SDK)" <<sdk>> {
+  :GetItemQueryIterator<T>(queryText);
+  :SDK builds HTTP POST
+  (query plan request);
+}
+
+partition "FakeCosmosHandler" <<handler>> {
+  :SendAsync → HandleQueryPlanAsync();
+  :TryParse() → analyze AST
+  → **PartitionedQueryExecutionInfo**;
+}
+
+partition "CosmosClient (real SDK)" <<sdk>> {
+  :Build pipeline stages
+  (OrderBy/Aggregate/Distinct);
+  :Return FeedIterator<T>;
+}
+
+partition "Per-page loop" {
+  while (HasMoreResults?) is (yes)
+
+    partition "CosmosClient (real SDK)" <<sdk>> {
+      :SDK builds HTTP POST
+      (query execution request);
+    }
+
+    partition "FakeCosmosHandler" <<handler>> {
+      :SendAsync → HandleQueryAsync();
+      :TryParse() + SimplifySdkQuery();
+    }
+
+    partition "InMemoryContainer" {
+      :GetItemQueryIterator → FilterItemsByQuery()
+      → full SQL pipeline;
+    }
+
+    partition "FakeCosmosHandler" <<handler>> {
+      :DrainIterator() → FilterDocumentsByRange();
+      :Cache results → BuildPagedResponse();
+      :Return 200 OK + paginated JSON;
+    }
+
+    partition "CosmosClient (real SDK)" <<sdk>> {
+      :SDK pipeline merges results
+      → **FeedResponse<T>**;
+    }
+
+  endwhile (no)
+}
+
+stop
+
+@enduml

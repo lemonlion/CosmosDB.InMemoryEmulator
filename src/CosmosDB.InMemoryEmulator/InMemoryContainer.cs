@@ -5197,6 +5197,7 @@ public class InMemoryContainer : Container
 
     private static int CountOccurrences(string text, string term)
     {
+        if (term.Length == 0) return 0;
         var count = 0;
         var idx = 0;
         while ((idx = text.IndexOf(term, idx, StringComparison.OrdinalIgnoreCase)) >= 0)

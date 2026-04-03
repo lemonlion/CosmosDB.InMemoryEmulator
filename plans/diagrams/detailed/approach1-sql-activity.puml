@@ -1,0 +1,157 @@
+@startuml approach1-sql-detailed-activity
+title **Approach 1: InMemoryContainer — SQL Query Flow (Detailed)**
+
+skinparam backgroundColor #FEFEFE
+skinparam ActivityBorderColor #333
+skinparam ActivityBackgroundColor #E8F4FD
+skinparam PartitionBorderColor #666
+
+start
+
+|Test Code|
+:Call **InMemoryContainer.GetItemQueryIterator<T>**
+(queryText, continuationToken, requestOptions);
+
+|InMemoryContainer|
+:Call **FilterItemsByQuery**
+(queryText, parameters, requestOptions);
+
+|CosmosSqlParser|
+:**Parse**(queryText);
+:Build **CosmosSqlQuery** AST record:
+• SelectFields
+• Where (expression tree)
+• OrderBy (fields + directions)
+• GroupBy
+• Distinct, Top, Offset, Limit;
+
+|InMemoryContainer.FilterItemsByQuery|
+:**GetAllItemsForPartition**(requestOptions)
+→ List<string> from ConcurrentDictionary
+→ filter by partition key if specified
+→ exclude TTL-expired items;
+
+:**AugmentWithComputedProperties**()
+→ add virtual properties for
+computed property definitions;
+
+:**ExpandFromSource**()
+→ handle FROM c IN c.arrayField
+→ iterate array elements as rows;
+
+:**ExpandAllJoins**()
+→ flatten JOINed arrays
+→ cross-product with parent document;
+
+#LightYellow:=== WHERE clause evaluation ===
+**EvaluateWhereExpression**(expr, JObject item)
+per item in collection|
+
+|InMemoryContainer.EvaluateSqlExpression|
+:Recursively evaluate SQL expression:;
+
+note right
+  **LiteralExpression** → return constant
+  **IdentifierExpression** → lookup property in JObject
+  **PropertyAccessExpression** → navigate nested paths (c.address.city)
+  **IndexAccessExpression** → array indexing (c.tags[0])
+  **BinaryExpression** → =, !=, <, >, <=, >=, +, -, *, /, %, ||, AND, OR
+  **UnaryExpression** → NOT, Negate, BitwiseNot
+  **FunctionCallExpression** → 40+ built-in functions:
+    UPPER, LOWER, CONTAINS, STARTSWITH, ENDSWITH,
+    ARRAY_CONTAINS, ARRAY_LENGTH, ARRAY_SLICE,
+    ST_DISTANCE, ST_WITHIN, ST_INTERSECTS,
+    CONCAT, SUBSTRING, REPLACE, TRIM, LENGTH,
+    ABS, FLOOR, CEILING, ROUND, POWER, SQRT, LOG,
+    ToString, IS_DEFINED, IS_NULL, IS_NUMBER, etc.
+  **BetweenExpression** → BETWEEN low AND high
+  **InExpression** → IN (val, val, …)
+  **LikeExpression** → LIKE pattern [ESCAPE char]
+  **TernaryExpression** → condition ? ifTrue : ifFalse
+  **CoalesceExpression** → left ?? right
+  **SubqueryExpression** → (SELECT …) — recursive
+  **ArrayLiteralExpression** → [expr, expr, …]
+  **ObjectLiteralExpression** → {key: expr, key: expr}
+end note
+
+:Return bool (include/exclude item);
+
+|InMemoryContainer.FilterItemsByQuery|
+
+:**ApplyGroupBy**() + aggregate functions
+→ COUNT, SUM, AVG, MIN, MAX
+→ group items by GROUP BY fields
+→ apply HAVING clause if present;
+
+:**ApplyOrderByFields**()
+→ multi-field sort
+→ ASC / DESC per field
+→ uses EvaluateSqlExpression for sort keys;
+
+:Apply **TOP** → Take(TopCount);
+
+:Apply **OFFSET + LIMIT**
+→ Skip(Offset).Take(Limit);
+
+:**ProjectFields**()
+→ SELECT projection
+→ named fields, aliased expressions
+→ nested objects, computed expressions
+→ SELECT * returns all fields;
+
+:**StripComputedProperties**()
+→ remove virtual properties from
+SELECT * projections;
+
+:Apply **DISTINCT**
+→ deduplicate on projected shape
+→ JSON string comparison;
+
+:**UnwrapValueSelect**()
+→ SELECT VALUE → extract scalar
+from wrapper object;
+
+:Return List<string> (JSON documents);
+
+|InMemoryContainer|
+:Deserialize each JSON string →
+**JsonConvert.DeserializeObject<T>()**;
+
+:Create **new InMemoryFeedIterator<T>**
+(items, maxItemCount, initialOffset);
+
+:Return **FeedIterator<T>** to caller;
+
+|Test Code|
+while (FeedIter.HasMoreResults?) is (yes)
+  :Call **ReadNextAsync()**;
+
+  |InMemoryFeedIterator<T>|
+  :**EnsureItems**()
+  → lazily evaluate factory delegate
+  if provided (deferred execution);
+
+  :Paginate: **Skip**(offset).**Take**(maxItemCount)
+  → extract current page of items;
+
+  :Generate **continuation token**
+  → offset-based integer
+  → null if this is the last page;
+
+  :Create **new InMemoryFeedResponse<T>**
+  (page of items, continuationToken,
+  Headers: x-ms-request-charge,
+  x-ms-activity-id);
+
+  |Test Code|
+  :Receive **FeedResponse<T>**
+  → .Resource (items)
+  → .ContinuationToken
+  → .RequestCharge
+  → .Count;
+
+endwhile (no)
+
+stop
+
+@enduml

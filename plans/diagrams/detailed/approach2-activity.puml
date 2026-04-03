@@ -1,0 +1,146 @@
+@startuml approach2-detailed-activity
+title **Approach 2: InMemoryCosmosClient + InMemoryContainer — Query Flow (Detailed)**
+
+skinparam backgroundColor #FEFEFE
+skinparam ActivityBorderColor #333
+skinparam ActivityBackgroundColor #E8F4FD
+skinparam PartitionBorderColor #666
+
+start
+
+|Test Code|
+:Call **InMemoryCosmosClient.GetContainer**
+(databaseId, containerId);
+
+|InMemoryCosmosClient|
+:**_databases.GetOrAdd**(databaseId, …)
+→ ConcurrentDictionary lookup
+→ thread-safe lazy creation;
+
+if (database exists?) then (yes)
+  :Return existing **InMemoryDatabase**;
+else (no)
+  :Create **new InMemoryDatabase**
+  (databaseId, client);
+endif
+
+|InMemoryDatabase|
+:**GetOrCreateContainer**
+(containerId, partitionKeyPath);
+
+:**_containers.GetOrAdd**(containerId, …)
+→ ConcurrentDictionary lookup
+→ thread-safe lazy creation;
+
+if (container exists?) then (yes)
+  :Return existing **InMemoryContainer**;
+else (no)
+  :Create **new InMemoryContainer**
+  (containerId, partitionKeyPath);
+endif
+
+note right
+  Subsequent GetContainer() calls with
+  same databaseId + containerId return
+  the **SAME instance** — data is shared
+  across all callers.
+end note
+
+|Test Code|
+:Receive Container (InMemoryContainer);
+
+#LightGreen:=== SQL Query Flow ===
+(identical to Approach 1)|
+
+|InMemoryContainer|
+:Call **GetItemQueryIterator<T>**
+(queryText, continuationToken, requestOptions);
+
+:Call **FilterItemsByQuery**
+(queryText, parameters, requestOptions);
+
+|CosmosSqlParser|
+:**Parse**(queryText)
+→ CosmosSqlQuery AST
+(SelectFields, Where, OrderBy,
+GroupBy, Distinct, Top, Offset, Limit);
+
+|InMemoryContainer.FilterItemsByQuery|
+:**GetAllItemsForPartition**(requestOptions)
+→ List<string> from ConcurrentDictionary
+→ partition key filtering, TTL exclusion;
+
+:**AugmentWithComputedProperties**();
+
+:**ExpandFromSource**()
+→ FROM c IN c.arrayField;
+
+:**ExpandAllJoins**()
+→ JOIN array flattening;
+
+#LightYellow:=== WHERE per item ===
+**EvaluateWhereExpression**
+→ **EvaluateSqlExpression** (recursive)
+→ all expression types:
+Literal, Identifier, PropertyAccess,
+IndexAccess, Binary, Unary, FunctionCall
+(40+ functions), Between, In, Like,
+Ternary, Coalesce, Subquery,
+ArrayLiteral, ObjectLiteral|
+
+:**ApplyGroupBy**() + aggregates
+(COUNT, SUM, AVG, MIN, MAX);
+
+:**ApplyOrderByFields**()
+→ multi-field, ASC/DESC;
+
+:Apply **TOP** / **OFFSET+LIMIT**;
+
+:**ProjectFields**()
+→ SELECT projection;
+
+:**StripComputedProperties**();
+
+:Apply **DISTINCT**;
+
+:**UnwrapValueSelect**()
+→ SELECT VALUE;
+
+:Return List<string> (JSON);
+
+|InMemoryContainer|
+:Deserialize → List<T>;
+:Create **InMemoryFeedIterator<T>**;
+
+|Test Code|
+while (HasMoreResults?) is (yes)
+  :ReadNextAsync();
+
+  |InMemoryFeedIterator<T>|
+  :EnsureItems() → Paginate
+  → Skip(offset).Take(maxItemCount)
+  → continuation token
+  → **InMemoryFeedResponse<T>**;
+
+  |Test Code|
+  :Receive **FeedResponse<T>**;
+
+endwhile (no)
+
+#LightBlue:=== LINQ Flow (also identical to Approach 1) ===|
+
+note right
+  GetItemLinqQueryable<T>()
+  → GetAllItemsForPartition()
+  → Deserialize → .AsQueryable().OrderBy(x => 0)
+  → **IOrderedQueryable<T>** (LINQ-to-Objects)
+  → User applies .Where() / .Select() / .OrderBy()
+  → .ToFeedIteratorOverridable()
+  → InMemoryFeedIteratorSetup.CreateInMemoryFeedIterator<T>()
+  → InMemoryFeedIterator<T>
+  → ReadNextAsync() → InMemoryFeedResponse<T>
+end note
+
+stop
+
+@enduml

@@ -1,0 +1,58 @@
+@startuml approach2-abbreviated-activity
+title **Approach 2: InMemoryCosmosClient + InMemoryContainer — Query Flow (Abbreviated)**
+
+skinparam backgroundColor #FEFEFE
+skinparam ActivityBorderColor #333
+skinparam ActivityBackgroundColor #E8F4FD
+skinparam PartitionBorderColor #666
+
+start
+
+partition "Test Code" {
+  :Call **GetContainer**(databaseId, containerId);
+}
+
+partition "InMemoryCosmosClient" {
+  :_databases.GetOrAdd(databaseId)
+  → **InMemoryDatabase** [lazy create];
+}
+
+partition "InMemoryDatabase" {
+  :_containers.GetOrAdd(containerId)
+  → **InMemoryContainer** [lazy create];
+}
+
+partition "Test Code" {
+  :Receive Container (InMemoryContainer);
+  :Call **GetItemQueryIterator<T>**(queryText);
+}
+
+partition "InMemoryContainer" {
+  :FilterItemsByQuery();
+}
+
+partition "CosmosSqlParser" {
+  :Parse(queryText) → CosmosSqlQuery AST;
+}
+
+partition "InMemoryContainer" {
+  :WHERE / ORDER BY / SELECT / …
+  (identical to Approach 1);
+  :Deserialize → **InMemoryFeedIterator<T>**;
+}
+
+partition "Test Code" {
+  while (HasMoreResults?) is (yes)
+    :ReadNextAsync() → **FeedResponse<T>**;
+  endwhile (no)
+}
+
+note right
+  LINQ flow also identical to Approach 1:
+  GetItemLinqQueryable<T>() → LINQ-to-Objects
+  → .ToFeedIteratorOverridable()
+end note
+
+stop
+
+@enduml

@@ -1396,3 +1396,572 @@ public class FullTextNonStringFieldTests
         results.Should().ContainSingle();
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category A — FullTextScore Edge Cases (CountOccurrences bugs)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FullTextScoreEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task FullTextScore_EmptyTermInArray_DoesNotHang()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "The quick brown fox" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, FullTextScore(c.text, ['', 'fox']) AS score FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        ((double)results[0]["score"]!).Should().Be(1.0);
+    }
+
+    [Fact]
+    public async Task FullTextScore_AllEmptyTerms_ReturnsZero()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "Some content here" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, FullTextScore(c.text, ['', '']) AS score FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        ((double)results[0]["score"]!).Should().Be(0.0);
+    }
+
+    [Fact]
+    public async Task FullTextScore_OverlappingTerms_CountsNonOverlapping()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "aaa" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, FullTextScore(c.text, ['aa']) AS score FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        ((double)results[0]["score"]!).Should().Be(1.0);
+    }
+
+    [Fact]
+    public async Task FullTextScore_WithPartitionKey_RespectsFilter()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "cosmos cosmos cosmos" }),
+            new PartitionKey("a"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", text = "cosmos" }),
+            new PartitionKey("b"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT c.id, FullTextScore(c.text, ['cosmos']) AS score FROM c WHERE c.pk = @pk")
+                .WithParameter("@pk", "a"),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        results[0]["id"]!.ToString().Should().Be("1");
+        ((double)results[0]["score"]!).Should().Be(3.0);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category B — FullTextContains Additional Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FullTextContainsAdditionalEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task FullTextContains_WhitespaceOnlyTerm_Matches()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "hello world" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContains(c.text, ' ')");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle("space character is a valid substring");
+    }
+
+    [Fact]
+    public async Task FullTextContains_UnicodeCharacters_CaseInsensitive()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "Über cool database" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContains(c.text, 'über')");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle("OrdinalIgnoreCase should match Ü/ü");
+    }
+
+    [Fact]
+    public async Task FullTextContains_VeryLongText_PerformsReasonably()
+    {
+        var longText = string.Join(" ", Enumerable.Repeat("word", 10_000)) + " needle";
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = longText }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContains(c.text, 'needle')");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task FullTextContains_TermLongerThanText_ReturnsFalse()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "hi" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContains(c.text, 'this is a much longer search term')");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category C — FullTextContainsAll Additional Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FullTextContainsAllAdditionalTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task FullTextContainsAll_DuplicateTerms_MatchesOnce()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "cosmos database" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContainsAll(c.text, 'cosmos', 'cosmos')");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle("duplicate terms should still match");
+    }
+
+    [Fact]
+    public async Task FullTextContainsAll_EmptyStringTerm_MatchesAll()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "anything" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContainsAll(c.text, '', 'anything')");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle("empty string is a substring of everything");
+    }
+
+    [Fact]
+    public async Task FullTextContainsAll_ZeroTerms_ReturnsFalse()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "anything" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContainsAll(c.text)");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty("zero search terms returns false (args.Length < 2 guard)");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category D — FullTextContainsAny Additional Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FullTextContainsAnyAdditionalTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task FullTextContainsAny_DuplicateTerms_StillMatches()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "cosmos database" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContainsAny(c.text, 'cosmos', 'cosmos')");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task FullTextContainsAny_EmptyStringTerm_MatchesAll()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "anything" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContainsAny(c.text, '', 'nope')");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle("empty string is a substring of everything");
+    }
+
+    [Fact]
+    public async Task FullTextContainsAny_ZeroTerms_ReturnsFalse()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "anything" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContainsAny(c.text)");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty("zero search terms returns false");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category E — ORDER BY RANK Advanced Scenarios
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class OrderByRankAdvancedTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task OrderByRank_WithDistinct_HigherRankedDocumentPreferred()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "cosmos cosmos cosmos", category = "db" }),
+            new PartitionKey("a"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", text = "cosmos", category = "db" }),
+            new PartitionKey("b"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT DISTINCT c.category FROM c ORDER BY RANK FullTextScore(c.text, ['cosmos'])");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        results[0]["category"]!.ToString().Should().Be("db");
+    }
+
+    [Fact]
+    public async Task OrderByRank_WithWhereFullTextContains_CombinesFiltering()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "cosmos database engine" }),
+            new PartitionKey("a"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", text = "cosmos cosmos cosmos" }),
+            new PartitionKey("b"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "c", text = "unrelated content" }),
+            new PartitionKey("c"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContains(c.text, 'cosmos') ORDER BY RANK FullTextScore(c.text, ['cosmos'])");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(2, "only docs containing 'cosmos' are returned");
+        results[0]["id"]!.ToString().Should().Be("2", "doc with 3 occurrences ranks first");
+        results[1]["id"]!.ToString().Should().Be("1", "doc with 1 occurrence ranks second");
+    }
+
+    [Fact]
+    public async Task OrderByRank_WithTopAndOffset_CombinedPagination()
+    {
+        for (var i = 1; i <= 10; i++)
+            await _container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = $"p{i}", text = string.Concat(Enumerable.Repeat("cosmos ", i)).Trim() }),
+                new PartitionKey($"p{i}"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT TOP 5 * FROM c ORDER BY RANK FullTextScore(c.text, ['cosmos'])");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(5);
+        results[0]["id"]!.ToString().Should().Be("10");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category F — Cross-Function Interaction Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FullTextCrossFunctionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task FullTextContains_WithIN_Operator()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "cosmos database", type = "tech" }),
+            new PartitionKey("a"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", text = "cosmos cloud", type = "cloud" }),
+            new PartitionKey("b"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "c", text = "cosmos service", type = "other" }),
+            new PartitionKey("c"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContains(c.text, 'cosmos') AND c.type IN ('tech', 'cloud')");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+        results.Select(r => r["id"]!.ToString()).Should().BeEquivalentTo("1", "2");
+    }
+
+    [Fact]
+    public async Task FullTextContains_WithArrayContains()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "cosmos database", tags = new[] { "db", "nosql" } }),
+            new PartitionKey("a"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", text = "cosmos cloud", tags = new[] { "cloud" } }),
+            new PartitionKey("b"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContains(c.text, 'cosmos') AND ARRAY_CONTAINS(c.tags, 'nosql')");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        results[0]["id"]!.ToString().Should().Be("1");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category G — FullTextScore Scoring Accuracy
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FullTextScoreAccuracyTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task FullTextScore_MultipleOccurrences_ExactCount()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "db db db" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, FullTextScore(c.text, ['db']) AS score FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        ((double)results[0]["score"]!).Should().Be(3.0);
+    }
+
+    [Fact]
+    public async Task FullTextScore_MultipleTerms_SumsCorrectly()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "hello world hello" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, FullTextScore(c.text, ['hello', 'world']) AS score FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        ((double)results[0]["score"]!).Should().Be(3.0);
+    }
+
+    [Fact]
+    public async Task FullTextScore_CaseVariations_CountedCorrectly()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "DB Db dB db" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, FullTextScore(c.text, ['db']) AS score FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        ((double)results[0]["score"]!).Should().Be(4.0);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category H — Parameterized Query Gaps
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FullTextParameterizedQueryAdditionalTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task FullTextContainsAll_WithParameterizedTerms()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "cosmos database engine" }),
+            new PartitionKey("a"));
+
+        var query = new QueryDefinition(
+            "SELECT * FROM c WHERE FullTextContainsAll(c.text, @t1, @t2)")
+            .WithParameter("@t1", "cosmos")
+            .WithParameter("@t2", "engine");
+        var iterator = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task FullTextContainsAny_WithParameterizedTerms()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "cosmos database" }),
+            new PartitionKey("a"));
+
+        var query = new QueryDefinition(
+            "SELECT * FROM c WHERE FullTextContainsAny(c.text, @t1, @t2)")
+            .WithParameter("@t1", "nonexistent")
+            .WithParameter("@t2", "cosmos");
+        var iterator = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task OrderByRank_WithParameterizedScore()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "cosmos cosmos cosmos" }),
+            new PartitionKey("a"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "b", text = "cosmos" }),
+            new PartitionKey("b"));
+
+        var query = new QueryDefinition(
+            "SELECT * FROM c ORDER BY RANK FullTextScore(c.text, [@term])")
+            .WithParameter("@term", "cosmos");
+        var iterator = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+        results[0]["id"]!.ToString().Should().Be("1", "higher score ranks first");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Category I — Divergent Behavior (Stop Words)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FullTextStopWordDivergentTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact(Skip = "Real Cosmos DB removes stop words during text analysis. " +
+        "Searching for common words like 'the' may return no results or be ignored. " +
+        "The emulator treats all words equally — 'the' is matched like any other substring.")]
+    public async Task FullTextContains_StopWordRemoval_ShouldIgnoreCommonWords()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "The quick brown fox" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContains(c.text, 'the')");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FullTextContains_StopWords_EmulatorMatchesAll()
+    {
+        // DIVERGENT BEHAVIOUR: The emulator treats stop words like "the" as
+        // regular substrings. Real Cosmos DB removes stop words during text
+        // analysis, so searching for "the" may return no results.
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "The quick brown fox" }),
+            new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE FullTextContains(c.text, 'the')");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle("emulator does substring matching on 'the'");
+    }
+}

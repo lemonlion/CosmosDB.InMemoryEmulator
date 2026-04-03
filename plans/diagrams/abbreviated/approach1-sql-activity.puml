@@ -1,0 +1,45 @@
+@startuml approach1-sql-abbreviated-activity
+title **Approach 1: InMemoryContainer — SQL Query Flow (Abbreviated)**
+
+skinparam backgroundColor #FEFEFE
+skinparam ActivityBorderColor #333
+skinparam ActivityBackgroundColor #E8F4FD
+skinparam PartitionBorderColor #666
+
+start
+
+partition "Test Code" {
+  :Call **GetItemQueryIterator<T>**(queryText);
+}
+
+partition "InMemoryContainer" {
+  :Call **FilterItemsByQuery**(queryText, params);
+}
+
+partition "CosmosSqlParser" {
+  :Parse(queryText) → **CosmosSqlQuery** AST;
+}
+
+partition "InMemoryContainer.FilterItemsByQuery" {
+  :GetAllItemsForPartition()
+  → List<string> from store;
+  :WHERE → EvaluateSqlExpression();
+  :GROUP BY / ORDER BY / TOP
+  OFFSET+LIMIT / SELECT / DISTINCT;
+}
+
+partition "InMemoryContainer" {
+  :Deserialize JSON → List<T>;
+  :Create **InMemoryFeedIterator<T>**;
+}
+
+partition "Test Code" {
+  while (HasMoreResults?) is (yes)
+    :ReadNextAsync()
+    → **FeedResponse<T>** (page);
+  endwhile (no)
+}
+
+stop
+
+@enduml

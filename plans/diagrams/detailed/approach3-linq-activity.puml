@@ -1,0 +1,376 @@
+@startuml approach3-linq-detailed-activity
+title **Approach 3: CosmosClient + FakeCosmosHandler — LINQ Query Flow (Detailed)**
+
+skinparam backgroundColor #FEFEFE
+skinparam ActivityBorderColor #333
+skinparam ActivityBackgroundColor #E8F4FD
+skinparam PartitionBorderColor #666
+
+start
+
+|Setup|
+:Create **new InMemoryContainer**("orders", "/pk");
+:Create **new FakeCosmosHandler**(inMemoryContainer);
+:Create **new CosmosClient**(connectionString,
+new CosmosClientOptions {
+  ConnectionMode = Gateway,
+  HttpClientFactory = () =>
+    new HttpClient(handler)
+});
+
+note right
+  Connection string is syntactically valid
+  but points nowhere — all HTTP requests
+  go to FakeCosmosHandler in-process.
+end note
+
+#FFF3E0:=== LINQ Expression Building ===|
+
+|CosmosClient (real SDK)|
+:Call **container.GetItemLinqQueryable<T>()**;
+:SDK creates **CosmosLinqQueryProvider**
+(real SDK query provider — NOT LINQ-to-Objects);
+:Return **IOrderedQueryable<T>**
+(backed by CosmosLinqQueryProvider,
+expression tree rooted here);
+
+|Test Code|
+:Apply LINQ operators
+(builds Expression Tree — no execution):
+.**Where**(x => x.Status == "active")
+→ MethodCallExpression added
+.**OrderBy**(x => x.Name)
+→ OrderBy node added
+.**Select**(x => new { x.Id, x.Name })
+→ Select projection added;
+
+note right
+  Unlike Approach 1 & 2, these operators
+  do NOT execute as C# delegates.
+  They build an expression tree that
+  the SDK will translate to SQL.
+end note
+
+#FFE0B2:=== LINQ-to-SQL Translation ===|
+
+|CosmosClient (real SDK)|
+:Call .**ToFeedIterator()**;
+
+note right
+  No production code change needed!
+  Real .ToFeedIterator() works because
+  the queryable is backed by the real
+  SDK's CosmosLinqQueryProvider.
+  (Unlike Approach 1 & 2 which need
+  .ToFeedIteratorOverridable())
+end note
+
+:CosmosLinqQueryProvider.**Execute**(expression);
+
+:Visit expression tree nodes:
+• WhereExpression → WHERE clause
+• OrderByExpression → ORDER BY clause
+• SelectExpression → SELECT fields
+• Property access → camelCase mapping
+• Constants → parameter binding
+• Method calls → SQL function mapping
+  (e.g. .Contains() → CONTAINS());
+
+:Generate Cosmos SQL:
+"SELECT VALUE
+  {"Id": c.id, "Name": c.name}
+FROM c
+WHERE c.status = 'active'
+ORDER BY c.name ASC";
+
+:Return **FeedIterator<T>** (SDK pipeline);
+
+#E8F5E9:=== Query Plan Phase (SDK-initiated) ===|
+
+|Test Code|
+:Call **ReadNextAsync()** (first call);
+
+|CosmosClient (real SDK)|
+:SDK builds **HTTP POST** (query plan request):
+**POST** /dbs/{db}/colls/{coll}/docs
+Header: x-ms-cosmos-is-query-plan-request: True
+Header: Content-Type: application/query+json
+Body: { "query": "SELECT VALUE
+    {"Id": c.id, "Name": c.name}
+  FROM c WHERE c.status = 'active'
+  ORDER BY c.name ASC" };
+
+|FakeCosmosHandler|
+:**SendAsync**(request);
+:Route: detect header
+x-ms-cosmos-is-query-plan-request
+→ **HandleQueryPlanAsync()**;
+
+|CosmosSqlParser|
+:**TryParse**(SDK-generated SQL)
+→ CosmosSqlQuery AST:
+  SelectFields: [Id, Name] (VALUE projection)
+  Where: c.status = 'active'
+  OrderBy: [c.name ASC];
+
+|FakeCosmosHandler|
+:Analyze AST to build
+**PartitionedQueryExecutionInfo**:
+• Scan OrderBy → ["Ascending"]
+• Scan SELECT for aggregates → []
+• Detect DISTINCT → None
+• Generate **rewrittenQuery**
+  (wraps in orderByItems + payload
+  for SDK merge-sort);
+
+:Return **200 OK** with JSON body:
+{
+  queryRanges: [{min:"",max:"FF"}],
+  aggregates: [],
+  orderBy: ["Ascending"],
+  distinctType: "None",
+  rewrittenQuery: "SELECT …"
+};
+
+|CosmosClient (real SDK)|
+:Receive query plan;
+:Build execution pipeline:
+• **OrderByPipelineStage** (ORDER BY c.name)
+• AggregatePipelineStage (none)
+• DistinctPipelineStage (none);
+
+#C8E6C9:=== Query Execution Phase (per page, per range) ===|
+
+while (SDKIter.HasMoreResults?) is (yes)
+
+  |CosmosClient (real SDK)|
+  :SDK builds **HTTP POST** (query request):
+  **POST** /dbs/{db}/colls/{coll}/docs
+  Header: x-ms-documentdb-isquery: True
+  Header: x-ms-max-item-count: {pageSize}
+  Header: x-ms-continuation: {token}
+  Header: x-ms-documentdb-query-partitionkeyrangeid: {rangeId}
+  Header: Content-Type: application/query+json
+  Body: { "query": "… (rewritten
+    with orderByItems)",
+    "parameters": [{"name":"@p1","value":"active"}] };
+
+  |FakeCosmosHandler|
+  :**SendAsync**(request);
+  :Route: detect header
+  x-ms-documentdb-isquery: True
+  → **HandleQueryAsync()**;
+
+  :Extract from HTTP request:
+  • sqlQuery (body JSON .query)
+  • partitionKey (header)
+  • maxItemCount (header)
+  • continuationToken → parse offset
+  • rangeId (header);
+
+  :**_queryLog.Add**(sqlQuery)
+  (available for test assertions);
+
+  |QueryResultCache|
+  :**TryGet**(cacheKey);
+
+  if (cache hit?) then (yes)
+    :Return cached results + offset;
+  else (no)
+
+    |CosmosSqlParser|
+    :**TryParse**(sqlQuery)
+    → CosmosSqlQuery AST;
+
+    |FakeCosmosHandler|
+    if (ORDER BY detected in AST?) then (yes)
+
+      #FFFDE7:=== ORDER BY Path ===|
+
+      :Call **HandleOrderByQueryAsync()**;
+
+      |CosmosSqlParser|
+      :**SimplifySdkQuery**(parsed)
+      → strip orderByItems/payload wrapper
+      → recover original LINQ-generated SQL:
+      "SELECT VALUE
+        {"Id": c.id, "Name": c.name}
+      FROM c WHERE c.status = 'active'
+      ORDER BY c.name ASC";
+
+      |FakeCosmosHandler|
+      :**BuildQueryDefinition**()
+      → QueryDefinition with parameters;
+
+      |InMemoryContainer|
+      :**GetItemQueryIterator<JObject>**
+      (queryDefinition, requestOptions);
+
+      |InMemoryContainer.FilterItemsByQuery|
+      :**Parse**(simplifiedSql) → AST;
+
+      :GetAllItemsForPartition()
+      → List<string> from store
+      (partition-filtered, TTL-applied);
+
+      :AugmentWithComputedProperties();
+      :ExpandFromSource();
+      :ExpandAllJoins();
+
+      #LightYellow:=== WHERE per item ===
+      **EvaluateWhereExpression**
+      → **EvaluateSqlExpression** (recursive)
+      Evaluates: c.status = 'active'
+      → PropertyAccess("c","status")
+      → BinaryExpression(=)
+      → LiteralExpression("active")
+      Full support for 40+ built-in
+      functions, subqueries, etc.|
+
+      :ApplyGroupBy() + aggregates;
+      :ApplyOrderByFields()
+      → sort by c.name ASC;
+      :TOP / OFFSET+LIMIT;
+      :ProjectFields()
+      → SELECT VALUE {"Id": c.id, "Name": c.name};
+      :StripComputedProperties();
+      :DISTINCT;
+      :UnwrapValueSelect()
+      → extract VALUE projection;
+
+      :Return List<string> (JSON);
+
+      |InMemoryContainer|
+      :Deserialize → List<JObject>;
+      :Create InMemoryFeedIterator<JObject>;
+
+      |FakeCosmosHandler.DrainIterator|
+      :**DrainIterator<JObject>()**
+      → loop ReadNextAsync()
+        until !HasMoreResults
+      → materialize ALL results
+      → List<JToken>;
+
+      |FakeCosmosHandler|
+      :Reconstruct each document:
+      {
+        "orderByItems": [
+          {"item": "nameValue"}
+        ],
+        "payload": {
+          "Id": "…", "Name": "…"
+        }
+      }
+      → SDK uses orderByItems
+        for cross-partition merge-sort;
+
+    else (no — standard query)
+
+      #E3F2FD:=== Standard Path ===|
+
+      |CosmosSqlParser|
+      :**SimplifySdkQuery**(parsed)
+      → simplify SDK internal SQL;
+
+      |FakeCosmosHandler|
+      :**BuildQueryDefinition**()
+      → QueryDefinition with parameters;
+
+      |InMemoryContainer|
+      :**GetItemQueryIterator<JToken>**
+      (queryDefinition, requestOptions);
+
+      |InMemoryContainer.FilterItemsByQuery|
+      :Parse(sql) → AST;
+      :GetAllItemsForPartition();
+      :AugmentWithComputedProperties();
+      :ExpandFromSource();
+      :ExpandAllJoins();
+
+      #LightYellow:WHERE → EvaluateWhereExpression()
+      → EvaluateSqlExpression() (recursive)|
+
+      :ApplyGroupBy() + aggregates;
+      :ApplyOrderByFields();
+      :TOP / OFFSET+LIMIT;
+      :ProjectFields();
+      :StripComputedProperties();
+      :DISTINCT;
+      :UnwrapValueSelect();
+      :Return List<string>;
+
+      |InMemoryContainer|
+      :Deserialize → List<JToken>;
+      :Create InMemoryFeedIterator<JToken>;
+
+      |FakeCosmosHandler.DrainIterator|
+      :**DrainIterator<JToken>()**
+      → materialize all results;
+
+      |FakeCosmosHandler|
+      :Wrap aggregates for SDK if needed:
+      • AVG → {"sum": val, "count": 1}
+      • COUNT → {"$1": n}
+      • SUM/MIN/MAX → {"$1": val};
+
+    endif
+
+    |FakeCosmosHandler|
+    :**FilterDocumentsByRange**
+    (documents, rangeId, payloadPropertyName)
+    → hash each doc's partition key
+    → keep only docs in this range;
+
+    |QueryResultCache|
+    :**Set**(cacheKey, allDocuments)
+    TTL from CacheTtl (default 5 min);
+
+  endif
+
+  |FakeCosmosHandler|
+  :**BuildPagedResponse**()
+  → Skip(offset).Take(maxItemCount)
+  → continuation token (offset-based)
+  → Serialize JSON:
+    { "_rid": "collRid",
+      "Documents": [ …page… ],
+      "_count": n };
+
+  :Set response headers:
+  • x-ms-request-charge: 1
+  • x-ms-activity-id: {guid}
+  • x-ms-session-token: 0:0#1
+  • x-ms-item-count: {count}
+  • x-ms-continuation: {token|null};
+
+  :Return **HttpResponseMessage** (200 OK);
+
+  |CosmosClient (real SDK)|
+  :SDK pipeline stages process response:
+  • OrderByPipelineStage reads orderByItems,
+    merge-sorts across partition ranges
+  • AggregatePipelineStage accumulates
+  • Deserialize JSON → T;
+
+  :Create **FeedResponse<T>**;
+
+  |Test Code|
+  :Receive **FeedResponse<T>**;
+
+endwhile (no)
+
+note right
+  **Key difference from Approach 1 & 2:**
+  LINQ expressions are translated to SQL
+  by the real SDK's CosmosLinqQueryProvider,
+  then executed through CosmosSqlParser —
+  testing the full LINQ → SQL → HTTP →
+  parse → execute → serialize pipeline.
+
+  .ToFeedIterator() works unchanged
+  (no .ToFeedIteratorOverridable() needed).
+end note
+
+stop
+
+@enduml

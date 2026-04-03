@@ -1,0 +1,123 @@
+@startuml approach1-linq-detailed-activity
+title **Approach 1: InMemoryContainer — LINQ Query Flow (Detailed)**
+
+skinparam backgroundColor #FEFEFE
+skinparam ActivityBorderColor #333
+skinparam ActivityBackgroundColor #E8F4FD
+skinparam PartitionBorderColor #666
+
+start
+
+|Test Setup|
+:**InMemoryFeedIteratorSetup.Register()**
+→ sets AsyncLocal<FeedIteratorFactory>
+= CreateInMemoryFeedIterator<T>
+(one-time, per test fixture);
+
+note right
+  Resolution order in ToFeedIteratorOverridable:
+  1. AsyncLocal factory (per-async-flow) ← matches in tests
+  2. StaticFallbackFactory (static field)
+  3. Real SDK .ToFeedIterator() (production path)
+end note
+
+|InMemoryContainer|
+:Call **GetItemLinqQueryable<T>**
+(allowSynchronousQueryExecution,
+continuationToken, requestOptions);
+
+:**GetAllItemsForPartition**(requestOptions)
+→ read from ConcurrentDictionary store
+→ filter by partition key if specified
+→ exclude TTL-expired items
+→ return List<string> (JSON);
+
+:Deserialize each JSON string →
+**JsonConvert.DeserializeObject<T>()**;
+
+:Apply requestOptions.PartitionKey
+filtering if specified;
+
+:items.**AsQueryable()**
+.**OrderBy**(item => 0)
+→ **IOrderedQueryable<T>**;
+
+note right
+  This is a plain **LINQ-to-Objects** queryable —
+  NOT the Cosmos SDK's CosmosLinqQueryProvider.
+  All operators execute as C# delegates, not SQL.
+  No SQL parsing involved in this flow.
+end note
+
+:Return IOrderedQueryable<T> to caller;
+
+|Test Code|
+:Apply LINQ operators (no execution yet):
+.**Where**(x => x.Status == "active")
+→ adds predicate delegate
+.**Select**(x => x.Name)
+→ adds projection delegate
+.**OrderBy**(x => x.Timestamp)
+→ adds sort key delegate
+.**Take**(10)
+→ adds limit;
+
+note right
+  These are standard System.Linq
+  operators on IQueryable<T>.
+  They compose a deferred pipeline —
+  no items are evaluated yet.
+end note
+
+|ProductionExtensions|
+:Call .**ToFeedIteratorOverridable**()
+(CosmosOverridableFeedIteratorExtensions);
+
+:Check **AsyncLocal<FeedIteratorFactory>**
+→ non-null (set by Register());
+
+|InMemoryFeedIteratorSetup|
+:factory.Invoke(queryable) =
+**CreateInMemoryFeedIterator<T>**(queryable);
+
+:queryable.**AsEnumerable**()
+→ **triggers LINQ-to-Objects execution**:
+Where delegate → Select delegate →
+OrderBy delegate → Take delegate
+all run as C# delegates in-memory;
+
+:Create **new InMemoryFeedIterator<T>**
+(materialized IEnumerable<T>,
+maxItemCount from requestOptions);
+
+:Return FeedIterator<T>;
+
+|Test Code|
+while (FeedIter.HasMoreResults?) is (yes)
+  :Call **ReadNextAsync()**;
+
+  |InMemoryFeedIterator<T>|
+  :**EnsureItems**()
+  → materialize enumerable on first call
+  → cache results for subsequent pages;
+
+  :Paginate: **Skip**(offset).**Take**(maxItemCount)
+  → extract current page;
+
+  :Generate **continuation token**
+  → offset-based integer
+  → null if last page;
+
+  :Create **new InMemoryFeedResponse<T>**
+  (page of items, continuationToken,
+  Headers: x-ms-request-charge,
+  x-ms-activity-id);
+
+  |Test Code|
+  :Receive **FeedResponse<T>**;
+
+endwhile (no)
+
+stop
+
+@enduml
