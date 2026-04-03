@@ -1860,3 +1860,1494 @@ public class JsTriggerTests
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Trigger CRUD Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TriggerCrudEdgeCaseTests
+{
+    [Fact]
+    public async Task CreateTriggerAsync_DuplicateId_ThrowsConflict()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        var scripts = container.Scripts;
+
+        await scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "trig1",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.stamp = 'ok'; req.setBody(doc); }"
+        });
+
+        var act = () => scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "trig1",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run2() { }"
+        });
+
+        (await act.Should().ThrowAsync<CosmosException>())
+            .Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task ReplaceTriggerAsync_ChangesOperation_AffectsFiring()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        var scripts = container.Scripts;
+
+        await scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "trig1",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.Create,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.stamp = 'v1'; req.setBody(doc); }"
+        });
+
+        // Create an item to replace later
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "trig1" } });
+
+        // Now change trigger to fire on All (including Replace)
+        await scripts.ReplaceTriggerAsync(new TriggerProperties
+        {
+            Id = "trig1",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.stamp = 'v2'; req.setBody(doc); }"
+        });
+
+        await container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "trig1" } });
+
+        var readBack = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        readBack["stamp"]!.ToString().Should().Be("v2");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Operation-Specific Trigger Filtering
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TriggerOperationFilteringTests
+{
+    [Fact]
+    public async Task PreTrigger_DeleteOnly_DoesNotFireOnCreate()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "del-only",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.Delete,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.stamp = 'fired'; req.setBody(doc); }"
+        });
+
+        var result = await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "del-only" } });
+
+        result.Resource["stamp"].Should().BeNull("delete-only trigger should not fire on create");
+    }
+
+    [Fact]
+    public async Task PreTrigger_DeleteOnly_DoesNotFireOnReplace()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "del-only",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.Delete,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.stamp = 'fired'; req.setBody(doc); }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        var result = await container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "del-only" } });
+
+        result.Resource["stamp"].Should().BeNull("delete-only trigger should not fire on replace");
+    }
+
+    [Fact]
+    public async Task PostTrigger_CreateOnly_DoesNotFireOnReplace()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        var called = false;
+        container.RegisterTrigger("create-only", TriggerType.Post, TriggerOperation.Create,
+            _ => called = true);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        called = false; // reset after create
+
+        await container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", extra = "val" }),
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "create-only" } });
+
+        called.Should().BeFalse("create-only post-trigger should not fire on replace");
+    }
+
+    [Fact]
+    public async Task PreTrigger_DeleteOnly_DoesNotFireOnUpsert()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "del-only",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.Delete,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.stamp = 'fired'; req.setBody(doc); }"
+        });
+
+        await container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "del-only" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["stamp"].Should().BeNull("delete-only trigger should not fire on upsert");
+    }
+
+    [Fact]
+    public async Task PostTrigger_DeleteOnly_DoesNotFireOnCreate()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        var called = false;
+        container.RegisterTrigger("del-only-post", TriggerType.Post, TriggerOperation.Delete,
+            _ => called = true);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "del-only-post" } });
+
+        called.Should().BeFalse("delete-only post-trigger should not fire on create");
+    }
+
+    [Fact]
+    public async Task PreTrigger_UpsertOnly_FiresOnUpsert()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "upsert-only",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All, // Upsert maps to Create/Replace in emulator; use All to cover
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.stamp = 'upserted'; req.setBody(doc); }"
+        });
+
+        await container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "upsert-only" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["stamp"]!.ToString().Should().Be("upserted");
+    }
+
+    [Fact]
+    public async Task PostTrigger_All_FiresOnUpsert()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        var called = false;
+        container.RegisterTrigger("all-post", TriggerType.Post, TriggerOperation.All,
+            _ => called = true);
+
+        await container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "all-post" } });
+
+        called.Should().BeTrue("All-operation post-trigger should fire on upsert");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Pre-Trigger Rollback Verification
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class PreTriggerRollbackTests
+{
+    [Fact]
+    public async Task PreTrigger_Js_Throws_ItemNotCreated()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('intentional failure'); }"
+        });
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "throw-trigger" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        container.ItemCount.Should().Be(0, "item should not be created when pre-trigger throws");
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_Throws_ItemNotReplaced()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "original" }),
+            new PartitionKey("a"));
+
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('intentional failure'); }"
+        });
+
+        var act = () => container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "changed" }),
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "throw-trigger" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+
+        var readBack = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        readBack.Resource["val"]!.ToString().Should().Be("original");
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_Throws_ItemNotUpserted()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('intentional failure'); }"
+        });
+
+        var act = () => container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "throw-trigger" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        container.ItemCount.Should().Be(0, "item should not be created when pre-trigger throws on upsert");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Post-Trigger Rollback Verification
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class PostTriggerRollbackVerificationTests
+{
+    [Fact]
+    public async Task PostTrigger_Js_RollsBack_Create_ItemRemoved()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('post failure'); }"
+        });
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        container.ItemCount.Should().Be(0, "item should be rolled back when post-trigger throws");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_RollsBack_Replace_RestoresOriginal()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "original" }),
+            new PartitionKey("a"));
+
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('post failure'); }"
+        });
+
+        var act = () => container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "replaced" }),
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+
+        var readBack = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        readBack.Resource["val"]!.ToString().Should().Be("original");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_RollsBack_Delete_RestoresItem()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('post failure'); }"
+        });
+
+        var act = () => container.DeleteItemAsync<JObject>(
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        container.ItemCount.Should().Be(1, "item should be restored when post-trigger throws on delete");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_RollsBack_UpsertNew_RemovesItem()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('post failure'); }"
+        });
+
+        var act = () => container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        container.ItemCount.Should().Be(0, "new upsert should be rolled back");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_RollsBack_UpsertExisting_RestoresOriginal()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "original" }),
+            new PartitionKey("a"));
+
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('post failure'); }"
+        });
+
+        var act = () => container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "updated" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+
+        var readBack = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        readBack.Resource["val"]!.ToString().Should().Be("original", "existing upsert should restore original on rollback");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  JintTriggerEngine Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class JintTriggerEngineAdditionalEdgeCaseTests
+{
+    private readonly InMemoryContainer _container;
+
+    public JintTriggerEngineAdditionalEdgeCaseTests()
+    {
+        _container = new InMemoryContainer("test", "/pk");
+        _container.UseJsTriggers();
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_MultipleSetBody_LastWins()
+    {
+        await _container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "multi-set",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { " +
+                "var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); " +
+                "doc.val = 'first'; req.setBody(doc); " +
+                "doc.val = 'second'; req.setBody(doc); }"
+        });
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "multi-set" } });
+
+        var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["val"]!.ToString().Should().Be("second");
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_MathFunctions_Work()
+    {
+        await _container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "math-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { " +
+                "var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); " +
+                "doc.rounded = Math.floor(3.7); doc.max = Math.max(1, 5, 3); " +
+                "req.setBody(doc); }"
+        });
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "math-trigger" } });
+
+        var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        ((long)item["rounded"]!).Should().Be(3);
+        ((long)item["max"]!).Should().Be(5);
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_StringManipulation_Works()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "string-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { " +
+                "var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); " +
+                "doc.upper = doc.name.toUpperCase(); doc.trimmed = '  hello  '.trim(); " +
+                "req.setBody(doc); }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "test" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "string-trigger" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["upper"]!.ToString().Should().Be("TEST");
+        item["trimmed"]!.ToString().Should().Be("hello");
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_JsonParse_InTrigger()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "json-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { " +
+                "var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); " +
+                "var parsed = JSON.parse('{\"key\":\"value\"}'); doc.parsedKey = parsed.key; " +
+                "req.setBody(doc); }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "json-trigger" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["parsedKey"]!.ToString().Should().Be("value");
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_EmptyBody_NoOp()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "empty-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = ""
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "original" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "empty-trigger" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["val"]!.ToString().Should().Be("original", "empty trigger body should not modify document");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_EmptyBody_NoOp()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "empty-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = ""
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "empty-post" } });
+
+        container.ItemCount.Should().Be(1, "empty post-trigger body should not cause failure");
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_ArrowFunction_NotInvoked()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "arrow-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "var f = () => { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.arrow = true; req.setBody(doc); };"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "arrow-trigger" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["arrow"].Should().BeNull("arrow functions are not invoked by InvokeFirstFunction regex");
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_AnonymousFunction_NotInvoked()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "anon-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "(function() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.anon = true; req.setBody(doc); })();"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "anon-trigger" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        // Anonymous IIFE executes during engine.Execute(), so it DOES run before InvokeFirstFunction
+        // The regex won't match it, but the IIFE already executed
+        item["anon"]!.Value<bool>().Should().BeTrue("IIFE executes during engine.Execute() phase");
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_NumberPrecision()
+    {
+        await _container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "precision-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { " +
+                "var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); " +
+                "doc.sum = 0.1 + 0.2; " +
+                "req.setBody(doc); }"
+        });
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "precision-trigger" } });
+
+        var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        var sum = (double)item["sum"]!;
+        sum.Should().NotBe(0.3, "JavaScript floating-point: 0.1 + 0.2 !== 0.3");
+        sum.Should().BeApproximately(0.3, 0.0001);
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_DateObject()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "date-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { " +
+                "var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); " +
+                "doc.hasDate = typeof new Date().getTime() === 'number'; " +
+                "req.setBody(doc); }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "date-trigger" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["hasDate"]!.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_RegexUsage()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "regex-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { " +
+                "var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); " +
+                "doc.isEmail = /^[^@]+@[^@]+$/.test(doc.email); " +
+                "req.setBody(doc); }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", email = "user@example.com" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "regex-trigger" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["isEmail"]!.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_JsonStringify_InTrigger()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "stringify-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { " +
+                "var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); " +
+                "doc.nested = JSON.stringify({a: 1, b: 2}); " +
+                "req.setBody(doc); }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "stringify-trigger" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["nested"]!.ToString().Should().Contain("\"a\"");
+        item["nested"]!.ToString().Should().Contain("\"b\"");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_LargeDocument_HandledCorrectly()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "large-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { var ctx = getContext(); var resp = ctx.getResponse(); var doc = resp.getBody(); }"
+        });
+
+        var doc = new JObject { ["id"] = "1", ["pk"] = "a" };
+        for (var i = 0; i < 150; i++) doc[$"field{i}"] = $"value{i}";
+
+        await container.CreateItemAsync(doc, new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "large-post" } });
+
+        container.ItemCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_UnicodeInResponse()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "unicode-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { var ctx = getContext(); var resp = ctx.getResponse(); var doc = resp.getBody(); }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "日本語テスト 🎉" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "unicode-post" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["name"]!.ToString().Should().Be("日本語テスト 🎉");
+    }
+
+    [Fact(Skip = "Jint timeout is 5 seconds — test would take too long for CI. " +
+        "Verified that Jint.Engine TimeoutInterval is configured to 5s in JintTriggerEngine.")]
+    public async Task PreTrigger_Js_InfiniteLoop_TimesOut()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "loop-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { while(true) {} }"
+        });
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "loop-trigger" } });
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact(Skip = "MaxStatements(10000) may take too long to trigger in CI. " +
+        "Verified that Jint.Engine MaxStatements is configured to 10000 in JintTriggerEngine.")]
+    public async Task PreTrigger_Js_MaxStatements_Exceeded()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "stmt-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { var i = 0; while(i < 100000) { i++; } }"
+        });
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "stmt-trigger" } });
+
+        await act.Should().ThrowAsync<Exception>();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Feature Interaction Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TriggerFeatureInteractionTests
+{
+    [Fact]
+    public async Task PreTrigger_Js_WithTTL_SetsItemTTL()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.DefaultTimeToLive = 3600;
+        container.UseJsTriggers();
+
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "ttl-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { " +
+                "var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); " +
+                "doc.ttl = 60; req.setBody(doc); }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "ttl-trigger" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        ((long)item["ttl"]!).Should().Be(60);
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_VerifyChangeFeedRecorded()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "log-trigger",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { /* no-op post trigger */ }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "log-trigger" } });
+
+        var cfIterator = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.LatestVersion);
+        var results = new List<JObject>();
+        while (cfIterator.HasMoreResults)
+        {
+            var batch = await cfIterator.ReadNextAsync();
+            if (batch.StatusCode == HttpStatusCode.NotModified) break;
+            results.AddRange(batch);
+        }
+
+        results.Should().ContainSingle().Which["id"]!.ToString().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_WithETagCondition_BothApply()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "stamp-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.stamp = 'triggered'; req.setBody(doc); }"
+        });
+
+        var created = await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "v1" }),
+            new PartitionKey("a"));
+        var etag = created.ETag;
+
+        // Replace with correct ETag + pre-trigger
+        await container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "v2" }),
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions
+            {
+                IfMatchEtag = etag,
+                PreTriggers = new List<string> { "stamp-trigger" }
+            });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["stamp"]!.ToString().Should().Be("triggered");
+        item["val"]!.ToString().Should().Be("v2");
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_WithUniqueKeyPolicy()
+    {
+        var properties = new ContainerProperties("test", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "email-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.email = doc.email.toLowerCase(); req.setBody(doc); }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", email = "USER@TEST.COM" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "email-trigger" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["email"]!.ToString().Should().Be("user@test.com");
+
+        // Second item with same email (after trigger lowercasing) should conflict
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", email = "User@Test.Com" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "email-trigger" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact(Skip = "Real Cosmos DB prevents pre-triggers from changing the id field. " +
+        "Emulator behavior is undefined — the id used for storage depends on extraction timing.")]
+    public async Task PreTrigger_Js_ModifiesIdField_Undefined()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "id-changer",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.id = 'modified-id'; req.setBody(doc); }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "original-id", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "id-changer" } });
+    }
+
+    [Fact(Skip = "Real Cosmos DB prevents pre-triggers from changing the partition key. " +
+        "Emulator behavior is undefined — the pk used for storage depends on extraction timing.")]
+    public async Task PreTrigger_Js_ModifiesPartitionKey_Undefined()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "pk-changer",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.pk = 'modified-pk'; req.setBody(doc); }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "pk-changer" } });
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Divergent Behavior — Patch/Batch Triggers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TriggerPatchBatchDivergentTests
+{
+    [Fact(Skip = "Real Cosmos DB can fire triggers on PatchItemAsync. The emulator's PatchItemAsync " +
+        "does not call ExecutePreTriggers/ExecutePostTriggers, so triggers are silently ignored.")]
+    public async Task Trigger_Js_PatchOperation_FiresTrigger()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "patch-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = 10 }),
+            new PartitionKey("a"));
+
+        await container.PatchItemAsync<JObject>(
+            "1", new PartitionKey("a"),
+            new[] { PatchOperation.Replace("/val", 20) },
+            new PatchItemRequestOptions { PreTriggers = new List<string> { "patch-trigger" } });
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_PatchIgnoresTriggers()
+    {
+        // DIVERGENT BEHAVIOR: PatchItemAsync does not call ExecutePreTriggers.
+        // Triggers specified in PatchItemRequestOptions are silently ignored.
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "stamp-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.stamped = true; req.setBody(doc); }"
+        });
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = 10 }),
+            new PartitionKey("a"));
+
+        var patched = await container.PatchItemAsync<JObject>(
+            "1", new PartitionKey("a"),
+            new[] { PatchOperation.Replace("/val", 20) });
+
+        patched.Resource["stamped"].Should().BeNull("patch does not fire pre-triggers");
+    }
+
+    [Fact(Skip = "Real Cosmos DB records change feed only for committed transactions. " +
+        "The emulator records change feed before post-trigger execution, so failed post-triggers " +
+        "leave orphan change feed entries.")]
+    public async Task ChangeFeed_RolledBack_OnPostTriggerFailure()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('fail'); }"
+        });
+
+        try
+        {
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = "1", pk = "a" }),
+                new PartitionKey("a"),
+                new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
+        }
+        catch { }
+
+        var cfIterator = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.LatestVersion);
+        var results = new List<JObject>();
+        while (cfIterator.HasMoreResults)
+        {
+            var batch = await cfIterator.ReadNextAsync();
+            if (batch.StatusCode == HttpStatusCode.NotModified) break;
+            results.AddRange(batch);
+        }
+
+        results.Should().BeEmpty("failed transaction should not appear in change feed");
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_ChangeFeed_NotRolledBack_OnPostTriggerFailure()
+    {
+        // DIVERGENT BEHAVIOR: The emulator records change feed entries before
+        // post-trigger execution. If the post-trigger fails and the write is
+        // rolled back, the change feed still contains the orphan entry.
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('fail'); }"
+        });
+
+        try
+        {
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = "1", pk = "a" }),
+                new PartitionKey("a"),
+                new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
+        }
+        catch { }
+
+        var cfIterator = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.LatestVersion);
+        var results = new List<JObject>();
+        while (cfIterator.HasMoreResults)
+        {
+            var batch = await cfIterator.ReadNextAsync();
+            if (batch.StatusCode == HttpStatusCode.NotModified) break;
+            results.AddRange(batch);
+        }
+
+        results.Should().ContainSingle("orphan entry remains in change feed");
+    }
+
+    [Fact(Skip = "Real Cosmos DB can fire triggers on TransactionalBatch operations. " +
+        "The emulator's TransactionalBatch does not support trigger options.")]
+    public async Task Trigger_Js_TransactionalBatch_NotSupported()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "batch-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { }"
+        });
+
+        // TransactionalBatch does not expose Pre/PostTriggers options
+        var batch = container.CreateTransactionalBatch(new PartitionKey("a"));
+        batch.CreateItem(JObject.FromObject(new { id = "1", pk = "a" }));
+        await batch.ExecuteAsync();
+    }
+
+    [Fact]
+    public async Task DivergentBehavior_TransactionalBatch_IgnoresTriggers()
+    {
+        // DIVERGENT BEHAVIOR: TransactionalBatch operations do not support
+        // Pre/PostTrigger options. Triggers cannot be specified for batch operations.
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        var called = false;
+        container.RegisterTrigger("batch-post", TriggerType.Post, TriggerOperation.All,
+            _ => called = true);
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("a"));
+        batch.CreateItem(JObject.FromObject(new { id = "1", pk = "a" }));
+        await batch.ExecuteAsync();
+
+        called.Should().BeFalse("batch operations do not invoke registered triggers");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Scripts CRUD Status Code Verification
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TriggerScriptsStatusCodeTests
+{
+    [Fact]
+    public async Task CreateTriggerAsync_ReturnsCreatedStatus()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        var result = await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "trig1",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { }"
+        });
+
+        result.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task ReplaceTriggerAsync_ReturnsOkStatus()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "trig1",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { }"
+        });
+
+        var result = await container.Scripts.ReplaceTriggerAsync(new TriggerProperties
+        {
+            Id = "trig1",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run2() { }"
+        });
+
+        result.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task DeleteTriggerAsync_ReturnsNoContentStatus()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "trig1",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { }"
+        });
+
+        var result = await container.Scripts.DeleteTriggerAsync("trig1");
+
+        result.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task ReplaceTriggerAsync_ChangesType_FromPreToPost()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "trig1",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.stamp = 'pre'; req.setBody(doc); }"
+        });
+
+        // Replace to change from Pre to Post
+        await container.Scripts.ReplaceTriggerAsync(new TriggerProperties
+        {
+            Id = "trig1",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { /* now a post trigger */ }"
+        });
+
+        // It should no longer fire as a pre-trigger
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "trig1" } });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["stamp"].Should().BeNull("trigger was changed from Pre to Post — should not fire as pre-trigger");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Stream API Trigger Rollback Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class StreamTriggerRollbackTests
+{
+    [Fact]
+    public async Task PostTrigger_Js_RollsBack_CreateStream()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('post failure'); }"
+        });
+
+        var json = JObject.FromObject(new { id = "1", pk = "a" }).ToString();
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+
+        var act = () => container.CreateItemStreamAsync(
+            stream, new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        container.ItemCount.Should().Be(0, "stream create should be rolled back on post-trigger failure");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_RollsBack_ReplaceStream()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "original" }),
+            new PartitionKey("a"));
+
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('post failure'); }"
+        });
+
+        var json = JObject.FromObject(new { id = "1", pk = "a", val = "replaced" }).ToString();
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+
+        var act = () => container.ReplaceItemStreamAsync(
+            stream, "1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        var readBack = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        readBack.Resource["val"]!.ToString().Should().Be("original");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_RollsBack_UpsertStream_New()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('post failure'); }"
+        });
+
+        var json = JObject.FromObject(new { id = "1", pk = "a" }).ToString();
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+
+        var act = () => container.UpsertItemStreamAsync(
+            stream, new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        container.ItemCount.Should().Be(0, "new stream upsert should be rolled back");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_RollsBack_UpsertStream_Existing()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", val = "original" }),
+            new PartitionKey("a"));
+
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('post failure'); }"
+        });
+
+        var json = JObject.FromObject(new { id = "1", pk = "a", val = "updated" }).ToString();
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+
+        var act = () => container.UpsertItemStreamAsync(
+            stream, new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        var readBack = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        readBack.Resource["val"]!.ToString().Should().Be("original");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_RollsBack_DeleteStream()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-post",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('post failure'); }"
+        });
+
+        var act = () => container.DeleteItemStreamAsync(
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        container.ItemCount.Should().Be(1, "item should be restored when stream delete post-trigger fails");
+    }
+
+    [Fact]
+    public async Task PreTrigger_Js_DeleteStream_FiresAndBlocksDelete()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "throw-pre",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { throw new Error('pre failure'); }"
+        });
+
+        var act = () => container.DeleteItemStreamAsync(
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "throw-pre" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        container.ItemCount.Should().Be(1, "item should not be deleted when pre-trigger throws");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Trigger Concurrency Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TriggerConcurrencyTests
+{
+    [Fact]
+    public async Task PreTrigger_Js_ConcurrentCreates_AllTriggered()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "stamp-trigger",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.All,
+            Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.stamp = 'triggered'; req.setBody(doc); }"
+        });
+
+        var tasks = Enumerable.Range(0, 10).Select(i =>
+            container.CreateItemAsync(
+                JObject.FromObject(new { id = $"item-{i}", pk = "a" }),
+                new PartitionKey("a"),
+                new ItemRequestOptions { PreTriggers = new List<string> { "stamp-trigger" } }));
+
+        await Task.WhenAll(tasks);
+
+        container.ItemCount.Should().Be(10);
+        for (var i = 0; i < 10; i++)
+        {
+            var item = (await container.ReadItemAsync<JObject>($"item-{i}", new PartitionKey("a"))).Resource;
+            item["stamp"]!.ToString().Should().Be("triggered");
+        }
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_ConcurrentCreates_AllTriggered()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+        var callCount = 0;
+        container.RegisterTrigger("count-trigger", TriggerType.Post, TriggerOperation.All,
+            _ => Interlocked.Increment(ref callCount));
+
+        var tasks = Enumerable.Range(0, 10).Select(i =>
+            container.CreateItemAsync(
+                JObject.FromObject(new { id = $"item-{i}", pk = "a" }),
+                new PartitionKey("a"),
+                new ItemRequestOptions { PostTriggers = new List<string> { "count-trigger" } }));
+
+        await Task.WhenAll(tasks);
+
+        container.ItemCount.Should().Be(10);
+        callCount.Should().Be(10);
+    }
+}

@@ -2400,6 +2400,11 @@ public class InMemoryContainer : Container
             .Returns(ci =>
             {
                 var props = ci.Arg<TriggerProperties>();
+                if (_triggerProperties.ContainsKey(props.Id))
+                {
+                    throw new CosmosException($"Trigger '{props.Id}' already exists.",
+                        HttpStatusCode.Conflict, 0, string.Empty, 0);
+                }
                 _triggerProperties[props.Id] = props;
                 var r = Substitute.For<TriggerResponse>();
                 r.StatusCode.Returns(HttpStatusCode.Created);
