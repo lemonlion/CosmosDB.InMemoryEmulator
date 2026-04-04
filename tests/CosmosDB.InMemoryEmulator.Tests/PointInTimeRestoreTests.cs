@@ -730,7 +730,7 @@ public class PitrConcurrencyTests
         }
 
         // Concurrent reads + restore should not throw
-        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var readTask = Task.Run(async () =>
         {
             while (!cts.Token.IsCancellationRequested)
@@ -740,8 +740,9 @@ public class PitrConcurrencyTests
                     await container.ReadItemAsync<TestDocument>("0", new PartitionKey("pk"));
                 }
                 catch (CosmosException) { /* item may not exist during restore */ }
+                catch (OperationCanceledException) { break; }
             }
-        }, cts.Token);
+        });
 
         var restoreTask = Task.Run(() =>
         {
