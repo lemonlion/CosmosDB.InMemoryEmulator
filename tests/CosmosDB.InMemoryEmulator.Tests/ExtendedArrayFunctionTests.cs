@@ -1725,7 +1725,7 @@ public class ExtendedArrayFunctionTests
 
     // ── Divergent Behavior: Non-Array Scalar Property (BUG-5) ───────────────
 
-    [Fact(Skip = "Real Cosmos DB returns undefined when either input to SetIntersect is a non-array scalar. The emulator returns undefined. Impact: Low.")]
+    [Fact]
     public async Task SetIntersect_NonArrayScalarProperty_ReturnsUndefined()
     {
         await SeedTypeDiverseItems();
@@ -1737,19 +1737,6 @@ public class ExtendedArrayFunctionTests
     }
 
     [Fact]
-    public async Task SetIntersect_NonArrayScalarProperty_EmulatorBehavior()
-    {
-        await SeedTypeDiverseItems();
-        // Item 9: tags="not-an-array" — emulator returns undefined via UndefinedValue path
-        var query = new QueryDefinition("SELECT SetIntersect(c.tags, ['a']) AS common FROM c WHERE c.id = '9'");
-
-        var results = await QueryAll<JObject>(query);
-
-        results.Should().ContainSingle();
-        results[0]["common"].Should().BeNull(); // property absent = undefined
-    }
-
-    [Fact(Skip = "Real Cosmos DB returns undefined when either input to SetUnion is a non-array scalar. The emulator returns undefined. Impact: Low.")]
     public async Task SetUnion_NonArrayScalarProperty_ReturnsUndefined()
     {
         await SeedTypeDiverseItems();
@@ -1760,19 +1747,6 @@ public class ExtendedArrayFunctionTests
     }
 
     [Fact]
-    public async Task SetUnion_NonArrayScalarProperty_EmulatorBehavior()
-    {
-        await SeedTypeDiverseItems();
-        // Item 9: tags="not-an-array" — SetUnion with non-array first arg
-        var query = new QueryDefinition("SELECT SetUnion(c.tags, ['a']) AS combined FROM c WHERE c.id = '9'");
-
-        var results = await QueryAll<JObject>(query);
-
-        results.Should().ContainSingle();
-        results[0]["combined"].Should().BeNull(); // property absent = undefined
-    }
-
-    [Fact(Skip = "Real Cosmos DB returns undefined when either input to SetDifference is a non-array scalar. The emulator returns undefined. Impact: Low.")]
     public async Task SetDifference_NonArrayScalarProperty_ReturnsUndefined()
     {
         await SeedTypeDiverseItems();
@@ -1780,19 +1754,6 @@ public class ExtendedArrayFunctionTests
         var results = await QueryAll<JObject>(query);
         results.Should().ContainSingle();
         results[0]["diff"].Should().BeNull();
-    }
-
-    [Fact]
-    public async Task SetDifference_NonArrayScalarProperty_EmulatorBehavior()
-    {
-        await SeedTypeDiverseItems();
-        // Item 9: tags="not-an-array" — SetDifference with non-array first arg
-        var query = new QueryDefinition("SELECT SetDifference(c.tags, ['a']) AS diff FROM c WHERE c.id = '9'");
-
-        var results = await QueryAll<JObject>(query);
-
-        results.Should().ContainSingle();
-        results[0]["diff"].Should().BeNull(); // property absent = undefined
     }
 
     private async Task<List<T>> QueryAll<T>(QueryDefinition query)

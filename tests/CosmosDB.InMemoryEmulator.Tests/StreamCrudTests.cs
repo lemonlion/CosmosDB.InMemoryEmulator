@@ -1566,10 +1566,7 @@ public class StreamCreateEdgeCaseTests
 
 public class StreamErrorMessageDivergentTests
 {
-    [Fact(Skip = "Real Cosmos DB sets ErrorMessage on failure ResponseMessages with a human-readable error " +
-                  "description. InMemoryContainer's CreateResponseMessage does not set ErrorMessage for error " +
-                  "status codes. Adding synthetic error messages is low priority since callers typically switch " +
-                  "on StatusCode.")]
+    [Fact]
     public async Task Stream_ErrorResponse_ContainsErrorMessage()
     {
         // Expected real Cosmos behavior:
@@ -1577,16 +1574,5 @@ public class StreamErrorMessageDivergentTests
         var container = new InMemoryContainer("errmsg-test", "/pk");
         using var response = await container.ReadItemStreamAsync("missing", new PartitionKey("a"));
         response.ErrorMessage.Should().NotBeNullOrEmpty();
-    }
-
-    [Fact]
-    public async Task Divergent_Stream_ErrorResponse_ErrorMessageIsNull()
-    {
-        // InMemoryContainer does not set ErrorMessage on error ResponseMessages.
-        // Real Cosmos DB would set a human-readable error string here.
-        // Callers should rely on StatusCode rather than ErrorMessage.
-        var container = new InMemoryContainer("errmsg-test", "/pk");
-        using var response = await container.ReadItemStreamAsync("missing", new PartitionKey("a"));
-        response.ErrorMessage.Should().BeNullOrEmpty();
     }
 }

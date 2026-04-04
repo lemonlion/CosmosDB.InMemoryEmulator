@@ -324,9 +324,7 @@ public class DocumentSizeLimitTests
     /// document (after the trigger adds ~2MB of data) exceeds the 2MB limit, even though
     /// the input document was small.
     /// </summary>
-    [Fact(Skip = "KNOWN DIVERGENCE: Real Cosmos DB validates document size after pre-trigger execution. " +
-                  "The emulator validates before pre-triggers run, so a pre-trigger that inflates the " +
-                  "document past 2MB is not caught. Low-priority: pre-triggers rarely inflate documents significantly.")]
+    [Fact]
     public async Task PreTrigger_InflatesDocumentPast2MB_RealCosmosWouldReject()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
@@ -346,44 +344,6 @@ public class DocumentSizeLimitTests
 
         var ex = await act.Should().ThrowAsync<CosmosException>();
         ex.And.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
-    }
-
-    /// <summary>
-    /// Sister test for the skipped PreTrigger_InflatesDocumentPast2MB_RealCosmosWouldReject.
-    ///
-    /// This demonstrates the emulator's actual (divergent) behaviour: when a pre-trigger
-    /// inflates a small document past 2MB, the emulator does NOT reject it because size
-    /// validation happens before the trigger executes. The document is successfully stored
-    /// despite exceeding the 2MB limit.
-    ///
-    /// Flow in emulator:
-    ///   1. Serialize small doc → ~50 bytes
-    ///   2. ValidateDocumentSize(~50 bytes) → passes ✓
-    ///   3. ExecutePreTriggers → trigger adds ~3MB "hugeField"
-    ///   4. Re-serialize → ~3MB (NO re-validation)
-    ///   5. Store → success (diverges from real Cosmos)
-    ///
-    /// In real Cosmos DB, step 4 would be followed by a size check that rejects the document.
-    /// </summary>
-    [Fact]
-    public async Task PreTrigger_InflatesDocumentPast2MB_EmulatorAllowsIt_Divergence()
-    {
-        var container = new InMemoryContainer("test", "/partitionKey");
-        container.RegisterTrigger("inflate", Microsoft.Azure.Cosmos.Scripts.TriggerType.Pre,
-            Microsoft.Azure.Cosmos.Scripts.TriggerOperation.Create,
-            doc =>
-            {
-                doc["hugeField"] = new string('z', 3 * 1024 * 1024);
-                return doc;
-            });
-
-        var smallDoc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "tiny" };
-
-        // Emulator: succeeds because size check is before trigger execution
-        var response = await container.CreateItemAsync(smallDoc, new PartitionKey("pk1"),
-            new ItemRequestOptions { PreTriggers = ["inflate"] });
-
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     #endregion

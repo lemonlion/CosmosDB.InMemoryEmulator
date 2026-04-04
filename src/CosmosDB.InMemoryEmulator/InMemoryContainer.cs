@@ -478,6 +478,7 @@ public class InMemoryContainer : Container
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Create");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+        ValidateDocumentSize(json);
 
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException("Item must have an 'id' property.");
         ValidatePartitionKeyConsistency(partitionKey, jObj);
@@ -562,6 +563,7 @@ public class InMemoryContainer : Container
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Upsert");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+        ValidateDocumentSize(json);
 
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException("Item must have an 'id' property.");
         ValidatePartitionKeyConsistency(partitionKey, jObj);
@@ -656,6 +658,7 @@ public class InMemoryContainer : Container
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+        ValidateDocumentSize(json);
 
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(id, pk);
@@ -857,6 +860,8 @@ public class InMemoryContainer : Container
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Create");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+        sizeError = ValidateDocumentSizeStream(json);
+        if (sizeError is not null) return Task.FromResult(sizeError);
 
         var itemId = jObj["id"]?.ToString() ?? Guid.NewGuid().ToString();
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
@@ -939,6 +944,8 @@ public class InMemoryContainer : Container
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Upsert");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+        sizeError = ValidateDocumentSizeStream(json);
+        if (sizeError is not null) return Task.FromResult(sizeError);
 
         var itemId = jObj["id"]?.ToString();
         if (itemId is null)
@@ -1050,6 +1057,8 @@ public class InMemoryContainer : Container
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+        sizeError = ValidateDocumentSizeStream(json);
+        if (sizeError is not null) return Task.FromResult(sizeError);
 
         string etag;
         string enrichedJson;
@@ -1225,6 +1234,7 @@ public class InMemoryContainer : Container
         IReadOnlyList<(string id, PartitionKey partitionKey)> items,
         ReadManyRequestOptions readManyRequestOptions = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(items);
         var results = new List<T>();
         foreach (var (itemId, pk) in items)
@@ -2442,7 +2452,13 @@ public class InMemoryContainer : Container
 
     private static ResponseMessage CreateResponseMessage(HttpStatusCode statusCode, string json = null, string etag = null)
     {
-        var msg = new ResponseMessage(statusCode) { Content = json is not null ? ToStream(json) : null };
+        var errorMessage = (int)statusCode >= 400
+            ? $"Response status code does not indicate success: {statusCode} ({(int)statusCode})"
+            : null;
+        var msg = new ResponseMessage(statusCode, requestMessage: null, errorMessage: errorMessage)
+        {
+            Content = json is not null ? ToStream(json) : null
+        };
         msg.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
         msg.Headers["x-ms-request-charge"] = SyntheticRequestCharge.ToString(CultureInfo.InvariantCulture);
         msg.Headers["x-ms-session-token"] = "0:0#1";
@@ -2707,7 +2723,20 @@ public class InMemoryContainer : Container
                 var hasHandler = false;
                 if (_storedProcedures.TryGetValue(sprocId, out var handler))
                 {
-                    handlerResult = handler(pk, sprocArgs);
+                    try
+                    {
+                        handlerResult = handler(pk, sprocArgs);
+                    }
+                    catch (CosmosException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new CosmosException(
+                            $"Stored procedure '{sprocId}' failed: {ex.Message}",
+                            HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                    }
                     hasHandler = true;
                 }
                 var r = Substitute.For<StoredProcedureExecuteResponse<string>>();

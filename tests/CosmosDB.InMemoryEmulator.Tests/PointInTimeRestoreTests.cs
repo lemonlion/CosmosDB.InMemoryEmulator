@@ -672,10 +672,7 @@ public class PitrFeatureInteractionTests
             .Where(e => e.StatusCode == HttpStatusCode.Conflict);
     }
 
-    [Fact(Skip = "DIVERGENT: After a failed transactional batch, change feed retains " +
-        "'ghost' entries from operations that executed before the failure. RestoreSnapshot " +
-        "rolls back _items/_etags but not _changeFeed. PITR replays these ghost entries, " +
-        "potentially resurrecting items that were never committed.")]
+    [Fact]
     public async Task RestoreToPointInTime_AfterFailedBatch_GhostEntriesInChangeFeed()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
@@ -1153,28 +1150,4 @@ public class PitrDivergentBehaviorTests
             .Resource.Name.Should().Be("B");
     }
 
-    [Fact]
-    public async Task RestoreToPointInTime_AfterFailedBatch_GhostBehavior_ActualBehavior()
-    {
-        // Sister test for existing skipped T18: batch rollback also reverts change feed,
-        // so ghost entries do NOT get replayed by PITR
-        var container = new InMemoryContainer("test", "/partitionKey");
-
-        await container.CreateItemAsync(
-            new TestDocument { Id = "existing", PartitionKey = "pk", Name = "Existing" },
-            new PartitionKey("pk"));
-
-        var batch = container.CreateTransactionalBatch(new PartitionKey("pk"));
-        batch.CreateItem(new TestDocument { Id = "ghost", PartitionKey = "pk", Name = "Ghost" });
-        batch.CreateItem(new TestDocument { Id = "existing", PartitionKey = "pk", Name = "Conflict" });
-
-        using var response = await batch.ExecuteAsync();
-        response.StatusCode.Should().NotBe(HttpStatusCode.OK);
-
-        container.ItemCount.Should().Be(1);
-
-        // PITR does NOT resurrect ghost items — batch rollback reverts the change feed
-        container.RestoreToPointInTime(DateTimeOffset.UtcNow);
-        container.ItemCount.Should().Be(1, "batch rollback reverts change feed, so no ghost entries to replay");
-    }
 }

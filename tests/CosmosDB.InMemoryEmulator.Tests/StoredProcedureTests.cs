@@ -244,8 +244,8 @@ public class StoredProcedureTests
         var act = () => _container.Scripts.ExecuteStoredProcedureAsync<string>(
             "spThrow", new PartitionKey("pk1"), Array.Empty<dynamic>());
 
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("sproc failure");
+        await act.Should().ThrowAsync<CosmosException>()
+            .WithMessage("*sproc failure*");
     }
 
     [Fact]
@@ -988,11 +988,7 @@ public class StoredProcedureDivergentBehaviorTests
 
     // ─── Divergent: Handler exceptions differ from real Cosmos (T42) ────
 
-    [Fact(Skip = "Real Cosmos DB wraps stored procedure runtime errors in CosmosException with HTTP 400 " +
-                  "Bad Request. The emulator propagates the raw C# exception from the registered handler. " +
-                  "This is intentional — it gives test authors full control over exception types. To simulate " +
-                  "a 400 error, throw new CosmosException(\"msg\", HttpStatusCode.BadRequest, 0, \"\", 0) " +
-                  "from your handler.")]
+    [Fact]
     public async Task ExecuteStoredProcedure_HandlerError_ShouldReturn400()
     {
         // Expected real Cosmos behavior:

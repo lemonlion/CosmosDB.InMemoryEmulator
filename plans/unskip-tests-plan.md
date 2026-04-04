@@ -78,8 +78,8 @@ These categories are inherently impossible or meaningless to emulate in-memory:
 | 19 | DivergentBehaviorTests | 575 | ParseFailure_ThrowsCosmosException | Wrap in CosmosException(400) |
 | 20 | ContainerManagementTests | 2037 | Container_Database_ReturnsSameInstance | Cache Database instance |
 
-## Batch 3: Feature Completeness (~20 tests) — NOT STARTED
-**Target: v2.0.55**
+## Batch 3: Feature Completeness (~20 tests) — COMPLETED
+**Version: v2.0.55 — 8 unskipped, 12 kept skipped (undefined propagation, c.* parser, CONCAT undefined, intentional divergences, TTL eviction, change feed architecture, GROUP BY+ORDER BY aggregate, conflict resolution)**
 
 | # | File | Line | Test | Fix |
 |---|------|------|------|-----|

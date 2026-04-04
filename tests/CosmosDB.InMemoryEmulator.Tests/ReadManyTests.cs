@@ -653,9 +653,7 @@ public class ReadManyOptionsDeepDiveTests
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    [Fact(Skip = "CancellationToken not honored — emulator ReadMany is synchronous via Task.FromResult. " +
-                 "Real Cosmos throws OperationCanceledException. " +
-                 "See sister test: ReadMany_CancelledToken_StillReturnsResults_Divergent")]
+    [Fact]
     public async Task ReadMany_CancelledToken_ThrowsOperationCanceledException()
     {
         await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
@@ -664,19 +662,6 @@ public class ReadManyOptionsDeepDiveTests
         var act = () => _container.ReadManyItemsAsync<JObject>(
             new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) }, cancellationToken: cts.Token);
         await act.Should().ThrowAsync<OperationCanceledException>();
-    }
-
-    [Fact]
-    public async Task ReadMany_CancelledToken_StillReturnsResults_Divergent()
-    {
-        // DIVERGENT BEHAVIOR: Emulator ignores CancellationToken — ReadMany is synchronous.
-        // Real Cosmos SDK throws OperationCanceledException during network I/O.
-        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-        var result = await _container.ReadManyItemsAsync<JObject>(
-            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) }, cancellationToken: cts.Token);
-        result.Count.Should().Be(1);
     }
 
     [Fact(Skip = "IfNoneMatchEtag is ignored. Emulator always returns 200 OK. " +
