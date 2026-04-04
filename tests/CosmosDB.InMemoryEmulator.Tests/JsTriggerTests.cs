@@ -2871,8 +2871,7 @@ public class TriggerFeatureInteractionTests
 
 public class TriggerPatchBatchDivergentTests
 {
-    [Fact(Skip = "Real Cosmos DB can fire triggers on PatchItemAsync. The emulator's PatchItemAsync " +
-        "does not call ExecutePreTriggers/ExecutePostTriggers, so triggers are silently ignored.")]
+    [Fact]
     public async Task Trigger_Js_PatchOperation_FiresTrigger()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -2896,10 +2895,10 @@ public class TriggerPatchBatchDivergentTests
     }
 
     [Fact]
-    public async Task DivergentBehavior_PatchIgnoresTriggers()
+    public async Task DivergentBehavior_PatchTriggerFiresWhenRequested()
     {
-        // DIVERGENT BEHAVIOR: PatchItemAsync does not call ExecutePreTriggers.
-        // Triggers specified in PatchItemRequestOptions are silently ignored.
+        // Triggers on patch now fire when explicitly requested via PreTriggers/PostTriggers.
+        // When not requested, triggers are not fired (same as real Cosmos DB).
         var container = new InMemoryContainer("test", "/pk");
         container.UseJsTriggers();
         await container.Scripts.CreateTriggerAsync(new TriggerProperties
@@ -2918,7 +2917,7 @@ public class TriggerPatchBatchDivergentTests
             "1", new PartitionKey("a"),
             new[] { PatchOperation.Replace("/val", 20) });
 
-        patched.Resource["stamped"].Should().BeNull("patch does not fire pre-triggers");
+        patched.Resource["stamped"].Should().BeNull("triggers not requested in this call");
     }
 
     [Fact(Skip = "Real Cosmos DB records change feed only for committed transactions. " +

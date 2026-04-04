@@ -810,6 +810,8 @@ public class InMemoryContainer : Container
             }
         }
 
+        jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
+
         ApplyPatchOperations(jObj, patchOperations);
         var updatedJson = jObj.ToString(Formatting.None);
         ValidateDocumentSize(updatedJson);
@@ -836,6 +838,9 @@ public class InMemoryContainer : Container
         }
         var enrichedJson = _items[key];
         RecordChangeFeed(id, pk, enrichedJson);
+
+        ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Replace");
+
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         var result = JsonConvert.DeserializeObject<T>(enrichedJson, JsonSettings);
         return Task.FromResult(CreateItemResponse(result, HttpStatusCode.OK, etag, suppressContent));
@@ -1891,6 +1896,15 @@ public class InMemoryContainer : Container
     private static (string Id, string PartitionKey) ItemKey(string id, string partitionKey) => (id, partitionKey);
 
     private string ExtractPartitionKeyValue(PartitionKey? partitionKey, JObject jObj)
+    {
+        var pk = ExtractPartitionKeyValueCore(partitionKey, jObj);
+        if (pk is not null && System.Text.Encoding.UTF8.GetByteCount(pk) > 2048)
+            throw new CosmosException("Partition key value exceeds the maximum allowed size of 2KB.",
+                HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+        return pk;
+    }
+
+    private string ExtractPartitionKeyValueCore(PartitionKey? partitionKey, JObject jObj)
     {
         if (partitionKey.HasValue)
         {

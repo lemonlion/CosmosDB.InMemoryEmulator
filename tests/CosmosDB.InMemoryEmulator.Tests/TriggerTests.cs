@@ -1100,7 +1100,7 @@ public class TriggerDivergentBehaviorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
 
-    [Fact(Skip = "Divergent: real Cosmos DB fires triggers on PatchItemAsync")]
+    [Fact]
     public async Task PatchItemAsync_FiresTriggers_RealCosmos()
     {
         await Task.CompletedTask;

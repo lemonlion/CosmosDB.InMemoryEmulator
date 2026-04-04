@@ -1196,7 +1196,7 @@ public class PkExtractionConsistencyTests
 
 public class PkBoundaryValueTests
 {
-    [Fact(Skip = "Real Cosmos DB rejects PK values > 2KB. The emulator has no size limit.")]
+    [Fact]
     public async Task PartitionKey_MaxSize_2KB_ShouldReject()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -1204,19 +1204,6 @@ public class PkBoundaryValueTests
         var act = () => container.CreateItemAsync(
             JObject.FromObject(new { id = "1", pk = largePk }), new PartitionKey(largePk));
         await act.Should().ThrowAsync<CosmosException>();
-    }
-
-    [Fact]
-    public async Task PartitionKey_MaxSize_2KB_EmulatorBehavior_Accepts()
-    {
-        // DIVERGENT BEHAVIOR: The emulator has no PK size validation.
-        var container = new InMemoryContainer("test", "/pk");
-        var largePk = new string('x', 2049);
-        await container.CreateItemAsync(
-            JObject.FromObject(new { id = "1", pk = largePk }), new PartitionKey(largePk));
-
-        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey(largePk))).Resource;
-        item["id"]!.ToString().Should().Be("1");
     }
 
     [Fact]
