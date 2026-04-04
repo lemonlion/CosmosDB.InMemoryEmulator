@@ -1277,3 +1277,621 @@ public class WafDivergentBehaviorTests : IDisposable
         pageCount.Should().BeGreaterThan(1);
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Plan 46: DI Callback Coverage
+// ════════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class WafCallbackTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public async Task OnClientCreated_CapturesCosmosClient_ViaWaf()
+    {
+        CosmosClient? captured = null;
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.OnClientCreated = client => captured = client;
+                }));
+
+        captured.Should().NotBeNull();
+        var resolved = app.Services.GetRequiredService<CosmosClient>();
+        captured.Should().BeSameAs(resolved);
+    }
+
+    [Fact]
+    public async Task OnContainerCreated_CapturesInMemoryContainer_ViaWaf()
+    {
+        InMemoryContainer? captured = null;
+        await using var app = await TestAppHost.CreateAsync(
+            configureBaseServices: services =>
+            {
+                services.AddSingleton<Container>(_ =>
+                    new InMemoryContainer("items", "/partitionKey"));
+                services.AddSingleton<TestRepository>();
+            },
+            configureTestServices: services =>
+                services.UseInMemoryCosmosContainers(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.OnContainerCreated = c => captured = c;
+                }));
+
+        captured.Should().NotBeNull();
+
+        await captured!.CreateItemAsync(
+            new CosmosTestItem("seed1", "seed1", "Seeded"),
+            new PartitionKey("seed1"));
+
+        var container = app.Services.GetRequiredService<Container>();
+        var read = await container.ReadItemAsync<CosmosTestItem>("seed1", new PartitionKey("seed1"));
+        read.Resource.Name.Should().Be("Seeded");
+    }
+
+    [Fact]
+    public async Task RegisterFeedIteratorSetup_False_NativeToFeedIteratorStillWorks()
+    {
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.RegisterFeedIteratorSetup = false;
+                }));
+
+        var container = app.Services.GetRequiredService<Container>();
+        await container.CreateItemAsync(
+            new CosmosTestItem("1", "1", "Test"),
+            new PartitionKey("1"));
+
+        // Native query iterator works because UseInMemoryCosmosDB uses FakeCosmosHandler
+        var iterator = container.GetItemQueryIterator<CosmosTestItem>("SELECT * FROM c");
+        var results = new List<CosmosTestItem>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Plan 46: Data Seeding Patterns
+// ════════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class WafSeedingPatternTests : IDisposable
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public async Task SeedingViaOnHandlerCreated_BackingContainer_ViaWaf()
+    {
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.OnHandlerCreated = (_, handler) =>
+                    {
+                        handler.BackingContainer.CreateItemAsync(
+                            new CosmosTestItem("seed1", "seed1", "SeededViaHandler"),
+                            new PartitionKey("seed1")).GetAwaiter().GetResult();
+                    };
+                }));
+
+        var response = await app.HttpClient.GetAsync("/items/seed1");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var item = await response.Content.ReadFromJsonAsync<CosmosTestItem>(JsonOptions);
+        item!.Name.Should().Be("SeededViaHandler");
+    }
+
+    [Fact]
+    public async Task SeedingViaOnContainerCreated_ViaWaf()
+    {
+        await using var app = await TestAppHost.CreateAsync(
+            configureBaseServices: services =>
+            {
+                services.AddSingleton<Container>(_ =>
+                    new InMemoryContainer("items", "/partitionKey"));
+                services.AddSingleton<TestRepository>();
+            },
+            configureTestServices: services =>
+                services.UseInMemoryCosmosContainers(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.OnContainerCreated = container =>
+                    {
+                        container.CreateItemAsync(
+                            new CosmosTestItem("seed1", "seed1", "SeededViaContainer"),
+                            new PartitionKey("seed1")).GetAwaiter().GetResult();
+                    };
+                }));
+
+        var container = app.Services.GetRequiredService<Container>();
+        var read = await container.ReadItemAsync<CosmosTestItem>("seed1", new PartitionKey("seed1"));
+        read.Resource.Name.Should().Be("SeededViaContainer");
+    }
+
+    [Fact]
+    public async Task SeedingViaOnClientCreated_ViaWaf()
+    {
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.OnClientCreated = client =>
+                    {
+                        var container = client.GetContainer("in-memory-db", "items");
+                        container.CreateItemAsync(
+                            new CosmosTestItem("seed1", "seed1", "SeededViaClient"),
+                            new PartitionKey("seed1")).GetAwaiter().GetResult();
+                    };
+                }));
+
+        var response = await app.HttpClient.GetAsync("/items/seed1");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var item = await response.Content.ReadFromJsonAsync<CosmosTestItem>(JsonOptions);
+        item!.Name.Should().Be("SeededViaClient");
+    }
+
+    [Fact]
+    public async Task SeedingViaImportState_InDiCallback_ViaWaf()
+    {
+        // Pre-generate state by exporting from a seeded container
+        var source = new InMemoryContainer("items", "/partitionKey");
+        await source.CreateItemAsync(
+            new CosmosTestItem("imp1", "imp1", "Imported"),
+            new PartitionKey("imp1"));
+        var state = source.ExportState();
+
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.OnHandlerCreated = (_, handler) =>
+                    {
+                        handler.BackingContainer.ImportState(state);
+                    };
+                }));
+
+        var response = await app.HttpClient.GetAsync("/items/imp1");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var item = await response.Content.ReadFromJsonAsync<CosmosTestItem>(JsonOptions);
+        item!.Name.Should().Be("Imported");
+    }
+
+    [Fact]
+    public async Task ClearItems_ResetBetweenTests_ViaWaf()
+    {
+        FakeCosmosHandler? capturedHandler = null;
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.OnHandlerCreated = (_, handler) => capturedHandler = handler;
+                }));
+
+        var container = app.Services.GetRequiredService<Container>();
+        await container.CreateItemAsync(
+            new CosmosTestItem("1", "1", "ToBeCleared"),
+            new PartitionKey("1"));
+
+        capturedHandler!.BackingContainer.ClearItems();
+
+        var response = await app.HttpClient.GetAsync("/items");
+        var items = await response.Content.ReadFromJsonAsync<List<CosmosTestItem>>(JsonOptions);
+        items.Should().BeEmpty();
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Plan 46: Advanced Cosmos Features via WAF
+// ════════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class WafAdvancedFeatureTests : IDisposable
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public async Task TransactionalBatch_ViaWaf_AtomicCreateAndRead()
+    {
+        FakeCosmosHandler? handler = null;
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.OnHandlerCreated = (_, h) => handler = h;
+                }));
+
+        // Use backing container for batch (HTTP-proxied Container doesn't support batch)
+        var container = handler!.BackingContainer;
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new CosmosTestItem("b1", "pk1", "Batch1"));
+        batch.CreateItem(new CosmosTestItem("b2", "pk1", "Batch2"));
+        batch.CreateItem(new CosmosTestItem("b3", "pk1", "Batch3"));
+        var batchResult = await batch.ExecuteAsync();
+        batchResult.IsSuccessStatusCode.Should().BeTrue();
+
+        var response = await app.HttpClient.GetAsync("/items");
+        var items = await response.Content.ReadFromJsonAsync<List<CosmosTestItem>>(JsonOptions);
+        items.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task ChangeFeed_ViaWaf_ReadsChangesAfterHttpMutations()
+    {
+        FakeCosmosHandler? handler = null;
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.OnHandlerCreated = (_, h) => handler = h;
+                }));
+
+        var client = app.HttpClient;
+        await client.PostAsJsonAsync("/items", new CosmosTestItem("cf1", "cf1", "CF1"));
+        await client.PostAsJsonAsync("/items", new CosmosTestItem("cf2", "cf2", "CF2"));
+        await client.PostAsJsonAsync("/items", new CosmosTestItem("cf3", "cf3", "CF3"));
+
+        var backingContainer = handler!.BackingContainer;
+        var iterator = backingContainer.GetChangeFeedIterator<Newtonsoft.Json.Linq.JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.LatestVersion);
+
+        var changes = new List<Newtonsoft.Json.Linq.JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            if (page.StatusCode == HttpStatusCode.NotModified) break;
+            changes.AddRange(page.Resource);
+        }
+
+        changes.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task Ttl_ViaWaf_ExpiredItemsNotReturned()
+    {
+        FakeCosmosHandler? handler = null;
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.OnHandlerCreated = (_, h) =>
+                    {
+                        handler = h;
+                        h.BackingContainer.DefaultTimeToLive = 1;
+                    };
+                }));
+
+        var client = app.HttpClient;
+        await client.PostAsJsonAsync("/items", new CosmosTestItem("ttl1", "ttl1", "Temporary"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var response = await app.HttpClient.GetAsync("/items");
+        var items = await response.Content.ReadFromJsonAsync<List<CosmosTestItem>>(JsonOptions);
+        items.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ReadMany_ViaWaf_ReturnsRequestedItems()
+    {
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o => o.AddContainer("items", "/partitionKey")));
+
+        var container = app.Services.GetRequiredService<Container>();
+        for (var i = 1; i <= 5; i++)
+            await container.CreateItemAsync(
+                new CosmosTestItem($"rm{i}", $"rm{i}", $"Item{i}"),
+                new PartitionKey($"rm{i}"));
+
+        var readManyResult = await container.ReadManyItemsAsync<CosmosTestItem>(new List<(string, PartitionKey)>
+        {
+            ("rm1", new PartitionKey("rm1")),
+            ("rm3", new PartitionKey("rm3")),
+            ("rm5", new PartitionKey("rm5"))
+        });
+
+        readManyResult.Resource.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task StatePersistence_ExportImport_ViaWaf()
+    {
+        FakeCosmosHandler? handler1 = null;
+        await using var app1 = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.OnHandlerCreated = (_, h) => handler1 = h;
+                }));
+
+        await app1.HttpClient.PostAsJsonAsync("/items", new CosmosTestItem("s1", "s1", "State1"));
+        await app1.HttpClient.PostAsJsonAsync("/items", new CosmosTestItem("s2", "s2", "State2"));
+
+        var exportedState = handler1!.BackingContainer.ExportState();
+
+        FakeCosmosHandler? handler2 = null;
+        await using var app2 = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.OnHandlerCreated = (_, h) =>
+                    {
+                        handler2 = h;
+                        h.BackingContainer.ImportState(exportedState);
+                    };
+                }));
+
+        var response = await app2.HttpClient.GetAsync("/items");
+        var items = await response.Content.ReadFromJsonAsync<List<CosmosTestItem>>(JsonOptions);
+        items.Should().HaveCount(2);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Plan 46: Container / Database Management via WAF
+// ════════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class WafContainerManagementTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public async Task DynamicContainerCreation_ViaWaf_CreateThenUse()
+    {
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o => o.AddContainer("items", "/partitionKey")));
+
+        var client = app.Services.GetRequiredService<CosmosClient>();
+        var db = client.GetDatabase("in-memory-db");
+        var dynamicResponse = await db.CreateContainerIfNotExistsAsync("dynamic", "/partitionKey");
+        var dynamicContainer = dynamicResponse.Container;
+
+        await dynamicContainer.CreateItemAsync(
+            new CosmosTestItem("d1", "a", "Dynamic"),
+            new PartitionKey("a"));
+
+        var read = await dynamicContainer.ReadItemAsync<CosmosTestItem>("d1", new PartitionKey("a"));
+        read.Resource.Name.Should().Be("Dynamic");
+    }
+
+    [Fact]
+    public async Task ReadContainerProperties_ViaWaf()
+    {
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o => o.AddContainer("items", "/partitionKey")));
+
+        var container = app.Services.GetRequiredService<Container>();
+        var props = await container.ReadContainerAsync();
+        props.Resource.Id.Should().Be("items");
+    }
+
+    [Fact]
+    public async Task ReadAccountProperties_ViaWaf()
+    {
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o => o.AddContainer("items", "/partitionKey")));
+
+        var client = app.Services.GetRequiredService<CosmosClient>();
+        var account = await client.ReadAccountAsync();
+        account.Should().NotBeNull();
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Plan 46: Pattern Validation
+// ════════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class WafPatternValidationTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact]
+    public async Task ProductionClientNotReachable_ReplacedByEmulator()
+    {
+        // Base services register a CosmosClient pointing to an unreachable endpoint.
+        // UseInMemoryCosmosDB replaces it. If replacement failed, CreateItemAsync would
+        // throw a network error.
+        await using var app = await TestAppHost.CreateAsync(
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o => o.AddContainer("items", "/partitionKey")));
+
+        var container = app.Services.GetRequiredService<Container>();
+        var act = () => container.CreateItemAsync(
+            new CosmosTestItem("1", "1", "Works"),
+            new PartitionKey("1"));
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task RegistrationOrder_DoesNotMatter()
+    {
+        // Register services before UseInMemoryCosmosDB
+        await using var app = await TestAppHost.CreateAsync(
+            configureBaseServices: services =>
+            {
+                services.AddSingleton<CosmosClient>(_ =>
+                    new CosmosClient("AccountEndpoint=https://fail.example.com:9999/;AccountKey=dGVzdA==;"));
+                services.AddSingleton(sp =>
+                    sp.GetRequiredService<CosmosClient>().GetContainer("Db", "items"));
+                services.AddSingleton<TestRepository>();
+            },
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o => o.AddContainer("items", "/partitionKey")));
+
+        var container = app.Services.GetRequiredService<Container>();
+        await container.CreateItemAsync(
+            new CosmosTestItem("1", "1", "OrderTest"),
+            new PartitionKey("1"));
+
+        var read = await container.ReadItemAsync<CosmosTestItem>("1", new PartitionKey("1"));
+        read.Resource.Name.Should().Be("OrderTest");
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Plan 46: Divergent Behaviour Deep Tests (Skip + Sister Pairs)
+// ════════════════════════════════════════════════════════════════════════════════
+
+[Collection("FeedIteratorSetup")]
+public class WafDivergentBehaviorDeepTests : IDisposable
+{
+    public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
+
+    [Fact(Skip = "DIVERGENT: When RegisterFeedIteratorSetup=false with UseInMemoryCosmosContainers, "
+               + ".ToFeedIteratorOverridable() falls back to native .ToFeedIterator() which requires "
+               + "the Cosmos LINQ provider. InMemoryContainer's IOrderedQueryable doesn't implement "
+               + "this provider, so it throws.")]
+    public void RegisterFeedIteratorSetup_False_WithContainers_BreaksOverridable() { }
+
+    [Fact]
+    public async Task RegisterFeedIteratorSetup_False_WithContainers_NativeQueryStillWorks()
+    {
+        // With UseInMemoryCosmosContainers + RegisterFeedIteratorSetup=false,
+        // SQL queries still work; only LINQ .ToFeedIteratorOverridable() breaks.
+        await using var app = await TestAppHost.CreateAsync(
+            configureBaseServices: services =>
+            {
+                services.AddSingleton<Container>(_ =>
+                    new InMemoryContainer("items", "/partitionKey"));
+                services.AddSingleton<TestRepository>();
+            },
+            configureTestServices: services =>
+                services.UseInMemoryCosmosContainers(o =>
+                {
+                    o.AddContainer("items", "/partitionKey");
+                    o.RegisterFeedIteratorSetup = false;
+                }));
+
+        var container = app.Services.GetRequiredService<Container>();
+        await container.CreateItemAsync(
+            new CosmosTestItem("1", "1", "Test"),
+            new PartitionKey("1"));
+
+        var iterator = container.GetItemQueryIterator<CosmosTestItem>("SELECT * FROM c");
+        var results = new List<CosmosTestItem>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+    }
+
+    [Fact(Skip = "DIVERGENT: FakeCosmosHandler routes by container name only, not database+container. "
+               + "Two containers with the same name in different databases would collide. "
+               + "Real Cosmos SDK sends container-specific requests to different endpoints based on database URI.")]
+    public void PerContainerDatabaseName_MultipleDbsSameContainerName_ShouldIsolate() { }
+
+    [Fact]
+    public async Task PerContainerDatabaseName_DifferentContainerNames_IsolatesCorrectly()
+    {
+        // Different container names in different databases work because routing is by container name
+        await using var app = await TestAppHost.CreateAsync(
+            configureBaseServices: services =>
+            {
+                services.AddSingleton<CosmosClient>(_ =>
+                    new CosmosClient("AccountEndpoint=https://fail.example.com:9999/;AccountKey=dGVzdA==;"));
+                services.AddSingleton<TestRepository>();
+                services.AddSingleton(sp => sp.GetRequiredService<CosmosClient>().GetContainer("Db", "items"));
+            },
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey", databaseName: "Db1");
+                    o.AddContainer("products", "/partitionKey", databaseName: "Db2");
+                }));
+
+        var client = app.Services.GetRequiredService<CosmosClient>();
+        var items = client.GetContainer("Db1", "items");
+        var products = client.GetContainer("Db2", "products");
+
+        await items.CreateItemAsync(
+            new CosmosTestItem("i1", "i1", "Item"),
+            new PartitionKey("i1"));
+        await products.CreateItemAsync(
+            new CosmosTestItem("p1", "p1", "Product"),
+            new PartitionKey("p1"));
+
+        var itemsIterator = items.GetItemQueryIterator<CosmosTestItem>("SELECT * FROM c");
+        var itemResults = new List<CosmosTestItem>();
+        while (itemsIterator.HasMoreResults)
+            itemResults.AddRange(await itemsIterator.ReadNextAsync());
+
+        var productsIterator = products.GetItemQueryIterator<CosmosTestItem>("SELECT * FROM c");
+        var productResults = new List<CosmosTestItem>();
+        while (productsIterator.HasMoreResults)
+            productResults.AddRange(await productsIterator.ReadNextAsync());
+
+        itemResults.Should().HaveCount(1);
+        itemResults[0].Name.Should().Be("Item");
+        productResults.Should().HaveCount(1);
+        productResults[0].Name.Should().Be("Product");
+    }
+
+    [Fact(Skip = "DIVERGENT: Stored procedure registration requires InMemoryContainer.RegisterStoredProcedure() "
+               + "which is not available on the abstract Container class resolved from DI. "
+               + "Use OnHandlerCreated to capture the FakeCosmosHandler.BackingContainer.")]
+    public void StoredProcedure_ViaWaf_RequiresBackingContainerAccess() { }
+
+    [Fact(Skip = "DIVERGENT: Trigger registration requires InMemoryContainer.RegisterTrigger() "
+               + "which is not part of the Container abstract class. Additionally, "
+               + "pre-trigger headers must be threaded through ItemRequestOptions, "
+               + "which HTTP endpoints don't expose.")]
+    public void Trigger_ViaWaf_RequiresBackingContainerAndHeaders() { }
+
+    [Fact(Skip = "DIVERGENT: UseInMemoryCosmosDB AddContainer() doesn't expose ContainerProperties "
+               + "for unique key configuration. Users must capture the backing InMemoryContainer "
+               + "via OnHandlerCreated and create it with ContainerProperties directly.")]
+    public void UniqueKeyPolicy_ViaWaf_NotExposedViaAddContainer() { }
+
+    [Fact(Skip = "DIVERGENT: Deleting a container via DeleteContainerAsync() removes it from "
+               + "the in-memory database, but the DI container retains its reference to the "
+               + "now-deleted singleton. This is a DI lifetime concern.")]
+    public void DeleteContainer_ViaWaf_DiStillHoldsReference() { }
+
+    [Fact(Skip = "DIVERGENT: After DisposeAsync(), the IHost and TestServer are stopped. "
+               + "Subsequent HttpClient calls throw, but the exact exception type is "
+               + "framework-dependent (ObjectDisposedException, HttpRequestException, etc.).")]
+    public void Dispose_ThenAttemptUse_FrameworkDependentException() { }
+
+    [Fact(Skip = "DIVERGENT: Change feed continuation tokens via HTTP require threading tokens "
+               + "through request/response headers — an application concern, not an emulator concern.")]
+    public void ChangeFeed_IncrementalReads_ViaHttp_RequiresCustomHeaders() { }
+
+    [Fact(Skip = "DIVERGENT: Item-level TTL requires _ttl property on the document. "
+               + "CosmosTestItem record doesn't include this field. Testing through HTTP "
+               + "requires a dedicated record type or dynamic JSON endpoints.")]
+    public void Ttl_ItemLevelOverride_ViaHttp_RequiresCustomRecordType() { }
+}
+
