@@ -65,10 +65,10 @@ public class InMemoryCosmosClientTests
         var container = client.GetContainer("test-db", "test-container");
 
         await container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 },
-            new PartitionKey("pk1"));
+            new TestDocument { Id = "1", PartitionKey = "1", Name = "Alice", Value = 10 },
+            new PartitionKey("1"));
 
-        var readResponse = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        var readResponse = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("1"));
         readResponse.Resource.Name.Should().Be("Alice");
     }
 
@@ -85,8 +85,8 @@ public class InMemoryCosmosClientTests
         var container2 = client.GetContainer("db2", "shared-name");
 
         await container1.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "From DB1" },
-            new PartitionKey("pk1"));
+            new TestDocument { Id = "1", PartitionKey = "1", Name = "From DB1" },
+            new PartitionKey("1"));
 
         container1.Should().BeOfType<InMemoryContainer>();
         ((InMemoryContainer)container1).ItemCount.Should().Be(1);
@@ -105,8 +105,8 @@ public class InMemoryCosmosClientTests
         var container2 = client.GetContainer("test-db", "container-2");
 
         await container1.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Container1Only" },
-            new PartitionKey("pk1"));
+            new TestDocument { Id = "1", PartitionKey = "1", Name = "Container1Only" },
+            new PartitionKey("1"));
 
         ((InMemoryContainer)container1).ItemCount.Should().Be(1);
         ((InMemoryContainer)container2).ItemCount.Should().Be(0);
@@ -136,11 +136,11 @@ public class InMemoryCosmosClientTests
         var container = client.GetContainer("test-db", "items");
 
         await container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 },
-            new PartitionKey("pk1"));
+            new TestDocument { Id = "1", PartitionKey = "1", Name = "Alice", Value = 10 },
+            new PartitionKey("1"));
         await container.CreateItemAsync(
-            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20 },
-            new PartitionKey("pk1"));
+            new TestDocument { Id = "2", PartitionKey = "2", Name = "Bob", Value = 20 },
+            new PartitionKey("2"));
 
         var query = new QueryDefinition("SELECT * FROM c WHERE c.value > 15");
         var iterator = container.GetItemQueryIterator<TestDocument>(query);
@@ -484,9 +484,7 @@ public class InMemoryCosmosClientDisposeTests
         act.Should().NotThrow();
     }
 
-    [Fact(Skip = "In real Cosmos DB SDK, any operation after Dispose throws ObjectDisposedException. " +
-        "InMemoryCosmosClient.Dispose is a no-op to prevent NullReferenceException from the base " +
-        "CosmosClient class. Post-dispose operations continue to work.")]
+    [Fact]
     public async Task Dispose_ThenUseClient_ThrowsObjectDisposedException()
     {
         var client = new InMemoryCosmosClient();
@@ -494,19 +492,6 @@ public class InMemoryCosmosClientDisposeTests
 
         var act = () => client.CreateDatabaseAsync("db1");
         await act.Should().ThrowAsync<ObjectDisposedException>();
-    }
-
-    [Fact]
-    public async Task DivergentBehavior_DisposeThenUse_StillFunctional()
-    {
-        // DIVERGENT BEHAVIOR: Real Cosmos SDK throws ObjectDisposedException
-        // after Dispose. The emulator's Dispose is a no-op, so operations
-        // continue to work.
-        var client = new InMemoryCosmosClient();
-        client.Dispose();
-
-        var response = await client.CreateDatabaseAsync("db1");
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 }
 

@@ -1015,9 +1015,7 @@ public class QueryPkScopingTests
 
 public class PkValidationMismatchTests
 {
-    [Fact(Skip = "Real Cosmos DB returns 400 when explicit PK differs from document body PK. " +
-        "The emulator silently accepts the mismatch and uses the explicit PK for storage. " +
-        "Fixing this would be invasive — every write method would need a PK comparison step.")]
+    [Fact]
     public async Task Create_PkMismatchWithBody_ShouldThrowBadRequest()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -1029,21 +1027,6 @@ public class PkValidationMismatchTests
     }
 
     [Fact]
-    public async Task Create_PkMismatchWithBody_EmulatorBehavior_SilentlyAccepts()
-    {
-        // DIVERGENT BEHAVIOR: Emulator uses the explicit PK parameter for storage,
-        // ignoring the PK value in the document body. No validation is performed.
-        var container = new InMemoryContainer("test", "/pk");
-        await container.CreateItemAsync(
-            JObject.FromObject(new { id = "1", pk = "body-pk" }),
-            new PartitionKey("explicit-pk"));
-
-        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("explicit-pk"))).Resource;
-        item["pk"]!.ToString().Should().Be("body-pk", "document body retains its original PK value");
-    }
-
-    [Fact(Skip = "Real Cosmos DB returns 400 when upsert explicit PK differs from body. " +
-        "The emulator silently accepts.")]
     public async Task Upsert_PkMismatchWithBody_ShouldThrowBadRequest()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -1055,20 +1038,6 @@ public class PkValidationMismatchTests
     }
 
     [Fact]
-    public async Task Upsert_PkMismatchWithBody_EmulatorBehavior_SilentlyAccepts()
-    {
-        // DIVERGENT BEHAVIOR: Same as Create — explicit PK wins, no validation.
-        var container = new InMemoryContainer("test", "/pk");
-        await container.UpsertItemAsync(
-            JObject.FromObject(new { id = "1", pk = "body-pk" }),
-            new PartitionKey("explicit-pk"));
-
-        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("explicit-pk"))).Resource;
-        item["pk"]!.ToString().Should().Be("body-pk");
-    }
-
-    [Fact(Skip = "Real Cosmos DB returns 400 when a patch modifies the partition key field. " +
-        "The emulator silently allows PK modification via patch.")]
     public async Task Patch_ModifyingPartitionKeyField_ShouldThrowBadRequest()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -1079,24 +1048,6 @@ public class PkValidationMismatchTests
             new[] { PatchOperation.Replace("/pk", "b") });
         await act.Should().ThrowAsync<CosmosException>()
             .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
-    }
-
-    [Fact]
-    public async Task Patch_ModifyingPartitionKeyField_EmulatorBehavior_SilentlyModifies()
-    {
-        // DIVERGENT BEHAVIOR: Emulator allows patching the PK field without error.
-        // The document body changes but the storage key still uses the original PK.
-        var container = new InMemoryContainer("test", "/pk");
-        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
-
-        var patched = await container.PatchItemAsync<JObject>(
-            "1", new PartitionKey("a"),
-            new[] { PatchOperation.Replace("/pk", "b") });
-
-        patched.Resource["pk"]!.ToString().Should().Be("b", "document body is modified");
-        // But it's still stored under original PK "a"
-        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
-        item["pk"]!.ToString().Should().Be("b");
     }
 }
 

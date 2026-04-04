@@ -162,19 +162,6 @@ public class StoredProcedureTests
     // ─── Execute ─────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task ExecuteStoredProcedure_ReturnsOk()
-    {
-        var scripts = _container.Scripts;
-
-        var response = await scripts.ExecuteStoredProcedureAsync<string>(
-            "spBulkDelete",
-            new PartitionKey("pk1"),
-            Array.Empty<dynamic>());
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-    }
-
-    [Fact]
     public async Task ExecuteStoredProcedure_WithRegisteredHandler_ExecutesLogic()
     {
         _container.RegisterStoredProcedure("spGetCount", (partitionKey, args) =>
@@ -208,18 +195,6 @@ public class StoredProcedureTests
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         response.Resource.Should().Be("hello-world");
-    }
-
-    [Fact]
-    public async Task ExecuteStoredProcedure_WithoutRegisteredHandler_ReturnsDefault()
-    {
-        var scripts = _container.Scripts;
-        var response = await scripts.ExecuteStoredProcedureAsync<string>(
-            "nonExistentSproc",
-            new PartitionKey("pk1"),
-            Array.Empty<dynamic>());
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]
@@ -498,13 +473,13 @@ public class StoredProcedureTests
         _container.DeregisterStoredProcedure("spTemp");
 
         var scripts = _container.Scripts;
-        var response = await scripts.ExecuteStoredProcedureAsync<string>(
+        var act = () => scripts.ExecuteStoredProcedureAsync<string>(
             "spTemp",
             new PartitionKey("pk1"),
             Array.Empty<dynamic>());
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        response.Resource.Should().BeEmpty();
+        (await act.Should().ThrowAsync<CosmosException>())
+            .Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     [Fact]
@@ -872,10 +847,7 @@ public class StoredProcedureDivergentBehaviorTests
 
     // ─── Divergent: Real Cosmos returns 404 for unregistered sprocs ──────
 
-    [Fact(Skip = "Real Cosmos DB throws 404 NotFound when executing a stored procedure that doesn't exist. " +
-                  "The emulator returns 200 OK with an empty resource for any unregistered sproc ID to allow " +
-                  "flexible testing without requiring handler registration for every stored procedure call. " +
-                  "Use RegisterStoredProcedure() to provide a C# handler if you need specific return values.")]
+    [Fact]
     public async Task ExecuteStoredProcedure_NotRegistered_ShouldThrow404()
     {
         // Expected real Cosmos behavior:
@@ -885,20 +857,6 @@ public class StoredProcedureDivergentBehaviorTests
         var act = () => scripts.ExecuteStoredProcedureAsync<string>(
             "nonExistent", new PartitionKey("pk1"), Array.Empty<dynamic>());
         await act.Should().ThrowAsync<CosmosException>();
-    }
-
-    // Sister test: shows the actual emulator behavior
-    [Fact]
-    public async Task ExecuteStoredProcedure_NotRegistered_EmulatorReturns200()
-    {
-        // InMemoryContainer returns 200 OK with empty resource for any unregistered sproc.
-        // This allows tests to call ExecuteStoredProcedureAsync without pre-registering handlers
-        // when the exact return value doesn't matter.
-        var scripts = _container.Scripts;
-        var response = await scripts.ExecuteStoredProcedureAsync<string>(
-            "nonExistent", new PartitionKey("pk1"), Array.Empty<dynamic>());
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     // ─── Divergent: Real Cosmos executes JavaScript server-side ──────────
@@ -1502,13 +1460,14 @@ public class StoredProcedureDualStoreTests
         await _container.Scripts.DeleteStoredProcedureAsync("sp1");
 
         // Handler should be removed too (CRUD delete cleans up both stores)
-        var response = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+        var act = () => _container.Scripts.ExecuteStoredProcedureAsync<string>(
             "sp1", new PartitionKey("pk1"), Array.Empty<dynamic>());
-        response.Resource.Should().BeNullOrEmpty();
+        (await act.Should().ThrowAsync<CosmosException>())
+            .Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
 
         // Metadata should also be gone
-        var act = () => _container.Scripts.ReadStoredProcedureAsync("sp1");
-        await act.Should().ThrowAsync<CosmosException>();
+        var metaAct = () => _container.Scripts.ReadStoredProcedureAsync("sp1");
+        await metaAct.Should().ThrowAsync<CosmosException>();
     }
 
     [Fact]

@@ -1674,46 +1674,25 @@ public class ComputedPropertyValidationDivergentTests
         }
     }
 
-    [Fact(Skip = "Real Cosmos DB limits containers to 20 computed properties. The emulator does " +
-                 "not enforce this limit. Adding validation is low priority since exceeding 20 " +
-                 "CPs is an extremely rare edge case.")]
-    public void ComputedProperty_MaxLimit_RealCosmos() { }
-
     [Fact]
-    public void ComputedProperty_MaxLimit_EmulatorBehaviour()
+    public void ComputedProperty_MaxLimit_RealCosmos()
     {
-        // DIVERGENT: Emulator allows more than 20 CPs
-        var definitions = Enumerable.Range(1, 25)
+        var definitions = Enumerable.Range(1, 21)
             .Select(i => ($"cp_{i}", $"SELECT VALUE c.field{i} FROM c"))
             .ToArray();
 
-        var container = CreateContainerWithComputedProperties(definitions);
+        var act = () => CreateContainerWithComputedProperties(definitions);
 
-        // Should succeed without error
-        container.Should().NotBeNull();
+        act.Should().Throw<CosmosException>();
     }
 
-    [Fact(Skip = "Real Cosmos DB rejects CP names that are reserved system properties (id, _rid, " +
-                 "_ts). The emulator does not validate CP names. Adding name validation is low " +
-                 "priority.")]
-    public void ComputedProperty_ReservedNameValidation_RealCosmos() { }
-
     [Fact]
-    public async Task ComputedProperty_ReservedNameValidation_EmulatorBehaviour()
+    public void ComputedProperty_ReservedNameValidation_RealCosmos()
     {
-        // DIVERGENT: Emulator allows CP named "id" — it overrides id in SELECT projections
-        var container = CreateContainerWithComputedProperties(
+        var act = () => CreateContainerWithComputedProperties(
             ("id", "SELECT VALUE LOWER(c.name) FROM c"));
 
-        await SeedItems(container, new { id = "1", pk = "p", name = "Alice" });
-
-        // In SELECT projection, the CP "id" overrides the persisted id
-        var query = new QueryDefinition("SELECT c.id FROM c");
-        var iterator = container.GetItemQueryIterator<JObject>(query);
-        var response = await iterator.ReadNextAsync();
-
-        // The computed "id" should be "alice" (LOWER of name), not "1"
-        response.First()["id"]!.ToString().Should().Be("alice");
+        act.Should().Throw<CosmosException>();
     }
 
     [Fact(Skip = "Real Cosmos DB validates that CP queries use SELECT VALUE syntax. Definitions " +

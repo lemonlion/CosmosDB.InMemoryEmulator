@@ -2064,7 +2064,7 @@ public class TransactionalBatchSkippedAndDivergentTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "Divergent: emulator does not validate PK mismatch between batch and document body")]
+    [Fact]
     public async Task Batch_PartitionKeyMismatch_Document_Vs_BatchPK_ThrowsBadRequest()
     {
         var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
@@ -2072,19 +2072,6 @@ public class TransactionalBatchSkippedAndDivergentTests
         using var response = await batch.ExecuteAsync();
         response.IsSuccessStatusCode.Should().BeFalse();
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    }
-
-    [Fact]
-    public async Task Batch_PartitionKeyMismatch_InMemory_UsesDocumentPK()
-    {
-        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
-        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk2", Name = "A" });
-        using var response = await batch.ExecuteAsync();
-        response.IsSuccessStatusCode.Should().BeTrue(); // emulator doesn't validate
-
-        // Item stored at batch PK (pk1) — the emulator uses the batch PK for storage
-        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
-        read.Resource.Name.Should().Be("A");
     }
 
     [Fact(Skip = "Divergent: emulator diagnostics returns zero elapsed time")]

@@ -1898,48 +1898,25 @@ public class TtlChangeFeedExtendedTests
 
 public class TtlDivergentBehaviorDeepTests
 {
-    [Fact(Skip = "DIVERGENT: Real Cosmos DB rejects DefaultTimeToLive=0 with 400 Bad Request. "
-               + "The emulator treats 0 as 'TTL enabled, no default expiry' (same as -1).")]
-    public void ContainerTtl_ZeroDefault_ShouldReturn400() { }
-
     [Fact]
-    public async Task ContainerTtl_ZeroDefault_EmulatorTreatsAsNoExpiration()
+    public void ContainerTtl_ZeroDefault_ShouldReturn400()
     {
-        var container = new InMemoryContainer("ttl-test", "/partitionKey")
-        {
-            DefaultTimeToLive = 0
-        };
-
-        await container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
-            new PartitionKey("pk1"));
-
-        await Task.Delay(TimeSpan.FromSeconds(2));
-
-        var read = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
-        read.Resource.Name.Should().Be("Test");
+        var container = new InMemoryContainer("ttl-test", "/partitionKey");
+        var act = () => container.DefaultTimeToLive = 0;
+        act.Should().Throw<CosmosException>();
     }
 
-    [Fact(Skip = "DIVERGENT: Real Cosmos DB rejects _ttl=0 — value must be -1 or positive integer. "
-               + "The emulator treats _ttl=0 as immediate expiry (elapsed >= 0 is always true).")]
-    public void PerItemTtl_Zero_ShouldReturn400() { }
-
     [Fact]
-    public async Task PerItemTtl_Zero_EmulatorExpiresImmediately()
+    public async Task PerItemTtl_Zero_ShouldReturn400()
     {
         var container = new InMemoryContainer("ttl-test", "/partitionKey")
         {
             DefaultTimeToLive = -1
         };
 
-        var json = """{"id":"1","partitionKey":"pk1","name":"Instant","_ttl":0}""";
-        await container.CreateItemStreamAsync(
-            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
-
-        // _ttl=0 means elapsed >= 0 is always true → immediate expiry
-        var act = () => container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
-        var ex = await act.Should().ThrowAsync<CosmosException>();
-        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var json = """{"id":"1","partitionKey":"pk1","_ttl":0}""";
+        var act = () => container.CreateItemAsync(JObject.Parse(json), new PartitionKey("pk1"));
+        await act.Should().ThrowAsync<CosmosException>();
     }
 
     [Fact(Skip = "DIVERGENT: Queries filter out expired items but do NOT evict them from memory. "

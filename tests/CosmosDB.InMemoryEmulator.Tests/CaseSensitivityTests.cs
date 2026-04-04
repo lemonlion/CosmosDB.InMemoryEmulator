@@ -1,3 +1,4 @@
+using System.Net;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Scripts;
@@ -99,17 +100,14 @@ public class CaseSensitivityTests
 
         var scripts = container.Scripts;
 
-        // Call with WRONG casing — should not find the handler
-        var response = await scripts.ExecuteStoredProcedureAsync<string>(
+        // Call with WRONG casing — should not find the handler (throws 404)
+        var act = () => scripts.ExecuteStoredProcedureAsync<string>(
             "MYPROC",
             new PartitionKey("pk1"),
             Array.Empty<dynamic>());
 
-        // In real Cosmos DB, a sproc with different casing is a different sproc.
-        // The registered handler for "myProc" should NOT execute for "MYPROC".
-        // The default behaviour (no handler found) returns OK with empty body,
-        // so we verify the handler's return value was NOT used.
-        response.Resource.Should().NotBe("result");
+        (await act.Should().ThrowAsync<CosmosException>())
+            .Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     [Fact]

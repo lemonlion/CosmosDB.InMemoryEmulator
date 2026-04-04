@@ -41,6 +41,7 @@ namespace CosmosDB.InMemoryEmulator;
 public class InMemoryCosmosClient : CosmosClient
 {
     private readonly ConcurrentDictionary<string, InMemoryDatabase> _databases = new();
+    private bool _disposed;
 
     private static readonly Uri EmulatorEndpoint = new("https://localhost:8081/");
     private readonly CosmosClientOptions _clientOptions = new();
@@ -67,6 +68,7 @@ public class InMemoryCosmosClient : CosmosClient
         string id, int? throughput = null, RequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(id);
         ArgumentException.ThrowIfNullOrEmpty(id);
         var created = false;
@@ -94,6 +96,7 @@ public class InMemoryCosmosClient : CosmosClient
         string id, int? throughput = null, RequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(id);
         ArgumentException.ThrowIfNullOrEmpty(id);
         var database = new InMemoryDatabase(id, this);
@@ -152,6 +155,7 @@ public class InMemoryCosmosClient : CosmosClient
     /// <param name="id">The database identifier.</param>
     public override Database GetDatabase(string id)
     {
+        ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(id);
         ArgumentException.ThrowIfNullOrEmpty(id);
         return _databases.GetOrAdd(id, name => new InMemoryDatabase(name, this));
@@ -165,6 +169,7 @@ public class InMemoryCosmosClient : CosmosClient
     /// <param name="containerId">The container identifier.</param>
     public override Container GetContainer(string databaseId, string containerId)
     {
+        ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(databaseId);
         ArgumentException.ThrowIfNullOrEmpty(databaseId);
         ArgumentNullException.ThrowIfNull(containerId);
@@ -249,7 +254,13 @@ public class InMemoryCosmosClient : CosmosClient
     /// </summary>
     protected override void Dispose(bool disposing)
     {
-        // No-op — prevent NullReferenceException from base class.
+        _disposed = true;
+        // No-op otherwise — prevent NullReferenceException from base class.
+    }
+
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
     private static DatabaseResponse BuildDatabaseResponse(Database database, HttpStatusCode statusCode)

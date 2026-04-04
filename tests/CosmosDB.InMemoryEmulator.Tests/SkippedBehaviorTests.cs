@@ -521,22 +521,6 @@ public class TtlSkippedBehaviorEdgeCaseTests
         response.StatusCode.Should().Be(HttpStatusCode.OK,
             "_ttl:-1 should override container default and prevent expiration");
     }
-
-    [Fact]
-    public async Task Ttl_ZeroContainerDefault_NoExpiration()
-    {
-        var container = new InMemoryContainer("ttl-zero", "/pk");
-        container.DefaultTimeToLive = 0;
-
-        await container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "a", Name = "A" }, new PartitionKey("a"));
-
-        await Task.Delay(TimeSpan.FromSeconds(1));
-
-        // DefaultTimeToLive=0 is treated as off → no expiration
-        var response = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("a"));
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -655,23 +639,6 @@ public class MaxItemCountEdgeCaseTests
         var iter = _container.GetItemQueryIterator<TestDocument>("SELECT * FROM c", requestOptions: opts);
         var page = await iter.ReadNextAsync();
 
-        page.Count.Should().Be(5);
-        page.ContinuationToken.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task MaxItemCount_Zero_ShouldReturnAllInOnePage()
-    {
-        for (var i = 0; i < 5; i++)
-            await _container.CreateItemAsync(
-                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"I{i}" },
-                new PartitionKey("pk1"));
-
-        var opts = new QueryRequestOptions { MaxItemCount = 0 };
-        var iter = _container.GetItemQueryIterator<TestDocument>("SELECT * FROM c", requestOptions: opts);
-        var page = await iter.ReadNextAsync();
-
-        // Emulator treats 0 as "return all" (real Cosmos returns 400)
         page.Count.Should().Be(5);
         page.ContinuationToken.Should().BeNull();
     }
@@ -984,28 +951,18 @@ public class SkippedBehaviorDivergentTests
             "emulator uses plain integer offsets as continuation tokens");
     }
 
-    [Fact(Skip = "MaxItemCount=0 returns HTTP 400 Bad Request in real Cosmos DB. " +
-        "The in-memory emulator treats any non-positive value as 'return all items' " +
-        "via the PageSize property guard `_maxItemCount is > 0`. " +
-        "Changing this would add complexity without benefit — " +
-        "no production code intentionally sets MaxItemCount=0.")]
-    public void MaxItemCount_Zero_ShouldReturn400_InRealCosmos() { }
-
     [Fact]
-    public async Task Divergent_MaxItemCount_Zero_ReturnsAllItems()
+    public async Task MaxItemCount_Zero_ShouldReturn400_InRealCosmos()
     {
-        var container = new InMemoryContainer("mi-zero-div", "/partitionKey");
-        for (var i = 0; i < 5; i++)
-            await container.CreateItemAsync(
-                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"I{i}" },
-                new PartitionKey("pk1"));
+        var container = new InMemoryContainer("mi-zero", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
 
         var opts = new QueryRequestOptions { MaxItemCount = 0 };
-        var iter = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c", requestOptions: opts);
-        var page = await iter.ReadNextAsync();
+        var act = () => container.GetItemQueryIterator<TestDocument>("SELECT * FROM c", requestOptions: opts);
 
-        // Emulator returns all 5 items; real Cosmos would return 400 Bad Request
-        page.Count.Should().Be(5);
+        act.Should().Throw<CosmosException>();
     }
 
     [Fact(Skip = "Real Cosmos DB sorts undefined < null < false < true < numbers < strings. " +

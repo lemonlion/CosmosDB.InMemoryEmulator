@@ -996,11 +996,7 @@ public class ReplaceContainerPropertyTests
         readBack.Resource.IndexingPolicy.Automatic.Should().BeFalse();
     }
 
-    [Fact(Skip = "Real Cosmos DB returns 400 BadRequest when attempting to change the partition " +
-        "key path via ReplaceContainerAsync. The in-memory emulator updates _containerProperties " +
-        "but the internal PartitionKeyPaths field is read-only (set in constructor), so item " +
-        "routing still uses the original path. Fixing this would require throwing on PK path " +
-        "changes or making PartitionKeyPaths mutable.")]
+    [Fact]
     public async Task ReplaceContainerAsync_CannotChangePartitionKeyPath()
     {
         // Real Cosmos DB behaviour:
@@ -1014,43 +1010,6 @@ public class ReplaceContainerPropertyTests
 
         var ex = await act.Should().ThrowAsync<CosmosException>();
         ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    }
-
-    /// <summary>
-    /// Sister test documenting the emulator's actual behavior for partition key path changes.
-    /// </summary>
-    [Fact]
-    public async Task ReplaceContainer_EmulatorBehavior_AcceptsPartitionKeyPathChange_ButInternalPathUnchanged()
-    {
-        // ── Divergent behavior documentation ──
-        // Real Cosmos DB: Returns 400 BadRequest when the partition key path is changed
-        //   via ReplaceContainerAsync. The partition key path is immutable after creation.
-        // In-Memory Emulator: Silently accepts the new ContainerProperties (including a
-        //   different partition key path). The _containerProperties field is updated, so
-        //   ReadContainerAsync will return the new path. However, the internal
-        //   PartitionKeyPaths field (set in the constructor) remains unchanged, meaning
-        //   item routing (Create, Read, Query) continues to use the original partition
-        //   key path. This creates an inconsistency between reported and actual paths.
-        var container = new InMemoryContainer("test", "/originalPk");
-
-        // Insert an item using the original partition key path
-        await container.CreateItemAsync(
-            JObject.FromObject(new { id = "1", originalPk = "val" }),
-            new PartitionKey("val"));
-
-        // Replace with a different PK path — emulator accepts silently
-        var props = new ContainerProperties("test", "/newPk");
-        var response = await container.ReplaceContainerAsync(props);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        // ReadContainerAsync reports the new path
-        var readBack = await container.ReadContainerAsync();
-        readBack.Resource.PartitionKeyPath.Should().Be("/newPk");
-
-        // But item routing still uses the original path
-        var item = await container.ReadItemAsync<JObject>("1", new PartitionKey("val"));
-        item.StatusCode.Should().Be(HttpStatusCode.OK,
-            "items are still routed via the original constructor-set partition key path");
     }
 }
 
@@ -1517,11 +1476,7 @@ public class ReplaceContainerPreservationTests
         readBack.Resource.DefaultTimeToLive.Should().Be(300);
     }
 
-    [Fact(Skip = "Real Cosmos DB: UniqueKeyPolicy is immutable after container creation and " +
-        "cannot be changed via ReplaceContainerAsync. The in-memory emulator replaces the entire " +
-        "_containerProperties object, which can lose the UniqueKeyPolicy if the replacement " +
-        "ContainerProperties doesn't include it. This means unique key enforcement silently " +
-        "disappears after a Replace that omits the policy.")]
+    [Fact]
     public async Task ReplaceContainerAsync_ShouldPreserveUniqueKeyPolicy_WhenNotIncludedInReplacement()
     {
         var properties = new ContainerProperties("test", "/pk")
@@ -1545,30 +1500,6 @@ public class ReplaceContainerPreservationTests
 
         var ex = await act.Should().ThrowAsync<CosmosException>();
         ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
-    }
-
-    [Fact]
-    public async Task ReplaceContainer_EmulatorBehavior_UniqueKeyPolicyErasedIfOmittedFromReplacement()
-    {
-        var properties = new ContainerProperties("test", "/pk")
-        {
-            UniqueKeyPolicy = new UniqueKeyPolicy
-            {
-                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
-            }
-        };
-        var container = new InMemoryContainer(properties);
-
-        // Replace with TTL only — no UniqueKeyPolicy
-        await container.ReplaceContainerAsync(new ContainerProperties("test", "/pk") { DefaultTimeToLive = 900 });
-
-        // Uniqueness enforcement is lost — duplicate email now succeeds
-        await container.CreateItemAsync(
-            JObject.FromObject(new { id = "1", pk = "a", email = "dup@test.com" }), new PartitionKey("a"));
-        await container.CreateItemAsync(
-            JObject.FromObject(new { id = "2", pk = "a", email = "dup@test.com" }), new PartitionKey("a"));
-
-        container.ItemCount.Should().Be(2, "unique key constraint was erased by the replace");
     }
 
     [Fact]
@@ -1688,11 +1619,7 @@ public class ContainerCreationValidationTests
 
 public class DeleteContainerRegistrationTests
 {
-    [Fact(Skip = "Real Cosmos DB: Deleting a container removes all associated triggers, UDFs, " +
-        "and stored procedures. The in-memory emulator's DeleteContainerAsync clears _items, " +
-        "_etags, _timestamps, and _changeFeed but does not clear _userDefinedFunctions, " +
-        "_storedProcedures, or _triggers dictionaries. This means if the container object is " +
-        "reused after deletion, previously registered handlers remain active.")]
+    [Fact]
     public async Task DeleteContainerAsync_ShouldClearRegisteredTriggersAndUDFs()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -1700,31 +1627,17 @@ public class DeleteContainerRegistrationTests
 
         await container.DeleteContainerAsync();
 
-        // Should no longer have the function registered
-        Assert.Fail("Triggers/UDFs survive container deletion in the emulator.");
-    }
-
-    [Fact]
-    public async Task DeleteContainer_EmulatorBehavior_RegisteredTriggersAndUDFsSurviveDeletion()
-    {
-        var container = new InMemoryContainer("test", "/pk");
-        container.RegisterUdf("upper", args => ((string)args[0]).ToUpperInvariant());
-
-        await container.DeleteContainerAsync();
-
-        // Function is still registered — add items and query using it
+        // Re-add an item and verify UDF no longer works (throws because it's unregistered)
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "1", pk = "a", name = "alice" }), new PartitionKey("a"));
 
-        var iterator = container.GetItemQueryIterator<string>("SELECT VALUE udf.upper(c.name) FROM c");
-        var results = new List<string>();
-        while (iterator.HasMoreResults)
+        var act = () =>
         {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
-        }
+            var iterator = container.GetItemQueryIterator<string>("SELECT VALUE udf.upper(c.name) FROM c");
+            return iterator.ReadNextAsync();
+        };
 
-        results.Should().Contain("ALICE", "UDF registration survives container deletion in the emulator");
+        await act.Should().ThrowAsync<NotSupportedException>();
     }
 }
 

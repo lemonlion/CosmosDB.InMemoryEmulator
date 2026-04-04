@@ -184,6 +184,7 @@ public class InMemoryContainer : Container
     /// <param name="containerProperties">The container properties to use.</param>
     public InMemoryContainer(ContainerProperties containerProperties)
     {
+        ValidateComputedProperties(containerProperties);
         _containerProperties = containerProperties;
         Id = containerProperties.Id;
         DefaultTimeToLive = containerProperties.DefaultTimeToLive;
@@ -218,8 +219,20 @@ public class InMemoryContainer : Container
     /// Container-level default TTL in seconds. When set, items expire after this duration
     /// unless overridden by a per-item <c>_ttl</c> property. Set to <c>null</c> to disable.
     /// Items are lazily evicted on the next read attempt.
+    /// Setting to 0 throws BadRequest as in real Cosmos DB — use -1 for "enabled, no default expiry".
     /// </summary>
-    public int? DefaultTimeToLive { get; set; }
+    public int? DefaultTimeToLive
+    {
+        get => _defaultTimeToLive;
+        set
+        {
+            if (value == 0)
+                throw new CosmosException("The value of DefaultTimeToLive must be either null, -1, or a positive integer.",
+                    HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _defaultTimeToLive = value;
+        }
+    }
+    private int? _defaultTimeToLive;
 
     /// <summary>The partition key path(s) for this container.</summary>
     public IReadOnlyList<string> PartitionKeyPaths { get; }
@@ -451,6 +464,8 @@ public class InMemoryContainer : Container
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
 
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException("Item must have an 'id' property.");
+        ValidatePartitionKeyConsistency(partitionKey, jObj);
+        ValidatePerItemTtl(jObj);
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
 
@@ -533,6 +548,8 @@ public class InMemoryContainer : Container
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
 
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException("Item must have an 'id' property.");
+        ValidatePartitionKeyConsistency(partitionKey, jObj);
+        ValidatePerItemTtl(jObj);
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
 
@@ -741,6 +758,8 @@ public class InMemoryContainer : Container
             throw new CosmosException("Patch request has too many operations.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
+
+        ValidatePatchPaths(patchOperations);
 
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
@@ -1235,6 +1254,7 @@ public class InMemoryContainer : Container
         QueryDefinition queryDefinition, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
     {
+        ValidateMaxItemCount(requestOptions);
         var parameters = ExtractQueryParameters(queryDefinition);
         var filtered = FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions);
         var items = filtered.Select(json => JsonConvert.DeserializeObject<T>(json, JsonSettings)).ToList();
@@ -1246,6 +1266,7 @@ public class InMemoryContainer : Container
         string queryText = null, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
     {
+        ValidateMaxItemCount(requestOptions);
         List<T> items;
         if (string.IsNullOrEmpty(queryText))
         {
@@ -1265,6 +1286,7 @@ public class InMemoryContainer : Container
         FeedRange feedRange, QueryDefinition queryDefinition, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
     {
+        ValidateMaxItemCount(requestOptions);
         var parameters = ExtractQueryParameters(queryDefinition);
         var filtered = FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions);
         filtered = FilterByFeedRange(filtered, feedRange);
@@ -1694,6 +1716,14 @@ public class InMemoryContainer : Container
     {
         if (containerProperties.Id != Id)
             throw new CosmosException($"Container id '{containerProperties.Id}' does not match the existing container id '{Id}'.", HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+        ValidateContainerReplace(containerProperties);
+        ValidateComputedProperties(containerProperties);
+        // Preserve UniqueKeyPolicy from the existing properties if the replacement doesn't include it
+        if (_containerProperties.UniqueKeyPolicy?.UniqueKeys?.Count > 0 &&
+            (containerProperties.UniqueKeyPolicy is null || containerProperties.UniqueKeyPolicy.UniqueKeys.Count == 0))
+        {
+            containerProperties.UniqueKeyPolicy = _containerProperties.UniqueKeyPolicy;
+        }
         _containerProperties = containerProperties;
         _parsedComputedProperties = null;
         DefaultTimeToLive = containerProperties.DefaultTimeToLive;
@@ -1727,6 +1757,10 @@ public class InMemoryContainer : Container
         _etags.Clear();
         _timestamps.Clear();
         lock (_changeFeedLock) { _changeFeed.Clear(); }
+        _storedProcedures.Clear();
+        _userDefinedFunctions.Clear();
+        _udfProperties.Clear();
+        _triggers.Clear();
         OnDeleted?.Invoke();
         var r = Substitute.For<ContainerResponse>();
         r.StatusCode.Returns(HttpStatusCode.NoContent);
@@ -1741,6 +1775,10 @@ public class InMemoryContainer : Container
         _etags.Clear();
         _timestamps.Clear();
         lock (_changeFeedLock) { _changeFeed.Clear(); }
+        _storedProcedures.Clear();
+        _userDefinedFunctions.Clear();
+        _udfProperties.Clear();
+        _triggers.Clear();
         OnDeleted?.Invoke();
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
     }
@@ -1865,6 +1903,120 @@ public class InMemoryContainer : Container
     }
 
     private static string GenerateETag() => $"\"{Guid.NewGuid()}\"";
+
+    private void ValidatePartitionKeyConsistency(PartitionKey? explicitKey, JObject jObj)
+    {
+        if (!explicitKey.HasValue || explicitKey.Value == PartitionKey.None || explicitKey.Value == PartitionKey.Null)
+            return;
+
+        // Only validate single-path partition keys (composite PKs have complex semantics)
+        if (PartitionKeyPaths is not { Count: 1 })
+            return;
+
+        var pkPath = PartitionKeyPaths[0].TrimStart('/');
+        var bodyToken = jObj.SelectToken(pkPath);
+        if (bodyToken is null)
+            return; // Field not present in body — nothing to validate
+
+        var explicitPk = PartitionKeyToString(explicitKey.Value);
+        var bodyPk = bodyToken.ToString();
+
+        if (bodyPk != explicitPk)
+        {
+            throw new CosmosException(
+                "Partition key provided either doesn't correspond to definition in the collection or doesn't match partition key field values specified in the document.",
+                HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+        }
+    }
+
+    private void ValidatePatchPaths(IReadOnlyList<PatchOperation> operations)
+    {
+        foreach (var op in operations)
+        {
+            var path = op.Path;
+            if (string.Equals(path, "/id", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new CosmosException(
+                    "Cannot patch the 'id' field.",
+                    HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            }
+
+            if (PartitionKeyPaths is { Count: > 0 })
+            {
+                foreach (var pkPath in PartitionKeyPaths)
+                {
+                    if (string.Equals(path, pkPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new CosmosException(
+                            "Cannot patch the partition key field.",
+                            HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                    }
+                }
+            }
+        }
+    }
+
+    private void ValidateContainerReplace(ContainerProperties newProperties)
+    {
+        // Real Cosmos DB rejects partition key path changes
+        var existingPkPath = _containerProperties.PartitionKeyPath;
+        var newPkPath = newProperties.PartitionKeyPath;
+        if (!string.IsNullOrEmpty(newPkPath) && !string.IsNullOrEmpty(existingPkPath) && newPkPath != existingPkPath)
+        {
+            throw new CosmosException(
+                "Partition key paths for a container cannot be changed.",
+                HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+        }
+    }
+
+    private void ValidatePerItemTtl(JObject jObj)
+    {
+        var ttlToken = jObj["_ttl"];
+        if (ttlToken is not null && int.TryParse(ttlToken.ToString(), out var ttlValue) && ttlValue == 0)
+        {
+            throw new CosmosException(
+                "The value of _ttl must be either -1 or a positive integer.",
+                HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+        }
+    }
+
+    private static void ValidateMaxItemCount(QueryRequestOptions requestOptions)
+    {
+        if (requestOptions?.MaxItemCount == 0)
+        {
+            throw new CosmosException(
+                "MaxItemCount must be a positive value or -1.",
+                HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
+        }
+    }
+
+    private static readonly HashSet<string> ReservedComputedPropertyNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "id", "_rid", "_ts", "_etag", "_self", "_attachments"
+    };
+
+    private static void ValidateComputedProperties(ContainerProperties properties)
+    {
+        var cps = properties.ComputedProperties;
+        if (cps is null or { Count: 0 }) return;
+
+        if (cps.Count > 20)
+        {
+            throw new CosmosException(
+                "A container can have at most 20 computed properties.",
+                HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
+        }
+
+        foreach (var cp in cps)
+        {
+            if (ReservedComputedPropertyNames.Contains(cp.Name))
+            {
+                throw new CosmosException(
+                    $"Computed property name '{cp.Name}' is a reserved system property name.",
+                    HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
+            }
+        }
+    }
 
     private static string EnrichWithSystemProperties(string json, string etag, DateTimeOffset timestamp)
     {
@@ -2433,6 +2585,14 @@ public class InMemoryContainer : Container
                 var sprocId = ci.ArgAt<string>(0);
                 var pk = ci.Arg<PartitionKey>();
                 var sprocArgs = ci.ArgAt<dynamic[]>(2);
+
+                // Real Cosmos DB returns 404 if the sproc doesn't exist
+                if (!_storedProcedures.ContainsKey(sprocId) && !_storedProcedureProperties.ContainsKey(sprocId))
+                {
+                    throw new CosmosException($"StoredProcedure '{sprocId}' not found.",
+                        HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                }
+
                 // Execute handler BEFORE creating NSubstitute mocks to avoid
                 // nested Returns() context corruption when the handler calls
                 // container methods that internally create NSubstitute mocks.
@@ -6006,6 +6166,9 @@ public class InMemoryContainer : Container
     private static object VectorDistanceFunc(object[] args)
     {
         // VECTORDISTANCE(vector1, vector2 [, bool_bruteForce] [, {distanceFunction:'cosine'|'dotproduct'|'euclidean'})
+        if (args.Length > 4)
+            throw new CosmosException("VECTORDISTANCE accepts at most 4 arguments.", HttpStatusCode.BadRequest, 0, string.Empty, 0);
+
         var vec1 = ToDoubleArray(args[0]);
         var vec2 = ToDoubleArray(args[1]);
         if (vec1 is null || vec2 is null || vec1.Length != vec2.Length || vec1.Length == 0)
@@ -6031,7 +6194,7 @@ public class InMemoryContainer : Container
             "cosine" => CosineSimilarity(vec1, vec2),
             "dotproduct" => (object)DotProduct(vec1, vec2),
             "euclidean" => (object)EuclideanDistance(vec1, vec2),
-            _ => CosineSimilarity(vec1, vec2),
+            _ => throw new CosmosException($"Unknown distanceFunction '{distanceFunction}'. Supported values: 'cosine', 'dotproduct', 'euclidean'.", HttpStatusCode.BadRequest, 0, string.Empty, 0),
         };
 
         // Guard against Infinity/NaN which are not valid JSON numbers

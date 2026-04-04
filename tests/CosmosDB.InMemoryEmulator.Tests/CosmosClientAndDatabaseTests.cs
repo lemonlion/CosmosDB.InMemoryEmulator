@@ -2428,25 +2428,6 @@ public class DisposeAndContinueDivergentTests
         var act = () => client.CreateDatabaseAsync("test-db");
         await act.Should().ThrowAsync<ObjectDisposedException>();
     }
-
-    /// <summary>
-    /// DIVERGENT BEHAVIOR: InMemoryCosmosClient.Dispose is a no-op. Post-dispose operations
-    /// continue to work normally. Real SDK throws ObjectDisposedException.
-    /// This is intentional for test convenience.
-    /// </summary>
-    [Fact]
-    public async Task DivergentBehavior_Dispose_ThenCreateDatabase_StillWorks()
-    {
-        // InMemoryCosmosClient.Dispose() overrides the base class with a no-op
-        // to prevent NullReferenceException from the base CosmosClient destructor.
-        // As a side-effect, post-dispose operations continue to work.
-        var client = new InMemoryCosmosClient();
-        client.Dispose();
-
-        var response = await client.CreateDatabaseAsync("test-db");
-
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-    }
 }
 
 
@@ -2836,9 +2817,9 @@ public class GetContainerAutoCreateDivergentTests
 
         // Emulator auto-creates the container — CRUD works immediately
         await container.CreateItemAsync(
-            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+            JObject.FromObject(new { id = "1" }), new PartitionKey("1"));
 
-        var item = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        var item = await container.ReadItemAsync<JObject>("1", new PartitionKey("1"));
         item.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }
@@ -3257,12 +3238,12 @@ public class MultiDatabaseIsolationTests
         var ctr2 = client.GetContainer("db2", "shared");
 
         await ctr1.CreateItemAsync(
-            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+            JObject.FromObject(new { id = "1" }), new PartitionKey("1"));
 
-        var item = await ctr1.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        var item = await ctr1.ReadItemAsync<JObject>("1", new PartitionKey("1"));
         item.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var act = () => ctr2.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        var act = () => ctr2.ReadItemAsync<JObject>("1", new PartitionKey("1"));
         await act.Should().ThrowAsync<CosmosException>();
     }
 }

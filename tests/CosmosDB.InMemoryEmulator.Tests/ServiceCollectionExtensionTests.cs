@@ -2049,7 +2049,7 @@ public class ServiceCollectionQueryIntegrationTests : IDisposable
         using var provider = services.BuildServiceProvider();
         var container = provider.GetRequiredService<Container>();
         await container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice" }, new PartitionKey("pk"));
+            new TestDocument { Id = "1", PartitionKey = "1", Name = "Alice" }, new PartitionKey("1"));
 
         var iter = container.GetItemLinqQueryable<TestDocument>()
             .Where(d => d.Name == "Alice")
@@ -2083,7 +2083,7 @@ public class ServiceCollectionQueryIntegrationTests : IDisposable
         using var provider = services.BuildServiceProvider();
         var container = provider.GetRequiredService<Container>();
         await container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+            new TestDocument { Id = "1", PartitionKey = "1", Name = "A" }, new PartitionKey("1"));
 
         var iter = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
         var results = await iter.ReadNextAsync();

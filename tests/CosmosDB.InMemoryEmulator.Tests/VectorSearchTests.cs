@@ -535,19 +535,6 @@ public class VectorSearchTests
         results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9);
     }
 
-    [Fact]
-    public async Task VectorDistance_UnknownDistanceFunction_FallsToCosine()
-    {
-        // Unknown distanceFunction silently falls back to cosine (emulator-specific behaviour)
-        var container = await CreateContainerWithVectors();
-        var results = await RunQuery(container,
-            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0], false, {distanceFunction:'manhattan'}) AS score FROM c WHERE c.id = 'x'");
-
-        results.Should().ContainSingle();
-        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9,
-            "unknown distance function should fall back to cosine in the emulator");
-    }
-
     [Theory]
     [InlineData("cosine")]
     [InlineData("COSINE")]
@@ -1494,20 +1481,6 @@ public class VectorSearchTests
             "ABS of cosine -1.0 should be 1.0");
     }
 
-    [Fact]
-    public async Task VectorDistance_FiveArgs_EmulatorIgnoresExtraArgs()
-    {
-        // Emulator behaviour: extra args (>4) are silently ignored
-        // Real Cosmos DB would reject this query
-        var container = await CreateContainerWithVectors();
-        var results = await RunQuery(container,
-            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0], false, {distanceFunction:'cosine'}, 'extra') AS score FROM c WHERE c.id = 'x'");
-
-        results.Should().ContainSingle();
-        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 1e-9,
-            "emulator silently ignores extra args beyond the 4th");
-    }
-
     // ═════════════════════════════════════════════════════════════════════
     //  I: CRUD + Mutation Interaction
     // ═════════════════════════════════════════════════════════════════════
@@ -1771,15 +1744,14 @@ public class VectorSearchTests
     // at the query compilation layer. The emulator's generic function dispatcher
     // accepts arbitrary arg counts and the 5th+ args are silently ignored.
 
-    [Fact(Skip = "M1: Real Cosmos DB rejects VECTORDISTANCE calls with more than 4 arguments at the " +
-                  "query compilation layer. The emulator's SQL parser and function dispatcher handle all " +
-                  "functions generically with variable arg lists, so extra args are silently ignored. " +
-                  "Implementing arg count validation would require special-casing VECTORDISTANCE in the " +
-                  "function call handler. Low value — extra args don't affect computation.")]
-    public void VectorDistance_FiveArgs_RealCosmosRejectsExtraArgs()
+    [Fact]
+    public async Task VectorDistance_FiveArgs_RealCosmosRejectsExtraArgs()
     {
-        // Expected real Cosmos DB behavior:
-        // VECTORDISTANCE(vec1, vec2, false, {}, 'extra') → query compilation error
+        var container = await CreateContainerWithVectors();
+        var act = () => RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0], false, {distanceFunction:'cosine'}, 'extra') AS score FROM c WHERE c.id = 'x'");
+
+        await act.Should().ThrowAsync<CosmosException>();
     }
 
     // Sister test already exists as VectorDistance_FiveArgs_EmulatorIgnoresExtraArgs in H category
@@ -1788,16 +1760,14 @@ public class VectorSearchTests
     // Real Cosmos DB rejects unknown distance function values with an error.
     // The emulator silently falls back to cosine similarity.
 
-    [Fact(Skip = "M2: Real Cosmos DB rejects unknown distanceFunction values (e.g. 'manhattan', " +
-                  "'hamming') with a query error. The emulator's default arm in the switch statement " +
-                  "silently falls back to cosine similarity. Implementing error reporting for unknown " +
-                  "distance functions would require throwing from VectorDistanceFunc, which could break " +
-                  "users who accidentally pass typos and rely on the fallback. The existing test " +
-                  "VectorDistance_UnknownDistanceFunction_FallsToCosine documents the emulator behaviour.")]
-    public void VectorDistance_UnknownDistanceFunction_RealCosmosRejects()
+    [Fact]
+    public async Task VectorDistance_UnknownDistanceFunction_RealCosmosRejects()
     {
-        // Expected real Cosmos DB behavior:
-        // {distanceFunction:'manhattan'} → error response, not cosine fallback
+        var container = await CreateContainerWithVectors();
+        var act = () => RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0], false, {distanceFunction:'manhattan'}) AS score FROM c WHERE c.id = 'x'");
+
+        await act.Should().ThrowAsync<CosmosException>();
     }
 
     // Sister test already exists as VectorDistance_UnknownDistanceFunction_FallsToCosine in B category
@@ -1872,13 +1842,10 @@ public class VectorSearchTests
     // parser might accept NaN depending on serialization settings.
     // This is a data quality issue, not a query engine issue.
 
-    [Fact(Skip = "M5: Real Cosmos DB likely rejects documents containing NaN in vector fields during " +
-                  "insertion because NaN is not a valid JSON number per RFC 8259. The emulator uses " +
-                  "Newtonsoft.Json which can be configured to accept/reject NaN. Since the emulator " +
-                  "focuses on query behaviour rather than data validation, NaN handling during insert " +
-                  "is out of scope. If NaN reaches the vector functions, dot product returns NaN and " +
-                  "cosine may return NaN — both would now be caught by the Infinity/NaN guard and " +
-                  "returned as null (after BUG-FIX-1).")]
+    [Fact(Skip = "Real Cosmos DB rejects NaN in vector fields at insert time (invalid JSON). " +
+                  "Implementing this requires intercepting all document writes to validate vector " +
+                  "field values, which is architecturally invasive. The emulator's NaN/Infinity guard " +
+                  "in VectorDistanceFunc returns null for NaN results, providing partial safety.")]
     public void VectorDistance_WithNaNInVector_RealCosmosBehaviour()
     {
         // Expected real Cosmos DB behavior:

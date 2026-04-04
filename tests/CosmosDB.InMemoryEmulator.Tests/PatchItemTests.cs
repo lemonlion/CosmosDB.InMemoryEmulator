@@ -175,20 +175,19 @@ public class PatchPartitionKeyImmutabilityTests5
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
     [Fact]
-    public async Task Patch_Set_PartitionKeyField_ItemStaysInOriginalPartition()
+    public async Task Patch_Set_PartitionKeyField_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
             new PartitionKey("pk1"));
 
-        // Patch the partition key field to a new value
-        await _container.PatchItemAsync<TestDocument>(
+        // Patch the partition key field — should be rejected
+        var act = () => _container.PatchItemAsync<TestDocument>(
             "1", new PartitionKey("pk1"),
             [PatchOperation.Set("/partitionKey", "pk2")]);
 
-        // Item is still accessible with original PK
-        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
-        read.Resource.Name.Should().Be("Original");
+        (await act.Should().ThrowAsync<CosmosException>())
+            .Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }
 
@@ -471,17 +470,16 @@ public class PatchGapTests2
     }
 
     [Fact]
-    public async Task Patch_Remove_IdField_DoesNotCorrupt()
+    public async Task Patch_Remove_IdField_ThrowsBadRequest()
     {
         await CreateTestItem();
 
-        // Attempting to remove the id field
-        var response = await _container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
+        // Attempting to remove the id field — should be rejected
+        var act = () => _container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
             [PatchOperation.Remove("/id")]);
 
-        // Item should still be readable (patch of /id may be no-op or remove the JSON field)
-        var read = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
-        read.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await act.Should().ThrowAsync<CosmosException>())
+            .Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
@@ -1746,9 +1744,7 @@ public class PatchStreamResponseBodyTests
 
 public class PatchIdFieldTests
 {
-    [Fact(Skip = "Real Cosmos DB rejects patches to /id with 400 Bad Request. " +
-        "The emulator allows it because ApplyPatchOperations treats id like any JSON property. " +
-        "The item's internal key is unchanged, so the JSON id becomes inconsistent.")]
+    [Fact]
     public async Task Patch_Set_IdField_ShouldThrowBadRequest()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -1757,22 +1753,6 @@ public class PatchIdFieldTests
             [PatchOperation.Set("/id", "new-id")]);
         (await act.Should().ThrowAsync<CosmosException>())
             .Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    }
-
-    [Fact]
-    public async Task Patch_Set_IdField_EmulatorAllows_ItemStillAccessibleByOriginalId()
-    {
-        // DIVERGENT BEHAVIOR: Emulator allows patching /id. The internal storage key
-        // is unchanged, so the item is still accessible by the original id.
-        var container = new InMemoryContainer("test", "/pk");
-        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
-
-        await container.PatchItemAsync<JObject>("1", new PartitionKey("a"),
-            [PatchOperation.Set("/id", "new-id")]);
-
-        // Still accessible by original id
-        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
-        item["id"]!.ToString().Should().Be("new-id");
     }
 }
 
