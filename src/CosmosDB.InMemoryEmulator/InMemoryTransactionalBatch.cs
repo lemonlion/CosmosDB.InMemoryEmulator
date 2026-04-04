@@ -140,12 +140,11 @@ public class InMemoryTransactionalBatch : TransactionalBatch
 
         if (_estimatedBatchSize > MaxBatchSizeBytes)
         {
-            var failResponse = Substitute.For<TransactionalBatchResponse>();
-            failResponse.StatusCode.Returns(HttpStatusCode.RequestEntityTooLarge);
-            failResponse.IsSuccessStatusCode.Returns(false);
-            failResponse.Count.Returns(_operations.Count);
-            failResponse.RequestCharge.Returns(1d);
-            return failResponse;
+            var overSizeResults = new List<(HttpStatusCode status, bool isSuccess)>();
+            for (var i = 0; i < _operations.Count; i++)
+                overSizeResults.Add((HttpStatusCode.FailedDependency, false));
+            return new InMemoryBatchResponse(HttpStatusCode.RequestEntityTooLarge, false, overSizeResults, _readResults, _writeEtags,
+                "Request size is too large.");
         }
 
         var itemsSnapshot = _container.SnapshotItems();
@@ -196,7 +195,8 @@ public class InMemoryTransactionalBatch : TransactionalBatch
                 operationResults.Add((HttpStatusCode.FailedDependency, false));
             }
 
-            return new InMemoryBatchResponse(failedStatusCode, false, operationResults, _readResults, _writeEtags);
+            return new InMemoryBatchResponse(failedStatusCode, false, operationResults, _readResults, _writeEtags,
+                $"Batch operation at index {failedIndex} failed with status code {(int)failedStatusCode}.");
         }
 
         return new InMemoryBatchResponse(HttpStatusCode.OK, true, operationResults, _readResults, _writeEtags);
@@ -211,6 +211,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
     {
         var json = new StreamReader(streamPayload).ReadToEnd();
         _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(json);
+        var opIndex = _operations.Count;
         _operations.Add((async () =>
         {
             var jObj = JsonParseHelpers.ParseJson(json);
@@ -219,6 +220,8 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             var response = await _container.CreateItemStreamAsync(stream, _partitionKey, ToItemRequestOptions(requestOptions));
             if (!response.IsSuccessStatusCode)
                 throw new CosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
+            _writeEtags[opIndex] = response.Headers.ETag;
+            _readResults[opIndex] = json;
         }, BatchOpType.Create));
         return this;
     }
@@ -227,12 +230,15 @@ public class InMemoryTransactionalBatch : TransactionalBatch
     {
         var json = new StreamReader(streamPayload).ReadToEnd();
         _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(json);
+        var opIndex = _operations.Count;
         _operations.Add((async () =>
         {
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
             var response = await _container.UpsertItemStreamAsync(stream, _partitionKey, ToItemRequestOptions(requestOptions));
             if (!response.IsSuccessStatusCode)
                 throw new CosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
+            _writeEtags[opIndex] = response.Headers.ETag;
+            _readResults[opIndex] = json;
         }, BatchOpType.Upsert));
         return this;
     }
@@ -241,12 +247,15 @@ public class InMemoryTransactionalBatch : TransactionalBatch
     {
         var json = new StreamReader(streamPayload).ReadToEnd();
         _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(json);
+        var opIndex = _operations.Count;
         _operations.Add((async () =>
         {
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
             var response = await _container.ReplaceItemStreamAsync(stream, id, _partitionKey, ToItemRequestOptions(requestOptions));
             if (!response.IsSuccessStatusCode)
                 throw new CosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
+            _writeEtags[opIndex] = response.Headers.ETag;
+            _readResults[opIndex] = json;
         }, BatchOpType.Replace));
         return this;
     }
@@ -259,6 +268,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             return System.Text.Encoding.UTF8.GetByteCount(json);
         });
         _estimatedBatchSize += estimatedSize;
+        var opIndex = _operations.Count;
         _operations.Add((async () =>
         {
             PatchItemRequestOptions? patchOptions = null;
@@ -271,7 +281,9 @@ public class InMemoryTransactionalBatch : TransactionalBatch
                     FilterPredicate = requestOptions.FilterPredicate,
                 };
             }
-            await _container.PatchItemAsync<object>(id, _partitionKey, patchOperations, patchOptions);
+            var result = await _container.PatchItemAsync<object>(id, _partitionKey, patchOperations, patchOptions);
+            _writeEtags[opIndex] = result.ETag;
+            _readResults[opIndex] = JsonConvert.SerializeObject(result.Resource, JsonSettings);
         }, BatchOpType.Patch));
         return this;
     }
@@ -285,25 +297,34 @@ public class InMemoryTransactionalBatch : TransactionalBatch
         private readonly List<(HttpStatusCode status, bool isSuccess)> _operationResults;
         private readonly Dictionary<int, string> _readResults;
         private readonly Dictionary<int, string> _writeEtags;
+        private readonly string? _errorMessage;
 
         public InMemoryBatchResponse(
             HttpStatusCode statusCode,
             bool isSuccess,
             List<(HttpStatusCode status, bool isSuccess)> operationResults,
             Dictionary<int, string> readResults,
-            Dictionary<int, string> writeEtags)
+            Dictionary<int, string> writeEtags,
+            string? errorMessage = null)
         {
             _statusCode = statusCode;
             _isSuccess = isSuccess;
             _operationResults = operationResults;
             _readResults = readResults;
             _writeEtags = writeEtags;
+            _errorMessage = errorMessage;
         }
 
         public override HttpStatusCode StatusCode => _statusCode;
         public override bool IsSuccessStatusCode => _isSuccess;
         public override int Count => _operationResults.Count;
         public override double RequestCharge => 1d;
+        public override string ActivityId => "00000000-0000-0000-0000-000000000000";
+        public override CosmosDiagnostics Diagnostics => new InMemoryBatchDiagnostics();
+        public override Headers Headers => _headers;
+        private readonly Headers _headers = new Headers();
+        public override string? ErrorMessage => _errorMessage;
+        public override TimeSpan? RetryAfter => TimeSpan.Zero;
 
         public override TransactionalBatchOperationResult this[int index]
         {
@@ -355,5 +376,12 @@ public class InMemoryTransactionalBatch : TransactionalBatch
         }
 
         protected override void Dispose(bool disposing) { }
+    }
+
+    private sealed class InMemoryBatchDiagnostics : CosmosDiagnostics
+    {
+        public override TimeSpan GetClientElapsedTime() => TimeSpan.Zero;
+        public override IReadOnlyList<(string regionName, Uri uri)> GetContactedRegions() => Array.Empty<(string, Uri)>();
+        public override string ToString() => "{}";
     }
 }

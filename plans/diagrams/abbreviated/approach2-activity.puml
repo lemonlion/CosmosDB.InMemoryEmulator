@@ -8,6 +8,10 @@ skinparam PartitionBorderColor #666
 
 start
 
+partition "Setup" {
+  :new InMemoryCosmosClient(…);
+}
+
 partition "Test Code" {
   :Call **GetContainer**(databaseId, containerId);
 }

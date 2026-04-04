@@ -68,7 +68,7 @@ This page compares the query execution flow across the three integration approac
 
 | Feature | Approach 1 | Approach 2 | Approach 3 |
 |---|---|---|---|
-| Setup | `new InMemoryContainer(...)` | `new InMemoryCosmosClient(...)` then `GetContainer()` | `new InMemoryContainer` + `new FakeCosmosHandler` + `new CosmosClient` then `GetContainer()` |
+| Setup | `new InMemoryContainer(…)` | `new InMemoryCosmosClient(…)` then `GetContainer()` | `new InMemoryContainer` + `new FakeCosmosHandler` + `new CosmosClient` then `GetContainer()` |
 | Query parsing | `CosmosSqlParser` | `CosmosSqlParser` | `CosmosSqlParser` (via `FakeCosmosHandler`) |
 | HTTP layer | None | None | Real SDK HTTP pipeline |
 | FeedIterator | `InMemoryFeedIterator<T>` | `InMemoryFeedIterator<T>` | Real SDK `FeedIterator<T>` |

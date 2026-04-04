@@ -122,7 +122,10 @@ participant "InMemoryContainer\n.FilterItemsByQuery()" as Filter
 participant "InMemoryFeedIterator<T>" as FeedIter
 participant "InMemoryFeedResponse<T>" as FeedResp
 
-== Container Resolution (lazy creation) ==
+== Setup ==
+Test -> Client ** : new InMemoryCosmosClient(…)
+
+== Get Container (lazy creation) ==
 
 Test -> Client ++ : GetContainer(databaseId, containerId)
 Client -> DbDict ++ : GetOrAdd(databaseId, …)

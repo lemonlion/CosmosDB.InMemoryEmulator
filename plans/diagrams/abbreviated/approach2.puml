@@ -11,7 +11,10 @@ participant "InMemoryContainer" as IMC
 participant "CosmosSqlParser" as Parser
 participant "InMemoryFeedIterator<T>" as FeedIter
 
-== Container Resolution (lazy creation) ==
+== Setup ==
+Test -> Client ** : new InMemoryCosmosClient(…)
+
+== Get Container (lazy creation) ==
 
 Test -> Client ++ : GetContainer(databaseId, containerId)
 Client -> DB ** : GetOrAdd → InMemoryDatabase [if new]

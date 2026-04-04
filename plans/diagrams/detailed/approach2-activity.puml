@@ -6,8 +6,11 @@ skinparam ActivityBorderColor #333
 skinparam ActivityBackgroundColor #E8F4FD
 skinparam PartitionBorderColor #666
 
-|Test Code|
+|Setup|
 start
+:Create **new InMemoryCosmosClient**(…);
+
+|Test Code|
 :Call **InMemoryCosmosClient.GetContainer**
 (databaseId, containerId);
 

@@ -19,7 +19,10 @@ participant "InMemoryContainer\n.EvaluateSqlExpression()" as Eval
 participant "InMemoryFeedIterator<T>" as FeedIter
 participant "InMemoryFeedResponse<T>\n(extends FeedResponse<T>)" as FeedResp
 
-== Container Resolution (lazy creation) ==
+== Setup ==
+Test -> Client ** : new InMemoryCosmosClient(…)
+
+== Get Container (lazy creation) ==
 
 Test -> Client ++ : GetContainer(databaseId, containerId)
 Client -> DbDict ++ : GetOrAdd(databaseId, …)

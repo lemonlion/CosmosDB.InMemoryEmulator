@@ -1282,3 +1282,865 @@ public class TransactionalBatchDivergentBehaviourTests
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category A: Response Property Coverage
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TransactionalBatchResponsePropertyDeepTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Batch_Response_ActivityId_IsPopulated()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.ActivityId.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Batch_Response_Diagnostics_IsNotNull()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.Diagnostics.Should().NotBeNull();
+        response.Diagnostics.GetClientElapsedTime().Should().Be(TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task Batch_Response_Headers_IsNotNull()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.Headers.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Batch_FailedResponse_ErrorMessage_IsPopulated()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "dup", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "dup", PartitionKey = "pk1", Name = "B" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Batch_Response_RetryAfter_IsTimeSpanZero()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.RetryAfter.Should().Be(TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task Batch_FailedResponse_Count_IncludesAllOperations()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "dup", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "ok1", PartitionKey = "pk1", Name = "B" });
+        batch.CreateItem(new TestDocument { Id = "dup", PartitionKey = "pk1", Name = "C" }); // fails
+        batch.CreateItem(new TestDocument { Id = "ok2", PartitionKey = "pk1", Name = "D" }); // won't execute
+
+        using var response = await batch.ExecuteAsync();
+        response.Count.Should().Be(3); // all ops counted even though batch failed
+    }
+
+    [Fact]
+    public async Task Batch_Response_IsDisposable()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        var response = await batch.ExecuteAsync();
+
+        var dispose = () => response.Dispose();
+        dispose.Should().NotThrow();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category B: Operation Result Data Coverage
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TransactionalBatchOperationResultDataTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Batch_CreateResult_ResourceStream_ContainsDocument()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" });
+        using var response = await batch.ExecuteAsync();
+        var rs = response[0].ResourceStream;
+        rs.Should().NotBeNull();
+        using var reader = new StreamReader(rs);
+        var json = await reader.ReadToEndAsync();
+        json.Should().Contain("Alice");
+    }
+
+    [Fact]
+    public async Task Batch_UpsertResult_ResourceStream_ContainsDocument()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Bob" });
+        using var response = await batch.ExecuteAsync();
+        var rs = response[0].ResourceStream;
+        rs.Should().NotBeNull();
+        using var reader = new StreamReader(rs);
+        var json = await reader.ReadToEndAsync();
+        json.Should().Contain("Bob");
+    }
+
+    [Fact]
+    public async Task Batch_ReplaceResult_ResourceStream_ContainsDocument()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItem("1", new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" });
+        using var response = await batch.ExecuteAsync();
+        var rs = response[0].ResourceStream;
+        rs.Should().NotBeNull();
+        using var reader = new StreamReader(rs);
+        var json = await reader.ReadToEndAsync();
+        json.Should().Contain("Updated");
+    }
+
+    [Fact]
+    public async Task Batch_ReadResult_ResourceStream_ContainsDocument()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Read" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReadItem("1");
+        using var response = await batch.ExecuteAsync();
+        var rs = response[0].ResourceStream;
+        rs.Should().NotBeNull();
+        using var reader = new StreamReader(rs);
+        var json = await reader.ReadToEndAsync();
+        json.Should().Contain("Read");
+    }
+
+    [Fact]
+    public async Task Batch_PatchResult_ResourceStream_ContainsDocument()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Old" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.PatchItem("1", new[] { PatchOperation.Replace("/name", "Patched") });
+        using var response = await batch.ExecuteAsync();
+        var rs = response[0].ResourceStream;
+        rs.Should().NotBeNull();
+        using var reader = new StreamReader(rs);
+        var json = await reader.ReadToEndAsync();
+        json.Should().Contain("Patched");
+    }
+
+    [Fact]
+    public async Task Batch_PatchResult_HasETag()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Old" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.PatchItem("1", new[] { PatchOperation.Replace("/name", "Patched") });
+        using var response = await batch.ExecuteAsync();
+        response[0].ETag.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Batch_DeleteResult_ResourceStream_IsNullOrEmpty()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.DeleteItem("1");
+        using var response = await batch.ExecuteAsync();
+        response[0].ResourceStream.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Batch_CreateItemStream_Result_HasETag()
+    {
+        var json = JsonConvert.SerializeObject(new { id = "1", partitionKey = "pk1", name = "A" });
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItemStream(new MemoryStream(Encoding.UTF8.GetBytes(json)));
+        using var response = await batch.ExecuteAsync();
+        response[0].ETag.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Batch_CreateItemStream_Result_ResourceStream_ContainsDocument()
+    {
+        var json = JsonConvert.SerializeObject(new { id = "1", partitionKey = "pk1", name = "StreamDoc" });
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItemStream(new MemoryStream(Encoding.UTF8.GetBytes(json)));
+        using var response = await batch.ExecuteAsync();
+        var rs = response[0].ResourceStream;
+        rs.Should().NotBeNull();
+        using var reader = new StreamReader(rs);
+        var content = await reader.ReadToEndAsync();
+        content.Should().Contain("StreamDoc");
+    }
+
+    [Fact]
+    public async Task Batch_UpsertItemStream_Result_HasETag()
+    {
+        var json = JsonConvert.SerializeObject(new { id = "1", partitionKey = "pk1", name = "A" });
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItemStream(new MemoryStream(Encoding.UTF8.GetBytes(json)));
+        using var response = await batch.ExecuteAsync();
+        response[0].ETag.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Batch_ReplaceItemStream_Result_HasETag()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        var json = JsonConvert.SerializeObject(new { id = "1", partitionKey = "pk1", name = "Replaced" });
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItemStream("1", new MemoryStream(Encoding.UTF8.GetBytes(json)));
+        using var response = await batch.ExecuteAsync();
+        response[0].ETag.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Batch_OperationResult_IsSuccessStatusCode_TrueForSuccessOps()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response[0].IsSuccessStatusCode.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Batch_OperationResult_IsSuccessStatusCode_FalseForFailedOps()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "dup", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "ok1", PartitionKey = "pk1", Name = "B" });
+        batch.CreateItem(new TestDocument { Id = "dup", PartitionKey = "pk1", Name = "C" });
+
+        using var response = await batch.ExecuteAsync();
+        response[0].IsSuccessStatusCode.Should().BeFalse(); // rolled back → FailedDependency
+        response[1].IsSuccessStatusCode.Should().BeFalse(); // 409
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category E: Request Options Passthrough
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TransactionalBatchRequestOptionsDeepTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Batch_ReplaceItem_WithIfMatchEtag_CurrentEtag_Succeeds()
+    {
+        var created = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItem("1",
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new TransactionalBatchItemRequestOptions { IfMatchEtag = created.ETag });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Batch_UpsertItem_WithIfMatchEtag_StaleEtag_Fails()
+    {
+        var created = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+        // Update to make the original ETag stale
+        await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "B" },
+            "1", new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItem(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "C" },
+            new TransactionalBatchItemRequestOptions { IfMatchEtag = created.ETag });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Batch_DeleteItem_WithIfMatchEtag_StaleEtag_Fails()
+    {
+        var created = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+        await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "B" },
+            "1", new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.DeleteItem("1", new TransactionalBatchItemRequestOptions { IfMatchEtag = created.ETag });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Batch_DeleteItem_WithIfMatchEtag_CurrentEtag_Succeeds()
+    {
+        var created = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.DeleteItem("1", new TransactionalBatchItemRequestOptions { IfMatchEtag = created.ETag });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category F: Error Scenarios
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TransactionalBatchErrorScenarioTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Batch_PatchNonExistentItem_FailsBatch()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        batch.PatchItem("nonexistent", new[] { PatchOperation.Replace("/name", "X") });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response[0].StatusCode.Should().Be(HttpStatusCode.FailedDependency); // rolled back
+    }
+
+    [Fact]
+    public async Task Batch_ExceedingMaxOps_ThrowsBadRequest_MessageContainsLimit()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        for (var i = 0; i <= 100; i++)
+            batch.CreateItem(new TestDocument { Id = i.ToString(), PartitionKey = "pk1", Name = "A" });
+
+        var act = () => batch.ExecuteAsync();
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Batch_CreateThenCreate_SameId_FailsAndRollsBack()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "dup", PartitionKey = "pk1", Name = "First" });
+        batch.CreateItem(new TestDocument { Id = "dup", PartitionKey = "pk1", Name = "Second" });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response[0].StatusCode.Should().Be(HttpStatusCode.FailedDependency);
+        response[1].StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+        // Verify rollback — item should not exist
+        var act = () => _container.ReadItemAsync<TestDocument>("dup", new PartitionKey("pk1"));
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category C: Unique Key Policy Interaction
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TransactionalBatchUniqueKeyTests
+{
+    [Fact]
+    public async Task Batch_CreateItem_UniqueKeyViolation_FailsBatch()
+    {
+        var containerProps = new ContainerProperties("uk-batch", "/partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/name" } } }
+            }
+        };
+        var container = new InMemoryContainer(containerProps);
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "existing", PartitionKey = "pk1", Name = "UniqueMe" },
+            new PartitionKey("pk1"));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "new1", PartitionKey = "pk1", Name = "UniqueMe" }); // violates unique key
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Batch_UpsertItem_IntoUniqueKeyConstraint_Succeeds()
+    {
+        var containerProps = new ContainerProperties("uk-batch", "/partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/name" } } }
+            }
+        };
+        var container = new InMemoryContainer(containerProps);
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "UniqueMe" },
+            new PartitionKey("pk1"));
+
+        // Upsert same id with same unique key value — should succeed
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "UniqueMe" });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category G: Intra-Batch Complex Sequences
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TransactionalBatchComplexSequenceTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Batch_CreateThenPatch_SameItemInBatch()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Initial" });
+        batch.PatchItem("1", new[] { PatchOperation.Replace("/name", "Patched") });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Patched");
+    }
+
+    [Fact]
+    public async Task Batch_ReplaceThenDelete_SameItemInBatch()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItem("1", new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" });
+        batch.DeleteItem("1");
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var act = () => _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task Batch_ReplaceThenRead_SameItemInBatch()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Old" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItem("1", new TestDocument { Id = "1", PartitionKey = "pk1", Name = "New" });
+        batch.ReadItem("1");
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var result = response.GetOperationResultAtIndex<TestDocument>(1);
+        result.Resource.Name.Should().Be("New");
+    }
+
+    [Fact]
+    public async Task Batch_PatchThenRead_SameItemInBatch()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Old" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.PatchItem("1", new[] { PatchOperation.Replace("/name", "Patched") });
+        batch.ReadItem("1");
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var result = response.GetOperationResultAtIndex<TestDocument>(1);
+        result.Resource.Name.Should().Be("Patched");
+    }
+
+    [Fact]
+    public async Task Batch_DeleteThenRead_SameId_FailsBatch()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.DeleteItem("1");
+        batch.ReadItem("1"); // Should find nothing → 404 → fail
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+
+        // Item should be restored by rollback
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("A");
+    }
+
+    [Fact]
+    public async Task Batch_CreateThenReplace_ThenPatch_ThenRead_SameItem()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Created" });
+        batch.ReplaceItem("1", new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" });
+        batch.PatchItem("1", new[] { PatchOperation.Replace("/name", "Patched") });
+        batch.ReadItem("1");
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var result = response.GetOperationResultAtIndex<TestDocument>(3);
+        result.Resource.Name.Should().Be("Patched");
+    }
+
+    [Fact]
+    public async Task Batch_UpsertThenDelete_ThenUpsert_SameItem()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "First" });
+        batch.DeleteItem("1");
+        batch.UpsertItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Recreated" });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Recreated");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category H: Stream Operations (Deeper Coverage)
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TransactionalBatchStreamDeepTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Batch_UpsertItemStream_UpdatesExisting()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Old" },
+            new PartitionKey("pk1"));
+
+        var json = JsonConvert.SerializeObject(new { id = "1", partitionKey = "pk1", name = "Updated" });
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItemStream(new MemoryStream(Encoding.UTF8.GetBytes(json)));
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Updated");
+    }
+
+    [Fact]
+    public async Task Batch_ReplaceItemStream_NonExistent_FailsBatch()
+    {
+        var json = JsonConvert.SerializeObject(new { id = "missing", partitionKey = "pk1", name = "X" });
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItemStream("missing", new MemoryStream(Encoding.UTF8.GetBytes(json)));
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Batch_CreateItemStream_ReturnsCorrectStatusCode()
+    {
+        var json = JsonConvert.SerializeObject(new { id = "1", partitionKey = "pk1", name = "A" });
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItemStream(new MemoryStream(Encoding.UTF8.GetBytes(json)));
+        using var response = await batch.ExecuteAsync();
+        response[0].StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Batch_MixedStreamAndTyped_AllSucceed()
+    {
+        var json = JsonConvert.SerializeObject(new { id = "2", partitionKey = "pk1", name = "StreamDoc" });
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "TypedDoc" });
+        batch.CreateItemStream(new MemoryStream(Encoding.UTF8.GetBytes(json)));
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+        response.Count.Should().Be(2);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category I: Change Feed Integration
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TransactionalBatchChangeFeedIntegrationTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Batch_SuccessfulCreates_AppearInChangeFeed()
+    {
+        var checkpoint = _container.GetChangeFeedCheckpoint();
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        batch.CreateItem(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var iter = _container.GetChangeFeedIterator<JObject>(checkpoint);
+        var changes = new List<JObject>();
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            changes.AddRange(page);
+        }
+        changes.Should().HaveCountGreaterThanOrEqualTo(2);
+    }
+
+    [Fact]
+    public async Task Batch_SuccessfulDeletes_AppearAsChangeFeedTombstones()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        var checkpoint = _container.GetChangeFeedCheckpoint();
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.DeleteItem("1");
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var iter = _container.GetChangeFeedIterator<JObject>(checkpoint);
+        var changes = new List<JObject>();
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            changes.AddRange(page);
+        }
+        changes.Should().NotBeEmpty();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category J: Serialization Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TransactionalBatchSerializationTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Batch_CreateItem_WithNestedObject_Succeeds()
+    {
+        var doc = new TestDocument
+        {
+            Id = "1", PartitionKey = "pk1", Name = "A",
+            Nested = new NestedObject { Description = "nested", Score = 9.5 }
+        };
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(doc);
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Nested!.Description.Should().Be("nested");
+    }
+
+    [Fact]
+    public async Task Batch_CreateItem_WithSpecialCharactersInId_Succeeds()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "special-id_123.test", PartitionKey = "pk1", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var read = await _container.ReadItemAsync<TestDocument>("special-id_123.test", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("A");
+    }
+
+    [Fact]
+    public async Task Batch_CreateItem_WithNullProperties_Succeeds()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = null! });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Batch_Stream_UTF8_Encoding_Preserved()
+    {
+        var json = JsonConvert.SerializeObject(new { id = "1", partitionKey = "pk1", name = "héllo wörld" });
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItemStream(new MemoryStream(Encoding.UTF8.GetBytes(json)));
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("héllo wörld");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category: 2MB Error Path
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TransactionalBatch2MBErrorPathTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task Batch_Over2MB_ResponseIndexer_ReturnsResults()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        var bigString = new string('A', 1024 * 1024);
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = bigString });
+        batch.CreateItem(new TestDocument { Id = "2", PartitionKey = "pk1", Name = bigString });
+        batch.CreateItem(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "small" });
+
+        using var response = await batch.ExecuteAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response.Count.Should().Be(3);
+        response[0].Should().NotBeNull();
+        response[0].StatusCode.Should().Be(HttpStatusCode.FailedDependency);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Skipped + Divergent Behaviour Sister Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TransactionalBatchSkippedAndDivergentTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact(Skip = "Divergent: emulator does not validate PK mismatch between batch and document body")]
+    public async Task Batch_PartitionKeyMismatch_Document_Vs_BatchPK_ThrowsBadRequest()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk2", Name = "A" }); // doc says pk2, batch says pk1
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Batch_PartitionKeyMismatch_InMemory_UsesDocumentPK()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk2", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue(); // emulator doesn't validate
+
+        // Item stored at batch PK (pk1) — the emulator uses the batch PK for storage
+        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("A");
+    }
+
+    [Fact(Skip = "Divergent: emulator diagnostics returns zero elapsed time")]
+    public async Task Batch_Diagnostics_ContainsRequestLatency()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.Diagnostics.GetClientElapsedTime().Should().BeGreaterThan(TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task Batch_Diagnostics_InMemory_ReturnsZeroElapsedTime()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.Diagnostics.GetClientElapsedTime().Should().Be(TimeSpan.Zero);
+    }
+
+    [Fact(Skip = "Divergent: emulator uses synthetic session tokens")]
+    public async Task Batch_Headers_ContainSessionToken()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.Headers.Session.Should().NotBeNullOrEmpty();
+        response.Headers.Session.Should().MatchRegex(@"\d+:#\d+");
+    }
+
+    [Fact(Skip = "Divergent: emulator always returns 1.0 RU")]
+    public async Task Batch_RequestCharge_ScalesWithOperationCount()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        for (var i = 0; i < 10; i++)
+            batch.CreateItem(new TestDocument { Id = i.ToString(), PartitionKey = "pk1", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.RequestCharge.Should().BeGreaterThan(10d); // real Cosmos: ~5.3 RU per create
+    }
+
+    [Fact]
+    public async Task Batch_RequestCharge_InMemory_AlwaysReturns1RU()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        for (var i = 0; i < 10; i++)
+            batch.CreateItem(new TestDocument { Id = i.ToString(), PartitionKey = "pk1", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.RequestCharge.Should().Be(1.0);
+    }
+
+    [Fact(Skip = "Divergent: emulator batch is not isolated from concurrent direct CRUD")]
+    public async Task Batch_ConcurrentBatchAndDirectCrud_IsolationGuaranteed()
+    {
+        // Real Cosmos: batch execution is serialized within a partition key
+        // Emulator: snapshot/restore but no global lock
+        await Task.CompletedTask;
+    }
+}
+
