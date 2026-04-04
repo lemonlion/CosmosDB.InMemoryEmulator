@@ -186,6 +186,7 @@ public class InMemoryContainer : Container
     {
         _containerProperties = containerProperties;
         Id = containerProperties.Id;
+        DefaultTimeToLive = containerProperties.DefaultTimeToLive;
         var paths = containerProperties.PartitionKeyPaths;
         if (paths is null || paths.Count == 0)
         {
@@ -534,6 +535,8 @@ public class InMemoryContainer : Container
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException("Item must have an 'id' property.");
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
+
+        EvictIfExpired(key);
 
         if (requestOptions?.IfMatchEtag is not null && !_items.ContainsKey(key))
         {
@@ -907,6 +910,9 @@ public class InMemoryContainer : Container
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
+
+        EvictIfExpired(key);
+
         if (!CheckIfMatchStream(requestOptions, key))
         {
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
@@ -1666,6 +1672,7 @@ public class InMemoryContainer : Container
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         _containerProperties.IndexingPolicy = IndexingPolicy;
+        _containerProperties.DefaultTimeToLive = DefaultTimeToLive;
         var r = Substitute.For<ContainerResponse>();
         r.StatusCode.Returns(HttpStatusCode.OK);
         r.Resource.Returns(_containerProperties);
@@ -1677,6 +1684,7 @@ public class InMemoryContainer : Container
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         _containerProperties.IndexingPolicy = IndexingPolicy;
+        _containerProperties.DefaultTimeToLive = DefaultTimeToLive;
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, JsonConvert.SerializeObject(_containerProperties, JsonSettings)));
     }
 

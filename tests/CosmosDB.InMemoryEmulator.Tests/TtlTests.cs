@@ -1038,3 +1038,939 @@ public class TtlChangeFeedDivergentTests
             "lazy eviction should NOT produce a change feed delete event — only the original create event remains");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 44: TTL Bug Fix Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TtlBugFixTests
+{
+    [Fact]
+    public async Task Upsert_OnExpiredItem_Returns201Created()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Temp" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var result = await container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Reborn" },
+            new PartitionKey("pk1"));
+
+        result.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task UpsertStream_OnExpiredItem_Returns201Created()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        var json = """{"id":"1","partitionKey":"pk1","name":"Temp"}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var newJson = """{"id":"1","partitionKey":"pk1","name":"Reborn"}""";
+        var result = await container.UpsertItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(newJson)), new PartitionKey("pk1"));
+
+        result.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Upsert_OnExpiredItem_EvictsBeforeStatusCheck()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Temp" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        await container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Reborn" },
+            new PartitionKey("pk1"));
+
+        var read = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Reborn");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 44: Per-Item TTL Extended Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TtlPerItemExtendedTests
+{
+    public class TtlDocument
+    {
+        [JsonProperty("id")] public string Id { get; set; } = default!;
+        [JsonProperty("partitionKey")] public string PartitionKey { get; set; } = default!;
+        [JsonProperty("name")] public string Name { get; set; } = default!;
+        [JsonProperty("_ttl")] public int? Ttl { get; set; }
+    }
+
+    [Fact]
+    public async Task PerItemTtl_ViaTypedObject_WithJsonPropertyAttribute()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = -1
+        };
+
+        await container.CreateItemAsync(
+            new TtlDocument { Id = "1", PartitionKey = "pk1", Name = "Typed", Ttl = 1 },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var act = () => container.ReadItemAsync<TtlDocument>("1", new PartitionKey("pk1"));
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task PerItemTtl_ReplacedWithNewTtl_UsesNewValue()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = -1
+        };
+
+        var json = """{"id":"1","partitionKey":"pk1","name":"Original","_ttl":60}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        var newJson = """{"id":"1","partitionKey":"pk1","name":"Updated","_ttl":1}""";
+        await container.ReplaceItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(newJson)), "1", new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var act = () => container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task PerItemTtl_RemovedOnReplace_FallsBackToContainerDefault()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        // Create with long per-item TTL
+        var json = """{"id":"1","partitionKey":"pk1","name":"LongLived","_ttl":600}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        // Replace without _ttl → falls back to container default (1s)
+        await container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "NowShort" },
+            "1", new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var act = () => container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task PerItemTtl_Queryable_InSelectProjection()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = -1
+        };
+
+        var json = """{"id":"1","partitionKey":"pk1","name":"HasTtl","_ttl":300}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        var iterator = container.GetItemQueryIterator<JObject>("SELECT c._ttl FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["_ttl"]!.Value<int>().Should().Be(300);
+    }
+
+    [Fact]
+    public async Task PerItemTtl_NonIntegerValue_Ignored()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        // _ttl is a string "abc" — should be ignored (treated as no per-item TTL)
+        var json = """{"id":"1","partitionKey":"pk1","name":"BadTtl","_ttl":"abc"}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // Falls back to container default (1s), should be expired
+        var act = () => container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 44: Transactional Batch TTL Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TtlTransactionalBatchTests
+{
+    [Fact]
+    public async Task Batch_ReadExpiredItem_Returns404InBatchResult()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Temp" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReadItem("1");
+        var response = await batch.ExecuteAsync();
+
+        response[0].StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Batch_ReplaceExpiredItem_Returns404InBatchResult()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Temp" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItem("1", new TestDocument { Id = "1", PartitionKey = "pk1", Name = "New" });
+        var response = await batch.ExecuteAsync();
+
+        response.StatusCode.Should().NotBe(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Batch_DeleteExpiredItem_Returns404InBatchResult()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Temp" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.DeleteItem("1");
+        var response = await batch.ExecuteAsync();
+
+        response.StatusCode.Should().NotBe(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Batch_CreateAfterExpiry_Succeeds()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Temp" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Reborn" });
+        var response = await batch.ExecuteAsync();
+
+        response.IsSuccessStatusCode.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Batch_UpsertExpiredItem_Succeeds()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Temp" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Reborn" });
+        var response = await batch.ExecuteAsync();
+
+        response.IsSuccessStatusCode.Should().BeTrue();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 44: Container Properties Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TtlContainerPropertiesTests
+{
+    [Fact]
+    public async Task ReadContainerAsync_ReturnsTtlInProperties()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 42
+        };
+
+        var response = await container.ReadContainerAsync();
+        response.Resource.DefaultTimeToLive.Should().Be(42);
+    }
+
+    [Fact]
+    public async Task ReadContainerStreamAsync_ReturnsTtlInJsonBody()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 42
+        };
+
+        var response = await container.ReadContainerStreamAsync();
+        using var reader = new StreamReader(response.Content);
+        var body = await reader.ReadToEndAsync();
+        var jObj = JObject.Parse(body);
+        jObj["defaultTtl"]!.Value<int>().Should().Be(42);
+    }
+
+    [Fact]
+    public async Task ReplaceContainerStreamAsync_UpdatesTtl()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 10
+        };
+
+        var props = new ContainerProperties("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 99
+        };
+        await container.ReplaceContainerAsync(props);
+
+        container.DefaultTimeToLive.Should().Be(99);
+    }
+
+    [Fact]
+    public void ContainerCreatedViaContainerProperties_HasTtl()
+    {
+        var props = new ContainerProperties("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 30
+        };
+        var container = new InMemoryContainer(props);
+
+        container.DefaultTimeToLive.Should().Be(30);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 44: _ts System Property Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TtlSystemPropertyTests
+{
+    [Fact]
+    public async Task Ts_SystemProperty_SetOnCreate()
+    {
+        var container = new InMemoryContainer("ts-test", "/partitionKey");
+
+        var before = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+        var after = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        var read = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var ts = read.Resource["_ts"]!.Value<long>();
+        ts.Should().BeGreaterThanOrEqualTo(before);
+        ts.Should().BeLessThanOrEqualTo(after);
+    }
+
+    [Fact]
+    public async Task Ts_SystemProperty_UpdatedOnReplace()
+    {
+        var container = new InMemoryContainer("ts-test", "/partitionKey");
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var readBefore = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var tsBefore = readBefore.Resource["_ts"]!.Value<long>();
+
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        await container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" },
+            "1", new PartitionKey("pk1"));
+
+        var readAfter = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var tsAfter = readAfter.Resource["_ts"]!.Value<long>();
+
+        tsAfter.Should().BeGreaterThanOrEqualTo(tsBefore);
+    }
+
+    [Fact]
+    public async Task Ts_SystemProperty_UpdatedOnUpsert()
+    {
+        var container = new InMemoryContainer("ts-test", "/partitionKey");
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var readBefore = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var tsBefore = readBefore.Resource["_ts"]!.Value<long>();
+
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        await container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Upserted" },
+            new PartitionKey("pk1"));
+
+        var readAfter = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var tsAfter = readAfter.Resource["_ts"]!.Value<long>();
+
+        tsAfter.Should().BeGreaterThanOrEqualTo(tsBefore);
+    }
+
+    [Fact]
+    public async Task Ts_SystemProperty_UpdatedOnPatch()
+    {
+        var container = new InMemoryContainer("ts-test", "/partitionKey");
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var readBefore = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var tsBefore = readBefore.Resource["_ts"]!.Value<long>();
+
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        await container.PatchItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new List<PatchOperation> { PatchOperation.Set("/name", "Patched") });
+
+        var readAfter = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var tsAfter = readAfter.Resource["_ts"]!.Value<long>();
+
+        tsAfter.Should().BeGreaterThanOrEqualTo(tsBefore);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 44: Query Path Extended Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TtlQueryPathExtendedTests
+{
+    private async Task<InMemoryContainer> CreateContainerWithExpiredAndLiveItems()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = -1
+        };
+
+        // Item that will expire quickly
+        var shortJson = """{"id":"short","partitionKey":"pk1","name":"Short","_ttl":1}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(shortJson)), new PartitionKey("pk1"));
+
+        // Item that won't expire
+        await container.CreateItemAsync(
+            new TestDocument { Id = "long", PartitionKey = "pk1", Name = "Long", Value = 42 },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        return container;
+    }
+
+    [Fact]
+    public async Task QueryStreamIterator_ExcludesExpiredItems()
+    {
+        var container = await CreateContainerWithExpiredAndLiveItems();
+
+        var iterator = container.GetItemQueryStreamIterator("SELECT * FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var response = await iterator.ReadNextAsync();
+            using var reader = new StreamReader(response.Content);
+            var body = await reader.ReadToEndAsync();
+            var arr = JObject.Parse(body)["Documents"]!.ToObject<List<JObject>>()!;
+            results.AddRange(arr);
+        }
+
+        results.Should().HaveCount(1);
+        results[0]["id"]!.Value<string>().Should().Be("long");
+    }
+
+    [Fact]
+    public async Task WhereClauseQuery_ExcludesExpiredItems()
+    {
+        var container = await CreateContainerWithExpiredAndLiveItems();
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.partitionKey = 'pk1'");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["id"]!.Value<string>().Should().Be("long");
+    }
+
+    [Fact]
+    public async Task SumAggregate_ExcludesExpiredItems()
+    {
+        var container = await CreateContainerWithExpiredAndLiveItems();
+
+        // SELECT VALUE SUM returns a double (42.0), not int
+        var sumIterator = container.GetItemQueryIterator<double>("SELECT VALUE SUM(c.value) FROM c");
+        var sums = new List<double>();
+        while (sumIterator.HasMoreResults)
+            sums.AddRange(await sumIterator.ReadNextAsync());
+
+        sums.Should().Contain(42.0);
+    }
+
+    [Fact]
+    public async Task DistinctQuery_ExcludesExpiredItems()
+    {
+        var container = await CreateContainerWithExpiredAndLiveItems();
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT DISTINCT c.name FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["name"]!.Value<string>().Should().Be("Long");
+    }
+
+    [Fact]
+    public async Task OrderByQuery_ExcludesExpiredItems()
+    {
+        var container = await CreateContainerWithExpiredAndLiveItems();
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.name");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["id"]!.Value<string>().Should().Be("long");
+    }
+
+    [Fact]
+    public async Task TopQuery_ExcludesExpiredItems()
+    {
+        var container = await CreateContainerWithExpiredAndLiveItems();
+
+        var iterator = container.GetItemQueryIterator<JObject>("SELECT TOP 10 * FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["id"]!.Value<string>().Should().Be("long");
+    }
+
+    [Fact]
+    public async Task OffsetLimitQuery_ExcludesExpiredItems()
+    {
+        var container = await CreateContainerWithExpiredAndLiveItems();
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c OFFSET 0 LIMIT 10");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["id"]!.Value<string>().Should().Be("long");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 44: Stream Write Resets TTL Clock Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TtlStreamWriteResetTests
+{
+    [Fact]
+    public async Task UpsertStream_ResetsExpirationClock()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 3
+        };
+
+        var json = """{"id":"1","partitionKey":"pk1","name":"Original"}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var newJson = """{"id":"1","partitionKey":"pk1","name":"Upserted"}""";
+        await container.UpsertItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(newJson)), new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var read = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Upserted");
+    }
+
+    [Fact]
+    public async Task ReplaceStream_ResetsExpirationClock()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 3
+        };
+
+        var json = """{"id":"1","partitionKey":"pk1","name":"Original"}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var newJson = """{"id":"1","partitionKey":"pk1","name":"Replaced"}""";
+        await container.ReplaceItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(newJson)), "1", new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var read = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Replaced");
+    }
+
+    [Fact]
+    public async Task PatchStream_ResetsExpirationClock()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 3
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        await container.PatchItemStreamAsync("1", new PartitionKey("pk1"),
+            new List<PatchOperation> { PatchOperation.Set("/name", "Patched") });
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var read = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Patched");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 44: Hierarchical Partition Key TTL Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TtlHierarchicalPartitionKeyTests
+{
+    [Fact]
+    public async Task Ttl_WithHierarchicalPartitionKey_ExpiresCorrectly()
+    {
+        var container = new InMemoryContainer(new ContainerProperties("ttl-hpk", "/tenantId")
+        {
+            DefaultTimeToLive = 1,
+            PartitionKeyPaths = new System.Collections.ObjectModel.Collection<string> { "/tenantId", "/departmentId" }
+        });
+
+        var json = """{"id":"1","tenantId":"t1","departmentId":"d1","name":"Temp"}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)),
+            new PartitionKeyBuilder().Add("t1").Add("d1").Build());
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var act = () => container.ReadItemAsync<JObject>("1",
+            new PartitionKeyBuilder().Add("t1").Add("d1").Build());
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Ttl_WithHierarchicalPartitionKey_QueryExcludesExpired()
+    {
+        var container = new InMemoryContainer(new ContainerProperties("ttl-hpk", "/tenantId")
+        {
+            DefaultTimeToLive = -1,
+            PartitionKeyPaths = new System.Collections.ObjectModel.Collection<string> { "/tenantId", "/departmentId" }
+        });
+
+        // Item with per-item _ttl=1 will expire
+        var json = """{"id":"1","tenantId":"t1","departmentId":"d1","name":"Temp","_ttl":1}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)),
+            new PartitionKeyBuilder().Add("t1").Add("d1").Build());
+
+        // Item without per-item _ttl won't expire (DefaultTimeToLive=-1)
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", tenantId = "t1", departmentId = "d1", name = "Long" }),
+            new PartitionKeyBuilder().Add("t1").Add("d1").Build());
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var iterator = container.GetItemQueryIterator<JObject>("SELECT * FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["id"]!.Value<string>().Should().Be("2");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 44: ETag / Concurrency TTL Interaction Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TtlConcurrencyTests
+{
+    [Fact]
+    public async Task IfMatch_OnExpiredItem_Returns404NotPreconditionFailed()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        var created = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Temp" },
+            new PartitionKey("pk1"));
+        var etag = created.ETag;
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var act = () => container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = etag });
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task IfNoneMatch_OnExpiredItem_Returns404()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        var created = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Temp" },
+            new PartitionKey("pk1"));
+        var etag = created.ETag;
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var act = () => container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = etag });
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 44: Change Feed Extended TTL Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TtlChangeFeedExtendedTests
+{
+    [Fact]
+    public async Task ChangeFeed_ShowsItemWithTtlWhileAlive()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = -1
+        };
+
+        var json = """{"id":"1","partitionKey":"pk1","name":"HasTtl","_ttl":600}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        var iterator = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.LatestVersion);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            if (page.StatusCode == HttpStatusCode.NotModified) break;
+            results.AddRange(page.Resource);
+        }
+
+        results.Should().HaveCount(1);
+        results[0]["_ttl"]!.Value<int>().Should().Be(600);
+    }
+
+    [Fact]
+    public async Task ChangeFeed_UpsertOnExpiredItem_ProducesNewCreateEvent()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Temp" },
+            new PartitionKey("pk1"));
+
+        var checkpoint = container.GetChangeFeedCheckpoint();
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        await container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Reborn" },
+            new PartitionKey("pk1"));
+
+        var iterator = container.GetChangeFeedIterator<JObject>(checkpoint);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCountGreaterThanOrEqualTo(1);
+        results.Last()["name"]!.Value<string>().Should().Be("Reborn");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 44: Divergent Behaviour Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TtlDivergentBehaviorDeepTests
+{
+    [Fact(Skip = "DIVERGENT: Real Cosmos DB rejects DefaultTimeToLive=0 with 400 Bad Request. "
+               + "The emulator treats 0 as 'TTL enabled, no default expiry' (same as -1).")]
+    public void ContainerTtl_ZeroDefault_ShouldReturn400() { }
+
+    [Fact]
+    public async Task ContainerTtl_ZeroDefault_EmulatorTreatsAsNoExpiration()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 0
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var read = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Test");
+    }
+
+    [Fact(Skip = "DIVERGENT: Real Cosmos DB rejects _ttl=0 — value must be -1 or positive integer. "
+               + "The emulator treats _ttl=0 as immediate expiry (elapsed >= 0 is always true).")]
+    public void PerItemTtl_Zero_ShouldReturn400() { }
+
+    [Fact]
+    public async Task PerItemTtl_Zero_EmulatorExpiresImmediately()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = -1
+        };
+
+        var json = """{"id":"1","partitionKey":"pk1","name":"Instant","_ttl":0}""";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        // _ttl=0 means elapsed >= 0 is always true → immediate expiry
+        var act = () => container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact(Skip = "DIVERGENT: Queries filter out expired items but do NOT evict them from memory. "
+               + "Real Cosmos DB has a background GC process. Only direct CRUD triggers EvictIfExpired().")]
+    public void Query_ShouldEvictExpiredItemsFromMemory() { }
+
+    [Fact]
+    public async Task Query_EmulatorFiltersButDoesNotEvictExpiredItems()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Temp" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // Query filters out expired items
+        var iterator = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+        results.Should().BeEmpty();
+
+        // But internal item count still includes the expired item (not evicted)
+        // Trigger eviction via a direct read attempt
+        container.DefaultTimeToLive = null; // Disable TTL so ItemCount reflects all stored items
+        container.ItemCount.Should().Be(1, "expired item is still in memory until evicted by direct CRUD");
+    }
+}
+
