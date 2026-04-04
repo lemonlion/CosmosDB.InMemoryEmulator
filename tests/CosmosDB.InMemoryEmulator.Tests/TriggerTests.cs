@@ -663,3 +663,478 @@ public class DeleteTriggerTests
         item["value"]!.Value<string>().Should().Be("original");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase: Registration & CRUD Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TriggerRegistrationEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task RegisterTrigger_SameIdTwice_OverwritesHandler()
+    {
+        _container.RegisterTrigger("t1", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => { doc["v"] = 1; return doc; }));
+        _container.RegisterTrigger("t1", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => { doc["v"] = 2; return doc; }));
+
+        // The second registration should overwrite — verify by reading the stored item
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "t1" } });
+        var stored = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        stored["v"]!.Value<int>().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task RegisterTrigger_CaseSensitive_DifferentTriggers()
+    {
+        _container.RegisterTrigger("myTrigger", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => { doc["tag"] = "lower"; return doc; }));
+        _container.RegisterTrigger("MyTrigger", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => { doc["tag"] = "upper"; return doc; }));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "myTrigger" } });
+        var s1 = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        s1["tag"]!.Value<string>().Should().Be("lower");
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "MyTrigger" } });
+        var s2 = (await _container.ReadItemAsync<JObject>("2", new PartitionKey("a"))).Resource;
+        s2["tag"]!.Value<string>().Should().Be("upper");
+    }
+
+    [Fact]
+    public void DeregisterTrigger_NonExistent_DoesNotThrow()
+    {
+        var act = () => _container.DeregisterTrigger("nonexistent");
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public async Task DeregisterTrigger_ThenReRegister_Works()
+    {
+        _container.RegisterTrigger("t1", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => { doc["v"] = 1; return doc; }));
+        _container.DeregisterTrigger("t1");
+        _container.RegisterTrigger("t1", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => { doc["v"] = 2; return doc; }));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "t1" } });
+        var stored = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        stored["v"]!.Value<int>().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task CreateTriggerAsync_DuplicateId_ThrowsConflict()
+    {
+        await _container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "dup", TriggerType = TriggerType.Pre, TriggerOperation = TriggerOperation.Create,
+            Body = "function run() {}"
+        });
+
+        var act = () => _container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "dup", TriggerType = TriggerType.Pre, TriggerOperation = TriggerOperation.Create,
+            Body = "function run() {}"
+        });
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task CreateTriggerAsync_ReturnsCreatedStatusCode()
+    {
+        var response = await _container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "t1", TriggerType = TriggerType.Pre, TriggerOperation = TriggerOperation.Create,
+            Body = "function run() {}"
+        });
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task ReplaceTriggerAsync_ReturnsOkStatusCode()
+    {
+        await _container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "t1", TriggerType = TriggerType.Pre, TriggerOperation = TriggerOperation.Create,
+            Body = "function run() {}"
+        });
+
+        var response = await _container.Scripts.ReplaceTriggerAsync(new TriggerProperties
+        {
+            Id = "t1", TriggerType = TriggerType.Pre, TriggerOperation = TriggerOperation.Create,
+            Body = "function run2() {}"
+        });
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task DeleteTriggerAsync_ReturnsNoContentStatusCode()
+    {
+        await _container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "t1", TriggerType = TriggerType.Pre, TriggerOperation = TriggerOperation.Create,
+            Body = "function run() {}"
+        });
+
+        var response = await _container.Scripts.DeleteTriggerAsync("t1");
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase: Pre-Trigger Gaps
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class PreTriggerEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task PreTrigger_ThrowingHandler_AbortsCreate()
+    {
+        _container.RegisterTrigger("fail", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "fail" } });
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        _container.ItemCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PreTrigger_ThrowingHandler_AbortsUpsert()
+    {
+        _container.RegisterTrigger("fail", TriggerType.Pre, TriggerOperation.Upsert,
+            (Func<JObject, JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => _container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "fail" } });
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        _container.ItemCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PreTrigger_ThrowingHandler_AbortsReplace()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", v = "orig" }),
+            new PartitionKey("a"));
+
+        _container.RegisterTrigger("fail", TriggerType.Pre, TriggerOperation.Replace,
+            (Func<JObject, JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => _container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", v = "new" }),
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "fail" } });
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["v"]!.Value<string>().Should().Be("orig");
+    }
+
+    [Fact]
+    public async Task PreTrigger_EmptyTriggersArray_NoEffect()
+    {
+        _container.RegisterTrigger("t1", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => { doc["tag"] = "fired"; return doc; }));
+
+        var result = await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string>() });
+
+        result.Resource["tag"].Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PreTrigger_OperationSpecific_Delete_NotFiredOnCreate()
+    {
+        _container.RegisterTrigger("delOnly", TriggerType.Pre, TriggerOperation.Delete,
+            (Func<JObject, JObject>)(doc => { doc["fired"] = true; return doc; }));
+
+        var result = await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "delOnly" } });
+
+        result.Resource["fired"].Should().BeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase: Post-Trigger & Rollback Gaps
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class PostTriggerEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task PostTrigger_ReceivesEnrichedDoc_WithSystemProperties()
+    {
+        JObject? received = null;
+        _container.RegisterTrigger("capture", TriggerType.Post, TriggerOperation.Create,
+            (Action<JObject>)(doc => received = doc));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "capture" } });
+
+        received.Should().NotBeNull();
+        received!["_ts"].Should().NotBeNull();
+        received!["_etag"].Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task PostTrigger_MultiplePostTriggers_ChainInOrder()
+    {
+        var order = new List<string>();
+        _container.RegisterTrigger("first", TriggerType.Post, TriggerOperation.Create,
+            (Action<JObject>)(_ => order.Add("first")));
+        _container.RegisterTrigger("second", TriggerType.Post, TriggerOperation.Create,
+            (Action<JObject>)(_ => order.Add("second")));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "first", "second" } });
+
+        order.Should().BeEquivalentTo(new[] { "first", "second" }, opt => opt.WithStrictOrdering());
+    }
+
+    [Fact]
+    public async Task PostTrigger_ExceptionRollsBack_Upsert_ExistingItem()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", v = "orig" }),
+            new PartitionKey("a"));
+
+        _container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.Upsert,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => _container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", v = "new" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["v"]!.Value<string>().Should().Be("orig");
+    }
+
+    [Fact]
+    public async Task PostTrigger_OperationAll_FiresOnCreate()
+    {
+        var fired = false;
+        _container.RegisterTrigger("all", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => fired = true));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "all" } });
+
+        fired.Should().BeTrue();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase: Rollback Detail Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TriggerRollbackTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task PostTrigger_RollsBack_EtagIsRestoredToOriginal()
+    {
+        var created = await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"));
+        var origEtag = created.ETag;
+
+        _container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.Replace,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => _container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", v = "new" }),
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        var read = await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        read.ETag.Should().Be(origEtag);
+    }
+
+    [Fact]
+    public async Task PostTrigger_RollsBack_ItemContentIsExactlyOriginal()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", v = "original" }),
+            new PartitionKey("a"));
+
+        _container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.Replace,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => _container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", v = "changed" }),
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+        var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["v"]!.Value<string>().Should().Be("original");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase: Mixed Trigger Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TriggerMixedTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task PreAndPostTrigger_BothFire_OnSameOperation()
+    {
+        var preFired = false;
+        var postFired = false;
+        _container.RegisterTrigger("pre", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => { preFired = true; return doc; }));
+        _container.RegisterTrigger("post", TriggerType.Post, TriggerOperation.Create,
+            (Action<JObject>)(_ => postFired = true));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions
+            {
+                PreTriggers = new List<string> { "pre" },
+                PostTriggers = new List<string> { "post" }
+            });
+
+        preFired.Should().BeTrue();
+        postFired.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PreTrigger_PostTrigger_PostSeesPreModifiedDoc()
+    {
+        _container.RegisterTrigger("pre", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => { doc["preTag"] = "set"; return doc; }));
+
+        JObject? postDoc = null;
+        _container.RegisterTrigger("post", TriggerType.Post, TriggerOperation.Create,
+            (Action<JObject>)(doc => postDoc = doc));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions
+            {
+                PreTriggers = new List<string> { "pre" },
+                PostTriggers = new List<string> { "post" }
+            });
+
+        postDoc.Should().NotBeNull();
+        postDoc!["preTag"]!.Value<string>().Should().Be("set");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase: Unsupported Operations
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TriggerUnsupportedOperationTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task PatchItemAsync_DoesNotSupportTriggers()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", v = "orig" }),
+            new PartitionKey("a"));
+
+        var preFired = false;
+        _container.RegisterTrigger("pre", TriggerType.Pre, TriggerOperation.All,
+            (Func<JObject, JObject>)(doc => { preFired = true; return doc; }));
+
+        await _container.PatchItemAsync<JObject>("1", new PartitionKey("a"),
+            new[] { PatchOperation.Replace("/v", "patched") });
+
+        preFired.Should().BeFalse();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase: Divergent Behavior (Skip + Sister)
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TriggerDivergentBehaviorTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact(Skip = "Divergent: real Cosmos DB fires triggers on PatchItemAsync")]
+    public async Task PatchItemAsync_FiresTriggers_RealCosmos()
+    {
+        await Task.CompletedTask;
+    }
+
+    [Fact(Skip = "Divergent: real Cosmos DB implements GetTriggerQueryIterator")]
+    public async Task GetTriggerQueryIterator_ReturnsAllTriggers_RealCosmos()
+    {
+        await Task.CompletedTask;
+    }
+
+    [Fact(Skip = "Divergent: real Cosmos DB cleans change feed on post-trigger rollback")]
+    public async Task PostTriggerRollback_ChangeFeedClean_RealCosmos()
+    {
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task PostTriggerRollback_ChangeFeedRetainsEntry_InEmulator()
+    {
+        var checkpoint = _container.GetChangeFeedCheckpoint();
+
+        _container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.Create,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
+
+        await act.Should().ThrowAsync<CosmosException>();
+
+        // The change feed entry persists even though the write was rolled back
+        var newCheckpoint = _container.GetChangeFeedCheckpoint();
+        newCheckpoint.Should().BeGreaterThan(checkpoint);
+    }
+}
