@@ -1623,7 +1623,7 @@ public class SqlFunctionTests
 
         var act = async () => await QueryAll<object>(container, query);
 
-        await act.Should().ThrowAsync<NotSupportedException>()
+        await act.Should().ThrowAsync<CosmosException>()
             .WithMessage("*RegisterUdf*");
     }
 

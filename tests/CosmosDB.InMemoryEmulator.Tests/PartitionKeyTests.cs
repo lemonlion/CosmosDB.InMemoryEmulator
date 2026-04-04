@@ -1151,25 +1151,16 @@ public class DeleteAllChangeFeedTombstoneTests
         container.ItemCount.Should().Be(0);
     }
 
-    [Fact(Skip = "BUG 9: RecordDeleteTombstone splits on pipe delimiter. A PK value " +
-        "containing '|' is incorrectly split, producing wrong tombstone PK fields.")]
+    [Fact]
     public async Task DeleteTombstone_SinglePkWithPipeChar_ReconstructedCorrectly()
     {
         var container = new InMemoryContainer("test", "/pk");
         await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a|b" }), new PartitionKey("a|b"));
         await container.DeleteItemAsync<JObject>("1", new PartitionKey("a|b"));
-    }
 
-    [Fact]
-    public async Task DeleteTombstone_SinglePkWithPipeChar_EmulatorBehavior_Splits()
-    {
-        // DIVERGENT BEHAVIOR: RecordDeleteTombstone splits on '|', so PK values
-        // containing pipe characters produce incorrect tombstone JSON.
-        var container = new InMemoryContainer("test", "/pk");
-        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a|b" }), new PartitionKey("a|b"));
-        // This still works for CRUD — the pipe is in the PK string, not the key structure
-        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a|b"))).Resource;
-        item["id"]!.ToString().Should().Be("1");
+        // Verify the item was deleted
+        var act = () => container.ReadItemAsync<JObject>("1", new PartitionKey("a|b"));
+        (await act.Should().ThrowAsync<CosmosException>()).Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 }
 
@@ -1189,26 +1180,12 @@ public class PkExtractionConsistencyTests
         item["id"]!.ToString().Should().Be("1");
     }
 
-    [Fact(Skip = "BUG 11: When PK path exists but value is null, ExtractPartitionKeyValue " +
-        "should return null — not fall back to the id field. The emulator falls to id.")]
+    [Fact]
     public async Task PartitionKey_None_AllPathsNull_ShouldUseNullNotId()
     {
         var container = new InMemoryContainer("test", "/pk");
         await container.CreateItemAsync(JObject.Parse("{\"id\":\"1\",\"pk\":null}"), PartitionKey.None);
         var item = (await container.ReadItemAsync<JObject>("1", PartitionKey.Null)).Resource;
-        item["id"]!.ToString().Should().Be("1");
-    }
-
-    [Fact]
-    public async Task PartitionKey_None_AllPathsNull_EmulatorBehavior_FallsToEmptyString()
-    {
-        // DIVERGENT BEHAVIOR: When PK path value is null and PK.None is used,
-        // JObject.SelectToken("pk") returns a non-null JValue of JTokenType.Null,
-        // whose ToString() returns "". The item is stored with PK = "" (empty string).
-        var container = new InMemoryContainer("test", "/pk");
-        await container.CreateItemAsync(JObject.Parse("{\"id\":\"1\",\"pk\":null}"), PartitionKey.None);
-        // In the emulator, item stored with PK = "" (empty string from null JValue.ToString())
-        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey(""))).Resource;
         item["id"]!.ToString().Should().Be("1");
     }
 }

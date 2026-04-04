@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
@@ -129,23 +130,9 @@ public class UndefinedNullOrderByTests
 {
     // DIVERGENT: undefined and null are treated identically in ORDER BY.
     // Real Cosmos DB has a specific type ordering: undefined < null < boolean < number < string < array < object.
-    [Fact(Skip = "L6: Undefined and null are not distinguished in ORDER BY. " +
-                  "Real Cosmos DB has a deterministic type ordering where undefined sorts " +
-                  "before null, which sorts before booleans, numbers, strings, arrays, and " +
-                  "objects. The emulator treats both undefined and null as null/missing, " +
-                  "which means they sort together. Implementing full Cosmos type ordering " +
-                  "would require tracking undefined vs null through the entire query pipeline.")]
-    public void OrderBy_ShouldDistinguishUndefinedFromNull()
-    {
-        // Expected real Cosmos behavior:
-        // Items with undefined field sort before items with null field,
-        // which sort before items with actual values.
-    }
-
     [Fact]
-    public async Task OrderBy_EmulatorBehavior_UndefinedAndNullSortTogether()
+    public async Task OrderBy_ShouldDistinguishUndefinedFromNull()
     {
-        // EMULATOR: undefined and null are both treated as null — they sort together
         var container = new InMemoryContainer("test-l6", "/pk");
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "1", pk = "a", val = 10 }), new PartitionKey("a"));
@@ -160,10 +147,11 @@ public class UndefinedNullOrderByTests
         while (iterator.HasMoreResults)
             results.AddRange(await iterator.ReadNextAsync());
 
-        // Null and undefined items sort together (before or after the valued item)
+        // Cosmos type ordering: undefined < null < number
         results.Should().HaveCount(3);
-        // The valued item (id=1, val=10) should appear, but undefined/null are not distinguished
-        results.Select(r => r["id"]!.ToString()).Should().Contain("1");
+        results[0]["id"]!.ToString().Should().Be("3", "undefined sorts first");
+        results[1]["id"]!.ToString().Should().Be("2", "null sorts second");
+        results[2]["id"]!.ToString().Should().Be("1", "number sorts last");
     }
 }
 
@@ -541,28 +529,18 @@ public class CosmosResponseFactoryDivergenceTests
 
 public class UnsupportedSqlFunctionDivergenceTests
 {
-    [Fact(Skip = "D11: Unsupported SQL functions throw NotSupportedException instead of " +
-        "CosmosException(BadRequest). Real Cosmos DB returns HTTP 400 with 'Unknown built-in " +
-        "function name'. Emulator throws NotSupportedException from function dispatch.")]
-    public void UnsupportedSqlFunction_ShouldThrowCosmosExceptionBadRequest() { }
-
     [Fact]
-    public async Task UnsupportedSqlFunction_EmulatorBehavior_ThrowsNotSupportedException()
+    public async Task UnsupportedSqlFunction_ShouldThrowCosmosExceptionBadRequest()
     {
         var container = new InMemoryContainer("test-d11", "/pk");
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
 
-        var threw = false;
-        try
-        {
-            var iterator = container.GetItemQueryIterator<JObject>(
-                new QueryDefinition("SELECT VALUE NONEXISTENT_FUNCTION(c.id) FROM c"),
-                requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
-            await iterator.ReadNextAsync();
-        }
-        catch (NotSupportedException) { threw = true; }
-        threw.Should().BeTrue("unsupported SQL functions should throw NotSupportedException");
+        var act = () => container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT VALUE NONEXISTENT_FUNCTION(c.id) FROM c"),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+
+        act.Should().Throw<CosmosException>().Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }
 
@@ -572,28 +550,18 @@ public class UnsupportedSqlFunctionDivergenceTests
 
 public class SqlParseErrorDivergenceTests
 {
-    [Fact(Skip = "D12: SQL parse failures throw NotSupportedException instead of " +
-        "CosmosException(BadRequest). Real Cosmos DB returns HTTP 400 with syntax error. " +
-        "Emulator uses Superpower parser that throws NotSupportedException.")]
-    public void MalformedSql_ShouldThrowCosmosExceptionBadRequest() { }
-
     [Fact]
-    public async Task MalformedSql_EmulatorBehavior_ThrowsException()
+    public async Task MalformedSql_ShouldThrowCosmosExceptionBadRequest()
     {
         var container = new InMemoryContainer("test-d12", "/pk");
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
 
-        var threw = false;
-        try
-        {
-            var iterator = container.GetItemQueryIterator<JObject>(
-                new QueryDefinition("SELECTTTTT * FROM c"),
-                requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
-            await iterator.ReadNextAsync();
-        }
-        catch (NotSupportedException) { threw = true; }
-        threw.Should().BeTrue("malformed SQL should throw NotSupportedException");
+        var act = () => container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECTTTTT * FROM c"),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+
+        act.Should().Throw<CosmosException>().Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }
 

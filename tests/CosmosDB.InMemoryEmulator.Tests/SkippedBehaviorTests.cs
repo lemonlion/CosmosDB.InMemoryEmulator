@@ -965,23 +965,16 @@ public class SkippedBehaviorDivergentTests
         act.Should().Throw<CosmosException>();
     }
 
-    [Fact(Skip = "Real Cosmos DB sorts undefined < null < false < true < numbers < strings. " +
-        "The in-memory emulator uses .NET's default JToken comparison which may order " +
-        "these types differently. Implementing the full Cosmos DB type-precedence sort " +
-        "would require a custom IComparer that handles all JSON value types according " +
-        "to the Cosmos DB specification.")]
-    public void CrossPartitionOrderBy_NullOrdering_ShouldFollowCosmosSpec() { }
-
     [Fact]
-    public async Task Divergent_CrossPartitionOrderBy_NullsSortByDotNetDefault()
+    public async Task CrossPartitionOrderBy_NullOrdering_ShouldFollowCosmosSpec()
     {
-        var container = new InMemoryContainer("co-null-div", "/partitionKey");
+        var container = new InMemoryContainer("co-null-spec", "/partitionKey");
         await container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "B", Value = 20 },
             new PartitionKey("pk1"));
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "2", partitionKey = "pk2", name = "A" }),
-            new PartitionKey("pk2")); // no "value" field — sorts as null
+            new PartitionKey("pk2")); // no "value" field — undefined
         await container.CreateItemAsync(
             new TestDocument { Id = "3", PartitionKey = "pk3", Name = "C", Value = 10 },
             new PartitionKey("pk3"));
@@ -992,9 +985,11 @@ public class SkippedBehaviorDivergentTests
         while (iter.HasMoreResults)
             all.AddRange(await iter.ReadNextAsync());
 
-        // .NET default ordering places null-valued items in some order;
-        // real Cosmos would place undefined/null before numbers
-        all.Should().HaveCount(3, "all items returned regardless of null ordering");
+        // Cosmos type ordering: undefined < null < numbers
+        all.Should().HaveCount(3);
+        all[0]["id"]!.ToString().Should().Be("2", "undefined value sorts first");
+        all[1]["id"]!.ToString().Should().Be("3", "value 10 before value 20");
+        all[2]["id"]!.ToString().Should().Be("1", "value 20 last");
     }
 
     [Fact(Skip = "TTL eviction is lazy — expired items are only removed when a read/query " +

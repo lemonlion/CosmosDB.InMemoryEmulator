@@ -52,8 +52,8 @@ These categories are inherently impossible or meaningless to emulate in-memory:
 | 19 | InMemoryCosmosClientTests | 649 | GetContainer_Read_NonExistent_Returns404 | Check existence |
 | 20 | ContainerManagementTests | 1691 | DeleteContainer_CascadesTriggers | Clean up triggers/UDFs on delete |
 
-## Batch 2: More Validation + Query/Parser Fixes (~20 tests) — NOT STARTED
-**Target: v2.0.54**
+## Batch 2: More Validation + Query/Parser Fixes (~20 tests) — COMPLETED
+**Version: v2.0.54 — 16 unskipped, 4 kept skipped (GroupBy function expressions, FT index validation, FT score projection, ReadMany ETag/headers)**
 
 | # | File | Line | Test | Fix |
 |---|------|------|------|-----|

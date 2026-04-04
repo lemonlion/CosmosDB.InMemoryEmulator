@@ -450,10 +450,13 @@ public static class CosmosSqlParser
             .Select(t => (SqlExpression)new ParameterExpression(t.Span.ToStringValue()));
 
     // Function call: FUNC_NAME(args...)
+    // Supports * as a function argument (e.g. COUNT(*))
     private static readonly TokenListParser<CosmosSqlToken, SqlExpression> FunctionCall =
         from name in AnyIdentifierOrKeyword
         from open in Token.EqualTo(CosmosSqlToken.OpenParen)
-        from args in Superpower.Parse.Ref(() => Expr).ManyDelimitedBy(Token.EqualTo(CosmosSqlToken.Comma))
+        from args in Token.EqualTo(CosmosSqlToken.Star).Select(_ => (SqlExpression)new IdentifierExpression("*"))
+            .Or(Superpower.Parse.Ref(() => Expr))
+            .ManyDelimitedBy(Token.EqualTo(CosmosSqlToken.Comma))
         from close in Token.EqualTo(CosmosSqlToken.CloseParen)
         select (SqlExpression)new FunctionCallExpression(name.ToUpperInvariant(), args);
 

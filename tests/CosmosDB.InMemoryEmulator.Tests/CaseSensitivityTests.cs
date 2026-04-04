@@ -36,7 +36,7 @@ public class CaseSensitivityTests
             while (iter.HasMoreResults) await iter.ReadNextAsync();
         };
 
-        await act.Should().ThrowAsync<NotSupportedException>();
+        await act.Should().ThrowAsync<CosmosException>();
     }
 
     [Fact]

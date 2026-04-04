@@ -61,6 +61,7 @@ public class InMemoryDatabase : Database
     {
         var container = _containers.GetOrAdd(containerId, name => new InMemoryContainer(name, partitionKeyPath));
         container.OnDeleted ??= () => _containers.TryRemove(containerId, out _);
+        container.SetParentDatabase(Id);
         return container;
     }
 
@@ -73,6 +74,7 @@ public class InMemoryDatabase : Database
         var created = false;
         var container = _containers.GetOrAdd(id, name => { created = true; return new InMemoryContainer(name, partitionKeyPath); });
         container.OnDeleted ??= () => _containers.TryRemove(id, out _);
+        container.SetParentDatabase(Id);
         var response = BuildContainerResponse(container, partitionKeyPath, created ? HttpStatusCode.Created : HttpStatusCode.OK);
         return Task.FromResult(response);
     }
@@ -87,6 +89,7 @@ public class InMemoryDatabase : Database
         var created = false;
         var container = _containers.GetOrAdd(id, _ => { created = true; return new InMemoryContainer(containerProperties); });
         container.OnDeleted ??= () => _containers.TryRemove(id, out _);
+        container.SetParentDatabase(Id);
         if (created)
         {
             container.DefaultTimeToLive = containerProperties.DefaultTimeToLive;
@@ -115,6 +118,7 @@ public class InMemoryDatabase : Database
         ArgumentNullException.ThrowIfNull(partitionKeyPath);
         var container = new InMemoryContainer(id, partitionKeyPath);
         container.OnDeleted = () => _containers.TryRemove(id, out _);
+        container.SetParentDatabase(Id);
         if (!_containers.TryAdd(id, container))
         {
             throw new CosmosException("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
@@ -132,6 +136,7 @@ public class InMemoryDatabase : Database
             containerProperties.PartitionKeyPath = "/id";
         var container = new InMemoryContainer(containerProperties);
         container.OnDeleted = () => _containers.TryRemove(id, out _);
+        container.SetParentDatabase(Id);
         container.DefaultTimeToLive = containerProperties.DefaultTimeToLive;
         if (containerProperties.IndexingPolicy is not null)
             container.IndexingPolicy = containerProperties.IndexingPolicy;
@@ -161,6 +166,7 @@ public class InMemoryDatabase : Database
             containerProperties.PartitionKeyPath = "/id";
         var container = new InMemoryContainer(containerProperties);
         container.OnDeleted = () => _containers.TryRemove(id, out _);
+        container.SetParentDatabase(Id);
         container.DefaultTimeToLive = containerProperties.DefaultTimeToLive;
         if (containerProperties.IndexingPolicy is not null)
             container.IndexingPolicy = containerProperties.IndexingPolicy;

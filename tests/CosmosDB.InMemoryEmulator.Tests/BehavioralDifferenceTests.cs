@@ -188,23 +188,6 @@ public class BehavioralDifferenceTests
         response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
     }
 
-    // ── Database property ────────────────────────────────────────────────────
-
-    /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB Container.Database returns a real
-    /// Database object that can be used to manage containers and users.
-    /// InMemoryContainer returns an NSubstitute mock which has no real behaviour,
-    /// so calling methods on .Database will return default values or throw.
-    /// </summary>
-    [Fact]
-    public void Database_ReturnsSubstituteMock_NotRealDatabase()
-    {
-        var database = _container.Database;
-        database.Should().NotBeNull();
-        // The returned Database is an NSubstitute mock with no real behaviour
-        database.Id.Should().BeEmpty();
-    }
-
     // ── Replace Container ────────────────────────────────────────────────────
 
     /// <summary>
@@ -790,24 +773,4 @@ public class BehavioralDifferenceTests
     [Fact(Skip = "Real Cosmos distinguishes PartitionKey.None (missing) from PartitionKey.Null (explicit null).")]
     public void PartitionKey_NoneVsNull_ShouldDiffer_RealCosmos() { }
 
-    // ══════════════════════════════════════════════════════════════════════════
-    // Phase 9: Database Property
-    // ══════════════════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos returns the same Database instance on
-    /// each access. InMemoryContainer creates a new NSubstitute mock each time.
-    /// </summary>
-    [Fact]
-    public void Database_NewMockInstanceOnEachAccess_UnlikeRealCosmos()
-    {
-        var db1 = _container.Database;
-        var db2 = _container.Database;
-
-        // Each access returns a different mock instance (referential inequality)
-        db1.Should().NotBeSameAs(db2);
-    }
-
-    [Fact(Skip = "Real Cosmos returns the same Database instance on every Container.Database access.")]
-    public void Database_ShouldReturnSameInstance_RealCosmos() { }
 }

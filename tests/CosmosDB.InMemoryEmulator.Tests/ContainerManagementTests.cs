@@ -1637,7 +1637,7 @@ public class DeleteContainerRegistrationTests
             return iterator.ReadNextAsync();
         };
 
-        await act.Should().ThrowAsync<NotSupportedException>();
+        await act.Should().ThrowAsync<CosmosException>();
     }
 }
 
@@ -1947,10 +1947,7 @@ public class ReadContainerStreamRoundTripTests
 
 public class ContainerDatabaseIdTests
 {
-    [Fact(Skip = "Real Cosmos DB: container.Database returns the actual parent Database " +
-        "with a valid Id. The in-memory emulator returns a fresh NSubstitute mock on each " +
-        "access (InMemoryContainer.cs: Substitute.For<Database>()), so Database.Id " +
-        "is always null. Fixing requires adding a parent Database parameter to the constructor.")]
+    [Fact]
     public void Container_Database_Id_ShouldReturnParentDatabaseId()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -1958,11 +1955,11 @@ public class ContainerDatabaseIdTests
     }
 
     [Fact]
-    public void Container_Database_EmulatorBehavior_IdIsNullWhenConstructedDirectly()
+    public void Container_Database_SameInstanceOnEachAccess()
     {
         var container = new InMemoryContainer("test", "/pk");
-
-        // Each access returns a fresh NSubstitute mock — Id is empty string
-        container.Database.Id.Should().BeEmpty();
+        var db1 = container.Database;
+        var db2 = container.Database;
+        db1.Should().BeSameAs(db2, "Database property should return the same instance");
     }
 }

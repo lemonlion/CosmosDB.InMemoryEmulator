@@ -1056,7 +1056,7 @@ public class StringFunctionEdgeCaseDeepDiveTests
 
 public class StringArrayConcatTests
 {
-    [Fact(Skip = "Divergent: emulator ARRAY_CONTAINS does case-insensitive string comparison")]
+    [Fact]
     public async Task Query_ArrayContains_StringElement_IsCaseSensitive()
     {
         var c = new InMemoryContainer("arr-case", "/pk");
@@ -1155,7 +1155,9 @@ public class StringComposedOperationTests
         page.Select(t => t.Value<string>()).Should().BeEquivalentTo("alice", "bob");
     }
 
-    [Fact(Skip = "Divergent: emulator does not support function expressions in GROUP BY clause")]
+    [Fact(Skip = "Divergent: emulator does not support function expressions in GROUP BY clause. " +
+        "GROUP BY only handles property paths (e.g. c.name), not function calls (e.g. LOWER(c.name)). " +
+        "Requires parser changes to support expression-based grouping keys.")]
     public async Task Query_GroupByLower_MergesCaseVariants()
     {
         var c = await SeedAsync();

@@ -207,7 +207,23 @@ public class InMemoryContainer : Container
     public override string Id { get; } = default!;
 
     /// <summary>Returns a stubbed <see cref="Microsoft.Azure.Cosmos.Database"/> instance.</summary>
-    public override Database Database => Substitute.For<Database>();
+    public override Database Database
+    {
+        get
+        {
+            if (_cachedDatabase is null)
+            {
+                var db = Substitute.For<Database>();
+                db.Id.Returns(_parentDatabaseId ?? Id);
+                _cachedDatabase = db;
+            }
+            return _cachedDatabase;
+        }
+    }
+    private Database _cachedDatabase;
+    private string _parentDatabaseId;
+
+    internal void SetParentDatabase(string databaseId) => _parentDatabaseId = databaseId;
 
     /// <summary>Returns a stubbed <see cref="Microsoft.Azure.Cosmos.Conflicts"/> instance.</summary>
     public override Conflicts Conflicts => Substitute.For<Conflicts>();
@@ -1250,13 +1266,27 @@ public class InMemoryContainer : Container
     //  Query — Typed FeedIterator
     // ═══════════════════════════════════════════════════════════════════════════
 
+    private static List<string> ExecuteQuerySafe(Func<List<string>> queryFunc)
+    {
+        try
+        {
+            return queryFunc();
+        }
+        catch (CosmosException) { throw; }
+        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or FormatException)
+        {
+            throw new CosmosException(
+                ex.Message, HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
+        }
+    }
+
     public override FeedIterator<T> GetItemQueryIterator<T>(
         QueryDefinition queryDefinition, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
     {
         ValidateMaxItemCount(requestOptions);
         var parameters = ExtractQueryParameters(queryDefinition);
-        var filtered = FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions);
+        var filtered = ExecuteQuerySafe(() => FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions));
         var items = filtered.Select(json => JsonConvert.DeserializeObject<T>(json, JsonSettings)).ToList();
         var initialOffset = ParseContinuationToken(continuationToken);
         return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, initialOffset);
@@ -1275,7 +1305,7 @@ public class InMemoryContainer : Container
         }
         else
         {
-            var filtered = FilterItemsByQuery(queryText, new Dictionary<string, object>(), requestOptions);
+            var filtered = ExecuteQuerySafe(() => FilterItemsByQuery(queryText, new Dictionary<string, object>(), requestOptions));
             items = filtered.Select(json => JsonConvert.DeserializeObject<T>(json, JsonSettings)).ToList();
         }
         var initialOffset = ParseContinuationToken(continuationToken);
@@ -1288,7 +1318,7 @@ public class InMemoryContainer : Container
     {
         ValidateMaxItemCount(requestOptions);
         var parameters = ExtractQueryParameters(queryDefinition);
-        var filtered = FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions);
+        var filtered = ExecuteQuerySafe(() => FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions));
         filtered = FilterByFeedRange(filtered, feedRange);
         var items = filtered.Select(json => JsonConvert.DeserializeObject<T>(json, JsonSettings)).ToList();
         var initialOffset = ParseContinuationToken(continuationToken);
@@ -1304,7 +1334,7 @@ public class InMemoryContainer : Container
         QueryRequestOptions requestOptions = null)
     {
         var parameters = ExtractQueryParameters(queryDefinition);
-        var filtered = FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions);
+        var filtered = ExecuteQuerySafe(() => FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions));
         return CreateStreamFeedIterator(filtered, ParseContinuationToken(continuationToken), requestOptions?.MaxItemCount);
     }
 
@@ -1318,7 +1348,7 @@ public class InMemoryContainer : Container
             return CreateStreamFeedIterator(GetAllItemsForPartition(requestOptions).ToList(), offset, requestOptions?.MaxItemCount);
         }
 
-        return CreateStreamFeedIterator(FilterItemsByQuery(queryText, new Dictionary<string, object>(), requestOptions), offset, requestOptions?.MaxItemCount);
+        return CreateStreamFeedIterator(ExecuteQuerySafe(() => FilterItemsByQuery(queryText, new Dictionary<string, object>(), requestOptions)), offset, requestOptions?.MaxItemCount);
     }
 
     public override FeedIterator GetItemQueryStreamIterator(
@@ -1326,7 +1356,7 @@ public class InMemoryContainer : Container
         QueryRequestOptions requestOptions = null)
     {
         var parameters = ExtractQueryParameters(queryDefinition);
-        var filtered = FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions);
+        var filtered = ExecuteQuerySafe(() => FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions));
         filtered = FilterByFeedRange(filtered, feedRange);
         return CreateStreamFeedIterator(filtered, ParseContinuationToken(continuationToken), requestOptions?.MaxItemCount);
     }
@@ -1861,16 +1891,20 @@ public class InMemoryContainer : Container
 
         if (PartitionKeyPaths is { Count: > 0 })
         {
-            var parts = PartitionKeyPaths.Select(path => jObj.SelectToken(path.TrimStart('/'))?.ToString()).ToList();
-            if (parts.Count > 1)
+            if (PartitionKeyPaths.Count > 1)
             {
                 // Composite key — preserve null positions as empty strings for consistency
                 // with PartitionKeyToString which also uses empty string for null components
+                var parts = PartitionKeyPaths.Select(path => jObj.SelectToken(path.TrimStart('/'))?.ToString()).ToList();
                 return string.Join("|", parts.Select(p => p ?? string.Empty));
             }
-            if (parts[0] is not null)
+
+            // Single path — check if the field exists
+            var token = jObj.SelectToken(PartitionKeyPaths[0].TrimStart('/'));
+            if (token is not null)
             {
-                return parts[0];
+                // Field exists — if value is null, return null (don't fall back to id)
+                return token.Type == JTokenType.Null ? null : token.ToString();
             }
         }
 
@@ -1953,6 +1987,20 @@ public class InMemoryContainer : Container
                     }
                 }
             }
+
+            var cps = _containerProperties?.ComputedProperties;
+            if (cps is { Count: > 0 })
+            {
+                foreach (var cp in cps)
+                {
+                    if (string.Equals(path, "/" + cp.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new CosmosException(
+                            "Cannot patch a computed property path.",
+                            HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                    }
+                }
+            }
         }
     }
 
@@ -1995,6 +2043,9 @@ public class InMemoryContainer : Container
         "id", "_rid", "_ts", "_etag", "_self", "_attachments"
     };
 
+    private static readonly string[] ProhibitedCpClauses =
+        { " WHERE ", " ORDER BY ", " GROUP BY ", " TOP ", " DISTINCT ", " OFFSET ", " LIMIT ", " JOIN " };
+
     private static void ValidateComputedProperties(ContainerProperties properties)
     {
         var cps = properties.ComputedProperties;
@@ -2007,6 +2058,7 @@ public class InMemoryContainer : Container
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
         }
 
+        var definedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var cp in cps)
         {
             if (ReservedComputedPropertyNames.Contains(cp.Name))
@@ -2015,6 +2067,52 @@ public class InMemoryContainer : Container
                     $"Computed property name '{cp.Name}' is a reserved system property name.",
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
             }
+
+            if (!string.IsNullOrWhiteSpace(cp.Query))
+            {
+                var trimmed = cp.Query.TrimStart();
+                if (!trimmed.StartsWith("SELECT VALUE", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new CosmosException(
+                        "Computed property query must use 'SELECT VALUE' syntax.",
+                        HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
+                }
+
+                foreach (var clause in ProhibitedCpClauses)
+                {
+                    // Check after the FROM clause for prohibited keywords
+                    var fromIdx = trimmed.IndexOf(" FROM ", StringComparison.OrdinalIgnoreCase);
+                    if (fromIdx >= 0)
+                    {
+                        var afterFrom = trimmed[(fromIdx + 6)..];
+                        // Skip the alias part (e.g., "FROM c") — check after the alias
+                        var spaceIdx = afterFrom.IndexOf(' ');
+                        if (spaceIdx >= 0)
+                        {
+                            var afterAlias = afterFrom[spaceIdx..];
+                            if (afterAlias.IndexOf(clause, StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                throw new CosmosException(
+                                    $"Computed property query cannot contain '{clause.Trim()}' clause.",
+                                    HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
+                            }
+                        }
+                    }
+                }
+
+                // Check for cross-CP references
+                foreach (var existingName in definedNames)
+                {
+                    if (trimmed.Contains("." + existingName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new CosmosException(
+                            $"Computed property '{cp.Name}' cannot reference another computed property '{existingName}'.",
+                            HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
+                    }
+                }
+            }
+
+            definedNames.Add(cp.Name);
         }
     }
 
@@ -2075,10 +2173,19 @@ public class InMemoryContainer : Container
         }
         else if (pk is not null)
         {
-            var pkValues = pk.Split('|');
-            for (var i = 0; i < PartitionKeyPaths.Count; i++)
+            if (PartitionKeyPaths.Count == 1)
             {
-                tombstone[PartitionKeyPaths[i].TrimStart('/')] = i < pkValues.Length ? pkValues[i] : null;
+                // Single PK path — use the value directly to avoid splitting on pipe
+                // characters that may appear in the PK value itself.
+                tombstone[PartitionKeyPaths[0].TrimStart('/')] = pk;
+            }
+            else
+            {
+                var pkValues = pk.Split('|');
+                for (var i = 0; i < PartitionKeyPaths.Count; i++)
+                {
+                    tombstone[PartitionKeyPaths[i].TrimStart('/')] = i < pkValues.Length ? pkValues[i] : null;
+                }
             }
         }
 
@@ -2937,6 +3044,9 @@ public class InMemoryContainer : Container
             .ToList();
     }
 
+    // Sentinel for undefined (missing field) — distinct from null
+    private static readonly object UndefinedSortSentinel = new();
+
     private static List<string> ApplyOrderByFields(
         List<string> items, OrderByField[] orderByFields, string fromAlias,
         IDictionary<string, object> parameters = null)
@@ -2976,13 +3086,16 @@ public class InMemoryContainer : Container
                 var token = jObj.SelectToken(fieldPath);
                 if (token is null)
                 {
-                    return null;
+                    return UndefinedSortSentinel; // field missing — undefined
                 }
 
                 return token.Type switch
                 {
-                    JTokenType.Integer => token.Value<long>(),
-                    JTokenType.Float => token.Value<double>(),
+                    JTokenType.Null => null, // field present but null
+                    JTokenType.Boolean => (object)token.Value<bool>(),
+                    JTokenType.Integer => (object)token.Value<long>(),
+                    JTokenType.Float => (object)token.Value<double>(),
+                    JTokenType.String => (object)token.Value<string>(),
                     _ => (object)token.ToString()
                 };
             }
@@ -3775,30 +3888,53 @@ public class InMemoryContainer : Container
         return string.Equals(left.ToString(), right.ToString(), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Returns the Cosmos DB type rank for ordering:
+    /// undefined(0) &lt; null(1) &lt; bool(2) &lt; number(3) &lt; string(4) &lt; array(5) &lt; object(6).
+    /// </summary>
+    private static int GetTypeRank(object value)
+    {
+        if (ReferenceEquals(value, UndefinedSortSentinel)) return 0;
+        if (value is null) return 1;
+        if (value is bool) return 2;
+        if (value is int or long or double or float or decimal) return 3;
+        if (value is string) return 4;
+        if (value is JToken jt)
+        {
+            return jt.Type switch
+            {
+                JTokenType.Undefined => 0,
+                JTokenType.Null => 1,
+                JTokenType.Boolean => 2,
+                JTokenType.Integer or JTokenType.Float => 3,
+                JTokenType.String => 4,
+                JTokenType.Array => 5,
+                JTokenType.Object => 6,
+                _ => 7
+            };
+        }
+        return 7;
+    }
+
     private static int CompareValues(object left, object right)
     {
-        if (left is null && right is null)
-        {
-            return 0;
-        }
+        var leftRank = GetTypeRank(left);
+        var rightRank = GetTypeRank(right);
+        if (leftRank != rightRank) return leftRank.CompareTo(rightRank);
 
-        if (left is null)
-        {
-            return -1;
-        }
+        // Same type rank
+        if (leftRank <= 1) return 0; // both undefined or both null
 
-        if (right is null)
-        {
-            return 1;
-        }
+        if (left is bool lb && right is bool rb)
+            return lb.CompareTo(rb); // false < true
 
-        if (double.TryParse(left.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var l) &&
-            double.TryParse(right.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var r))
+        if (double.TryParse(left?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var l) &&
+            double.TryParse(right?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var r))
         {
             return l.CompareTo(r);
         }
 
-        return string.Compare(left.ToString(), right.ToString(), StringComparison.Ordinal);
+        return string.Compare(left?.ToString(), right?.ToString(), StringComparison.Ordinal);
     }
 
     private static bool EvaluateLike(object left, object right, string escapeChar = null)
@@ -5846,7 +5982,7 @@ public class InMemoryContainer : Container
                     return true;
                 }
             }
-            else if (string.Equals(element.ToString(), searchStr, StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(element.ToString(), searchStr, StringComparison.Ordinal))
             {
                 return true;
             }

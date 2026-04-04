@@ -4559,9 +4559,7 @@ public class QueryDivergentBehaviorDeepDiveTests
         return results;
     }
 
-    [Fact(Skip = "Real Cosmos has deterministic type ordering: undefined < null < bool < number < string. " +
-                 "Emulator treats undefined and null identically. " +
-                 "See sister test: OrderBy_MixedNullAndValues_EmulatorBehavior")]
+    [Fact]
     public async Task OrderBy_MixedNullAndValues_CosmosTypeOrdering()
     {
         await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", value = 10 }), new PartitionKey("pk1"));
@@ -4576,38 +4574,10 @@ public class QueryDivergentBehaviorDeepDiveTests
     }
 
     [Fact]
-    public async Task OrderBy_MixedNullAndValues_EmulatorBehavior()
-    {
-        // DIVERGENT BEHAVIOR: Emulator treats undefined and null identically in ORDER BY.
-        // Real Cosmos has: undefined < null < bool < number < string.
-        // Emulator groups null/undefined together, then sorts defined values.
-        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", value = 10 }), new PartitionKey("pk1"));
-        await _container.CreateItemAsync(JObject.Parse("{\"id\":\"2\",\"partitionKey\":\"pk1\",\"value\":null}"), new PartitionKey("pk1"));
-
-        var results = await Query("SELECT * FROM c ORDER BY c.value ASC");
-        results.Should().HaveCount(2);
-    }
-
-    [Fact(Skip = "COUNT(*) syntax may not be parsed. " +
-                 "See sister test: CountStar_EmulatorBehavior")]
     public async Task CountStar_ParsesAndExecutes()
     {
         await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1" }), new PartitionKey("pk1"));
         var iterator = _container.GetItemQueryIterator<int>("SELECT VALUE COUNT(*) FROM c");
-        var results = new List<int>();
-        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
-        results.Should().ContainSingle().Which.Should().Be(1);
-    }
-
-    [Fact]
-    public async Task CountStar_EmulatorBehavior()
-    {
-        // DIVERGENT BEHAVIOR: COUNT(*) may not be parsed by the emulator.
-        // Real Cosmos DB accepts COUNT(*) as equivalent to COUNT(1).
-        // The emulator may require COUNT(1) syntax.
-        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1" }), new PartitionKey("pk1"));
-
-        var iterator = _container.GetItemQueryIterator<int>("SELECT VALUE COUNT(1) FROM c");
         var results = new List<int>();
         while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
         results.Should().ContainSingle().Which.Should().Be(1);

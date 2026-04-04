@@ -934,8 +934,7 @@ public class OrderByMixedTypeSortingTests
         results[0]["id"]!.ToString().Should().Be("2", "undefined/missing sorts before values");
     }
 
-    [Fact(Skip = "Real Cosmos DB sorts by type rank: undefined < null < boolean < number < string < array < object. " +
-        "The emulator's CompareValues uses numeric-then-string comparison and does not distinguish type ranks.")]
+    [Fact]
     public async Task OrderBy_MixedTypes_FollowsCosmosTypeRanking()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -958,30 +957,6 @@ public class OrderByMixedTypeSortingTests
         results[0]["id"]!.ToString().Should().Be("3", "boolean before number");
         results[1]["id"]!.ToString().Should().Be("2", "number before string");
         results[2]["id"]!.ToString().Should().Be("1", "string last");
-    }
-
-    [Fact]
-    public async Task BehavioralDifference_OrderBy_MixedTypes_UsesStringComparison()
-    {
-        // DIVERGENT BEHAVIOR: Real Cosmos DB sorts by type rank
-        // (undefined < null < bool < number < string < array < object).
-        // The emulator's CompareValues uses numeric-then-string comparison,
-        // so mixed types are compared by their string representations.
-        var container = new InMemoryContainer("test", "/pk");
-        await container.CreateItemAsync(
-            JObject.FromObject(new { id = "1", pk = "a", val = "hello" }),
-            new PartitionKey("a"));
-        await container.CreateItemAsync(
-            JObject.FromObject(new { id = "2", pk = "b", val = 42 }),
-            new PartitionKey("b"));
-
-        var iterator = container.GetItemQueryIterator<JObject>(
-            "SELECT * FROM c ORDER BY c.val");
-        var results = new List<JObject>();
-        while (iterator.HasMoreResults)
-            results.AddRange(await iterator.ReadNextAsync());
-
-        results.Should().HaveCount(2, "both items returned regardless of type mismatch");
     }
 }
 

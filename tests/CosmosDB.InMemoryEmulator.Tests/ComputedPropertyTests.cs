@@ -878,7 +878,7 @@ public class ComputedPropertyImplementationBugTests
             var iterator = container.GetItemQueryIterator<JObject>(query);
             return iterator.ReadNextAsync();
         };
-        await act.Should().ThrowAsync<NotSupportedException>();
+        await act.Should().ThrowAsync<CosmosException>();
     }
 
     [Fact(Skip = "Real Cosmos DB returns undefined when any CONCAT argument is undefined. " +
@@ -920,9 +920,7 @@ public class ComputedPropertyImplementationBugTests
         doc["cp_fullName"]!.ToString().Should().Be("Jane ");
     }
 
-    [Fact(Skip = "Real Cosmos DB rejects PatchItemAsync targeting computed property paths with " +
-                 "400 Bad Request. The emulator does not guard against this — the patch silently " +
-                 "succeeds but queries still use the computed value.")]
+    [Fact]
     public async Task ComputedProperty_PatchComputedPropertyPath_RealCosmos()
     {
         var container = CreateContainerWithComputedProperties(
@@ -935,29 +933,6 @@ public class ComputedPropertyImplementationBugTests
             "1", new PartitionKey("p"),
             new[] { PatchOperation.Set("/cp_lowerName", "hacked") });
         await act.Should().ThrowAsync<CosmosException>();
-    }
-
-    [Fact]
-    public async Task ComputedProperty_PatchComputedPropertyPath_EmulatorBehaviour()
-    {
-        // DIVERGENT: Emulator silently accepts patch on CP path, but queries use computed value
-        var container = CreateContainerWithComputedProperties(
-            ("cp_lowerName", "SELECT VALUE LOWER(c.name) FROM c"));
-
-        await SeedItems(container, new { id = "1", pk = "p", name = "Alice" });
-
-        // Emulator: patch succeeds silently
-        await container.PatchItemAsync<JObject>(
-            "1", new PartitionKey("p"),
-            new[] { PatchOperation.Set("/cp_lowerName", "hacked") });
-
-        // But queries still use the computed definition
-        var query = new QueryDefinition("SELECT c.cp_lowerName FROM c");
-        var iterator = container.GetItemQueryIterator<JObject>(query);
-        var response = await iterator.ReadNextAsync();
-
-        response.First()["cp_lowerName"]!.ToString().Should().Be("alice",
-            "computed value should override the patched persisted value");
     }
 }
 
@@ -1695,80 +1670,29 @@ public class ComputedPropertyValidationDivergentTests
         act.Should().Throw<CosmosException>();
     }
 
-    [Fact(Skip = "Real Cosmos DB validates that CP queries use SELECT VALUE syntax. Definitions " +
-                 "like 'SELECT LOWER(c.name) FROM c' (without VALUE) are rejected. The emulator " +
-                 "silently falls back to null expression.")]
-    public void ComputedProperty_QueryMustBeSelectValue_RealCosmos() { }
-
     [Fact]
-    public async Task ComputedProperty_QueryMustBeSelectValue_EmulatorBehaviour()
+    public void ComputedProperty_QueryMustBeSelectValue_RealCosmos()
     {
-        // DIVERGENT: CP without VALUE keyword silently produces no computed property
-        var container = CreateContainerWithComputedProperties(
-            ("cp_lowerName", "SELECT LOWER(c.name) FROM c")); // missing VALUE
-
-        await SeedItems(container, new { id = "1", pk = "p", name = "Alice" });
-
-        var query = new QueryDefinition("SELECT c.id, c.cp_lowerName FROM c");
-        var iterator = container.GetItemQueryIterator<JObject>(query);
-        var response = await iterator.ReadNextAsync();
-        var doc = response.First();
-
-        // The CP should not be evaluated (expression is null, so skipped in AugmentWithComputedProperties)
-        (doc["cp_lowerName"] is null || doc["cp_lowerName"]!.Type == JTokenType.Null).Should().BeTrue(
-            "CP without SELECT VALUE should not evaluate");
+        var act = () => CreateContainerWithComputedProperties(
+            ("cp_lowerName", "SELECT LOWER(c.name) FROM c"));
+        act.Should().Throw<CosmosException>().Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
-    [Fact(Skip = "Real Cosmos DB rejects CP queries containing WHERE/ORDER BY/GROUP BY/TOP/" +
-                 "DISTINCT/OFFSET LIMIT/JOIN clauses. The emulator does not validate CP query " +
-                 "structure.")]
-    public void ComputedProperty_QueryCannotContainWhere_RealCosmos() { }
-
     [Fact]
-    public async Task ComputedProperty_QueryCannotContainWhere_EmulatorBehaviour()
+    public void ComputedProperty_QueryCannotContainWhere_RealCosmos()
     {
-        // DIVERGENT: WHERE clause in CP definition is ignored — only VALUE expression extracted
-        var container = CreateContainerWithComputedProperties(
+        var act = () => CreateContainerWithComputedProperties(
             ("cp_name", "SELECT VALUE c.name FROM c WHERE c.age > 18"));
-
-        await SeedItems(container,
-            new { id = "1", pk = "p", name = "Alice", age = 25 },
-            new { id = "2", pk = "p", name = "Bob", age = 10 });
-
-        var query = new QueryDefinition("SELECT c.id, c.cp_name FROM c ORDER BY c.id");
-        var iterator = container.GetItemQueryIterator<JObject>(query);
-        var response = await iterator.ReadNextAsync();
-        var results = response.ToList();
-
-        // Both items get the CP — WHERE in definition is ignored.
-        results.Should().HaveCount(2);
-        results[0]["cp_name"]!.ToString().Should().Be("Alice");
-        results[1]["cp_name"]!.ToString().Should().Be("Bob");
+        act.Should().Throw<CosmosException>().Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
-    [Fact(Skip = "Real Cosmos DB states that computed properties 'can't rely on other computed " +
-                 "properties.' The emulator does not enforce this constraint — CPs are processed " +
-                 "sequentially so referencing earlier CPs actually works.")]
-    public void ComputedProperty_CannotReferenceOtherCP_RealCosmos() { }
-
     [Fact]
-    public async Task ComputedProperty_CannotReferenceOtherCP_EmulatorBehaviour()
+    public void ComputedProperty_CannotReferenceOtherCP_RealCosmos()
     {
-        // DIVERGENT: CPs are processed sequentially, so cp_upper_of_lower can reference cp_lower
-        var container = CreateContainerWithComputedProperties(
+        var act = () => CreateContainerWithComputedProperties(
             ("cp_lower", "SELECT VALUE LOWER(c.name) FROM c"),
             ("cp_upper_of_lower", "SELECT VALUE UPPER(c.cp_lower) FROM c"));
-
-        await SeedItems(container, new { id = "1", pk = "p", name = "Alice" });
-
-        var query = new QueryDefinition("SELECT c.cp_lower, c.cp_upper_of_lower FROM c");
-        var iterator = container.GetItemQueryIterator<JObject>(query);
-        var response = await iterator.ReadNextAsync();
-        var doc = response.First();
-
-        doc["cp_lower"]!.ToString().Should().Be("alice");
-        doc["cp_upper_of_lower"]!.ToString().Should().Be("ALICE",
-            "emulator processes CPs sequentially so cross-CP references work");
+        act.Should().Throw<CosmosException>().Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }
 
