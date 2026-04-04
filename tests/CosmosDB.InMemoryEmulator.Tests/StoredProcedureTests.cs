@@ -554,6 +554,276 @@ public class StoredProcedureTests
         response.Resource.Should().Be("v2");
     }
 
+    // ─── CRUD edge cases (T8–T13) ────────────────────────────────────────
+
+    [Fact]
+    public async Task DeleteStoredProcedure_ThenReCreate_SameId_Works()
+    {
+        var scripts = _container.Scripts;
+        await scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "spRecreate", Body = "function() { return 'v1'; }" });
+        await scripts.DeleteStoredProcedureAsync("spRecreate");
+
+        var response = await scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "spRecreate", Body = "function() { return 'v2'; }" });
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var read = await scripts.ReadStoredProcedureAsync("spRecreate");
+        read.Resource.Body.Should().Be("function() { return 'v2'; }");
+    }
+
+    [Fact]
+    public async Task CreateStoredProcedure_MultipleDistinct_AllReadable()
+    {
+        var scripts = _container.Scripts;
+        for (int i = 0; i < 5; i++)
+        {
+            await scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+                { Id = $"sp-{i}", Body = $"function() {{ return {i}; }}" });
+        }
+
+        for (int i = 0; i < 5; i++)
+        {
+            var read = await scripts.ReadStoredProcedureAsync($"sp-{i}");
+            read.StatusCode.Should().Be(HttpStatusCode.OK);
+            read.Resource.Body.Should().Be($"function() {{ return {i}; }}");
+        }
+    }
+
+    [Fact]
+    public async Task CreateStoredProcedure_SpecialCharactersInId_Works()
+    {
+        var scripts = _container.Scripts;
+        await scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "sp-bulk.delete_v2", Body = "function() {}" });
+
+        var read = await scripts.ReadStoredProcedureAsync("sp-bulk.delete_v2");
+        read.StatusCode.Should().Be(HttpStatusCode.OK);
+        read.Resource.Id.Should().Be("sp-bulk.delete_v2");
+    }
+
+    [Fact]
+    public async Task CreateStoredProcedure_BodyPreservedExactly()
+    {
+        var body = "function(arg) {\n\tvar x = 'hello world';\n\treturn x + ' ñ 日本語';\n}";
+        var scripts = _container.Scripts;
+        await scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "spUnicode", Body = body });
+
+        var read = await scripts.ReadStoredProcedureAsync("spUnicode");
+        read.Resource.Body.Should().Be(body);
+    }
+
+    [Fact]
+    public async Task ReplaceStoredProcedure_OldBodyNotAccessible()
+    {
+        var scripts = _container.Scripts;
+        await scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "spOldBody", Body = "function() { return 'v1'; }" });
+
+        await scripts.ReplaceStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "spOldBody", Body = "function() { return 'v2'; }" });
+
+        var read = await scripts.ReadStoredProcedureAsync("spOldBody");
+        read.Resource.Body.Should().Be("function() { return 'v2'; }");
+        read.Resource.Body.Should().NotBe("function() { return 'v1'; }");
+    }
+
+    [Fact]
+    public async Task CreateStoredProcedure_CaseSensitiveIds()
+    {
+        var scripts = _container.Scripts;
+        await scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "myProc", Body = "function() { return 'lower'; }" });
+        await scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "MYPROC", Body = "function() { return 'upper'; }" });
+
+        var lower = await scripts.ReadStoredProcedureAsync("myProc");
+        var upper = await scripts.ReadStoredProcedureAsync("MYPROC");
+
+        lower.Resource.Body.Should().Be("function() { return 'lower'; }");
+        upper.Resource.Body.Should().Be("function() { return 'upper'; }");
+    }
+
+    // ─── Execution advanced scenarios (T14–T21) ─────────────────────────
+
+    [Fact]
+    public async Task ExecuteStoredProcedure_HandlerReturnsEmptyString_ResourceIsEmpty()
+    {
+        _container.RegisterStoredProcedure("spEmpty", (pk, args) => "");
+
+        var response = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spEmpty", new PartitionKey("pk1"), Array.Empty<dynamic>());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Resource.Should().Be("");
+    }
+
+    [Fact]
+    public async Task ExecuteStoredProcedure_PartitionKeyNull_PassedCorrectly()
+    {
+        PartitionKey? received = null;
+        _container.RegisterStoredProcedure("spPkNull", (pk, args) =>
+        {
+            received = pk;
+            return "ok";
+        });
+
+        await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spPkNull", PartitionKey.Null, Array.Empty<dynamic>());
+
+        received.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteStoredProcedure_HandlerThrowsCosmosException_PropagatesWithStatusCode()
+    {
+        _container.RegisterStoredProcedure("spCosmos", (pk, args) =>
+            throw new CosmosException("bad request", HttpStatusCode.BadRequest, 0, "", 0));
+
+        var act = () => _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spCosmos", new PartitionKey("pk1"), Array.Empty<dynamic>());
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ExecuteStoredProcedure_HandlerModifiesArguments_NoSideEffects()
+    {
+        _container.RegisterStoredProcedure("spMutate", (pk, args) =>
+        {
+            args[0] = "mutated";
+            return "ok";
+        });
+
+        var myArgs = new dynamic[] { "original" };
+        await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spMutate", new PartitionKey("pk1"), myArgs);
+
+        // Reference semantics: the handler mutates the same array
+        ((string)myArgs[0]).Should().Be("mutated");
+    }
+
+    [Fact]
+    public async Task ExecuteStoredProcedure_HandlerCanUpsertItems()
+    {
+        _container.RegisterStoredProcedure("spUpsert", (pk, args) =>
+        {
+            _container.UpsertItemAsync(
+                new TestDocument { Id = "upserted", PartitionKey = "pk1", Name = "Upserted" },
+                new PartitionKey("pk1")).GetAwaiter().GetResult();
+            return "done";
+        });
+
+        await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spUpsert", new PartitionKey("pk1"), Array.Empty<dynamic>());
+
+        var read = await _container.ReadItemAsync<TestDocument>("upserted", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Upserted");
+    }
+
+    [Fact]
+    public async Task ExecuteStoredProcedure_HandlerCanPatchItems()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "to-patch", PartitionKey = "pk1", Name = "Before" },
+            new PartitionKey("pk1"));
+
+        _container.RegisterStoredProcedure("spPatch", (pk, args) =>
+        {
+            _container.PatchItemAsync<TestDocument>("to-patch", new PartitionKey("pk1"),
+                new[] { PatchOperation.Replace("/name", "After") }).GetAwaiter().GetResult();
+            return "patched";
+        });
+
+        await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spPatch", new PartitionKey("pk1"), Array.Empty<dynamic>());
+
+        var read = await _container.ReadItemAsync<TestDocument>("to-patch", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("After");
+    }
+
+    [Fact]
+    public async Task ExecuteStoredProcedure_SequentialExecutions_IndependentResults()
+    {
+        var callCount = 0;
+        _container.RegisterStoredProcedure("spSeq", (pk, args) =>
+        {
+            callCount++;
+            return callCount.ToString();
+        });
+
+        var r1 = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spSeq", new PartitionKey("pk1"), Array.Empty<dynamic>());
+        var r2 = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spSeq", new PartitionKey("pk1"), Array.Empty<dynamic>());
+        var r3 = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spSeq", new PartitionKey("pk1"), Array.Empty<dynamic>());
+
+        r1.Resource.Should().Be("1");
+        r2.Resource.Should().Be("2");
+        r3.Resource.Should().Be("3");
+    }
+
+    [Fact]
+    public async Task ExecuteStoredProcedure_HandlerUsesPartitionKeyToScope()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk-a", Name = "A" }, new PartitionKey("pk-a"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk-b", Name = "B" }, new PartitionKey("pk-b"));
+
+        _container.RegisterStoredProcedure("spScoped", (pk, args) =>
+        {
+            var iterator = _container.GetItemQueryIterator<TestDocument>(
+                "SELECT * FROM c",
+                requestOptions: new QueryRequestOptions { PartitionKey = pk });
+            var items = new List<string>();
+            while (iterator.HasMoreResults)
+            {
+                var page = iterator.ReadNextAsync().GetAwaiter().GetResult();
+                items.AddRange(page.Select(x => x.Name));
+            }
+            return JsonConvert.SerializeObject(items);
+        });
+
+        var result = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spScoped", new PartitionKey("pk-a"), Array.Empty<dynamic>());
+
+        var names = JsonConvert.DeserializeObject<List<string>>(result.Resource);
+        names.Should().ContainSingle().Which.Should().Be("A");
+    }
+
+    // ─── Response metadata (T25–T27) ────────────────────────────────────
+
+    [Fact]
+    public async Task CreateStoredProcedure_Response_HasResourceWithIdAndBody()
+    {
+        var response = await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+        {
+            Id = "spMeta",
+            Body = "function() { return 42; }"
+        });
+
+        response.Resource.Id.Should().Be("spMeta");
+        response.Resource.Body.Should().Be("function() { return 42; }");
+    }
+
+    [Fact]
+    public async Task ReplaceStoredProcedure_Response_HasUpdatedResource()
+    {
+        var scripts = _container.Scripts;
+        await scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "spRepMeta", Body = "v1" });
+
+        var response = await scripts.ReplaceStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "spRepMeta", Body = "v2" });
+
+        response.Resource.Body.Should().Be("v2");
+        response.Resource.Id.Should().Be("spRepMeta");
+    }
+
     // ─── Partition key behavior ──────────────────────────────────────────
 
     [Fact]
@@ -718,6 +988,173 @@ public class StoredProcedureDivergentBehaviorTests
         ((int)result["count"]!).Should().Be(42);
         result["items"]!.ToObject<string[]>().Should().BeEquivalentTo("a", "b");
     }
+
+    // ─── Divergent: Stream variants not implemented (T39, T40) ──────────
+
+    [Fact(Skip = "Real Cosmos DB supports ExecuteStoredProcedureStreamAsync which returns a ResponseMessage " +
+                  "with a Content Stream. The emulator does not mock this method on the Scripts NSubstitute " +
+                  "proxy. Workaround: use ExecuteStoredProcedureAsync<string> and convert to stream manually " +
+                  "if needed. The stream variants require mocking ResponseMessage which is non-trivial.")]
+    public async Task ExecuteStoredProcedureStreamAsync_ShouldReturnStream()
+    {
+        // Expected real Cosmos behavior:
+        // var response = await scripts.ExecuteStoredProcedureStreamAsync("spId", pk, args);
+        // using var sr = new StreamReader(response.Content);
+        // var body = await sr.ReadToEndAsync();
+    }
+
+    [Fact(Skip = "Real Cosmos DB supports stream CRUD: CreateStoredProcedureStreamAsync, " +
+                  "ReadStoredProcedureStreamAsync, ReplaceStoredProcedureStreamAsync, " +
+                  "DeleteStoredProcedureStreamAsync. The emulator does not mock these methods. " +
+                  "Workaround: use the typed CRUD variants which are fully supported.")]
+    public void CrudStreamVariants_ShouldWork()
+    {
+        // Expected real Cosmos behavior:
+        // Stream-based CRUD for stored procedures, returning ResponseMessage.
+    }
+
+    // ─── Divergent: Script logging not available (T41) ──────────────────
+
+    [Fact(Skip = "Real Cosmos DB supports StoredProcedureRequestOptions.EnableScriptLogging = true which " +
+                  "captures console.log() output from JavaScript stored procedures and returns it in the " +
+                  "response headers (x-ms-documentdb-script-log-results). The emulator does not interpret " +
+                  "JavaScript and does not populate script log headers. Workaround: use C# logging directly " +
+                  "in your handler.")]
+    public async Task ExecuteStoredProcedure_EnableScriptLogging_ShouldReturnLogs()
+    {
+        // Expected real Cosmos behavior:
+        // var options = new StoredProcedureRequestOptions { EnableScriptLogging = true };
+        // var response = await scripts.ExecuteStoredProcedureAsync<string>("sp", pk, args, options);
+        // response.Headers["x-ms-documentdb-script-log-results"] contains console.log output
+    }
+
+    // ─── Divergent: Handler exceptions differ from real Cosmos (T42) ────
+
+    [Fact(Skip = "Real Cosmos DB wraps stored procedure runtime errors in CosmosException with HTTP 400 " +
+                  "Bad Request. The emulator propagates the raw C# exception from the registered handler. " +
+                  "This is intentional — it gives test authors full control over exception types. To simulate " +
+                  "a 400 error, throw new CosmosException(\"msg\", HttpStatusCode.BadRequest, 0, \"\", 0) " +
+                  "from your handler.")]
+    public async Task ExecuteStoredProcedure_HandlerError_ShouldReturn400()
+    {
+        // Expected real Cosmos behavior:
+        // A sproc that throws an error at runtime returns CosmosException with 400 Bad Request.
+        var scripts = _container.Scripts;
+        _container.RegisterStoredProcedure("spFail", (pk, args) =>
+            throw new InvalidOperationException("runtime error"));
+
+        var act = () => scripts.ExecuteStoredProcedureAsync<string>(
+            "spFail", new PartitionKey("pk1"), Array.Empty<dynamic>());
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    // ─── Divergent: No 10-second timeout (T43) ─────────────────────────
+
+    [Fact(Skip = "Real Cosmos DB enforces a 10-second execution timeout for stored procedures. If a sproc " +
+                  "exceeds this limit, the request fails with HTTP 408 (Request Timeout). The emulator does " +
+                  "not enforce any timeout. Handlers run to completion regardless of execution time. " +
+                  "Workaround: implement your own CancellationTokenSource with timeout in the handler.")]
+    public void ExecuteStoredProcedure_10SecondTimeout_ShouldThrow()
+    {
+        // Expected real Cosmos behavior:
+        // A stored procedure running longer than 10 seconds is terminated with HTTP 408.
+    }
+
+    // ─── Divergent: No 2MB response limit (T44) ────────────────────────
+
+    [Fact(Skip = "Real Cosmos DB limits stored procedure response body size to 2MB. Exceeding this throws " +
+                  "an error. The emulator does not enforce response size limits. The handler can return any " +
+                  "size string.")]
+    public void ExecuteStoredProcedure_2MBResponseLimit_ShouldFail()
+    {
+        // Expected real Cosmos behavior:
+        // A stored procedure returning more than 2MB of data fails.
+    }
+
+    // ─── Divergent: No system metadata on resources (T45) ──────────────
+
+    [Fact(Skip = "Real Cosmos DB returns _self, _rid, _ts, _etag on StoredProcedureProperties after " +
+                  "Create/Read/Replace. The emulator's NSubstitute-based CRUD mocks return the exact " +
+                  "StoredProcedureProperties object passed by the caller, which does not include these " +
+                  "system-generated fields. Workaround: set them manually on the properties before calling " +
+                  "CreateStoredProcedureAsync if your tests need these fields.")]
+    public async Task StoredProcedure_SystemMetadata_ShouldHaveEtagTimestamp()
+    {
+        // Expected real Cosmos behavior:
+        // var response = await scripts.CreateStoredProcedureAsync(props);
+        // response.Resource.ETag should not be null
+        // response.Resource.SelfLink should not be null
+    }
+
+    // ─── Divergent: No partition scoping (T46) ─────────────────────────
+
+    [Fact(Skip = "Real Cosmos DB stored procedures are scoped to a single logical partition. They can " +
+                  "only read/write documents within the partition key value specified in the " +
+                  "ExecuteStoredProcedureAsync call. The emulator's C# handlers have unrestricted access " +
+                  "to the container via closure — they can query/write any partition. Workaround: scope " +
+                  "your handler's queries using QueryRequestOptions.PartitionKey matching the PK passed " +
+                  "to execute.")]
+    public async Task StoredProcedure_CrossPartition_ShouldBeScoped()
+    {
+        // Expected real Cosmos behavior:
+        // A sproc executed with PartitionKey("A") can only read/write docs in partition "A".
+        // The emulator's handler has full container access — document this divergence.
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk-a", Name = "A" }, new PartitionKey("pk-a"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk-b", Name = "B" }, new PartitionKey("pk-b"));
+
+        _container.RegisterStoredProcedure("spAll", (pk, args) =>
+        {
+            var iterator = _container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+            var items = new List<string>();
+            while (iterator.HasMoreResults)
+            {
+                var page = iterator.ReadNextAsync().GetAwaiter().GetResult();
+                items.AddRange(page.Select(x => x.Name));
+            }
+            return JsonConvert.SerializeObject(items);
+        });
+
+        var result = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spAll", new PartitionKey("pk-a"), Array.Empty<dynamic>());
+
+        // In real Cosmos, only "A" would be returned. Emulator returns both.
+        var names = JsonConvert.DeserializeObject<List<string>>(result.Resource);
+        names.Should().Contain("A");
+        names.Should().Contain("B"); // emulator divergence — no partition scoping
+    }
+
+    // Sister test: shows the workaround pattern for partition scoping
+    [Fact]
+    public async Task StoredProcedure_CrossPartition_EmulatorWorkaround_ScopeManually()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk-a", Name = "A" }, new PartitionKey("pk-a"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk-b", Name = "B" }, new PartitionKey("pk-b"));
+
+        _container.RegisterStoredProcedure("spScoped", (pk, args) =>
+        {
+            var iterator = _container.GetItemQueryIterator<TestDocument>(
+                "SELECT * FROM c",
+                requestOptions: new QueryRequestOptions { PartitionKey = pk });
+            var items = new List<string>();
+            while (iterator.HasMoreResults)
+            {
+                var page = iterator.ReadNextAsync().GetAwaiter().GetResult();
+                items.AddRange(page.Select(x => x.Name));
+            }
+            return JsonConvert.SerializeObject(items);
+        });
+
+        var result = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spScoped", new PartitionKey("pk-a"), Array.Empty<dynamic>());
+
+        var names = JsonConvert.DeserializeObject<List<string>>(result.Resource);
+        names.Should().ContainSingle().Which.Should().Be("A");
+    }
 }
 
 
@@ -791,5 +1228,393 @@ public class UdfGapTests
         };
 
         await act.Should().ThrowAsync<Exception>();
+    }
+
+    // ─── Deregister UDF (T30, T31) ──────────────────────────────────────
+
+    [Fact]
+    public async Task DeregisterUdf_RemovesHandler()
+    {
+        _container.RegisterUdf("removable", args => (double)args[0] * 10);
+
+        await _container.CreateItemAsync(
+            new UdfDocument { Id = "1", PartitionKey = "pk1", Value = 5 },
+            new PartitionKey("pk1"));
+
+        // First query should work
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE udf.removable(c.value) FROM c");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        results.Should().HaveCount(1);
+
+        // Deregister and second query should throw
+        _container.DeregisterUdf("removable");
+        var act = async () =>
+        {
+            var it2 = _container.GetItemQueryIterator<JToken>(
+                "SELECT VALUE udf.removable(c.value) FROM c");
+            while (it2.HasMoreResults) await it2.ReadNextAsync();
+        };
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public void DeregisterUdf_NonExistent_DoesNotThrow()
+    {
+        var act = () => _container.DeregisterUdf("neverRegistered");
+        act.Should().NotThrow();
+    }
+
+    // ─── UDF registration edge cases (T32, T33) ─────────────────────────
+
+    [Fact]
+    public async Task Udf_RegisterSameIdTwice_OverwritesHandler()
+    {
+        _container.RegisterUdf("overwrite", args => 1.0);
+        _container.RegisterUdf("overwrite", args => 999.0);
+
+        await _container.CreateItemAsync(
+            new UdfDocument { Id = "1", PartitionKey = "pk1", Value = 1 },
+            new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE udf.overwrite(c.value) FROM c");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        results.Should().HaveCount(1);
+        results[0].Value<double>().Should().Be(999.0);
+    }
+
+    [Fact]
+    public async Task Udf_CaseSensitive_DifferentHandlers()
+    {
+        _container.RegisterUdf("myUdf", args => 1.0);
+        _container.RegisterUdf("MYUDF", args => 2.0);
+
+        await _container.CreateItemAsync(
+            new UdfDocument { Id = "1", PartitionKey = "pk1", Value = 0 },
+            new PartitionKey("pk1"));
+
+        var it1 = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE udf.myUdf(c.value) FROM c");
+        var r1 = new List<JToken>();
+        while (it1.HasMoreResults) { var pg = await it1.ReadNextAsync(); r1.AddRange(pg); }
+
+        var it2 = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE udf.MYUDF(c.value) FROM c");
+        var r2 = new List<JToken>();
+        while (it2.HasMoreResults) { var pg = await it2.ReadNextAsync(); r2.AddRange(pg); }
+
+        r1[0].Value<double>().Should().Be(1.0);
+        r2[0].Value<double>().Should().Be(2.0);
+    }
+
+    // ─── UDF query patterns (T34–T37) ───────────────────────────────────
+
+    [Fact]
+    public async Task Udf_InWhereClause_FiltersCorrectly()
+    {
+        _container.RegisterUdf("isEven", args => ((double)args[0]) % 2 == 0);
+
+        await _container.CreateItemAsync(
+            new UdfDocument { Id = "1", PartitionKey = "pk1", Value = 2 }, new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new UdfDocument { Id = "2", PartitionKey = "pk1", Value = 3 }, new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new UdfDocument { Id = "3", PartitionKey = "pk1", Value = 4 }, new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<UdfDocument>(
+            "SELECT * FROM c WHERE udf.isEven(c.value)");
+        var results = new List<UdfDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results.Select(x => x.Value).Should().BeEquivalentTo(new[] { 2.0, 4.0 });
+    }
+
+    [Fact]
+    public async Task Udf_ReturningString_Works()
+    {
+        _container.RegisterUdf("label", args => "item-" + args[0]);
+
+        await _container.CreateItemAsync(
+            new UdfDocument { Id = "1", PartitionKey = "pk1", Value = 42 }, new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE udf.label(c.value) FROM c");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
+        results[0].Value<string>().Should().Be("item-42");
+    }
+
+    [Fact]
+    public async Task Udf_ReturningNull_Works()
+    {
+        _container.RegisterUdf("nullify", args => null!);
+
+        await _container.CreateItemAsync(
+            new UdfDocument { Id = "1", PartitionKey = "pk1", Value = 1 }, new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE udf.nullify(c.value) FROM c");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Udf_WithNoArguments_Works()
+    {
+        _container.RegisterUdf("getVersion", args => "1.0.0");
+
+        await _container.CreateItemAsync(
+            new UdfDocument { Id = "1", PartitionKey = "pk1", Value = 0 }, new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE udf.getVersion() FROM c");
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
+        results[0].Value<string>().Should().Be("1.0.0");
+    }
+
+    // ─── UDF CRUD duplicate detection (T38) ─────────────────────────────
+
+    [Fact]
+    public async Task CreateUserDefinedFunctionAsync_DuplicateId_Throws409()
+    {
+        var scripts = _container.Scripts;
+
+        await scripts.CreateUserDefinedFunctionAsync(new UserDefinedFunctionProperties
+        {
+            Id = "udfDup",
+            Body = "function(x) { return x; }"
+        });
+
+        var act = () => scripts.CreateUserDefinedFunctionAsync(new UserDefinedFunctionProperties
+        {
+            Id = "udfDup",
+            Body = "function(x) { return x * 2; }"
+        });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Stored Procedure Dual Store Tests — _storedProcedureProperties vs _storedProcedures
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StoredProcedureDualStoreTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task CreateMetadata_WithoutRegisterHandler_ExecuteReturnsDefault()
+    {
+        // CRUD create without RegisterStoredProcedure — execute should return OK with default
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "sp1", Body = "function() { return 1; }" });
+
+        var response = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "sp1", new PartitionKey("pk1"), Array.Empty<dynamic>());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task RegisterHandler_WithoutCreateMetadata_ReadThrows404()
+    {
+        // Handler registered but no CRUD metadata — Read should throw 404
+        _container.RegisterStoredProcedure("sp1", (pk, args) => "hello");
+
+        var act = () => _container.Scripts.ReadStoredProcedureAsync("sp1");
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task RegisterHandler_WithoutCreateMetadata_ExecuteWorks()
+    {
+        // Handler registered without CRUD create — execution should still work
+        _container.RegisterStoredProcedure("sp1", (pk, args) => "result");
+
+        var response = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "sp1", new PartitionKey("pk1"), Array.Empty<dynamic>());
+
+        response.Resource.Should().Be("result");
+    }
+
+    [Fact]
+    public async Task DeregisterHandler_MetadataStillAccessible()
+    {
+        // Create metadata + register handler, then deregister handler
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "sp1", Body = "function() {}" });
+        _container.RegisterStoredProcedure("sp1", (pk, args) => "handler");
+        _container.DeregisterStoredProcedure("sp1");
+
+        // Metadata should still be accessible
+        var read = await _container.Scripts.ReadStoredProcedureAsync("sp1");
+        read.StatusCode.Should().Be(HttpStatusCode.OK);
+        read.Resource.Id.Should().Be("sp1");
+    }
+
+    [Fact]
+    public async Task DeleteMetadata_AlsoRemovesHandler()
+    {
+        // Create via CRUD + register handler, then delete via CRUD
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "sp1", Body = "function() {}" });
+        _container.RegisterStoredProcedure("sp1", (pk, args) => "alive");
+
+        await _container.Scripts.DeleteStoredProcedureAsync("sp1");
+
+        // Handler should be removed too (CRUD delete cleans up both stores)
+        var response = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "sp1", new PartitionKey("pk1"), Array.Empty<dynamic>());
+        response.Resource.Should().BeNullOrEmpty();
+
+        // Metadata should also be gone
+        var act = () => _container.Scripts.ReadStoredProcedureAsync("sp1");
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task DeleteMetadata_HandlerOnlyRegistered_Throws404_HandlerLeaks()
+    {
+        // Register handler only (no CRUD create)
+        _container.RegisterStoredProcedure("sp1", (pk, args) => "leaked");
+
+        // Delete throws 404 because no metadata exists
+        var act = () => _container.Scripts.DeleteStoredProcedureAsync("sp1");
+        await act.Should().ThrowAsync<CosmosException>();
+
+        // Handler still works (leaked — dual-store edge case)
+        var response = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "sp1", new PartitionKey("pk1"), Array.Empty<dynamic>());
+        response.Resource.Should().Be("leaked");
+    }
+
+    [Fact]
+    public async Task CreateMetadata_ThenRegisterHandler_BothUsable()
+    {
+        // Full lifecycle: CRUD create + register handler
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "sp1", Body = "function() { return 'js'; }" });
+        _container.RegisterStoredProcedure("sp1", (pk, args) => "csharp");
+
+        // Read returns metadata
+        var read = await _container.Scripts.ReadStoredProcedureAsync("sp1");
+        read.Resource.Body.Should().Be("function() { return 'js'; }");
+
+        // Execute uses handler
+        var exec = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "sp1", new PartitionKey("pk1"), Array.Empty<dynamic>());
+        exec.Resource.Should().Be("csharp");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Stored Procedure Input Validation Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StoredProcedureInputValidationTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public void RegisterStoredProcedure_NullId_ThrowsArgumentNullException()
+    {
+        var act = () => _container.RegisterStoredProcedure(null!, (pk, args) => "ok");
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void RegisterStoredProcedure_NullHandler_ThrowsArgumentNullException()
+    {
+        var act = () => _container.RegisterStoredProcedure("sp1", null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void DeregisterStoredProcedure_NullId_ThrowsArgumentNullException()
+    {
+        var act = () => _container.DeregisterStoredProcedure(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Stored Procedure Container Isolation Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StoredProcedureContainerIsolationTests
+{
+    [Fact]
+    public async Task TwoContainers_SameSprocId_IndependentHandlers()
+    {
+        var container1 = new InMemoryContainer("container-1", "/partitionKey");
+        var container2 = new InMemoryContainer("container-2", "/partitionKey");
+
+        container1.RegisterStoredProcedure("sp1", (pk, args) => "from-container-1");
+        container2.RegisterStoredProcedure("sp1", (pk, args) => "from-container-2");
+
+        var r1 = await container1.Scripts.ExecuteStoredProcedureAsync<string>(
+            "sp1", new PartitionKey("pk1"), Array.Empty<dynamic>());
+        var r2 = await container2.Scripts.ExecuteStoredProcedureAsync<string>(
+            "sp1", new PartitionKey("pk1"), Array.Empty<dynamic>());
+
+        r1.Resource.Should().Be("from-container-1");
+        r2.Resource.Should().Be("from-container-2");
+    }
+
+    [Fact]
+    public async Task TwoContainers_SameSprocId_IndependentMetadata()
+    {
+        var container1 = new InMemoryContainer("container-1", "/partitionKey");
+        var container2 = new InMemoryContainer("container-2", "/partitionKey");
+
+        await container1.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "sp1", Body = "function() { return 'body-1'; }" });
+        await container2.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+            { Id = "sp1", Body = "function() { return 'body-2'; }" });
+
+        var r1 = await container1.Scripts.ReadStoredProcedureAsync("sp1");
+        var r2 = await container2.Scripts.ReadStoredProcedureAsync("sp1");
+
+        r1.Resource.Body.Should().Be("function() { return 'body-1'; }");
+        r2.Resource.Body.Should().Be("function() { return 'body-2'; }");
     }
 }

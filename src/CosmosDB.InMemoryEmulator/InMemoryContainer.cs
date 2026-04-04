@@ -72,6 +72,7 @@ public class InMemoryContainer : Container
     private readonly Dictionary<string, Func<PartitionKey, dynamic[], string>> _storedProcedures = new(StringComparer.Ordinal);
     private readonly Dictionary<string, StoredProcedureProperties> _storedProcedureProperties = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RegisteredTrigger> _triggers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, UserDefinedFunctionProperties> _udfProperties = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TriggerProperties> _triggerProperties = new(StringComparer.Ordinal);
     private volatile (string Name, string FromAlias, SqlExpression Expr)[] _parsedComputedProperties;
 
@@ -364,10 +365,21 @@ public class InMemoryContainer : Container
     }
 
     /// <summary>
+    /// Removes a previously registered user-defined function.
+    /// </summary>
+    public void DeregisterUdf(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        _userDefinedFunctions.Remove("UDF." + name.TrimStart('.'));
+    }
+
+    /// <summary>
     /// Registers a stored procedure handler that is invoked when <c>ExecuteStoredProcedureAsync</c> is called.
     /// </summary>
     public void RegisterStoredProcedure(string sprocId, Func<PartitionKey, dynamic[], string> handler)
     {
+        ArgumentNullException.ThrowIfNull(sprocId);
+        ArgumentNullException.ThrowIfNull(handler);
         _storedProcedures[sprocId] = handler;
     }
 
@@ -376,6 +388,7 @@ public class InMemoryContainer : Container
     /// </summary>
     public void DeregisterStoredProcedure(string sprocId)
     {
+        ArgumentNullException.ThrowIfNull(sprocId);
         _storedProcedures.Remove(sprocId);
     }
 
@@ -2491,6 +2504,12 @@ public class InMemoryContainer : Container
             .Returns(ci =>
             {
                 var props = ci.Arg<UserDefinedFunctionProperties>();
+                if (_udfProperties.ContainsKey(props.Id))
+                {
+                    throw new CosmosException($"UDF '{props.Id}' already exists.",
+                        HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                }
+                _udfProperties[props.Id] = props;
                 if (!_userDefinedFunctions.ContainsKey("UDF." + props.Id))
                 {
                     _userDefinedFunctions["UDF." + props.Id] = _ => null;
