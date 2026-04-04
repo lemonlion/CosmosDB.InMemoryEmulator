@@ -2343,8 +2343,7 @@ public class CrudSystemPropertyDivergentTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
 
-    [Fact(Skip = "InMemoryEmulator does not generate _rid system property. " +
-        "Real Cosmos DB assigns a unique Resource ID (_rid) to every document.")]
+    [Fact]
     public async Task Read_ResponseBody_Contains_Rid_SystemProperty()
     {
         await _container.CreateItemAsync(
@@ -2354,30 +2353,11 @@ public class CrudSystemPropertyDivergentTests
     }
 
     [Fact]
-    public async Task Read_ResponseBody_DoesNotContain_Rid_InEmulator()
-    {
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" }, new PartitionKey("pk1"));
-        var response = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
-        response.Resource["_rid"].Should().BeNull();
-    }
-
-    [Fact(Skip = "InMemoryEmulator does not generate _self system property. " +
-        "Real Cosmos DB includes a _self property with the addressable URI path to the resource.")]
     public async Task Read_ResponseBody_Contains_Self_SystemProperty()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" }, new PartitionKey("pk1"));
         var response = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
         response.Resource["_self"].Should().NotBeNull();
-    }
-
-    [Fact]
-    public async Task Read_ResponseBody_DoesNotContain_Self_InEmulator()
-    {
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" }, new PartitionKey("pk1"));
-        var response = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
-        response.Resource["_self"].Should().BeNull();
     }
 }

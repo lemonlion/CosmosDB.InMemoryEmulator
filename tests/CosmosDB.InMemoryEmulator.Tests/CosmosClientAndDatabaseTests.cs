@@ -2476,12 +2476,7 @@ public class GetUserAutoCreateDivergentTests
 
 public class ThroughputNotPersistedDivergentTests
 {
-    [Fact(Skip = "InMemoryDatabase throughput is synthetic. ReplaceThroughputAsync returns " +
-        "success but does NOT persist the new value — ReadThroughputAsync always returns 400. " +
-        "Real Cosmos DB persists throughput changes: ReplaceThroughputAsync(1000) followed by " +
-        "ReadThroughputAsync would return 1000. This keeps the implementation simple since " +
-        "throughput has no behavioral impact on an in-memory store (no RU accounting, no " +
-        "rate limiting, no partition splitting).")]
+    [Fact]
     public async Task ReplaceThroughputAsync_ThenRead_ShouldReturnNewValue()
     {
         var client = new InMemoryCosmosClient();
@@ -2490,27 +2485,8 @@ public class ThroughputNotPersistedDivergentTests
 
         await db.ReplaceThroughputAsync(1000);
 
-        // Real SDK: ReadThroughputAsync returns 1000
         var throughput = await db.ReadThroughputAsync();
         throughput.Should().Be(1000);
-    }
-
-    /// <summary>
-    /// FIXED: ReplaceThroughputAsync now persists the value.
-    /// ReadThroughputAsync returns the replaced value, matching real Cosmos DB.
-    /// </summary>
-    [Fact]
-    public async Task ReplaceThroughputAsync_ThenRead_ReturnsPersisted()
-    {
-        var client = new InMemoryCosmosClient();
-        await client.CreateDatabaseAsync("test-db");
-        var db = client.GetDatabase("test-db");
-
-        var replaceResponse = await db.ReplaceThroughputAsync(1000);
-        replaceResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var throughput = await db.ReadThroughputAsync();
-        throughput.Should().Be(1000); // Now correctly returns 1000
     }
 }
 

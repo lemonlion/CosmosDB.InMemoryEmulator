@@ -1890,10 +1890,7 @@ public class ContainerSpecialCharacterTests
 
 public class ContainerCancellationTokenTests
 {
-    [Fact(Skip = "Real Cosmos DB: Management methods (ReadContainerAsync, ReplaceContainerAsync, etc.) " +
-        "honour the CancellationToken and throw OperationCanceledException when already cancelled. " +
-        "The in-memory emulator's management methods do not check the CancellationToken as they " +
-        "are implemented as synchronous in-memory operations wrapped in Task.FromResult.")]
+    [Fact]
     public async Task ReadContainerAsync_WithCancelledToken_ThrowsOperationCancelled()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -1902,18 +1899,6 @@ public class ContainerCancellationTokenTests
 
         var act = () => container.ReadContainerAsync(cancellationToken: cts.Token);
         await act.Should().ThrowAsync<OperationCanceledException>();
-    }
-
-    [Fact]
-    public async Task ReadContainerAsync_EmulatorBehavior_CancelledTokenIgnored()
-    {
-        var container = new InMemoryContainer("test", "/pk");
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        // Emulator does not check CancellationToken — succeeds anyway
-        var response = await container.ReadContainerAsync(cancellationToken: cts.Token);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }
 

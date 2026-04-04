@@ -761,23 +761,12 @@ public class ReadManyResponseDeepDiveTests
         count.Should().Be(1);
     }
 
-    [Fact(Skip = "Response Headers are empty. Use response.RequestCharge property instead. " +
-                 "See sister test: ReadMany_Headers_AreEmpty_Divergent")]
+    [Fact]
     public async Task ReadMany_Headers_ContainRequestCharge()
     {
         await Seed();
         var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
         result.Headers["x-ms-request-charge"].Should().NotBeNull();
-    }
-
-    [Fact]
-    public async Task ReadMany_Headers_AreEmpty_Divergent()
-    {
-        // DIVERGENT BEHAVIOR: Response Headers dictionary is empty.
-        // Use response.RequestCharge and response.ActivityId properties instead.
-        await Seed();
-        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
-        result.RequestCharge.Should().BeGreaterThan(0); // Works via property
     }
 }
 

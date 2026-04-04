@@ -1034,8 +1034,7 @@ public class StreamDivergentBehaviorTests
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
-    [Fact(Skip = "Real Cosmos DB includes _rid, _self, _attachments system properties. " +
-        "InMemoryContainer only enriches with _etag and _ts.")]
+    [Fact]
     public async Task Stream_ResponseBody_ContainsAllSystemProperties()
     {
         var container = new InMemoryContainer("sysprop-all", "/pk");
@@ -1046,21 +1045,6 @@ public class StreamDivergentBehaviorTests
         body["_rid"].Should().NotBeNull();
         body["_self"].Should().NotBeNull();
         body["_attachments"].Should().NotBeNull();
-    }
-
-    [Fact]
-    public async Task Divergent_Stream_ResponseBody_ContainsOnlyEtagAndTs()
-    {
-        // Sister test: only _etag and _ts are present
-        var container = new InMemoryContainer("sysprop-div", "/pk");
-        using var response = await container.CreateItemStreamAsync(
-            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
-
-        var body = JObject.Parse(await ReadStreamAsync(response.Content));
-        body["_etag"].Should().NotBeNull();
-        body["_ts"].Should().NotBeNull();
-        body["_rid"].Should().BeNull("emulator does not generate _rid");
-        body["_self"].Should().BeNull("emulator does not generate _self");
     }
 }
 

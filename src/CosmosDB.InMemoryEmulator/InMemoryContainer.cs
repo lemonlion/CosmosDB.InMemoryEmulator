@@ -1733,6 +1733,7 @@ public class InMemoryContainer : Container
     public override Task<ContainerResponse> ReadContainerAsync(
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _containerProperties.IndexingPolicy = IndexingPolicy;
         _containerProperties.DefaultTimeToLive = DefaultTimeToLive;
         var r = Substitute.For<ContainerResponse>();
@@ -1745,6 +1746,7 @@ public class InMemoryContainer : Container
     public override Task<ResponseMessage> ReadContainerStreamAsync(
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _containerProperties.IndexingPolicy = IndexingPolicy;
         _containerProperties.DefaultTimeToLive = DefaultTimeToLive;
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, JsonConvert.SerializeObject(_containerProperties, JsonSettings)));
@@ -1754,6 +1756,7 @@ public class InMemoryContainer : Container
         ContainerProperties containerProperties, ContainerRequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (containerProperties.Id != Id)
             throw new CosmosException($"Container id '{containerProperties.Id}' does not match the existing container id '{Id}'.", HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         ValidateContainerReplace(containerProperties);
@@ -1780,6 +1783,7 @@ public class InMemoryContainer : Container
         ContainerProperties containerProperties, ContainerRequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (containerProperties.Id != Id)
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
         _containerProperties = containerProperties;
@@ -1793,6 +1797,7 @@ public class InMemoryContainer : Container
     public override Task<ContainerResponse> DeleteContainerAsync(
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
@@ -1811,6 +1816,7 @@ public class InMemoryContainer : Container
     public override Task<ResponseMessage> DeleteContainerStreamAsync(
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
@@ -2129,8 +2135,11 @@ public class InMemoryContainer : Container
     private static string EnrichWithSystemProperties(string json, string etag, DateTimeOffset timestamp)
     {
         var jObj = JsonParseHelpers.ParseJson(json);
+        jObj["_rid"] = Convert.ToBase64String(Guid.NewGuid().ToByteArray()).TrimEnd('=');
+        jObj["_self"] = $"dbs/db/colls/col/docs/{jObj["id"]}";
         jObj["_etag"] = etag;
         jObj["_ts"] = timestamp.ToUnixTimeSeconds();
+        jObj["_attachments"] = "attachments/";
         return jObj.ToString(Formatting.None);
     }
 
@@ -6310,7 +6319,11 @@ public class InMemoryContainer : Container
     private sealed class InMemoryFeedResponse<T> : FeedResponse<T>
     {
         private readonly IReadOnlyList<T> _items;
-        public InMemoryFeedResponse(IReadOnlyList<T> items) => _items = items;
+        public InMemoryFeedResponse(IReadOnlyList<T> items)
+        {
+            _items = items;
+            Headers["x-ms-request-charge"] = SyntheticRequestCharge.ToString();
+        }
         public override Headers Headers { get; } = new();
         public override IEnumerable<T> Resource => _items;
         public override HttpStatusCode StatusCode => HttpStatusCode.OK;

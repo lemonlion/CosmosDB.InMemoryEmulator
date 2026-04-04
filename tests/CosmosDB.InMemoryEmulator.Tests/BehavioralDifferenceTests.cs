@@ -347,54 +347,46 @@ public class BehavioralDifferenceTests
 
     /// <summary>
     /// BEHAVIORAL DIFFERENCE: Real Cosmos DB documents always have a <c>_rid</c>
-    /// (resource ID) property. InMemoryContainer never sets <c>_rid</c>.
+    /// Real Cosmos DB always generates a <c>_rid</c>
+    /// (resource ID) property. Now also set by the emulator.
     /// </summary>
     [Fact]
-    public async Task SystemProperties_RidNotPresent_OnDocuments()
+    public async Task SystemProperties_RidPresent_OnDocuments()
     {
         var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
         await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
         var response = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
-        response.Resource.ContainsKey("_rid").Should().BeFalse();
+        response.Resource.ContainsKey("_rid").Should().BeTrue();
     }
-
-    [Fact(Skip = "Real Cosmos always returns _rid on every document.")]
-    public void SystemProperties_RidShouldBePresent_RealCosmos() { }
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB documents always have a <c>_self</c>
-    /// link (e.g. <c>dbs/db1/colls/col1/docs/doc1</c>). InMemoryContainer never sets it.
+    /// Real Cosmos DB documents always have a <c>_self</c>
+    /// link. Now also set by the emulator.
     /// </summary>
     [Fact]
-    public async Task SystemProperties_SelfNotPresent_OnDocuments()
+    public async Task SystemProperties_SelfPresent_OnDocuments()
     {
         var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
         await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
         var response = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
-        response.Resource.ContainsKey("_self").Should().BeFalse();
+        response.Resource.ContainsKey("_self").Should().BeTrue();
     }
-
-    [Fact(Skip = "Real Cosmos always returns _self on every document.")]
-    public void SystemProperties_SelfShouldBePresent_RealCosmos() { }
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB documents always have an <c>_attachments</c>
-    /// property. InMemoryContainer never sets it.
+    /// Real Cosmos DB documents always have an <c>_attachments</c>
+    /// property. Now also set by the emulator.
     /// </summary>
     [Fact]
-    public async Task SystemProperties_AttachmentsNotPresent_OnDocuments()
+    public async Task SystemProperties_AttachmentsPresent_OnDocuments()
     {
         var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
         await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
         var response = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
-        response.Resource.ContainsKey("_attachments").Should().BeFalse();
+        response.Resource.ContainsKey("_attachments").Should().BeTrue();
     }
-
-    [Fact(Skip = "Real Cosmos always returns _attachments on every document.")]
-    public void SystemProperties_AttachmentsShouldBePresent_RealCosmos() { }
 
     /// <summary>
     /// BEHAVIORAL DIFFERENCE: Real Cosmos DB request charges vary by operation.
