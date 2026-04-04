@@ -3660,11 +3660,11 @@ public class InMemoryContainer : Container
                     sb.Append(Regex.Escape(patternStr[i].ToString()));
             }
             var pattern = $"^{sb}$";
-            return GetOrCreateRegex(pattern, RegexOptions.None).IsMatch(left.ToString());
+            return GetOrCreateRegex(pattern, RegexOptions.Singleline).IsMatch(left.ToString());
         }
 
         var simplePattern = ConvertLikeToRegex(patternStr);
-        return GetOrCreateRegex(simplePattern, RegexOptions.None).IsMatch(left.ToString());
+        return GetOrCreateRegex(simplePattern, RegexOptions.Singleline).IsMatch(left.ToString());
     }
 
     private static string ConvertLikeToRegex(string pattern)
@@ -4003,7 +4003,7 @@ public class InMemoryContainer : Container
             BinaryOp.Multiply => ArithmeticOp(left, right, (a, b) => a * b),
             BinaryOp.Divide => ArithmeticOp(left, right, (a, b) => b != 0 ? a / b : double.NaN),
             BinaryOp.Modulo => ArithmeticOp(left, right, (a, b) => b != 0 ? a % b : double.NaN),
-            BinaryOp.StringConcat => (left?.ToString() ?? "") + (right?.ToString() ?? ""),
+            BinaryOp.StringConcat => left is null || right is null ? null : left.ToString() + right.ToString(),
             BinaryOp.BitwiseAnd => BitwiseOp(left, right, (a, b) => a & b),
             BinaryOp.BitwiseOr => BitwiseOp(left, right, (a, b) => a | b),
             BinaryOp.BitwiseXor => BitwiseOp(left, right, (a, b) => a ^ b),

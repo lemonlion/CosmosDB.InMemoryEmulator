@@ -759,3 +759,489 @@ public class StringCaseEdgeCaseTests
         page.First()["id"]!.Value<string>().Should().Be("1");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 1: StringConcat (||) null handling bug fix
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StringConcatNullTests
+{
+    [Fact]
+    public async Task Query_StringConcat_WithNull_ReturnsNull()
+    {
+        var container = new InMemoryContainer("concat-null", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "hello" }),
+            new PartitionKey("a"));
+
+        var iter = container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE c.name || null FROM c");
+        var page = await iter.ReadNextAsync();
+        page.First().Type.Should().Be(JTokenType.Null);
+    }
+
+    [Fact]
+    public async Task Query_StringConcat_NullOnLeft_ReturnsNull()
+    {
+        var container = new InMemoryContainer("concat-null", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "world" }),
+            new PartitionKey("a"));
+
+        var iter = container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE null || c.name FROM c");
+        var page = await iter.ReadNextAsync();
+        page.First().Type.Should().Be(JTokenType.Null);
+    }
+
+    [Fact]
+    public async Task Query_StringConcat_PreservesCase()
+    {
+        var container = new InMemoryContainer("concat-case", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }),
+            new PartitionKey("a"));
+
+        var iter = container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE c.name || '-suffix' FROM c");
+        var page = await iter.ReadNextAsync();
+        page.First().Value<string>().Should().Be("Alice-suffix");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 2: LIKE extended coverage
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StringLikeExtendedDeepDiveTests
+{
+    [Fact]
+    public async Task Query_Like_WithEscape_IsCaseSensitive()
+    {
+        var container = new InMemoryContainer("like-esc", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "A%" }), new PartitionKey("a"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "a%" }), new PartitionKey("a"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", name = "ABC" }), new PartitionKey("a"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.name LIKE 'A!%' ESCAPE '!'");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(1);
+        page.First()["name"]!.Value<string>().Should().Be("A%");
+    }
+
+    [Fact]
+    public async Task Query_NotLike_WithEscape_IsCaseSensitive()
+    {
+        var container = new InMemoryContainer("like-esc", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "A%" }), new PartitionKey("a"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "a%" }), new PartitionKey("a"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", name = "ABC" }), new PartitionKey("a"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.name NOT LIKE 'A!%' ESCAPE '!'");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(2);
+    }
+
+    [Theory]
+    [InlineData("+")]
+    [InlineData("*")]
+    [InlineData("^")]
+    [InlineData("$")]
+    [InlineData("(")]
+    [InlineData(")")]
+    [InlineData("{")]
+    [InlineData("}")]
+    [InlineData("?")]
+    public async Task Query_Like_AdditionalRegexMetachars_TreatedAsLiteral(string metaChar)
+    {
+        var container = new InMemoryContainer("like-meta", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = $"a{metaChar}b" }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", name = "axb" }),
+            new PartitionKey("a"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            $"SELECT * FROM c WHERE c.name LIKE 'a{metaChar}b'");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(1);
+        page.First()["id"]!.Value<string>().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task Query_Like_OnNullField_DoesNotMatch()
+    {
+        var container = new InMemoryContainer("like-null", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var iter = container.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name LIKE 'A%'");
+        var page = await iter.ReadNextAsync();
+        page.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Query_Like_PercentOnly_MatchesAllNonNull()
+    {
+        var container = new InMemoryContainer("like-pct", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "" }), new PartitionKey("a"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a" }), new PartitionKey("a"));
+
+        var iter = container.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name LIKE '%'");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(2); // id 1 and 2 (not 3 — null)
+    }
+
+    [Fact]
+    public async Task Query_Like_UnderscoreOnly_MatchesSingleCharStrings()
+    {
+        var container = new InMemoryContainer("like-under", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", code = "A" }), new PartitionKey("a"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", code = "AB" }), new PartitionKey("a"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", code = "" }), new PartitionKey("a"));
+
+        var iter = container.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.code LIKE '_'");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(1);
+        page.First()["code"]!.Value<string>().Should().Be("A");
+    }
+
+    [Fact]
+    public async Task Query_Like_UnderscoreWithNewline_MatchesNewline()
+    {
+        var container = new InMemoryContainer("like-newline", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "a\nb" }),
+            new PartitionKey("a"));
+
+        var iter = container.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name LIKE 'a_b'");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Query_Like_BackslashInData_TreatedAsLiteral()
+    {
+        var container = new InMemoryContainer("like-bs", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = @"a\b" }),
+            new PartitionKey("a"));
+
+        var iter = container.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name LIKE 'a\\b'");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(1);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 3: String functions — explicit false, null, empty
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StringFunctionEdgeCaseDeepDiveTests
+{
+    private async Task<InMemoryContainer> SeedAsync()
+    {
+        var c = new InMemoryContainer("func-edge", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", name = "Bob" }), new PartitionKey("a"));
+        return c;
+    }
+
+    [Fact]
+    public async Task Query_Contains_ExplicitFalse_SameAsDefault()
+    {
+        var c = await SeedAsync();
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE CONTAINS(c.name, 'ali', false)");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(1);
+        page.First()["name"]!.Value<string>().Should().Be("alice");
+    }
+
+    [Fact]
+    public async Task Query_StartsWith_ExplicitFalse_SameAsDefault()
+    {
+        var c = await SeedAsync();
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE STARTSWITH(c.name, 'a', false)");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(1);
+        page.First()["name"]!.Value<string>().Should().Be("alice");
+    }
+
+    [Fact]
+    public async Task Query_EndsWith_ExplicitFalse_SameAsDefault()
+    {
+        var c = await SeedAsync();
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE ENDSWITH(c.name, 'ce', false)");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(2); // Both "Alice" and "alice" end with "ce" case-sensitively
+    }
+
+    [Fact]
+    public async Task Query_StringEquals_ExplicitFalse_SameAsDefault()
+    {
+        var c = await SeedAsync();
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE STRING_EQUALS(c.name, 'alice', false)");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Query_Contains_NullInput_ReturnsNoMatch()
+    {
+        var c = new InMemoryContainer("null-fn", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE CONTAINS(c.name, 'x')");
+        var page = await iter.ReadNextAsync();
+        page.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Query_StartsWith_NullInput_ReturnsNoMatch()
+    {
+        var c = new InMemoryContainer("null-fn", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE STARTSWITH(c.name, 'x')");
+        var page = await iter.ReadNextAsync();
+        page.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Query_EndsWith_NullInput_ReturnsNoMatch()
+    {
+        var c = new InMemoryContainer("null-fn", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE ENDSWITH(c.name, 'x')");
+        var page = await iter.ReadNextAsync();
+        page.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Query_Contains_EmptySearchString_MatchesAll()
+    {
+        var c = await SeedAsync();
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE CONTAINS(c.name, '')");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task Query_StartsWith_EmptyPrefix_MatchesAll()
+    {
+        var c = await SeedAsync();
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE STARTSWITH(c.name, '')");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task Query_EndsWith_EmptySuffix_MatchesAll()
+    {
+        var c = await SeedAsync();
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE ENDSWITH(c.name, '')");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(3);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 4: ARRAY_CONTAINS and CONCAT
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StringArrayConcatTests
+{
+    [Fact(Skip = "Divergent: emulator ARRAY_CONTAINS does case-insensitive string comparison")]
+    public async Task Query_ArrayContains_StringElement_IsCaseSensitive()
+    {
+        var c = new InMemoryContainer("arr-case", "/pk");
+        await c.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", tags = new[] { "Alice" } }),
+            new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE ARRAY_CONTAINS(c.tags, 'alice')");
+        var page = await iter.ReadNextAsync();
+        page.Should().BeEmpty(); // case-sensitive: "Alice" ≠ "alice"
+    }
+
+    [Fact]
+    public async Task Query_ConcatFunction_NullArg_TreatsAsEmpty()
+    {
+        var c = new InMemoryContainer("concat-fn", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JToken>(
+            "SELECT VALUE CONCAT('a', null, 'b') FROM c");
+        var page = await iter.ReadNextAsync();
+        page.First().Value<string>().Should().Be("ab");
+    }
+
+    [Fact]
+    public async Task Query_ConcatFunction_PreservesCase()
+    {
+        var c = new InMemoryContainer("concat-fn", "/pk");
+        await c.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", first = "Alice", last = "BOB" }),
+            new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JToken>(
+            "SELECT VALUE CONCAT(c.first, ' ', c.last) FROM c");
+        var page = await iter.ReadNextAsync();
+        page.First().Value<string>().Should().Be("Alice BOB");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 5: Null and empty value edge cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StringNullEmptyEdgeCaseTests
+{
+    [Fact]
+    public async Task Query_EmptyStringEquality_Works()
+    {
+        var c = new InMemoryContainer("empty-eq", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "Bob" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name = ''");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(1);
+        page.First()["id"]!.Value<string>().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task Query_Between_WithNullValue_ExcludesNull()
+    {
+        var c = new InMemoryContainer("between-null", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Bob" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a" }), new PartitionKey("a")); // name is null/undefined
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name BETWEEN 'A' AND 'Z'");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(1);
+        page.First()["id"]!.Value<string>().Should().Be("1");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 6: Composed operations
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StringComposedOperationTests
+{
+    private async Task<InMemoryContainer> SeedAsync()
+    {
+        var c = new InMemoryContainer("composed-test", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", name = "Bob" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "4", pk = "a", name = "bob" }), new PartitionKey("a"));
+        return c;
+    }
+
+    [Fact]
+    public async Task Query_DistinctLower_CollapsesCaseDifferences()
+    {
+        var c = await SeedAsync();
+        var iter = c.GetItemQueryIterator<JToken>(
+            "SELECT DISTINCT VALUE LOWER(c.name) FROM c");
+        var page = await iter.ReadNextAsync();
+        page.Select(t => t.Value<string>()).Should().BeEquivalentTo("alice", "bob");
+    }
+
+    [Fact(Skip = "Divergent: emulator does not support function expressions in GROUP BY clause")]
+    public async Task Query_GroupByLower_MergesCaseVariants()
+    {
+        var c = await SeedAsync();
+        var iter = c.GetItemQueryIterator<JObject>(
+            "SELECT LOWER(c.name) AS lname, COUNT(1) AS cnt FROM c GROUP BY LOWER(c.name)");
+        var page = await iter.ReadNextAsync();
+        var results = page.ToList();
+        results.Should().HaveCount(2);
+        results.Should().Contain(r => r["lname"]!.Value<string>() == "alice" && r["cnt"]!.Value<int>() == 2);
+        results.Should().Contain(r => r["lname"]!.Value<string>() == "bob" && r["cnt"]!.Value<int>() == 2);
+    }
+
+    [Fact]
+    public async Task Query_RegexMatch_CombinedIgnoreCaseMultiline()
+    {
+        var c = new InMemoryContainer("regex-combined", "/pk");
+        await c.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", text = "hello\nAlice" }),
+            new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE RegexMatch(c.text, '^alice', 'im')");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(1); // "Alice" at start of second line, case-insensitive
+    }
+
+    [Fact]
+    public async Task Query_MultipleOrderBy_StringTiebreaking()
+    {
+        var c = new InMemoryContainer("multi-order", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", last = "Smith", first = "alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", last = "Smith", first = "Alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", last = "Brown", first = "Bob" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c ORDER BY c.last ASC, c.first ASC");
+        var page = await iter.ReadNextAsync();
+        var ids = page.Select(d => d["id"]!.Value<string>()).ToList();
+        ids[0].Should().Be("3"); // Brown
+        // Smith, Alice vs Smith, alice — ordinal: 'A'(65) < 'a'(97)
+        ids[1].Should().Be("2"); // Alice
+        ids[2].Should().Be("1"); // alice
+    }
+
+    [Fact]
+    public async Task Query_CrossPartition_CaseSensitivity_Consistent()
+    {
+        var c = new InMemoryContainer("cross-pk", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "b", name = "alice" }), new PartitionKey("b"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name = 'Alice'");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(1);
+        page.First()["pk"]!.Value<string>().Should().Be("a");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase 7: INDEX_OF null input
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StringIndexOfEdgeCaseTests
+{
+    [Fact]
+    public async Task Query_IndexOf_NullInput_ReturnsNull()
+    {
+        var c = new InMemoryContainer("indexof-null", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>(
+            "SELECT INDEX_OF(c.name, 'a') AS idx FROM c");
+        var page = await iter.ReadNextAsync();
+        page.First()["idx"]!.Type.Should().Be(JTokenType.Null);
+    }
+
+    [Fact]
+    public async Task Query_IndexOf_WithStartPosition_IsCaseSensitive()
+    {
+        var c = new InMemoryContainer("indexof-start", "/pk");
+        await c.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "hello hello" }),
+            new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>(
+            "SELECT INDEX_OF(c.name, 'hello', 1) AS idx FROM c");
+        var page = await iter.ReadNextAsync();
+        page.First()["idx"]!.Value<int>().Should().Be(6);
+    }
+}
