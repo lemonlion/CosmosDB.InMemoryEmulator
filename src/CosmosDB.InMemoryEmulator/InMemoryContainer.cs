@@ -274,6 +274,9 @@ public class InMemoryContainer : Container
                 var jObj = JsonParseHelpers.ParseJson(itemJson);
                 var pk = ExtractPartitionKeyValue(null, jObj);
                 var key = (id, pk);
+
+                ValidateUniqueKeys(jObj, pk);
+
                 var importEtag = $"\"{ Guid.NewGuid()}\"";
                 _etags[key] = importEtag;
                 _timestamps[key] = DateTimeOffset.UtcNow;

@@ -187,11 +187,7 @@ public class StatePersistenceTests
         results.Should().HaveCount(1);
         results[0].Name.Should().Be("Bob");
     }
-}
 
-
-public class StateImportExportTests
-{
     [Fact]
     public async Task ExportState_ImportState_RoundTrip()
     {
@@ -371,6 +367,109 @@ public class ExportStateEdgeCaseTests
         var json2 = container.ExportState();
         json1.Should().Be(json2);
     }
+
+    [Fact]
+    public async Task ExportState_WithNumericTypes_PreservesPrecision()
+    {
+        var container = new InMemoryContainer("export-num", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","intVal":42,"longVal":9999999999,"doubleVal":3.14159265358979}""")),
+            new PartitionKey("a"));
+
+        var json = container.ExportState();
+        var target = new InMemoryContainer("target", "/pk");
+        target.ImportState(json);
+
+        var result = await target.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        result.Resource["intVal"]!.Value<int>().Should().Be(42);
+        result.Resource["longVal"]!.Value<long>().Should().Be(9999999999);
+        result.Resource["doubleVal"]!.Value<double>().Should().BeApproximately(3.14159265358979, 0.000001);
+    }
+
+    [Fact]
+    public async Task ExportState_WithDateTimeValues_PreservesAsStrings()
+    {
+        var container = new InMemoryContainer("export-dt", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","created":"2024-01-15T10:30:00Z"}""")),
+            new PartitionKey("a"));
+
+        var json = container.ExportState();
+        var target = new InMemoryContainer("target", "/pk");
+        target.ImportState(json);
+
+        var result = await target.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        result.Resource["created"]!.ToString().Should().Contain("2024-01-15");
+    }
+
+    [Fact]
+    public async Task ExportState_WithEmptyStringValues_PreservesThem()
+    {
+        var container = new InMemoryContainer("export-emptystr", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","emptyField":"","nullField":null}""")),
+            new PartitionKey("a"));
+
+        var json = container.ExportState();
+        var items = (JArray)JObject.Parse(json)["items"]!;
+        items[0]["emptyField"]!.Type.Should().Be(JTokenType.String);
+        items[0]["emptyField"]!.ToString().Should().BeEmpty();
+        items[0]["nullField"]!.Type.Should().Be(JTokenType.Null);
+    }
+
+    [Fact]
+    public async Task ExportState_WithUnicodeAndEmoji_RoundTrips()
+    {
+        var container = new InMemoryContainer("export-utf", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","text":"\u4e16\u754c\ud83d\ude80"}""")),
+            new PartitionKey("a"));
+
+        var json = container.ExportState();
+        var target = new InMemoryContainer("target", "/pk");
+        target.ImportState(json);
+
+        var result = await target.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        result.Resource["text"]!.ToString().Should().Contain("\u4e16\u754c");
+    }
+
+    [Fact]
+    public async Task ExportState_WithMaxNestedDepth_DoesNotStackOverflow()
+    {
+        var container = new InMemoryContainer("export-deepnest", "/pk");
+        // Build 50-level deep JSON
+        var deep = new JObject { ["id"] = "1", ["pk"] = "a" };
+        var current = deep;
+        for (var i = 0; i < 50; i++)
+        {
+            var child = new JObject { ["level"] = i };
+            current["nested"] = child;
+            current = child;
+        }
+
+        await container.CreateItemAsync(deep, new PartitionKey("a"));
+
+        var act = () => container.ExportState();
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public async Task ExportState_ContainerMetadataNotIncluded()
+    {
+        var container = new InMemoryContainer("export-nometa", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a"}""")),
+            new PartitionKey("a"));
+
+        var json = container.ExportState();
+        var parsed = JObject.Parse(json);
+
+        parsed.Properties().Select(p => p.Name).Should().BeEquivalentTo(["items"]);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -494,6 +593,126 @@ public class ImportStateEdgeCaseTests
         result.Resource["customField"]!.ToString().Should().Be("preserved");
         result.Resource["nestedCustom"]!["x"]!.Value<int>().Should().Be(1);
     }
+
+    [Fact]
+    public async Task ImportState_ItemsMissingId_UsesEmptyStringAsId()
+    {
+        var container = new InMemoryContainer("import-noid", "/pk");
+        container.ImportState("""{"items":[{"pk":"a","name":"no-id-item"}]}""");
+
+        container.ItemCount.Should().Be(1);
+        var result = await container.ReadItemAsync<JObject>("", new PartitionKey("a"));
+        result.Resource["name"]!.ToString().Should().Be("no-id-item");
+    }
+
+    [Fact]
+    public async Task ImportState_ItemMissingPartitionKeyField_Behavior()
+    {
+        var container = new InMemoryContainer("import-nopk", "/pk");
+        container.ImportState("""{"items":[{"id":"1","name":"no-pk"}]}""");
+
+        container.ItemCount.Should().Be(1);
+        // When PK field is missing and partitionKey param is null, falls back to id value
+        var result = await container.ReadItemAsync<JObject>("1", new PartitionKey("1"));
+        result.Resource["name"]!.ToString().Should().Be("no-pk");
+    }
+
+    [Fact]
+    public async Task ImportState_GeneratesNewTimestamps()
+    {
+        var source = new InMemoryContainer("import-ts-src", "/pk");
+        await source.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a"}""")),
+            new PartitionKey("a"));
+
+        var export = source.ExportState();
+        var sourceTs = (long)((JArray)JObject.Parse(export)["items"]!)[0]["_ts"]!;
+
+        await Task.Delay(1100); // Wait so timestamp differs
+
+        var target = new InMemoryContainer("import-ts-tgt", "/pk");
+        target.ImportState(export);
+
+        var result = await target.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        result.Resource["_ts"]!.Value<long>().Should().BeGreaterThanOrEqualTo(sourceTs);
+    }
+
+    [Fact]
+    public async Task ImportState_WithItemsHavingSystemProperties_OverwritesThem()
+    {
+        var container = new InMemoryContainer("import-sysprop", "/pk");
+        container.ImportState("""{"items":[{"id":"1","pk":"a","_etag":"\"old-etag\"","_ts":1000}]}""");
+
+        var result = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        result.Resource["_etag"]!.ToString().Should().NotBe("\"old-etag\"",
+            "import regenerates ETags");
+        result.Resource["_ts"]!.Value<long>().Should().BeGreaterThan(1000,
+            "import regenerates timestamps");
+    }
+
+    [Fact]
+    public void ImportState_ValidJsonButArray_Throws()
+    {
+        var container = new InMemoryContainer("import-arr", "/pk");
+        var act = () => container.ImportState("""[{"id":"1"}]""");
+        act.Should().Throw<JsonReaderException>();
+    }
+
+    [Fact]
+    public void ImportState_ValidJsonButPrimitive_Throws()
+    {
+        var container = new InMemoryContainer("import-prim", "/pk");
+        var act = () => container.ImportState("123");
+        act.Should().Throw<JsonReaderException>();
+    }
+
+    [Fact]
+    public async Task ImportState_VeryLargePayload_1000Items_Succeeds()
+    {
+        var items = new JArray();
+        for (var i = 0; i < 1000; i++)
+            items.Add(new JObject { ["id"] = $"{i}", ["pk"] = "a", ["name"] = $"Item{i}" });
+
+        var state = new JObject { ["items"] = items };
+        var container = new InMemoryContainer("import-large", "/pk");
+        container.ImportState(state.ToString());
+
+        container.ItemCount.Should().Be(1000);
+
+        var iter = container.GetItemQueryIterator<JObject>("SELECT * FROM c");
+        var all = new List<JObject>();
+        while (iter.HasMoreResults) all.AddRange(await iter.ReadNextAsync());
+        all.Should().HaveCount(1000);
+    }
+
+    [Fact]
+    public void ImportState_WithWhitespaceOnlyJson_Throws()
+    {
+        var container = new InMemoryContainer("import-ws", "/pk");
+        var act = () => container.ImportState("   ");
+        act.Should().Throw<JsonReaderException>();
+    }
+
+    [Fact]
+    public async Task ImportState_ItemsWithDifferentSchemas_AllPreserved()
+    {
+        var container = new InMemoryContainer("import-schema", "/pk");
+        container.ImportState("""
+            {"items":[
+                {"id":"1","pk":"a","name":"Alice","age":30},
+                {"id":"2","pk":"a","score":99.5,"active":true},
+                {"id":"3","pk":"a","tags":["x","y"],"nested":{"z":1}}
+            ]}
+            """);
+
+        container.ItemCount.Should().Be(3);
+        var r1 = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        r1.Resource["name"]!.ToString().Should().Be("Alice");
+        var r2 = await container.ReadItemAsync<JObject>("2", new PartitionKey("a"));
+        r2.Resource["score"]!.Value<double>().Should().Be(99.5);
+        var r3 = await container.ReadItemAsync<JObject>("3", new PartitionKey("a"));
+        ((JArray)r3.Resource["tags"]!).Should().HaveCount(2);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -548,6 +767,52 @@ public class StatePersistenceChangeFeedTests
         // Export only has "items", no change feed data
         parsed.Properties().Select(p => p.Name).Should().BeEquivalentTo(["items"]);
     }
+
+    [Fact]
+    public void ClearItems_ClearsChangeFeed_VerifiedViaIterator()
+    {
+        var container = new InMemoryContainer("cf-clear", "/pk");
+        container.ImportState("""{"items":[{"id":"1","pk":"a"}]}""");
+
+        container.ClearItems();
+
+        var iter = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+        iter.HasMoreResults.Should().BeFalse("change feed should be empty after ClearItems");
+    }
+
+    [Fact]
+    public void ImportState_ThenExport_ThenReimport_ChangeFeedStillEmpty()
+    {
+        var container = new InMemoryContainer("cf-chain", "/pk");
+        container.ImportState("""{"items":[{"id":"1","pk":"a"}]}""");
+
+        var exported = container.ExportState();
+        container.ImportState(exported);
+
+        var iter = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+        iter.HasMoreResults.Should().BeFalse("chained import/export/reimport should leave change feed empty");
+    }
+
+    [Fact]
+    public async Task ImportState_ThenModifyItems_ChangeFeedOnlyHasModifications()
+    {
+        var container = new InMemoryContainer("cf-mod", "/pk");
+        container.ImportState("""{"items":[{"id":"1","pk":"a"},{"id":"2","pk":"a"},{"id":"3","pk":"a"}]}""");
+
+        // Modify one item
+        await container.UpsertItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", name = "modified" }),
+            new PartitionKey("a"));
+
+        var iter = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+        var page = await iter.ReadNextAsync();
+
+        page.Should().ContainSingle();
+        page.First()["id"]!.ToString().Should().Be("2");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -568,6 +833,48 @@ public class StatePersistenceTtlTests
         var act = () => container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
         await act.Should().ThrowAsync<CosmosException>()
             .Where(e => e.StatusCode == HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task ImportState_WithPerItemTTL_ItemsExpireCorrectly()
+    {
+        var container = new InMemoryContainer("ttl-peritem", "/pk");
+        container.DefaultTimeToLive = 60; // container TTL = 60s
+        container.ImportState("""{"items":[{"id":"1","pk":"a","_ttl":1}]}""");
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var act = () => container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task ExportState_WithTTLItems_IncludesTtlField()
+    {
+        var container = new InMemoryContainer("ttl-export", "/pk");
+        container.DefaultTimeToLive = 60;
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","ttl":300}""")),
+            new PartitionKey("a"));
+
+        var json = container.ExportState();
+        var items = (JArray)JObject.Parse(json)["items"]!;
+        items[0]["ttl"]!.Value<int>().Should().Be(300);
+    }
+
+    [Fact]
+    public async Task ImportState_IntoContainerWithNoTTL_TtlFieldIgnored()
+    {
+        var container = new InMemoryContainer("ttl-none", "/pk");
+        // No DefaultTimeToLive set
+        container.ImportState("""{"items":[{"id":"1","pk":"a","ttl":1}]}""");
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // Item should still exist — container has no TTL configured
+        var result = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        result.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }
 
@@ -592,6 +899,47 @@ public class StatePersistenceHierarchicalPkTests
         var result = await target.ReadItemAsync<JObject>("1",
             new PartitionKeyBuilder().Add("t1").Add("u1").Build());
         result.Resource["name"]!.ToString().Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task ExportImport_ThreeLevelHierarchicalPK_RoundTrips()
+    {
+        var source = new InMemoryContainer("hk-3level", new[] { "/a", "/b", "/c" });
+        await source.CreateItemAsync(
+            JObject.FromObject(new { id = "1", a = "x", b = "y", c = "z", name = "deep" }),
+            new PartitionKeyBuilder().Add("x").Add("y").Add("z").Build());
+
+        var json = source.ExportState();
+        var target = new InMemoryContainer("hk-3tgt", new[] { "/a", "/b", "/c" });
+        target.ImportState(json);
+
+        var result = await target.ReadItemAsync<JObject>("1",
+            new PartitionKeyBuilder().Add("x").Add("y").Add("z").Build());
+        result.Resource["name"]!.ToString().Should().Be("deep");
+    }
+
+    [Fact]
+    public async Task ExportImport_HierarchicalPK_SameIdDifferentPKValues_BothPreserved()
+    {
+        var source = new InMemoryContainer("hk-sameid", new[] { "/tenantId", "/userId" });
+        await source.CreateItemAsync(
+            JObject.FromObject(new { id = "1", tenantId = "t1", userId = "u1", name = "Alice" }),
+            new PartitionKeyBuilder().Add("t1").Add("u1").Build());
+        await source.CreateItemAsync(
+            JObject.FromObject(new { id = "1", tenantId = "t1", userId = "u2", name = "Bob" }),
+            new PartitionKeyBuilder().Add("t1").Add("u2").Build());
+
+        var json = source.ExportState();
+        var target = new InMemoryContainer("hk-sameid-tgt", new[] { "/tenantId", "/userId" });
+        target.ImportState(json);
+
+        target.ItemCount.Should().Be(2);
+        var r1 = await target.ReadItemAsync<JObject>("1",
+            new PartitionKeyBuilder().Add("t1").Add("u1").Build());
+        r1.Resource["name"]!.ToString().Should().Be("Alice");
+        var r2 = await target.ReadItemAsync<JObject>("1",
+            new PartitionKeyBuilder().Add("t1").Add("u2").Build());
+        r2.Resource["name"]!.ToString().Should().Be("Bob");
     }
 }
 
@@ -645,6 +993,58 @@ public class StatePersistenceFileTests
         var act = () => container.ImportStateFromFile("/nonexistent/path.json");
         act.Should().Throw<Exception>();
     }
+
+    [Fact]
+    public void ImportStateFromFile_EmptyFile_Throws()
+    {
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(tempFile, "");
+            var container = new InMemoryContainer("file-empty", "/pk");
+            var act = () => container.ImportStateFromFile(tempFile);
+            act.Should().Throw<JsonReaderException>();
+        }
+        finally { File.Delete(tempFile); }
+    }
+
+    [Fact]
+    public async Task ExportStateToFile_And_ImportStateFromFile_LargeDataset()
+    {
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            var source = new InMemoryContainer("file-large", "/pk");
+            for (var i = 0; i < 100; i++)
+                await source.CreateItemStreamAsync(
+                    new MemoryStream(Encoding.UTF8.GetBytes($$$"""{"id":"{{{i}}}","pk":"a","name":"Item{{{i}}}"}""")),
+                    new PartitionKey("a"));
+
+            source.ExportStateToFile(tempFile);
+
+            var target = new InMemoryContainer("file-large-tgt", "/pk");
+            target.ImportStateFromFile(tempFile);
+
+            target.ItemCount.Should().Be(100);
+        }
+        finally { File.Delete(tempFile); }
+    }
+
+    [Fact]
+    public void ExportStateToFile_NullPath_Throws()
+    {
+        var container = new InMemoryContainer("file-null", "/pk");
+        var act = () => container.ExportStateToFile(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void ImportStateFromFile_NullPath_Throws()
+    {
+        var container = new InMemoryContainer("file-null-import", "/pk");
+        var act = () => container.ImportStateFromFile(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -691,6 +1091,50 @@ public class ClearItemsTests
         var result = await container.ReadItemAsync<JObject>("2", new PartitionKey("a"));
         result.Resource["name"]!.ToString().Should().Be("new");
     }
+
+    [Fact]
+    public async Task ClearItems_ClearsETags()
+    {
+        var container = new InMemoryContainer("clear-etag", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var etag = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).ETag;
+        etag.Should().NotBeNullOrEmpty();
+
+        container.ClearItems();
+
+        var act = () => container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public void ClearItems_CalledMultipleTimes_NoError()
+    {
+        var container = new InMemoryContainer("clear-multi", "/pk");
+        var act = () =>
+        {
+            container.ClearItems();
+            container.ClearItems();
+            container.ClearItems();
+        };
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public async Task ClearItems_DoesNotAffectContainerConfig()
+    {
+        var container = new InMemoryContainer("clear-config", "/pk");
+        container.DefaultTimeToLive = 300;
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        container.ClearItems();
+        container.ItemCount.Should().Be(0);
+        container.DefaultTimeToLive.Should().Be(300, "TTL config survives ClearItems");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -719,6 +1163,33 @@ public class StatePersistenceConcurrencyTests
 
         var act = async () => await Task.WhenAll(tasks.Append(exportTask));
         await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ExportState_DuringConcurrentWrites_MayNotBeAtomicSnapshot()
+    {
+        // Documents that ConcurrentDictionary enumeration may include some concurrent writes
+        var container = new InMemoryContainer("conc-snapshot", "/pk");
+        for (var i = 0; i < 20; i++)
+            await container.CreateItemStreamAsync(
+                new MemoryStream(Encoding.UTF8.GetBytes($$$"""{"id":"{{{i}}}","pk":"a"}""")),
+                new PartitionKey("a"));
+
+        // Start writes concurrently with export
+        var writeTasks = Enumerable.Range(20, 30).Select(async i =>
+        {
+            await container.CreateItemStreamAsync(
+                new MemoryStream(Encoding.UTF8.GetBytes($$$"""{"id":"{{{i}}}","pk":"a"}""")),
+                new PartitionKey("a"));
+        });
+
+        var exportResult = "";
+        var exportTask = Task.Run(() => exportResult = container.ExportState());
+        await Task.WhenAll(writeTasks.Append(exportTask));
+
+        // Export should have at least the 20 original items, possibly more
+        var items = (JArray)JObject.Parse(exportResult)["items"]!;
+        items.Count.Should().BeGreaterThanOrEqualTo(20);
     }
 }
 
@@ -764,6 +1235,23 @@ public class CrossContainerExportImportTests
         var items2 = (JArray)JObject.Parse(json2)["items"]!;
         items2.Should().HaveCount(1);
         items2[0]["id"]!.ToString().Should().Be("B");
+    }
+
+    [Fact]
+    public async Task ImportState_FromDifferentContainerSchema_PreservesAllFields()
+    {
+        var source = new InMemoryContainer("schema-src", "/pk");
+        await source.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", fieldA = "hello", fieldB = 42, fieldC = true }),
+            new PartitionKey("a"));
+
+        var target = new InMemoryContainer("schema-tgt", "/pk");
+        target.ImportState(source.ExportState());
+
+        var result = await target.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        result.Resource["fieldA"]!.ToString().Should().Be("hello");
+        result.Resource["fieldB"]!.Value<int>().Should().Be(42);
+        result.Resource["fieldC"]!.Value<bool>().Should().BeTrue();
     }
 }
 
@@ -823,5 +1311,262 @@ public class DataFidelityAfterImportTests
 
         page.Should().HaveCount(1);
         page.First()["id"]!.ToString().Should().Be("2");
+    }
+
+    [Fact]
+    public async Task ImportState_ItemsReadableViaReadMany()
+    {
+        var container = new InMemoryContainer("fidelity-readmany", "/pk");
+        container.ImportState("""{"items":[{"id":"1","pk":"a"},{"id":"2","pk":"a"},{"id":"3","pk":"b"}]}""");
+
+        var items = new List<(string, PartitionKey)>
+        {
+            ("1", new PartitionKey("a")),
+            ("3", new PartitionKey("b"))
+        };
+        var response = await container.ReadManyItemsAsync<JObject>(items);
+        response.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task ImportState_ItemsCountable_ViaLinqCount()
+    {
+        var container = new InMemoryContainer("fidelity-linq", "/pk");
+        container.ImportState("""{"items":[{"id":"1","pk":"a"},{"id":"2","pk":"a"},{"id":"3","pk":"a"}]}""");
+
+        var iter = container.GetItemQueryIterator<JObject>("SELECT * FROM c");
+        var all = new List<JObject>();
+        while (iter.HasMoreResults) all.AddRange(await iter.ReadNextAsync());
+        all.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task ImportState_ItemsAccessibleViaPatchOperations()
+    {
+        var container = new InMemoryContainer("fidelity-patch", "/pk");
+        container.ImportState("""{"items":[{"id":"1","pk":"a","name":"original","count":0}]}""");
+
+        await container.PatchItemAsync<JObject>("1", new PartitionKey("a"),
+            new[] { PatchOperation.Set("/name", "patched"), PatchOperation.Increment("/count", 5) });
+
+        var result = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        result.Resource["name"]!.ToString().Should().Be("patched");
+        result.Resource["count"]!.Value<int>().Should().Be(5);
+    }
+
+    [Fact]
+    public async Task ImportState_ItemsAccessibleViaTransactionalBatch()
+    {
+        var container = new InMemoryContainer("fidelity-batch", "/pk");
+        container.ImportState("""{"items":[{"id":"1","pk":"a","name":"Alice"},{"id":"2","pk":"a","name":"Bob"}]}""");
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("a"));
+        batch.ReadItem("1");
+        batch.DeleteItem("2");
+        using var response = await batch.ExecuteAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        container.ItemCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ImportState_ItemsAccessibleViaChangeFeedAfterModification()
+    {
+        var container = new InMemoryContainer("fidelity-cf", "/pk");
+        container.ImportState("""{"items":[{"id":"1","pk":"a","name":"original"}]}""");
+
+        await container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "modified" }),
+            new PartitionKey("a"));
+
+        var iter = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+        var page = await iter.ReadNextAsync();
+
+        page.Should().ContainSingle();
+        page.First()["name"]!.ToString().Should().Be("modified");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category F: Unique Key Policy on Import
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StatePersistenceUniqueKeyTests
+{
+    [Fact]
+    public void ImportState_ViolatesUniqueKeyPolicy_Throws()
+    {
+        var properties = new ContainerProperties("uk-import", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        var act = () => container.ImportState("""
+            {"items":[
+                {"id":"1","pk":"a","email":"same@test.com"},
+                {"id":"2","pk":"a","email":"same@test.com"}
+            ]}
+            """);
+
+        act.Should().Throw<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public void ImportState_UniqueKeyPolicy_DifferentPartitions_NoConflict()
+    {
+        var properties = new ContainerProperties("uk-diff-pk", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        container.ImportState("""
+            {"items":[
+                {"id":"1","pk":"a","email":"same@test.com"},
+                {"id":"2","pk":"b","email":"same@test.com"}
+            ]}
+            """);
+
+        container.ItemCount.Should().Be(2);
+    }
+
+    [Fact]
+    public void ImportState_UniqueKeyPolicy_AllValid_Succeeds()
+    {
+        var properties = new ContainerProperties("uk-valid", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        container.ImportState("""
+            {"items":[
+                {"id":"1","pk":"a","email":"alice@test.com"},
+                {"id":"2","pk":"a","email":"bob@test.com"}
+            ]}
+            """);
+
+        container.ItemCount.Should().Be(2);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category L: PITR Interaction
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StatePersistencePitrTests
+{
+    [Fact]
+    public async Task ImportState_ThenRestore_OnlyPostImportOperationsRestorable()
+    {
+        var container = new InMemoryContainer("pitr-import", "/pk");
+        container.ImportState("""{"items":[{"id":"1","pk":"a","name":"imported"}]}""");
+
+        // Post-import operation
+        await container.UpsertItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", name = "added" }),
+            new PartitionKey("a"));
+
+        var checkpoint = DateTimeOffset.UtcNow;
+        await Task.Delay(100);
+
+        // Another operation after checkpoint
+        await container.UpsertItemAsync(
+            JObject.FromObject(new { id = "3", pk = "a", name = "late" }),
+            new PartitionKey("a"));
+
+        container.RestoreToPointInTime(checkpoint);
+
+        // Only post-import operations up to checkpoint should be present
+        container.ItemCount.Should().Be(1);
+        var result = await container.ReadItemAsync<JObject>("2", new PartitionKey("a"));
+        result.Resource["name"]!.ToString().Should().Be("added");
+    }
+
+    [Fact]
+    public void ClearItems_ThenRestore_NoDataRestorable()
+    {
+        var container = new InMemoryContainer("pitr-clear", "/pk");
+        container.ImportState("""{"items":[{"id":"1","pk":"a"}]}""");
+
+        container.ClearItems();
+        container.RestoreToPointInTime(DateTimeOffset.UtcNow);
+
+        container.ItemCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ExportState_RestoreToPointInTime_ThenExport_DifferentResults()
+    {
+        var container = new InMemoryContainer("pitr-export", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "first" }),
+            new PartitionKey("a"));
+
+        var checkpoint = DateTimeOffset.UtcNow;
+        await Task.Delay(100);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", name = "second" }),
+            new PartitionKey("a"));
+
+        var exportBefore = container.ExportState();
+        container.RestoreToPointInTime(checkpoint);
+        var exportAfter = container.ExportState();
+
+        var itemsBefore = (JArray)JObject.Parse(exportBefore)["items"]!;
+        var itemsAfter = (JArray)JObject.Parse(exportAfter)["items"]!;
+
+        itemsBefore.Count.Should().Be(2);
+        itemsAfter.Count.Should().Be(1);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Category M: Error Handling / Defensive
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StatePersistenceErrorHandlingTests
+{
+    [Fact]
+    public void ImportState_WithNullItemInArray_Behavior()
+    {
+        var container = new InMemoryContainer("err-null-item", "/pk");
+        // null item in array — should handle gracefully
+        var act = () => container.ImportState("""{"items":[null]}""");
+        act.Should().Throw<Exception>();
+    }
+
+    [Fact]
+    public void ExportState_AfterClearItems_ReturnsEmptyItemsArray()
+    {
+        var container = new InMemoryContainer("err-clear-export", "/pk");
+        container.ClearItems();
+        var json = container.ExportState();
+
+        var items = (JArray)JObject.Parse(json)["items"]!;
+        items.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ImportState_ItemsKeyIsNotArray_Behavior()
+    {
+        var container = new InMemoryContainer("err-not-array", "/pk");
+        container.ImportState("""{"items":"not an array"}""");
+
+        // "items" is not a JArray, so the if check fails; container is cleared, nothing imported
+        container.ItemCount.Should().Be(0);
     }
 }
