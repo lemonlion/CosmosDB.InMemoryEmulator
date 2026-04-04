@@ -812,7 +812,10 @@ public class InMemoryContainer : Container
         var json = ReadStream(streamPayload);
         var sizeError = ValidateDocumentSizeStream(json);
         if (sizeError is not null) return Task.FromResult(sizeError);
-        var jObj = JsonParseHelpers.ParseJson(json);
+        JObject jObj;
+        try { jObj = JsonParseHelpers.ParseJson(json); }
+        catch (Newtonsoft.Json.JsonReaderException)
+        { return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest)); }
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Create");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
@@ -859,7 +862,8 @@ public class InMemoryContainer : Container
             throw;
         }
 
-        return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created, enrichedJson, etag));
+        return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created,
+            requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag));
     }
 
     public override Task<ResponseMessage> ReadItemStreamAsync(
@@ -890,15 +894,17 @@ public class InMemoryContainer : Container
         var json = ReadStream(streamPayload);
         var sizeError = ValidateDocumentSizeStream(json);
         if (sizeError is not null) return Task.FromResult(sizeError);
-        var jObj = JsonParseHelpers.ParseJson(json);
+        JObject jObj;
+        try { jObj = JsonParseHelpers.ParseJson(json); }
+        catch (Newtonsoft.Json.JsonReaderException)
+        { return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest)); }
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Upsert");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
 
-        var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException(
-            "Item must have an 'id' property (case-sensitive, lowercase). " +
-            "If your C# model uses PascalCase 'Id', ensure CosmosClientOptions.Serializer is configured " +
-            "with camelCase naming (e.g. CosmosJsonDotNetSerializer with CamelCasePropertyNamesContractResolver).");
+        var itemId = jObj["id"]?.ToString();
+        if (itemId is null)
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
         if (!CheckIfMatchStream(requestOptions, key))
@@ -961,7 +967,8 @@ public class InMemoryContainer : Container
             throw;
         }
 
-        return Task.FromResult(CreateResponseMessage(existed ? HttpStatusCode.OK : HttpStatusCode.Created, enrichedJson, etag));
+        return Task.FromResult(CreateResponseMessage(existed ? HttpStatusCode.OK : HttpStatusCode.Created,
+            requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag));
     }
 
     public override Task<ResponseMessage> ReplaceItemStreamAsync(
@@ -988,7 +995,10 @@ public class InMemoryContainer : Container
         var previousEtag = _etags.GetValueOrDefault(key);
         var previousTimestamp = _timestamps.GetValueOrDefault(key);
 
-        var jObj = JsonParseHelpers.ParseJson(json);
+        JObject jObj;
+        try { jObj = JsonParseHelpers.ParseJson(json); }
+        catch (Newtonsoft.Json.JsonReaderException)
+        { return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest)); }
 
         // Validate body id matches parameter id (real Cosmos returns 400 on mismatch)
         var bodyId = jObj["id"]?.ToString();
@@ -1039,7 +1049,8 @@ public class InMemoryContainer : Container
             throw;
         }
 
-        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, enrichedJson, etag));
+        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+            requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag));
     }
 
     public override Task<ResponseMessage> DeleteItemStreamAsync(
@@ -1161,7 +1172,8 @@ public class InMemoryContainer : Container
         }
         var enrichedJson = _items[key];
         RecordChangeFeed(id, pk, enrichedJson);
-        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, enrichedJson, etag));
+        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+            requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

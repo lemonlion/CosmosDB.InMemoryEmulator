@@ -145,14 +145,13 @@ public class StreamCrudTests
     }
 
     [Fact]
-    public async Task UpsertItemStreamAsync_MissingLowercaseId_ThrowsWithSerializerHint()
+    public async Task UpsertItemStreamAsync_MissingLowercaseId_Returns400()
     {
         var json = """{"Id":"1","partitionKey":"pk1","name":"PascalCase"}""";
 
-        var act = () => _container.UpsertItemStreamAsync(ToStream(json), new PartitionKey("pk1"));
+        var response = await _container.UpsertItemStreamAsync(ToStream(json), new PartitionKey("pk1"));
 
-        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
-        ex.Which.Message.Should().Contain("camelCase");
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }
 
@@ -557,6 +556,31 @@ public class StreamResponseBodyTests
         body["name"]!.ToString().Should().Be("Alice");
         body["value"]!.Value<int>().Should().Be(42);
     }
+
+    [Fact]
+    public async Task DeleteStream_Success_ContentIsNull()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
+
+        using var response = await _container.DeleteItemStreamAsync("1", new PartitionKey("pk1"));
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        response.Content.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PatchStream_ResponseContent_ContainsPatchedDocument()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"Before"}"""), new PartitionKey("pk1"));
+
+        using var response = await _container.PatchItemStreamAsync(
+            "1", new PartitionKey("pk1"), new[] { PatchOperation.Replace("/name", "After") });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["name"]!.ToString().Should().Be("After");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -630,6 +654,26 @@ public class StreamSystemPropertyTests
         using var read2 = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
         var etag2 = JObject.Parse(await ReadStreamAsync(read2.Content))["_etag"]!.ToString();
         etag2.Should().NotBe(etag1);
+    }
+
+    [Fact]
+    public async Task PatchStream_UpdatesEtagAndTs()
+    {
+        await _container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"orig"}"""), new PartitionKey("pk1"));
+
+        using var read1 = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        var body1 = JObject.Parse(await ReadStreamAsync(read1.Content));
+        var etag1 = body1["_etag"]!.ToString();
+        var ts1 = body1["_ts"]!.Value<long>();
+
+        await _container.PatchItemStreamAsync("1", new PartitionKey("pk1"),
+            new[] { PatchOperation.Replace("/name", "patched") });
+
+        using var read2 = await _container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        var body2 = JObject.Parse(await ReadStreamAsync(read2.Content));
+        body2["_etag"]!.ToString().Should().NotBe(etag1);
+        body2["_ts"]!.Value<long>().Should().BeGreaterThanOrEqualTo(ts1);
     }
 }
 
@@ -1017,5 +1061,532 @@ public class StreamDivergentBehaviorTests
         body["_ts"].Should().NotBeNull();
         body["_rid"].Should().BeNull("emulator does not generate _rid");
         body["_self"].Should().BeNull("emulator does not generate _self");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUG-1: Invalid JSON → 400 BadRequest (stream contract)
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamBugFix_InvalidJsonTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task CreateStream_InvalidJson_Returns400BadRequest()
+    {
+        var container = new InMemoryContainer("json-test", "/pk");
+        var response = await container.CreateItemStreamAsync(
+            ToStream("{{not json}}"), new PartitionKey("a"));
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task UpsertStream_InvalidJson_Returns400BadRequest()
+    {
+        var container = new InMemoryContainer("json-test", "/pk");
+        var response = await container.UpsertItemStreamAsync(
+            ToStream("{{not json}}"), new PartitionKey("a"));
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ReplaceStream_InvalidJson_Returns400BadRequest()
+    {
+        var container = new InMemoryContainer("json-test", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+        var response = await container.ReplaceItemStreamAsync(
+            ToStream("{{not json}}"), "1", new PartitionKey("a"));
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task CreateStream_EmptyStream_Returns400()
+    {
+        var container = new InMemoryContainer("json-test", "/pk");
+        var response = await container.CreateItemStreamAsync(
+            new MemoryStream(), new PartitionKey("a"));
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUG-3: EnableContentResponseOnWrite in stream methods
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamBugFix_EnableContentResponseOnWriteTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task CreateStream_EnableContentResponseOnWrite_False_ContentIsNull()
+    {
+        var container = new InMemoryContainer("ecrw-test", "/pk");
+        var response = await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = false });
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.Content.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpsertStream_EnableContentResponseOnWrite_False_ContentIsNull()
+    {
+        var container = new InMemoryContainer("ecrw-test", "/pk");
+        var response = await container.UpsertItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = false });
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.Content.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReplaceStream_EnableContentResponseOnWrite_False_ContentIsNull()
+    {
+        var container = new InMemoryContainer("ecrw-test", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+        var response = await container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a","name":"new"}"""), "1", new PartitionKey("a"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = false });
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PatchStream_EnableContentResponseOnWrite_False_ContentIsNull()
+    {
+        var container = new InMemoryContainer("ecrw-test", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a","name":"before"}"""), new PartitionKey("a"));
+        var response = await container.PatchItemStreamAsync("1", new PartitionKey("a"),
+            new[] { PatchOperation.Replace("/name", "after") },
+            new PatchItemRequestOptions { EnableContentResponseOnWrite = false });
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CreateStream_EnableContentResponseOnWrite_True_ContentPopulated()
+    {
+        var container = new InMemoryContainer("ecrw-test", "/pk");
+        var response = await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = true });
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.Content.Should().NotBeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  BUG-5: UpsertStream missing id → 400 (not exception)
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamBugFix_UpsertMissingIdTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task UpsertStream_MissingId_Returns400BadRequest_DoesNotThrow()
+    {
+        var container = new InMemoryContainer("upsert-noid", "/pk");
+        var response = await container.UpsertItemStreamAsync(
+            ToStream("""{"pk":"a","name":"no-id"}"""), new PartitionKey("a"));
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  EnsureSuccessStatusCode tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamEnsureSuccessStatusCodeTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task Stream_EnsureSuccessStatusCode_OnSuccess_ReturnsSelf()
+    {
+        var container = new InMemoryContainer("ensure-test", "/pk");
+        using var response = await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+        var result = response.EnsureSuccessStatusCode();
+        result.Should().BeSameAs(response);
+    }
+
+    [Fact]
+    public async Task Stream_EnsureSuccessStatusCode_OnFailure_ThrowsCosmosException()
+    {
+        var container = new InMemoryContainer("ensure-test", "/pk");
+        using var response = await container.ReadItemStreamAsync("missing", new PartitionKey("a"));
+        var act = () => response.EnsureSuccessStatusCode();
+        act.Should().Throw<CosmosException>();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Error response ETag + Read ETag header tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamErrorAndReadHeaderTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task Stream_ErrorResponses_DoNotContainETagHeader()
+    {
+        var container = new InMemoryContainer("etag-err", "/pk");
+        using var readMiss = await container.ReadItemStreamAsync("missing", new PartitionKey("a"));
+        readMiss.Headers.ETag.Should().BeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task ReadStream_ResponseContainsETagHeader()
+    {
+        var container = new InMemoryContainer("etag-read", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+
+        using var response = await container.ReadItemStreamAsync("1", new PartitionKey("a"));
+        response.Headers.ETag.Should().NotBeNullOrEmpty();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ETag wildcard and IfNoneMatch edge cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamETagWildcardTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task UpsertStream_WithIfMatch_Wildcard_AlwaysSucceeds()
+    {
+        var container = new InMemoryContainer("wild-test", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+        var response = await container.UpsertItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a","name":"new"}"""), new PartitionKey("a"),
+            new ItemRequestOptions { IfMatchEtag = "*" });
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ReplaceStream_WithIfMatch_Wildcard_AlwaysSucceeds()
+    {
+        var container = new InMemoryContainer("wild-test", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+        var response = await container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a","name":"new"}"""), "1", new PartitionKey("a"),
+            new ItemRequestOptions { IfMatchEtag = "*" });
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task DeleteStream_WithIfMatch_Wildcard_AlwaysSucceeds()
+    {
+        var container = new InMemoryContainer("wild-test", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+        var response = await container.DeleteItemStreamAsync("1", new PartitionKey("a"),
+            new ItemRequestOptions { IfMatchEtag = "*" });
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
+    public async Task ReadStream_IfNoneMatch_Wildcard_Returns304()
+    {
+        var container = new InMemoryContainer("wild-test", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+        var response = await container.ReadItemStreamAsync("1", new PartitionKey("a"),
+            new ItemRequestOptions { IfNoneMatchEtag = "*" });
+        response.StatusCode.Should().Be(HttpStatusCode.NotModified);
+    }
+
+    [Fact]
+    public async Task ReadStream_IfNoneMatch_StaleEtag_Returns200WithContent()
+    {
+        var container = new InMemoryContainer("wild-test", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+        var response = await container.ReadItemStreamAsync("1", new PartitionKey("a"),
+            new ItemRequestOptions { IfNoneMatchEtag = "\"stale-etag\"" });
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task UpsertStream_IfMatch_OnNonExistentItem_CurrentBehavior()
+    {
+        var container = new InMemoryContainer("wild-test", "/pk");
+        var response = await container.UpsertItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"),
+            new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
+        // Current behavior: upsert proceeds as create (IfMatch silently ignored for non-existent items)
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Stream edge cases (PartitionKey.None, special chars, delete tombstone)
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamEdgeCaseAdditionalTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+    private static async Task<string> ReadStreamAsync(Stream s) { using var r = new StreamReader(s); return await r.ReadToEndAsync(); }
+
+    [Fact]
+    public async Task CreateStream_WithPartitionKeyNone_ExtractsFromDocument()
+    {
+        var container = new InMemoryContainer("pknone-test", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"extracted"}"""), PartitionKey.None);
+
+        using var response = await container.ReadItemStreamAsync("1", new PartitionKey("extracted"));
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Theory]
+    [InlineData("item/1")]
+    [InlineData("item#1")]
+    [InlineData("item 1")]
+    [InlineData("item?1")]
+    public async Task CreateStream_SpecialCharactersInId_RoundTrips(string itemId)
+    {
+        var container = new InMemoryContainer("special-test", "/pk");
+        var json = $$"""{"id":"{{itemId}}","pk":"a"}""";
+        await container.CreateItemStreamAsync(ToStream(json), new PartitionKey("a"));
+
+        using var response = await container.ReadItemStreamAsync(itemId, new PartitionKey("a"));
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["id"]!.ToString().Should().Be(itemId);
+    }
+
+    [Fact]
+    public async Task DeleteStream_RecordsTombstoneInChangeFeed()
+    {
+        var container = new InMemoryContainer("tombstone-test", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+
+        var checkpointBeforeDelete = container.GetChangeFeedCheckpoint();
+        await container.DeleteItemStreamAsync("1", new PartitionKey("a"));
+
+        var checkpointAfterDelete = container.GetChangeFeedCheckpoint();
+        checkpointAfterDelete.Should().Be(checkpointBeforeDelete + 1);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CancellationToken tests for stream methods
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamCancellationTokenTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task ReadItemStream_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        var container = new InMemoryContainer("cancel-test", "/pk");
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var act = () => container.ReadItemStreamAsync("1", new PartitionKey("a"), cancellationToken: cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task UpsertItemStream_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        var container = new InMemoryContainer("cancel-test", "/pk");
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var act = () => container.UpsertItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"), cancellationToken: cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task ReplaceItemStream_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        var container = new InMemoryContainer("cancel-test", "/pk");
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var act = () => container.ReplaceItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), "1", new PartitionKey("a"), cancellationToken: cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task DeleteItemStream_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        var container = new InMemoryContainer("cancel-test", "/pk");
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var act = () => container.DeleteItemStreamAsync("1", new PartitionKey("a"), cancellationToken: cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task PatchItemStream_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        var container = new InMemoryContainer("cancel-test", "/pk");
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var act = () => container.PatchItemStreamAsync("1", new PartitionKey("a"),
+            new[] { PatchOperation.Replace("/name", "x") }, cancellationToken: cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Patch validation tests (null/empty/max operations, filter predicate)
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamPatchValidationTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+    private static async Task<string> ReadStreamAsync(Stream s) { using var r = new StreamReader(s); return await r.ReadToEndAsync(); }
+
+    [Fact]
+    public async Task PatchStream_NullOperations_Returns400BadRequest()
+    {
+        var container = new InMemoryContainer("patch-val", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+        var response = await container.PatchItemStreamAsync("1", new PartitionKey("a"), null!);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task PatchStream_EmptyOperations_Returns400BadRequest()
+    {
+        var container = new InMemoryContainer("patch-val", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"));
+        var response = await container.PatchItemStreamAsync("1", new PartitionKey("a"),
+            Array.Empty<PatchOperation>());
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task PatchStream_MoreThan10Operations_Returns400BadRequest()
+    {
+        var container = new InMemoryContainer("patch-val", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a","f0":0,"f1":0,"f2":0,"f3":0,"f4":0,"f5":0,"f6":0,"f7":0,"f8":0,"f9":0,"f10":0}"""),
+            new PartitionKey("a"));
+        var ops = Enumerable.Range(0, 11)
+            .Select(i => PatchOperation.Replace($"/f{i}", i)).ToArray();
+        var response = await container.PatchItemStreamAsync("1", new PartitionKey("a"), ops);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task PatchStream_WithFilterPredicate_Match_ReturnsOk()
+    {
+        var container = new InMemoryContainer("patch-filter", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a","status":"active"}"""), new PartitionKey("a"));
+        var response = await container.PatchItemStreamAsync("1", new PartitionKey("a"),
+            new[] { PatchOperation.Replace("/status", "inactive") },
+            new PatchItemRequestOptions { FilterPredicate = "FROM c WHERE c.status = 'active'" });
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task PatchStream_WithFilterPredicate_NoMatch_Returns412()
+    {
+        var container = new InMemoryContainer("patch-filter", "/pk");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a","status":"active"}"""), new PartitionKey("a"));
+        var response = await container.PatchItemStreamAsync("1", new PartitionKey("a"),
+            new[] { PatchOperation.Replace("/status", "inactive") },
+            new PatchItemRequestOptions { FilterPredicate = "FROM c WHERE c.status = 'archived'" });
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Mixed stream/typed API tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamMixedApiTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+    private static async Task<string> ReadStreamAsync(Stream s) { using var r = new StreamReader(s); return await r.ReadToEndAsync(); }
+
+    [Fact]
+    public async Task StreamCreate_TypedPatch_StreamRead_DataConsistent()
+    {
+        var container = new InMemoryContainer("mixed-test", "/partitionKey");
+        await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","partitionKey":"pk1","name":"orig","value":10}"""),
+            new PartitionKey("pk1"));
+
+        await container.PatchItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+            new[] { PatchOperation.Replace("/name", "patched") });
+
+        using var response = await container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = JObject.Parse(await ReadStreamAsync(response.Content));
+        body["name"]!.ToString().Should().Be("patched");
+        body["value"]!.Value<int>().Should().Be(10);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  IfMatch on Create (should be ignored)
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamCreateEdgeCaseTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task CreateStream_WithIfMatchEtag_IgnoredOnCreate()
+    {
+        var container = new InMemoryContainer("create-ifmatch", "/pk");
+        var response = await container.CreateItemStreamAsync(
+            ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"),
+            new ItemRequestOptions { IfMatchEtag = "\"some-fake-etag\"" });
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DIV-3: ErrorMessage on failure ResponseMessages
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class StreamErrorMessageDivergentTests
+{
+    [Fact(Skip = "Real Cosmos DB sets ErrorMessage on failure ResponseMessages with a human-readable error " +
+                  "description. InMemoryContainer's CreateResponseMessage does not set ErrorMessage for error " +
+                  "status codes. Adding synthetic error messages is low priority since callers typically switch " +
+                  "on StatusCode.")]
+    public async Task Stream_ErrorResponse_ContainsErrorMessage()
+    {
+        // Expected real Cosmos behavior:
+        // response.ErrorMessage contains a descriptive error string for error responses.
+        var container = new InMemoryContainer("errmsg-test", "/pk");
+        using var response = await container.ReadItemStreamAsync("missing", new PartitionKey("a"));
+        response.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Divergent_Stream_ErrorResponse_ErrorMessageIsNull()
+    {
+        // InMemoryContainer does not set ErrorMessage on error ResponseMessages.
+        // Real Cosmos DB would set a human-readable error string here.
+        // Callers should rely on StatusCode rather than ErrorMessage.
+        var container = new InMemoryContainer("errmsg-test", "/pk");
+        using var response = await container.ReadItemStreamAsync("missing", new PartitionKey("a"));
+        response.ErrorMessage.Should().BeNullOrEmpty();
     }
 }
