@@ -115,6 +115,7 @@ public class InMemoryDatabase : Database
     {
         ArgumentNullException.ThrowIfNull(id);
         ArgumentException.ThrowIfNullOrEmpty(id);
+        InMemoryCosmosClient.ValidateResourceName(id, "Container");
         ArgumentNullException.ThrowIfNull(partitionKeyPath);
         var container = new InMemoryContainer(id, partitionKeyPath);
         container.OnDeleted = () => _containers.TryRemove(id, out _);
@@ -132,6 +133,7 @@ public class InMemoryDatabase : Database
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         var id = containerProperties.Id;
+        InMemoryCosmosClient.ValidateResourceName(id, "Container");
         if (string.IsNullOrEmpty(containerProperties.PartitionKeyPath) && containerProperties.PartitionKeyPaths is null)
             containerProperties.PartitionKeyPath = "/id";
         var container = new InMemoryContainer(containerProperties);

@@ -69,8 +69,10 @@ public class InMemoryCosmosClient : CosmosClient
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(id);
         ArgumentException.ThrowIfNullOrEmpty(id);
+        ValidateResourceName(id, "Database");
         var created = false;
         var database = _databases.GetOrAdd(id, name => { created = true; return new InMemoryDatabase(name, this); });
         var response = BuildDatabaseResponse(database, created ? HttpStatusCode.Created : HttpStatusCode.OK);
@@ -97,8 +99,10 @@ public class InMemoryCosmosClient : CosmosClient
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(id);
         ArgumentException.ThrowIfNullOrEmpty(id);
+        ValidateResourceName(id, "Database");
         var database = new InMemoryDatabase(id, this);
         if (!_databases.TryAdd(id, database))
         {
@@ -261,6 +265,22 @@ public class InMemoryCosmosClient : CosmosClient
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+    }
+
+    internal static void ValidateResourceName(string name, string resourceType)
+    {
+        if (name.Length > 255)
+        {
+            throw new CosmosException(
+                $"{resourceType} name must not exceed 255 characters.",
+                HttpStatusCode.BadRequest, 0, string.Empty, 0);
+        }
+        if (name.IndexOfAny(['/', '\\', '#', '?']) >= 0)
+        {
+            throw new CosmosException(
+                $"{resourceType} name must not contain '/', '\\', '#', or '?' characters.",
+                HttpStatusCode.BadRequest, 0, string.Empty, 0);
+        }
     }
 
     private static DatabaseResponse BuildDatabaseResponse(Database database, HttpStatusCode statusCode)

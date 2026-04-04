@@ -2414,11 +2414,7 @@ public class CreateDatabaseResponseUsabilityTests
 
 public class DisposeAndContinueDivergentTests
 {
-    [Fact(Skip = "InMemoryCosmosClient.Dispose is a no-op to prevent NullReferenceException from " +
-        "the base CosmosClient class. Post-dispose operations continue to work. Real SDK throws " +
-        "ObjectDisposedException after Dispose. This is intentional for test convenience — tests " +
-        "that use the emulator don't need to worry about disposal order or using statements " +
-        "affecting subsequent assertions.")]
+    [Fact]
     public async Task Dispose_ThenCreateDatabase_ShouldThrowObjectDisposed()
     {
         var client = new InMemoryCosmosClient();
@@ -2597,11 +2593,7 @@ public class DatabaseNameSpecialCharsTests
 
 public class DatabaseNameForbiddenCharsDivergentTests
 {
-    private const string SkipReason = "Real Cosmos DB rejects database names containing `/`, `\\`, " +
-        "`#`, or `?` characters with 400 BadRequest (Resource IDs cannot contain these characters per " +
-        "the REST API spec). The in-memory emulator does not validate resource ID character restrictions.";
-
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task CreateDatabaseAsync_NameWithForwardSlash_ShouldThrowBadRequest()
     {
         var client = new InMemoryCosmosClient();
@@ -2610,14 +2602,6 @@ public class DatabaseNameForbiddenCharsDivergentTests
     }
 
     [Fact]
-    public async Task DivergentBehavior_CreateDatabaseAsync_NameWithForwardSlash_Accepted()
-    {
-        var client = new InMemoryCosmosClient();
-        var response = await client.CreateDatabaseAsync("db/name");
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-    }
-
-    [Fact(Skip = SkipReason)]
     public async Task CreateDatabaseAsync_NameWithBackslash_ShouldThrowBadRequest()
     {
         var client = new InMemoryCosmosClient();
@@ -2626,14 +2610,6 @@ public class DatabaseNameForbiddenCharsDivergentTests
     }
 
     [Fact]
-    public async Task DivergentBehavior_CreateDatabaseAsync_NameWithBackslash_Accepted()
-    {
-        var client = new InMemoryCosmosClient();
-        var response = await client.CreateDatabaseAsync("db\\name");
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-    }
-
-    [Fact(Skip = SkipReason)]
     public async Task CreateDatabaseAsync_NameWithHash_ShouldThrowBadRequest()
     {
         var client = new InMemoryCosmosClient();
@@ -2642,36 +2618,17 @@ public class DatabaseNameForbiddenCharsDivergentTests
     }
 
     [Fact]
-    public async Task DivergentBehavior_CreateDatabaseAsync_NameWithHash_Accepted()
-    {
-        var client = new InMemoryCosmosClient();
-        var response = await client.CreateDatabaseAsync("db#name");
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-    }
-
-    [Fact(Skip = SkipReason)]
     public async Task CreateDatabaseAsync_NameWithQuestionMark_ShouldThrowBadRequest()
     {
         var client = new InMemoryCosmosClient();
         var act = () => client.CreateDatabaseAsync("db?name");
         await act.Should().ThrowAsync<CosmosException>();
     }
-
-    [Fact]
-    public async Task DivergentBehavior_CreateDatabaseAsync_NameWithQuestionMark_Accepted()
-    {
-        var client = new InMemoryCosmosClient();
-        var response = await client.CreateDatabaseAsync("db?name");
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-    }
 }
 
 public class DatabaseNameLengthDivergentTests
 {
-    private const string SkipReason = "Real Cosmos DB enforces a 255-character maximum for database " +
-        "names. The in-memory emulator does not enforce this limit.";
-
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task CreateDatabaseAsync_NameExceeds255Chars_ShouldThrowBadRequest()
     {
         var client = new InMemoryCosmosClient();
@@ -2679,39 +2636,17 @@ public class DatabaseNameLengthDivergentTests
         var act = () => client.CreateDatabaseAsync(longName);
         await act.Should().ThrowAsync<CosmosException>();
     }
-
-    [Fact]
-    public async Task DivergentBehavior_CreateDatabaseAsync_LongName_Accepted()
-    {
-        var client = new InMemoryCosmosClient();
-        var longName = new string('a', 256);
-        var response = await client.CreateDatabaseAsync(longName);
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-    }
 }
 
 public class ContainerNameForbiddenCharsDivergentTests
 {
-    private const string SkipReason = "Real Cosmos DB rejects container names containing `/`, `\\`, " +
-        "`#`, or `?` characters with 400 BadRequest. The in-memory emulator does not validate resource ID " +
-        "character restrictions.";
-
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task CreateContainerAsync_NameWithForwardSlash_ShouldThrowBadRequest()
     {
         var client = new InMemoryCosmosClient();
         var db = (await client.CreateDatabaseAsync("test-db")).Database;
         var act = () => db.CreateContainerAsync("ctr/name", "/pk");
         await act.Should().ThrowAsync<CosmosException>();
-    }
-
-    [Fact]
-    public async Task DivergentBehavior_CreateContainerAsync_NameWithForwardSlash_Accepted()
-    {
-        var client = new InMemoryCosmosClient();
-        var db = (await client.CreateDatabaseAsync("test-db")).Database;
-        var response = await db.CreateContainerAsync("ctr/name", "/pk");
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 }
 
@@ -3159,11 +3094,7 @@ public class UserReplaceIdDivergentTests
 
 public class DatabaseCancellationTokenDivergentTests
 {
-    private const string SkipReason = "Real Cosmos DB SDK respects CancellationToken on all async " +
-        "operations. The in-memory emulator returns Task.FromResult(...) synchronously, bypassing " +
-        "cancellation token checks entirely.";
-
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task CreateDatabaseAsync_WithCancelledToken_ShouldThrow()
     {
         var client = new InMemoryCosmosClient();
@@ -3172,18 +3103,6 @@ public class DatabaseCancellationTokenDivergentTests
 
         var act = () => client.CreateDatabaseAsync("test-db", cancellationToken: cts.Token);
         await act.Should().ThrowAsync<OperationCanceledException>();
-    }
-
-    [Fact]
-    public async Task DivergentBehavior_CreateDatabaseAsync_CancellationToken_Ignored()
-    {
-        var client = new InMemoryCosmosClient();
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        // Emulator ignores CancellationToken — succeeds anyway
-        var response = await client.CreateDatabaseAsync("test-db", cancellationToken: cts.Token);
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 }
 
