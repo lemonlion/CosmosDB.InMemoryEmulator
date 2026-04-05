@@ -2032,7 +2032,7 @@ public class RealToFeedIteratorLinqDeepDiveTests : IAsyncLifetime
         results[2].Name.Should().Be("Bob");
     }
 
-    [Fact(Skip = "Cosmos SDK LINQ provider generates GROUP BY SQL that requires server-side aggregation pipeline. The FakeCosmosHandler query path has limited GROUP BY support when queries arrive through the real SDK HTTP path.")]
+    [Fact]
     public async Task ToFeedIterator_WithGroupBy_GroupsCorrectly()
     {
         await SeedAsync(
@@ -2042,28 +2042,7 @@ public class RealToFeedIteratorLinqDeepDiveTests : IAsyncLifetime
 
         var results = await DrainAsync(
             _realContainer.GetItemLinqQueryable<TestDocument>()
-                .GroupBy(d => d.Name)
-                .Select(g => new { Name = g.Key, Count = g.Count() })
-                .ToFeedIterator());
-
-        results.Should().HaveCount(2);
-    }
-
-    [Fact]
-    public async Task ToFeedIterator_WithGroupBy_Divergent_ThrowsOrReturnsUngrouped()
-    {
-        // DIVERGENT BEHAVIOUR: Cosmos SDK LINQ provider's GroupBy generates GROUP BY SQL
-        // that requires server-side aggregation. Through the FakeCosmosHandler, this may
-        // throw or return unexpected results because the query pipeline has limited GROUP BY
-        // support for LINQ-generated queries.
-        await SeedAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice", Value = 10 },
-            new TestDocument { Id = "2", PartitionKey = "pk", Name = "Alice", Value = 20 });
-
-        // Verify basic query still works (without GroupBy)
-        var results = await DrainAsync(
-            _realContainer.GetItemLinqQueryable<TestDocument>()
-                .Where(d => d.Name == "Alice")
+                .GroupBy(d => d.Name, (key, elements) => new { Name = key, Count = elements.Count() })
                 .ToFeedIterator());
 
         results.Should().HaveCount(2);

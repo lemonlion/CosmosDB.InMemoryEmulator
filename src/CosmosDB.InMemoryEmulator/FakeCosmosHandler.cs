@@ -707,7 +707,16 @@ public class FakeCosmosHandler : HttpMessageHandler
                     .FirstOrDefault(field => IsOrderByItemsArray(field.SqlExpr));
                 var isOrderByQuery = orderByItemsField is not null && parsed.OrderByFields is { Length: > 0 };
 
-                if (isOrderByQuery)
+                var groupByItemsField = parsed.SelectFields
+                    .FirstOrDefault(field => string.Equals(field.Alias, "groupByItems", StringComparison.OrdinalIgnoreCase));
+                var isGroupByQuery = groupByItemsField is not null && parsed.GroupByFields is { Length: > 0 };
+
+                if (isGroupByQuery)
+                {
+                    allDocuments = await HandleGroupByQueryAsync(
+                        parsed, queryBody, partitionKey, cancellationToken);
+                }
+                else if (isOrderByQuery)
                 {
                     var payloadField = parsed.SelectFields
                         .FirstOrDefault(field => string.Equals(field.Alias, "payload", StringComparison.OrdinalIgnoreCase))
@@ -806,6 +815,13 @@ public class FakeCosmosHandler : HttpMessageHandler
         }
 
         var documents = new List<JToken>();
+        // Determine if the payload is the full document or a projected expression.
+        // For DISTINCT+ORDER BY, the SDK rewrites payload as {"name": c.name} (an ObjectLiteral),
+        // meaning only the projected fields should be returned, not the full document.
+        var payloadField = parsed.SelectFields
+            .FirstOrDefault(f => string.Equals(f.Alias, payloadAlias, StringComparison.OrdinalIgnoreCase));
+        var fromAlias = parsed.FromAlias ?? "c";
+
         foreach (var doc in rawDocuments)
         {
             var orderByItems = new JArray();
@@ -819,12 +835,176 @@ public class FakeCosmosHandler : HttpMessageHandler
             {
                 ["_rid"] = doc["_rid"]?.ToString() ?? Guid.NewGuid().ToString("N")[..8],
                 [orderByAlias] = orderByItems,
-                [payloadAlias] = doc.DeepClone()
+                [payloadAlias] = BuildPayloadValue(doc, payloadField, fromAlias)
             };
             documents.Add(wrapped);
         }
 
         return documents;
+    }
+
+    /// <summary>
+    /// Builds the payload value for an ORDER BY-wrapped document.
+    /// For simple ORDER BY, the payload is the full document.
+    /// For DISTINCT+ORDER BY, the SDK rewrites the payload as an ObjectLiteral
+    /// (e.g. {"name": c.name}), so we project just those fields.
+    /// </summary>
+    private static JToken BuildPayloadValue(JObject doc, SelectField? payloadField, string fromAlias)
+    {
+        if (payloadField?.SqlExpr is ObjectLiteralExpression objLiteral)
+        {
+            var projected = new JObject();
+            foreach (var prop in objLiteral.Properties)
+            {
+                var exprStr = CosmosSqlParser.ExprToString(prop.Value);
+                var path = exprStr;
+                if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                    path = path[(fromAlias.Length + 1)..];
+                projected[prop.Key] = doc.SelectToken(path)?.DeepClone() ?? JValue.CreateNull();
+            }
+            return projected;
+        }
+
+        if (payloadField?.SqlExpr is IdentifierExpression id
+            && !string.Equals(id.Name, fromAlias, StringComparison.OrdinalIgnoreCase)
+            && !id.Name.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase)
+            && !id.Name.StartsWith(fromAlias + "[", StringComparison.OrdinalIgnoreCase))
+        {
+            var path = id.Name;
+            if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                path = path[(fromAlias.Length + 1)..];
+            return doc.SelectToken(path)?.DeepClone() ?? JValue.CreateNull();
+        }
+
+        return doc.DeepClone();
+    }
+
+    /// <summary>
+    /// Handles GROUP BY queries that the SDK has rewritten to the groupByItems + payload format.
+    /// Reconstructs the original GROUP BY query, executes on InMemoryContainer (which computes
+    /// final aggregates), then wraps results in the format the SDK's GroupByQueryPipelineStage expects.
+    /// </summary>
+    private async Task<List<JToken>> HandleGroupByQueryAsync(
+        CosmosSqlQuery parsed, JObject queryBody, PartitionKey? partitionKey,
+        CancellationToken cancellationToken)
+    {
+        var originalSql = ReconstructGroupByQuery(parsed);
+        var queryDef = BuildQueryDefinition(originalSql, queryBody);
+        var requestOptions = partitionKey is not null
+            ? new QueryRequestOptions { PartitionKey = partitionKey }
+            : null;
+        var rawResults = await DrainIterator(
+            _container.GetItemQueryIterator<JObject>(queryDef, requestOptions: requestOptions),
+            cancellationToken);
+
+        // Extract aggregate type info from the payload ObjectLiteral
+        var payloadField = parsed.SelectFields
+            .FirstOrDefault(f => string.Equals(f.Alias, "payload", StringComparison.OrdinalIgnoreCase));
+        var aggregateTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (payloadField?.SqlExpr is ObjectLiteralExpression payloadObj)
+        {
+            foreach (var prop in payloadObj.Properties)
+            {
+                if (prop.Value is ObjectLiteralExpression inner
+                    && inner.Properties.Length == 1
+                    && string.Equals(inner.Properties[0].Key, "item", StringComparison.OrdinalIgnoreCase)
+                    && inner.Properties[0].Value is FunctionCallExpression func)
+                {
+                    aggregateTypes[prop.Key] = func.FunctionName.ToUpperInvariant();
+                }
+            }
+        }
+
+        // Extract GROUP BY key result-property names from the payload ObjectLiteral.
+        // Non-aggregate properties in the payload correspond to the GROUP BY keys.
+        var groupByResultKeys = new List<string>();
+        if (payloadField?.SqlExpr is ObjectLiteralExpression payloadObjForKeys)
+        {
+            foreach (var prop in payloadObjForKeys.Properties)
+            {
+                if (!(prop.Value is ObjectLiteralExpression inner
+                    && inner.Properties.Length == 1
+                    && string.Equals(inner.Properties[0].Key, "item", StringComparison.OrdinalIgnoreCase)))
+                {
+                    groupByResultKeys.Add(prop.Key);
+                }
+            }
+        }
+
+        return rawResults.Select(doc =>
+        {
+            var jObj = doc as JObject ?? JObject.Parse(doc.ToString());
+
+            var groupByItems = new JArray();
+            foreach (var key in groupByResultKeys)
+            {
+                groupByItems.Add(new JObject { ["item"] = jObj.SelectToken(key)?.DeepClone() ?? JValue.CreateNull() });
+            }
+
+            var payload = new JObject();
+            foreach (var prop in jObj.Properties())
+            {
+                if (aggregateTypes.TryGetValue(prop.Name, out var aggType))
+                {
+                    JToken itemValue = aggType == "AVG"
+                        ? new JObject { ["sum"] = prop.Value, ["count"] = 1 }
+                        : prop.Value.DeepClone();
+                    payload[prop.Name] = new JObject { ["item"] = itemValue };
+                }
+                else
+                {
+                    payload[prop.Name] = prop.Value.DeepClone();
+                }
+            }
+
+            return (JToken)new JObject
+            {
+                ["groupByItems"] = groupByItems,
+                ["payload"] = payload
+            };
+        }).ToList();
+    }
+
+    /// <summary>
+    /// Reconstructs the original GROUP BY SQL from the SDK-rewritten format.
+    /// The SDK rewrites e.g. <c>SELECT c.name, COUNT(1) AS cnt FROM c GROUP BY c.name</c> to
+    /// <c>SELECT [{"item": c.name}] AS groupByItems, {"name": c.name, "cnt": {"item": COUNT(1)}} AS payload FROM c GROUP BY c.name</c>.
+    /// This method extracts the original SELECT fields from the payload ObjectLiteral.
+    /// </summary>
+    private static string ReconstructGroupByQuery(CosmosSqlQuery parsed)
+    {
+        var alias = parsed.FromAlias ?? "c";
+        var payloadField = parsed.SelectFields
+            .FirstOrDefault(f => string.Equals(f.Alias, "payload", StringComparison.OrdinalIgnoreCase));
+
+        if (payloadField?.SqlExpr is not ObjectLiteralExpression payloadObj)
+            throw new InvalidOperationException("Cannot reconstruct GROUP BY query: payload field not found.");
+
+        var selectParts = new List<string>();
+        foreach (var prop in payloadObj.Properties)
+        {
+            if (prop.Value is ObjectLiteralExpression inner
+                && inner.Properties.Length == 1
+                && string.Equals(inner.Properties[0].Key, "item", StringComparison.OrdinalIgnoreCase))
+            {
+                // Aggregate: {"alias": {"item": AGG(...)}}
+                selectParts.Add($"{CosmosSqlParser.ExprToString(inner.Properties[0].Value)} AS {prop.Key}");
+            }
+            else
+            {
+                // Plain field: {"alias": expr}
+                selectParts.Add($"{CosmosSqlParser.ExprToString(prop.Value)} AS {prop.Key}");
+            }
+        }
+
+        var sb = new StringBuilder($"SELECT {string.Join(", ", selectParts)} FROM {alias}");
+
+        if (parsed.WhereExpr is not null)
+            sb.Append($" WHERE {CosmosSqlParser.ExprToString(parsed.WhereExpr)}");
+
+        sb.Append($" GROUP BY {string.Join(", ", parsed.GroupByFields!)}");
+
+        return sb.ToString();
     }
 
     /// <summary>

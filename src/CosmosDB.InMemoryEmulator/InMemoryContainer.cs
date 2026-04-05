@@ -3370,12 +3370,7 @@ public class InMemoryContainer : Container
             var keyParts = new List<string>();
             foreach (var field in parsed.GroupByFields)
             {
-                var path = field;
-                if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
-                {
-                    path = path[(fromAlias.Length + 1)..];
-                }
-
+                var path = StripAliasPrefix(field, fromAlias);
                 var token = jObj.SelectToken(path);
                 keyParts.Add(token?.ToString() ?? "null");
             }
@@ -3396,11 +3391,7 @@ public class InMemoryContainer : Container
                 var projected = new JObject();
                 foreach (var field in parsed.SelectFields)
                 {
-                    var path = field.Expression;
-                    if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
-                    {
-                        path = path[(fromAlias.Length + 1)..];
-                    }
+                    var path = StripAliasPrefix(field.Expression, fromAlias);
 
                     var outputName = field.Alias ?? path.Split('.').Last();
                     projected[outputName] = jObj.SelectToken(path)?.DeepClone();
@@ -3495,11 +3486,7 @@ public class InMemoryContainer : Container
                 }
                 else
                 {
-                    var path = field.Expression;
-                    if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
-                    {
-                        path = path[(fromAlias.Length + 1)..];
-                    }
+                    var path = StripAliasPrefix(field.Expression, fromAlias);
 
                     var fieldOutputName = field.Alias ?? path.Split('.').Last();
                     var jObj = JsonParseHelpers.ParseJson(groupItems[0]);
@@ -3526,11 +3513,7 @@ public class InMemoryContainer : Container
         foreach (var json in items)
         {
             var jObj = JsonParseHelpers.ParseJson(json);
-            var path = innerArg;
-            if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
-            {
-                path = path[(fromAlias.Length + 1)..];
-            }
+            var path = StripAliasPrefix(innerArg, fromAlias);
 
             var token = jObj.SelectToken(path);
             if (token != null && double.TryParse(token.ToString(), NumberStyles.Any,
@@ -3548,11 +3531,7 @@ public class InMemoryContainer : Container
         foreach (var json in items)
         {
             var jObj = JsonParseHelpers.ParseJson(json);
-            var path = innerArg;
-            if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
-            {
-                path = path[(fromAlias.Length + 1)..];
-            }
+            var path = StripAliasPrefix(innerArg, fromAlias);
 
             var token = jObj.SelectToken(path);
             if (token != null && token.Type != JTokenType.Null)
@@ -3573,6 +3552,26 @@ public class InMemoryContainer : Container
         }
 
         return EvaluateWhereExpression(having, resultObj, fromAlias, parameters, null);
+    }
+
+    /// <summary>
+    /// Strips the FROM alias prefix from a property path, handling both
+    /// dot notation (c.name) and bracket notation (c["name"]) from the LINQ provider.
+    /// </summary>
+    private static string StripAliasPrefix(string path, string fromAlias)
+    {
+        if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+            return path[(fromAlias.Length + 1)..];
+        if (path.StartsWith(fromAlias + "[", StringComparison.OrdinalIgnoreCase))
+        {
+            var bracketPart = path[fromAlias.Length..]; // ["name"] or ['name']
+            if (bracketPart.StartsWith("[\"") && bracketPart.EndsWith("\"]"))
+                return bracketPart[2..^2]; // Extract property name from ["prop"]
+            if (bracketPart.StartsWith("['") && bracketPart.EndsWith("']"))
+                return bracketPart[2..^2]; // Extract property name from ['prop']
+            return bracketPart;
+        }
+        return path;
     }
 
     private static object EvaluateHavingSqlExpression(

@@ -7,7 +7,7 @@
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 		<IsPackable>true</IsPackable>
 		<PackageId>CosmosDB.InMemoryEmulator</PackageId>
-		<Version>2.0.61</Version>
+		<Version>2.0.62</Version>
 		<Authors>lemonlion</Authors>
 		<Description>A high-fidelity, in-memory implementation of the Azure Cosmos DB SDK for .NET — purpose-built for fast, reliable component and integration testing. Drop-in replacements for CosmosClient, Container, and Database with full CRUD, SQL queries, LINQ, patch, bulk operations, batches, change feed, fault injection, and DI integration. Zero production code changes required with FakeCosmosHandler.</Description>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>

@@ -921,22 +921,9 @@ public class FakeCosmosHandlerTests
     //  this entirely.
     // ═══════════════════════════════════════════════════════════════════════════
 
-    [Fact(Skip = "C11: GROUP BY via FakeCosmosHandler fails on non-Windows. " +
-                  "The SDK's GroupByQueryPipelineStage expects rewritten documents with " +
-                  "groupByItems + payload wrapping (similar to ORDER BY). The handler returns " +
-                  "raw query results which the SDK cannot parse. Fixing requires implementing " +
-                  "GROUP BY document wrapping (partial aggregates per group key per range). " +
-                  "GROUP BY works via InMemoryContainer directly — this only affects the " +
-                  "FakeCosmosHandler HTTP pipeline.")]
+    [Fact]
     public async Task Handler_GroupByQuery_ReturnsGroupedResults()
     {
-        // Expected real Cosmos behavior:
-        // "SELECT c.name, COUNT(1) AS cnt FROM c GROUP BY c.name" with 2 Alices and 1 Bob
-        // should return [{name:"Alice",cnt:2}, {name:"Bob",cnt:1}].
-        //
-        // What happens: The SDK's GroupByQueryPipelineStage throws
-        // Newtonsoft.Json.JsonException: "Unexpected character while parsing path indexer: {"
-        // because it tries to parse the raw query results as groupByItems-wrapped documents.
         var container = new InMemoryContainer("test", "/partitionKey");
         await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 }, new PartitionKey("pk1"));
         await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Alice", Value = 20 }, new PartitionKey("pk1"));
@@ -955,40 +942,6 @@ public class FakeCosmosHandlerTests
             results.AddRange(page);
         }
 
-        results.Should().HaveCount(2);
-        results.Should().Contain(r => r["name"]!.ToString() == "Alice" && r["cnt"]!.Value<int>() == 2);
-        results.Should().Contain(r => r["name"]!.ToString() == "Bob" && r["cnt"]!.Value<int>() == 1);
-    }
-
-    /// <summary>
-    /// Sister test for C11: Demonstrates that GROUP BY works correctly via InMemoryContainer
-    /// directly, bypassing the FakeCosmosHandler HTTP pipeline. This proves the SQL engine
-    /// supports GROUP BY — the limitation is only in the SDK's response format expectations
-    /// when going through FakeCosmosHandler.
-    /// </summary>
-    [Fact]
-    public async Task Handler_GroupByQuery_Divergent_WorksViaContainerDirectly()
-    {
-        // GROUP BY works via InMemoryContainer.GetItemQueryIterator() directly.
-        // The limitation is only in the FakeCosmosHandler HTTP path, where the SDK's
-        // GroupByQueryPipelineStage expects a specific rewritten document format.
-        // Users should use InMemoryCosmosClient or UseInMemoryCosmosDB() DI for
-        // GROUP BY support — FakeCosmosHandler is the low-level HTTP approach.
-        var container = new InMemoryContainer("test", "/partitionKey");
-        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 }, new PartitionKey("pk1"));
-        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Alice", Value = 20 }, new PartitionKey("pk1"));
-        await container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Bob", Value = 30 }, new PartitionKey("pk1"));
-
-        var results = new List<JObject>();
-        var iterator = container.GetItemQueryIterator<JObject>(
-            new QueryDefinition("SELECT c.name, COUNT(1) AS cnt FROM c GROUP BY c.name"));
-        while (iterator.HasMoreResults)
-        {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
-        }
-
-        // This succeeds — GROUP BY is supported at the container level
         results.Should().HaveCount(2);
         results.Should().Contain(r => r["name"]!.ToString() == "Alice" && r["cnt"]!.Value<int>() == 2);
         results.Should().Contain(r => r["name"]!.ToString() == "Bob" && r["cnt"]!.Value<int>() == 1);
@@ -1990,7 +1943,7 @@ public class FakeCosmosHandlerDeepDiveTests
         results.Should().HaveCount(3);
     }
 
-    [Fact(Skip = "DISTINCT + ORDER BY combination requires specialized document wrapping combining both distinctType Ordered and orderByItems. The SDK merge-sort pipeline may reject the response format.")]
+    [Fact]
     public async Task Handler_DistinctWithOrderBy_ReturnsOrderedDistinctValues()
     {
         var container = new InMemoryContainer("do-test", "/partitionKey");
@@ -2005,52 +1958,32 @@ public class FakeCosmosHandlerDeepDiveTests
         var results = new List<JObject>();
         var iter = cosmosContainer.GetItemQueryIterator<JObject>("SELECT DISTINCT c.name FROM c ORDER BY c.name ASC");
         while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
         results.Should().HaveCount(2);
     }
 
     [Fact]
-    public async Task Handler_DistinctWithOrderBy_Divergent_WorksViaContainerDirectly()
-    {
-        var container = new InMemoryContainer("do-sister", "/partitionKey");
-        await container.CreateItemAsync(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Bob" }, new PartitionKey("pk1"));
-        await container.CreateItemAsync(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Alice" }, new PartitionKey("pk1"));
-        await container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Bob" }, new PartitionKey("pk1"));
-
-        var results = new List<JObject>();
-        var iter = container.GetItemQueryIterator<JObject>(new QueryDefinition("SELECT DISTINCT c.name FROM c ORDER BY c.name ASC"));
-        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
-
-        results.Should().HaveCount(2);
-    }
-
-    [Fact(Skip = "Multiple aggregates in one SELECT require the SDK to reconstruct the row from partial aggregates. The document wrapping format for multi-aggregate is undocumented.")]
     public async Task Handler_MultipleAggregates_ReturnsAllValues()
     {
-        var (_, handler, client, cosmosContainer) = await SetupWithData(5);
-        using var _ = handler; using var __ = client;
-
-        var iter = cosmosContainer.GetItemQueryIterator<JObject>(
-            "SELECT COUNT(1) as cnt, SUM(c.value) as total FROM c");
-        var results = new List<JObject>();
-        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
-        results.Should().ContainSingle();
-    }
-
-    [Fact]
-    public async Task Handler_MultipleAggregates_Divergent_WorksViaContainerDirectly()
-    {
         var container = new InMemoryContainer("multi-agg", "/partitionKey");
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < 5; i++)
             await container.CreateItemAsync(
-                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}", Value = (i + 1) * 10 },
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}", Value = i * 10 },
                 new PartitionKey("pk1"));
 
-        var results = new List<JObject>();
-        var iter = container.GetItemQueryIterator<JObject>(new QueryDefinition("SELECT COUNT(1) as cnt, SUM(c.value) as total FROM c"));
-        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "multi-agg");
 
+        // Use c["value"] bracket notation because 'value' is a reserved keyword
+        // in the SDK's ServiceInterop query plan generator.
+        var iter = cosmosContainer.GetItemQueryIterator<JObject>(
+            "SELECT COUNT(1) as cnt, SUM(c[\"value\"]) as total FROM c");
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
         results.Should().ContainSingle();
-        results[0]["cnt"]!.Value<long>().Should().Be(3);
-        results[0]["total"]!.Value<long>().Should().Be(60);
+        results[0]["cnt"]!.Value<long>().Should().Be(5);
+        results[0]["total"]!.Value<long>().Should().Be(100);
     }
+
 }
