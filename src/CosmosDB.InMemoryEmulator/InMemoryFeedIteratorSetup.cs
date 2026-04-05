@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using CosmosDB.InMemoryEmulator.ProductionExtensions;
 
 namespace CosmosDB.InMemoryEmulator;
@@ -80,6 +81,22 @@ public static class InMemoryFeedIteratorSetup
         MethodCache.Clear();
     }
 
+    /// <summary>
+    /// Side-channel for passing MaxItemCount from GetItemLinqQueryable to the feed iterator factory.
+    /// Set by InMemoryContainer.GetItemLinqQueryable, consumed by CreateInMemoryFeedIterator.
+    /// </summary>
+    internal static readonly AsyncLocal<int?> MaxItemCountLocal = new();
+
+    internal static int? LastMaxItemCount
+    {
+        get => MaxItemCountLocal.Value;
+        set => MaxItemCountLocal.Value = value;
+    }
+
     private static InMemoryFeedIterator<T> CreateInMemoryFeedIterator<T>(IQueryable<T> queryable)
-        => new(queryable.AsEnumerable());
+    {
+        var maxItemCount = MaxItemCountLocal.Value;
+        MaxItemCountLocal.Value = null;
+        return new InMemoryFeedIterator<T>(queryable.AsEnumerable(), maxItemCount);
+    }
 }

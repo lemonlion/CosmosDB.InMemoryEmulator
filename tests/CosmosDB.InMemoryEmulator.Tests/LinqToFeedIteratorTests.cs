@@ -1305,9 +1305,7 @@ public class LinqDivergentBehaviorTests
         results.Should().HaveCount(3);
     }
 
-    [Fact(Skip = "DIVERGENT: InMemoryFeedIteratorSetup.CreateInMemoryFeedIterator does not pass " +
-        "maxItemCount, so all items are returned in a single page. Real ToFeedIterator() respects " +
-        "QueryRequestOptions.MaxItemCount for server-side paging.")]
+    [Fact]
     public async Task ToFeedIteratorOverridable_MaxItemCount_ShouldPaginate()
     {
         await SeedData();
@@ -1318,21 +1316,6 @@ public class LinqDivergentBehaviorTests
         var pageCount = 0;
         while (iterator.HasMoreResults) { await iterator.ReadNextAsync(); pageCount++; }
         pageCount.Should().Be(3, "should page through 3 items one at a time");
-        InMemoryFeedIteratorSetup.Deregister();
-    }
-
-    [Fact]
-    public async Task ToFeedIteratorOverridable_AllItemsInOnePage_DivergentBehavior()
-    {
-        // DIVERGENT: All items returned in a single page regardless of MaxItemCount
-        await SeedData();
-        InMemoryFeedIteratorSetup.Register();
-        var q = _container.GetItemLinqQueryable<TestDocument>(true,
-            requestOptions: new QueryRequestOptions { MaxItemCount = 1 });
-        var iterator = q.ToFeedIteratorOverridable();
-        var pageCount = 0;
-        while (iterator.HasMoreResults) { await iterator.ReadNextAsync(); pageCount++; }
-        pageCount.Should().Be(1, "all items come in one page — MaxItemCount is not wired through");
         InMemoryFeedIteratorSetup.Deregister();
     }
 }

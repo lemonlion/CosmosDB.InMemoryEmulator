@@ -2957,44 +2957,6 @@ public class TriggerPatchBatchDivergentTests
         results.Should().BeEmpty("failed transaction should not appear in change feed");
     }
 
-    [Fact]
-    public async Task DivergentBehavior_ChangeFeed_NotRolledBack_OnPostTriggerFailure()
-    {
-        // DIVERGENT BEHAVIOR: The emulator records change feed entries before
-        // post-trigger execution. If the post-trigger fails and the write is
-        // rolled back, the change feed still contains the orphan entry.
-        var container = new InMemoryContainer("test", "/pk");
-        container.UseJsTriggers();
-        await container.Scripts.CreateTriggerAsync(new TriggerProperties
-        {
-            Id = "throw-post",
-            TriggerType = TriggerType.Post,
-            TriggerOperation = TriggerOperation.All,
-            Body = "function run() { throw new Error('fail'); }"
-        });
-
-        try
-        {
-            await container.CreateItemAsync(
-                JObject.FromObject(new { id = "1", pk = "a" }),
-                new PartitionKey("a"),
-                new ItemRequestOptions { PostTriggers = new List<string> { "throw-post" } });
-        }
-        catch { }
-
-        var cfIterator = container.GetChangeFeedIterator<JObject>(
-            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.LatestVersion);
-        var results = new List<JObject>();
-        while (cfIterator.HasMoreResults)
-        {
-            var batch = await cfIterator.ReadNextAsync();
-            if (batch.StatusCode == HttpStatusCode.NotModified) break;
-            results.AddRange(batch);
-        }
-
-        results.Should().ContainSingle("orphan entry remains in change feed");
-    }
-
     [Fact(Skip = "Real Cosmos DB can fire triggers on TransactionalBatch operations. " +
         "The emulator's TransactionalBatch does not support trigger options.")]
     public async Task Trigger_Js_TransactionalBatch_NotSupported()

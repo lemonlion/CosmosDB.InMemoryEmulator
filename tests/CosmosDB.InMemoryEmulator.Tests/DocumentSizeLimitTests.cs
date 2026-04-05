@@ -1219,21 +1219,6 @@ public class StoredProcedureSizeLimitDivergenceTests
 
         response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
     }
-
-    [Fact]
-    public async Task StoredProcedure_OversizedResponse_EmulatorAllowsIt_Divergence()
-    {
-        var container = new InMemoryContainer("test", "/partitionKey");
-        container.RegisterStoredProcedure("bigSproc", (pk, args) => new string('x', 5 * 1024 * 1024));
-
-        var scripts = container.Scripts;
-        var response = await scripts.ExecuteStoredProcedureAsync<string>(
-            "bigSproc", new PartitionKey("pk1"), []);
-
-        // Emulator allows 5MB response — no size validation on sproc output
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        response.Resource.Length.Should().Be(5 * 1024 * 1024);
-    }
 }
 
 #endregion

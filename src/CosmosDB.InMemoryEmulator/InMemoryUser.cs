@@ -44,6 +44,9 @@ public sealed class InMemoryUser : User
         RequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
+        if (userProperties.Id != _id)
+            throw new CosmosException($"Replacing user id is not allowed.", HttpStatusCode.BadRequest, 0, string.Empty, 0);
+
         _id = userProperties.Id;
         return Task.FromResult(BuildUserResponse(CreateUserProperties(_id), HttpStatusCode.OK));
     }

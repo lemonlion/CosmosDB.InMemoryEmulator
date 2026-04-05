@@ -122,6 +122,7 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
             var headers = new Headers();
             headers["x-ms-activity-id"] = ActivityId;
             headers["x-ms-request-charge"] = RequestCharge.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            headers["x-ms-item-count"] = items.Count.ToString();
             if (continuationToken != null) headers["x-ms-continuation"] = continuationToken;
             Headers = headers;
         }

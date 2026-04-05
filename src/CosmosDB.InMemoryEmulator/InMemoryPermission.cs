@@ -59,7 +59,9 @@ public sealed class InMemoryPermission : Permission
         RequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
-        _parentPermissions.TryRemove(Id, out _);
+        if (!_parentPermissions.TryRemove(Id, out _))
+            throw new CosmosException($"Permission '{Id}' not found.", HttpStatusCode.NotFound, 0, string.Empty, 0);
+
         return Task.FromResult(BuildPermissionResponse(null, HttpStatusCode.NoContent));
     }
 

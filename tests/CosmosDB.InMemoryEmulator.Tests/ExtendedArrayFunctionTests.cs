@@ -1613,28 +1613,13 @@ public class ExtendedArrayFunctionTests
 
     // ── Nested Array Elements ───────────────────────────────────────────────
 
-    [Fact(Skip = "Nested array elements in set operations require consistent hashing for JArray types. The current implementation may produce inconsistent hashes for equivalent arrays. Object/array element matching in set operations is an uncommon real-world pattern.")]
+    [Fact]
     public async Task SetIntersect_WithNestedArrayElements_Works()
     {
         await SeedTypeDiverseItems();
         // Item 14: tags=[[1,2],[3,4]] — intersect with [[1,2]] → [[1,2]]
         var query = new QueryDefinition("SELECT SetIntersect(c.tags, [[1,2]]) AS common FROM c WHERE c.id = '14'");
         var results = await QueryAll<JObject>(query);
-        results.Should().ContainSingle();
-        var common = (JArray)results[0]["common"]!;
-        common.Should().ContainSingle();
-    }
-
-    [Fact]
-    public async Task SetIntersect_WithNestedArrayElements_EmulatorBehavior()
-    {
-        await SeedTypeDiverseItems();
-        // Item 14: tags=[[1,2],[3,4]] — intersect with [[1,2]]
-        // After JTokenValueComparer hash fix, this should now work correctly
-        var query = new QueryDefinition("SELECT SetIntersect(c.tags, [[1,2]]) AS common FROM c WHERE c.id = '14'");
-
-        var results = await QueryAll<JObject>(query);
-
         results.Should().ContainSingle();
         var common = (JArray)results[0]["common"]!;
         common.Should().ContainSingle();

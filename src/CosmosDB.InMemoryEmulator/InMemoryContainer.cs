@@ -225,6 +225,8 @@ public class InMemoryContainer : Container
 
     internal void SetParentDatabase(string databaseId) => _parentDatabaseId = databaseId;
 
+    internal bool ExplicitlyCreated { get; set; } = true;
+
     /// <summary>Returns a stubbed <see cref="Microsoft.Azure.Cosmos.Conflicts"/> instance.</summary>
     public override Conflicts Conflicts => Substitute.For<Conflicts>();
 
@@ -513,7 +515,6 @@ public class InMemoryContainer : Container
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
         _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
-        RecordChangeFeed(itemId, pk, _items[key]);
 
         try
         {
@@ -526,6 +527,8 @@ public class InMemoryContainer : Container
             _timestamps.TryRemove(key, out _);
             throw;
         }
+
+        RecordChangeFeed(itemId, pk, _items[key]);
 
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         return Task.FromResult(CreateItemResponse(item, HttpStatusCode.Created, etag, suppressContent));
@@ -1242,12 +1245,16 @@ public class InMemoryContainer : Container
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(items);
         var results = new List<T>();
+        var etagParts = new List<string>();
         foreach (var (itemId, pk) in items)
         {
             var pkStr = PartitionKeyToString(pk);
             var key = ItemKey(itemId, pkStr);
             if (_items.TryGetValue(key, out var json) && !IsExpired(key))
             {
+                var jObj = JsonParseHelpers.ParseJson(json);
+                var itemEtag = jObj["_etag"]?.ToString();
+                if (itemEtag != null) etagParts.Add(itemEtag);
                 var deserialized = JsonConvert.DeserializeObject<T>(json, JsonSettings);
                 if (deserialized is not null)
                 {
@@ -1255,7 +1262,13 @@ public class InMemoryContainer : Container
                 }
             }
         }
-        return Task.FromResult<FeedResponse<T>>(new InMemoryFeedResponse<T>(results));
+        var compositeEtag = etagParts.Count > 0 ? $"\"{string.Join(",", etagParts)}\"" : null;
+        if (readManyRequestOptions?.IfNoneMatchEtag != null && compositeEtag == readManyRequestOptions.IfNoneMatchEtag)
+        {
+            return Task.FromResult<FeedResponse<T>>(new InMemoryFeedResponse<T>(
+                Array.Empty<T>(), HttpStatusCode.NotModified, compositeEtag));
+        }
+        return Task.FromResult<FeedResponse<T>>(new InMemoryFeedResponse<T>(results, etag: compositeEtag));
     }
 
     public override Task<ResponseMessage> ReadManyItemsStreamAsync(
@@ -1384,6 +1397,7 @@ public class InMemoryContainer : Container
         bool allowSynchronousQueryExecution = false, string continuationToken = null,
         QueryRequestOptions requestOptions = null, CosmosLinqSerializerOptions linqSerializerOptions = null)
     {
+        InMemoryFeedIteratorSetup.LastMaxItemCount = requestOptions?.MaxItemCount;
         return GetAllItemsForPartition(requestOptions)
             .Select(json => JsonConvert.DeserializeObject<T>(json, JsonSettings))
             .AsQueryable()
@@ -1739,6 +1753,10 @@ public class InMemoryContainer : Container
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (!ExplicitlyCreated && _items.IsEmpty)
+        {
+            throw new CosmosException($"Container '{Id}' not found.", HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+        }
         _containerProperties.IndexingPolicy = IndexingPolicy;
         _containerProperties.DefaultTimeToLive = DefaultTimeToLive;
         var r = Substitute.For<ContainerResponse>();
@@ -2668,6 +2686,7 @@ public class InMemoryContainer : Container
                         HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
                 _storedProcedureProperties[props.Id] = props;
+                EnrichStoredProcedureSystemProperties(props);
                 var r = Substitute.For<StoredProcedureResponse>();
                 r.StatusCode.Returns(HttpStatusCode.Created);
                 r.Resource.Returns(props);
@@ -2684,6 +2703,7 @@ public class InMemoryContainer : Container
                     throw new CosmosException($"StoredProcedure '{sprocId}' not found.",
                         HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
+                EnrichStoredProcedureSystemProperties(props);
                 var r = Substitute.For<StoredProcedureResponse>();
                 r.StatusCode.Returns(HttpStatusCode.OK);
                 r.Resource.Returns(props);
@@ -2701,6 +2721,7 @@ public class InMemoryContainer : Container
                         HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
                 _storedProcedureProperties[props.Id] = props;
+                EnrichStoredProcedureSystemProperties(props);
                 var r = Substitute.For<StoredProcedureResponse>();
                 r.StatusCode.Returns(HttpStatusCode.OK);
                 r.Resource.Returns(props);
@@ -2748,11 +2769,29 @@ public class InMemoryContainer : Container
                 {
                     try
                     {
-                        handlerResult = handler(pk, sprocArgs);
+                        var task = Task.Run(() => handler(pk, sprocArgs));
+                        if (!task.Wait(TimeSpan.FromSeconds(10)))
+                        {
+                            throw new CosmosException(
+                                $"Stored procedure '{sprocId}' exceeded the 10-second execution timeout.",
+                                HttpStatusCode.RequestTimeout, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                        }
+                        handlerResult = task.Result;
                     }
                     catch (CosmosException)
                     {
                         throw;
+                    }
+                    catch (AggregateException ae) when (ae.InnerException is CosmosException)
+                    {
+                        throw ae.InnerException;
+                    }
+                    catch (AggregateException ae)
+                    {
+                        var inner = ae.InnerException ?? ae;
+                        throw new CosmosException(
+                            $"Stored procedure '{sprocId}' failed: {inner.Message}",
+                            HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                     }
                     catch (Exception ex)
                     {
@@ -2761,6 +2800,14 @@ public class InMemoryContainer : Container
                             HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                     }
                     hasHandler = true;
+
+                    const int MaxResponseSize = 2 * 1024 * 1024;
+                    if (handlerResult != null && Encoding.UTF8.GetByteCount(handlerResult) > MaxResponseSize)
+                    {
+                        throw new CosmosException(
+                            $"Stored procedure '{sprocId}' response exceeds the 2MB size limit.",
+                            (HttpStatusCode)413, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                    }
                 }
                 var r = Substitute.For<StoredProcedureExecuteResponse<string>>();
                 r.StatusCode.Returns(HttpStatusCode.OK);
@@ -2859,7 +2906,54 @@ public class InMemoryContainer : Container
                 return r;
             });
 
+        scripts.GetStoredProcedureQueryIterator<StoredProcedureProperties>(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<QueryRequestOptions>())
+            .Returns(_ => new InMemoryFeedIterator<StoredProcedureProperties>(
+                () => _storedProcedureProperties.Values.ToList()));
+
+        scripts.GetStoredProcedureQueryIterator<StoredProcedureProperties>(
+            Arg.Any<QueryDefinition>(), Arg.Any<string>(), Arg.Any<QueryRequestOptions>())
+            .Returns(_ => new InMemoryFeedIterator<StoredProcedureProperties>(
+                () => _storedProcedureProperties.Values.ToList()));
+
+        scripts.GetTriggerQueryIterator<TriggerProperties>(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<QueryRequestOptions>())
+            .Returns(_ => new InMemoryFeedIterator<TriggerProperties>(
+                () => _triggerProperties.Values.ToList()));
+
+        scripts.GetTriggerQueryIterator<TriggerProperties>(
+            Arg.Any<QueryDefinition>(), Arg.Any<string>(), Arg.Any<QueryRequestOptions>())
+            .Returns(_ => new InMemoryFeedIterator<TriggerProperties>(
+                () => _triggerProperties.Values.ToList()));
+
+        scripts.GetUserDefinedFunctionQueryIterator<UserDefinedFunctionProperties>(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<QueryRequestOptions>())
+            .Returns(_ => new InMemoryFeedIterator<UserDefinedFunctionProperties>(
+                () => _udfProperties.Values.ToList()));
+
+        scripts.GetUserDefinedFunctionQueryIterator<UserDefinedFunctionProperties>(
+            Arg.Any<QueryDefinition>(), Arg.Any<string>(), Arg.Any<QueryRequestOptions>())
+            .Returns(_ => new InMemoryFeedIterator<UserDefinedFunctionProperties>(
+                () => _udfProperties.Values.ToList()));
+
         return scripts;
+    }
+
+    private static void EnrichStoredProcedureSystemProperties(StoredProcedureProperties props)
+    {
+        // ETag and SelfLink are read-only on StoredProcedureProperties,
+        // so we use Newtonsoft.Json to populate the internal backing fields.
+        var json = JsonConvert.SerializeObject(props);
+        var jObj = JObject.Parse(json);
+        if (jObj["_etag"] == null || string.IsNullOrEmpty(jObj["_etag"]?.ToString()))
+            jObj["_etag"] = $"\"{Guid.NewGuid()}\"";
+        if (jObj["_self"] == null || string.IsNullOrEmpty(jObj["_self"]?.ToString()))
+            jObj["_self"] = $"dbs/db/colls/col/sprocs/{props.Id}";
+        if (jObj["_ts"] == null || jObj["_ts"]!.Type == JTokenType.Null)
+            jObj["_ts"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (jObj["_rid"] == null || string.IsNullOrEmpty(jObj["_rid"]?.ToString()))
+            jObj["_rid"] = Convert.ToBase64String(Guid.NewGuid().ToByteArray()).TrimEnd('=');
+        JsonConvert.PopulateObject(jObj.ToString(), props);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -6333,21 +6427,27 @@ public class InMemoryContainer : Container
     private sealed class InMemoryFeedResponse<T> : FeedResponse<T>
     {
         private readonly IReadOnlyList<T> _items;
-        public InMemoryFeedResponse(IReadOnlyList<T> items)
+        private readonly HttpStatusCode _statusCode;
+        private readonly string _etag;
+
+        public InMemoryFeedResponse(IReadOnlyList<T> items, HttpStatusCode statusCode = HttpStatusCode.OK, string etag = null)
         {
             _items = items;
+            _statusCode = statusCode;
+            _etag = etag;
             Headers["x-ms-request-charge"] = SyntheticRequestCharge.ToString();
+            Headers["x-ms-item-count"] = items.Count.ToString();
         }
         public override Headers Headers { get; } = new();
         public override IEnumerable<T> Resource => _items;
-        public override HttpStatusCode StatusCode => HttpStatusCode.OK;
+        public override HttpStatusCode StatusCode => _statusCode;
         public override CosmosDiagnostics Diagnostics => FakeDiagnostics;
         public override int Count => _items.Count;
         public override string IndexMetrics => null;
         public override string ContinuationToken => null;
         public override double RequestCharge => SyntheticRequestCharge;
         public override string ActivityId { get; } = Guid.NewGuid().ToString();
-        public override string ETag => null;
+        public override string ETag => _etag;
         public override IEnumerator<T> GetEnumerator() => _items.GetEnumerator();
     }
 

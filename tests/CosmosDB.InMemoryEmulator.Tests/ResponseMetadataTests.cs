@@ -1711,8 +1711,20 @@ public class ResponseMetadataDivergentBehaviorDeepDiveTests
         page.ContinuationToken.Should().Be("2");
     }
 
-    [Fact(Skip = "Real Cosmos: x-ms-item-count header present on FeedResponse. Emulator: FeedResponse.Headers may not include x-ms-item-count.")]
-    public void FeedResponseHeaders_ShouldContainItemCount() { }
+    [Fact]
+    public async Task FeedResponseHeaders_ShouldContainItemCount()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+        await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "B" }, new PartitionKey("pk"));
+
+        var iter = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        var page = await iter.ReadNextAsync();
+
+        page.Headers["x-ms-item-count"].Should().Be("2");
+    }
 
     [Fact]
     public async Task FeedResponseHeaders_EmulatorBehavior_HasActivityIdAndRequestCharge()

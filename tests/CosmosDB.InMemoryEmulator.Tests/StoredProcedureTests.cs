@@ -903,17 +903,23 @@ public class StoredProcedureDivergentBehaviorTests
 
     // ─── Divergent: GetStoredProcedureQueryIterator not implemented ──────
 
-    [Fact(Skip = "Real Cosmos DB supports GetStoredProcedureQueryIterator() to enumerate all stored " +
-                  "procedures in a container. The emulator does not implement this method because " +
-                  "it would require returning a FeedIterator<StoredProcedureProperties> from " +
-                  "the NSubstitute Scripts proxy and maintaining queryable metadata. " +
-                  "Workaround: track stored procedure IDs in your test setup code.")]
-    public void GetStoredProcedureQueryIterator_ShouldEnumerateProcedures()
+    [Fact]
+    public async Task GetStoredProcedureQueryIterator_ShouldEnumerateProcedures()
     {
-        // Expected real Cosmos behavior:
-        // var iterator = scripts.GetStoredProcedureQueryIterator<StoredProcedureProperties>();
-        // while (iterator.HasMoreResults) { var page = await iterator.ReadNextAsync(); ... }
-        // Would return all stored procedures created on the container.
+        var scripts = _container.Scripts;
+        await scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp1", Body = "function(){}" });
+        await scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp2", Body = "function(){}" });
+
+        var iterator = scripts.GetStoredProcedureQueryIterator<StoredProcedureProperties>();
+        var all = new List<StoredProcedureProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            all.AddRange(page);
+        }
+
+        all.Should().HaveCount(2);
+        all.Select(s => s.Id).Should().BeEquivalentTo("sp1", "sp2");
     }
 
     // ─── Divergent: Only ExecuteStoredProcedureAsync<string> is mocked ──
@@ -1005,40 +1011,52 @@ public class StoredProcedureDivergentBehaviorTests
 
     // ─── Divergent: No 10-second timeout (T43) ─────────────────────────
 
-    [Fact(Skip = "Real Cosmos DB enforces a 10-second execution timeout for stored procedures. If a sproc " +
-                  "exceeds this limit, the request fails with HTTP 408 (Request Timeout). The emulator does " +
-                  "not enforce any timeout. Handlers run to completion regardless of execution time. " +
-                  "Workaround: implement your own CancellationTokenSource with timeout in the handler.")]
-    public void ExecuteStoredProcedure_10SecondTimeout_ShouldThrow()
+    [Fact]
+    public async Task ExecuteStoredProcedure_10SecondTimeout_ShouldThrow()
     {
-        // Expected real Cosmos behavior:
-        // A stored procedure running longer than 10 seconds is terminated with HTTP 408.
+        _container.RegisterStoredProcedure("spSlow", (pk, args) =>
+        {
+            Thread.Sleep(TimeSpan.FromSeconds(15));
+            return "done";
+        });
+
+        var act = () => _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spSlow", new PartitionKey("pk1"), Array.Empty<dynamic>());
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.RequestTimeout);
     }
 
     // ─── Divergent: No 2MB response limit (T44) ────────────────────────
 
-    [Fact(Skip = "Real Cosmos DB limits stored procedure response body size to 2MB. Exceeding this throws " +
-                  "an error. The emulator does not enforce response size limits. The handler can return any " +
-                  "size string.")]
-    public void ExecuteStoredProcedure_2MBResponseLimit_ShouldFail()
+    [Fact]
+    public async Task ExecuteStoredProcedure_2MBResponseLimit_ShouldFail()
     {
-        // Expected real Cosmos behavior:
-        // A stored procedure returning more than 2MB of data fails.
+        _container.RegisterStoredProcedure("spBig", (pk, args) =>
+        {
+            return new string('x', 3 * 1024 * 1024);
+        });
+
+        var act = () => _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spBig", new PartitionKey("pk1"), Array.Empty<dynamic>());
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ((int)ex.Which.StatusCode).Should().Be(413);
     }
 
     // ─── Divergent: No system metadata on resources (T45) ──────────────
 
-    [Fact(Skip = "Real Cosmos DB returns _self, _rid, _ts, _etag on StoredProcedureProperties after " +
-                  "Create/Read/Replace. The emulator's NSubstitute-based CRUD mocks return the exact " +
-                  "StoredProcedureProperties object passed by the caller, which does not include these " +
-                  "system-generated fields. Workaround: set them manually on the properties before calling " +
-                  "CreateStoredProcedureAsync if your tests need these fields.")]
+    [Fact]
     public async Task StoredProcedure_SystemMetadata_ShouldHaveEtagTimestamp()
     {
-        // Expected real Cosmos behavior:
-        // var response = await scripts.CreateStoredProcedureAsync(props);
-        // response.Resource.ETag should not be null
-        // response.Resource.SelfLink should not be null
+        var scripts = _container.Scripts;
+        var response = await scripts.CreateStoredProcedureAsync(
+            new StoredProcedureProperties { Id = "spMeta", Body = "function(){}" });
+
+        response.Resource.ETag.Should().NotBeNullOrEmpty();
+        response.Resource.SelfLink.Should().NotBeNullOrEmpty();
+
+        var readResponse = await scripts.ReadStoredProcedureAsync("spMeta");
+        readResponse.Resource.ETag.Should().NotBeNullOrEmpty();
+        readResponse.Resource.SelfLink.Should().NotBeNullOrEmpty();
     }
 
     // ─── Divergent: No partition scoping (T46) ─────────────────────────

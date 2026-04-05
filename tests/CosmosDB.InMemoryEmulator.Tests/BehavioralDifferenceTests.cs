@@ -490,20 +490,6 @@ public class BehavioralDifferenceTests
     // ══════════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos ReadContainerAsync returns 404 after
-    /// DeleteContainerAsync. InMemoryContainer still returns the container properties.
-    /// </summary>
-    [Fact]
-    public async Task DeleteContainer_ReadContainerAsync_StillWorks_UnlikeRealCosmos()
-    {
-        await _container.DeleteContainerAsync();
-
-        var response = await _container.ReadContainerAsync();
-        response.Should().NotBeNull();
-        response.Resource.Should().NotBeNull();
-    }
-
-    /// <summary>
     /// BEHAVIORAL DIFFERENCE: Real Cosmos enforces IndexingPolicy exclusion paths
     /// so excluded paths are not indexed and cannot be queried efficiently.
     /// InMemoryContainer stores the policy but all queries scan every item regardless.

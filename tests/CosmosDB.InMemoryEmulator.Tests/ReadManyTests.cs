@@ -664,15 +664,20 @@ public class ReadManyOptionsDeepDiveTests
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
-    [Fact(Skip = "IfNoneMatchEtag is ignored. Emulator always returns 200 OK. " +
-                 "See sister test: ReadMany_WithIfNoneMatchEtag_AlwaysReturns200_Divergent")]
+    [Fact]
     public async Task ReadMany_WithIfNoneMatchEtag_Returns304WhenUnchanged()
     {
         await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
         var first = await _container.ReadManyItemsAsync<JObject>(
             new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
         first.StatusCode.Should().Be(HttpStatusCode.OK);
-        // Real Cosmos would return 304 on second call with matching ETag
+        first.ETag.Should().NotBeNullOrEmpty();
+
+        var second = await _container.ReadManyItemsAsync<JObject>(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) },
+            new ReadManyRequestOptions { IfNoneMatchEtag = first.ETag });
+        second.StatusCode.Should().Be(HttpStatusCode.NotModified);
+        second.Count.Should().Be(0);
     }
 
     [Fact]
@@ -725,14 +730,6 @@ public class ReadManyResponseDeepDiveTests
         await Seed();
         var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
         result.Diagnostics.Should().NotBeNull();
-    }
-
-    [Fact]
-    public async Task ReadMany_ETag_IsNull()
-    {
-        await Seed();
-        var result = await _container.ReadManyItemsAsync<JObject>(new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
-        result.ETag.Should().BeNull();
     }
 
     [Fact]

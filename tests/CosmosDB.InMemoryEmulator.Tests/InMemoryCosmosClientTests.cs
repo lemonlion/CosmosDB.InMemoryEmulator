@@ -606,8 +606,7 @@ public class InMemoryCosmosClientEdgeCaseTests
 
 public class InMemoryCosmosClientAutoCreationDivergentTests
 {
-    [Fact(Skip = "In real Cosmos DB SDK, GetDatabase returns a proxy. ReadAsync on a non-existent " +
-        "database returns 404 NotFound. InMemoryCosmosClient auto-creates the database for test convenience.")]
+    [Fact]
     public async Task GetDatabase_NonExistent_ReadAsync_Throws404()
     {
         var client = new InMemoryCosmosClient();
@@ -619,20 +618,6 @@ public class InMemoryCosmosClientAutoCreationDivergentTests
     }
 
     [Fact]
-    public async Task DivergentBehavior_GetDatabase_LazilyCreatesDatabase()
-    {
-        // DIVERGENT BEHAVIOR: Real SDK's GetDatabase returns a proxy that
-        // fails with 404 on ReadAsync if the database doesn't exist.
-        // The emulator auto-creates for test convenience.
-        var client = new InMemoryCosmosClient();
-        var db = client.GetDatabase("auto-created");
-
-        var response = await db.ReadAsync();
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-    }
-
-    [Fact(Skip = "In real Cosmos DB SDK, GetContainer returns a proxy. ReadContainerAsync on a non-existent " +
-        "container returns 404 NotFound. InMemoryCosmosClient auto-creates both database and container.")]
     public async Task GetContainer_NonExistent_ReadAsync_Throws404()
     {
         var client = new InMemoryCosmosClient();

@@ -1372,7 +1372,12 @@ public class RealToFeedIteratorStringTests : IAsyncLifetime
         results.Should().ContainSingle().Which.Should().Be("Ali");
     }
 
-    [Fact(Skip = "Emulator SQL parser does not support LENGTH() function in LINQ-generated SQL. Cosmos SDK translates d.Name.Length to LENGTH(c.name) which the FakeCosmosHandler query pipeline cannot evaluate.")]
+    [Fact(Skip = "LENGTH() is implemented in InMemoryContainer.EvaluateSqlFunction but the FakeCosmosHandler " +
+        "query pipeline SimplifySdkQuery/HandleQueryAsync path does not fully evaluate WHERE clauses " +
+        "containing function calls like LENGTH(c[\"name\"]) > 3. The SDK translates d.Name.Length " +
+        "to LENGTH(c[\"name\"]) which passes through as a function-call comparison that the handler's " +
+        "simplified query path cannot resolve. Fix requires enhancing FakeCosmosHandler to delegate " +
+        "full WHERE evaluation to InMemoryContainer rather than simplifying the SQL.")]
     public async Task ToFeedIterator_WithStringLength_FiltersCorrectly()
     {
         await SeedAsync(

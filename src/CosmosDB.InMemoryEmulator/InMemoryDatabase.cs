@@ -24,6 +24,7 @@ namespace CosmosDB.InMemoryEmulator;
 public class InMemoryDatabase : Database
 {
     private readonly ConcurrentDictionary<string, InMemoryContainer> _containers = new();
+    private readonly ConcurrentDictionary<string, bool> _explicitlyCreatedContainers = new();
     private readonly ConcurrentDictionary<string, InMemoryUser> _users = new();
     private readonly InMemoryCosmosClient _client;
     private int _throughput = 400;
@@ -59,7 +60,10 @@ public class InMemoryDatabase : Database
     /// <param name="partitionKeyPath">The JSON path to the partition key field (e.g. <c>/partitionKey</c>).</param>
     internal InMemoryContainer GetOrCreateContainer(string containerId, string partitionKeyPath = "/id")
     {
-        var container = _containers.GetOrAdd(containerId, name => new InMemoryContainer(name, partitionKeyPath));
+        var isNew = false;
+        var container = _containers.GetOrAdd(containerId, name => { isNew = true; return new InMemoryContainer(name, partitionKeyPath); });
+        if (isNew)
+            container.ExplicitlyCreated = false;
         container.OnDeleted ??= () => _containers.TryRemove(containerId, out _);
         container.SetParentDatabase(Id);
         return container;
@@ -75,6 +79,8 @@ public class InMemoryDatabase : Database
         var container = _containers.GetOrAdd(id, name => { created = true; return new InMemoryContainer(name, partitionKeyPath); });
         container.OnDeleted ??= () => _containers.TryRemove(id, out _);
         container.SetParentDatabase(Id);
+        container.ExplicitlyCreated = true;
+        _explicitlyCreatedContainers.TryAdd(id, true);
         var response = BuildContainerResponse(container, partitionKeyPath, created ? HttpStatusCode.Created : HttpStatusCode.OK);
         return Task.FromResult(response);
     }
@@ -90,6 +96,8 @@ public class InMemoryDatabase : Database
         var container = _containers.GetOrAdd(id, _ => { created = true; return new InMemoryContainer(containerProperties); });
         container.OnDeleted ??= () => _containers.TryRemove(id, out _);
         container.SetParentDatabase(Id);
+        container.ExplicitlyCreated = true;
+        _explicitlyCreatedContainers.TryAdd(id, true);
         if (created)
         {
             container.DefaultTimeToLive = containerProperties.DefaultTimeToLive;
@@ -120,10 +128,12 @@ public class InMemoryDatabase : Database
         var container = new InMemoryContainer(id, partitionKeyPath);
         container.OnDeleted = () => _containers.TryRemove(id, out _);
         container.SetParentDatabase(Id);
+        container.ExplicitlyCreated = true;
         if (!_containers.TryAdd(id, container))
         {
             throw new CosmosException("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
         }
+        _explicitlyCreatedContainers.TryAdd(id, true);
         var response = BuildContainerResponse(container, partitionKeyPath, HttpStatusCode.Created);
         return Task.FromResult(response);
     }
@@ -139,6 +149,7 @@ public class InMemoryDatabase : Database
         var container = new InMemoryContainer(containerProperties);
         container.OnDeleted = () => _containers.TryRemove(id, out _);
         container.SetParentDatabase(Id);
+        container.ExplicitlyCreated = true;
         container.DefaultTimeToLive = containerProperties.DefaultTimeToLive;
         if (containerProperties.IndexingPolicy is not null)
             container.IndexingPolicy = containerProperties.IndexingPolicy;
@@ -146,6 +157,7 @@ public class InMemoryDatabase : Database
         {
             throw new CosmosException("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
         }
+        _explicitlyCreatedContainers.TryAdd(id, true);
         var response = BuildContainerResponse(container, containerProperties, HttpStatusCode.Created);
         return Task.FromResult(response);
     }
@@ -169,6 +181,7 @@ public class InMemoryDatabase : Database
         var container = new InMemoryContainer(containerProperties);
         container.OnDeleted = () => _containers.TryRemove(id, out _);
         container.SetParentDatabase(Id);
+        container.ExplicitlyCreated = true;
         container.DefaultTimeToLive = containerProperties.DefaultTimeToLive;
         if (containerProperties.IndexingPolicy is not null)
             container.IndexingPolicy = containerProperties.IndexingPolicy;
@@ -176,6 +189,7 @@ public class InMemoryDatabase : Database
         {
             return Task.FromResult(CreateStreamResponse(HttpStatusCode.Conflict));
         }
+        _explicitlyCreatedContainers.TryAdd(id, true);
         return Task.FromResult(CreateStreamResponse(HttpStatusCode.Created));
     }
 
@@ -191,6 +205,11 @@ public class InMemoryDatabase : Database
     public override Container GetContainer(string id)
     {
         return GetOrCreateContainer(id);
+    }
+
+    internal bool IsContainerExplicitlyCreated(string id)
+    {
+        return _explicitlyCreatedContainers.ContainsKey(id);
     }
 
     // ── GetContainerQueryIterator ───────────────────────────────────────────
@@ -217,6 +236,10 @@ public class InMemoryDatabase : Database
     public override Task<DatabaseResponse> ReadAsync(
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        if (_client != null && !_client.IsDatabaseExplicitlyCreated(Id))
+        {
+            throw new CosmosException($"Database '{Id}' not found.", HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), 0);
+        }
         var response = Substitute.For<DatabaseResponse>();
         response.Database.Returns(this);
         response.StatusCode.Returns(HttpStatusCode.OK);

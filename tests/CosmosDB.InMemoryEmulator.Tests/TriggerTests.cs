@@ -1106,20 +1106,33 @@ public class TriggerDivergentBehaviorTests
         await Task.CompletedTask;
     }
 
-    [Fact(Skip = "Divergent: real Cosmos DB implements GetTriggerQueryIterator")]
+    [Fact]
     public async Task GetTriggerQueryIterator_ReturnsAllTriggers_RealCosmos()
     {
-        await Task.CompletedTask;
-    }
+        var scripts = _container.Scripts;
+        await scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "t1", Body = "function(){}", TriggerType = TriggerType.Pre, TriggerOperation = TriggerOperation.Create
+        });
+        await scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "t2", Body = "function(){}", TriggerType = TriggerType.Post, TriggerOperation = TriggerOperation.All
+        });
 
-    [Fact(Skip = "Divergent: real Cosmos DB cleans change feed on post-trigger rollback")]
-    public async Task PostTriggerRollback_ChangeFeedClean_RealCosmos()
-    {
-        await Task.CompletedTask;
+        var iterator = scripts.GetTriggerQueryIterator<TriggerProperties>();
+        var all = new List<TriggerProperties>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            all.AddRange(page);
+        }
+
+        all.Should().HaveCount(2);
+        all.Select(t => t.Id).Should().BeEquivalentTo("t1", "t2");
     }
 
     [Fact]
-    public async Task PostTriggerRollback_ChangeFeedRetainsEntry_InEmulator()
+    public async Task PostTriggerRollback_ChangeFeedClean_RealCosmos()
     {
         var checkpoint = _container.GetChangeFeedCheckpoint();
 
@@ -1130,11 +1143,15 @@ public class TriggerDivergentBehaviorTests
             JObject.FromObject(new { id = "1", pk = "a" }),
             new PartitionKey("a"),
             new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
-
         await act.Should().ThrowAsync<CosmosException>();
 
-        // The change feed entry persists even though the write was rolled back
-        var newCheckpoint = _container.GetChangeFeedCheckpoint();
-        newCheckpoint.Should().BeGreaterThan(checkpoint);
+        var changes = _container.GetChangeFeedIterator<JObject>(checkpoint);
+        var items = new List<JObject>();
+        while (changes.HasMoreResults)
+        {
+            var page = await changes.ReadNextAsync();
+            items.AddRange(page);
+        }
+        items.Should().BeEmpty("change feed should not contain entries for rolled-back operations");
     }
 }

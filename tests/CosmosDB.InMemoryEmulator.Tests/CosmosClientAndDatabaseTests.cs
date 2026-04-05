@@ -943,10 +943,10 @@ public class CosmosClientAndDatabaseTests
         await db.CreateUserAsync("user1");
         var user = db.GetUser("user1");
 
-        var response = await user.ReplaceAsync(new UserProperties("user1-renamed"));
+        var response = await user.ReplaceAsync(new UserProperties("user1"));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        response.Resource.Id.Should().Be("user1-renamed");
+        response.Resource.Id.Should().Be("user1");
     }
 
     [Fact]
@@ -1750,28 +1750,6 @@ public class ReadStreamAsyncResponseTests
 }
 
 
-public class CosmosClientAutoCreateDatabaseDivergentBehaviorTests
-{
-    /// <summary>
-    /// BEHAVIORAL DIFFERENCE: InMemoryCosmosClient.GetDatabase auto-creates databases.
-    /// Real Cosmos DB GetDatabase returns a proxy reference that does NOT create the database;
-    /// the first actual operation (ReadAsync, CreateContainerAsync, etc.) would fail with
-    /// NotFound if the database doesn't exist.
-    /// InMemoryCosmosClient creates the database lazily on GetDatabase to simplify test setup.
-    /// </summary>
-    [Fact]
-    public async Task GetDatabase_AutoCreatesDatabase_InMemory()
-    {
-        var client = new InMemoryCosmosClient();
-        var db = client.GetDatabase("auto-created");
-
-        // InMemory: database is already created, so ReadAsync succeeds
-        var response = await db.ReadAsync();
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-    }
-}
-
-
 public class ReadThroughputAsyncDetailedTests
 {
     [Fact]
@@ -2263,22 +2241,6 @@ public class CreateContainerIfNotExistsNullPkFallbackTests
 public class DeleteThenReuseReferenceTests
 {
     [Fact]
-    public async Task DeleteAsync_ThenReadAsync_OnSameReference_StillReturnsOk()
-    {
-        // DIVERGENT: Real Cosmos DB would return 404 on ReadAsync after deletion.
-        // InMemoryDatabase.ReadAsync always returns OK because it doesn't check
-        // whether the database is still registered with the parent client.
-        var client = new InMemoryCosmosClient();
-        await client.CreateDatabaseAsync("test-db");
-        var db = client.GetDatabase("test-db");
-
-        await db.DeleteAsync();
-
-        var response = await db.ReadAsync();
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-    }
-
-    [Fact]
     public async Task DeleteAsync_ThenCreateContainer_OnSameReference_ShouldWork()
     {
         var client = new InMemoryCosmosClient();
@@ -2372,23 +2334,6 @@ public class PermissionErrorHandlingTests
 
         await act.Should().ThrowAsync<CosmosException>()
             .Where(e => e.StatusCode == HttpStatusCode.NotFound);
-    }
-
-    [Fact]
-    public async Task Permission_DeleteAsync_NonExistent_DoesNotThrow()
-    {
-        // DIVERGENT: Real Cosmos DB would return 404. InMemoryPermission.DeleteAsync
-        // does a quiet TryRemove which is a no-op if not found.
-        var client = new InMemoryCosmosClient();
-        await client.CreateDatabaseAsync("test-db");
-        var db = client.GetDatabase("test-db");
-        await db.CreateUserAsync("user1");
-        var user = db.GetUser("user1");
-        var perm = user.GetPermission("nonexistent");
-
-        var response = await perm.DeleteAsync();
-
-        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
     }
 }
 
@@ -2632,11 +2577,7 @@ public class ContainerNameForbiddenCharsDivergentTests
 
 public class ReadAfterDeleteDivergentTests
 {
-    private const string SkipReason = "Real Cosmos DB's Database.ReadAsync returns 404 NotFound when " +
-        "the database has been deleted and you use a stale reference. InMemoryDatabase.ReadAsync always " +
-        "returns 200 OK because the InMemoryDatabase object still exists in memory after deletion.";
-
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task ReadAsync_AfterDelete_ShouldThrowNotFound()
     {
         var client = new InMemoryCosmosClient();
@@ -2665,11 +2606,7 @@ public class ConcurrentDeleteDatabaseTests
 
 public class ContainerOpsAfterDbDeleteDivergentTests
 {
-    private const string SkipReason = "Real Cosmos DB returns 404 on any container operation when the " +
-        "parent database has been deleted. InMemoryDatabase.DeleteAsync clears the internal _containers " +
-        "dictionary but the stale InMemoryDatabase reference remains functional.";
-
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task ContainerOps_AfterDatabaseDelete_ShouldThrowNotFound()
     {
         var client = new InMemoryCosmosClient();
@@ -2703,12 +2640,7 @@ public class ContainerOpsAfterDbDeleteDivergentTests
 
 public class GetContainerAutoCreateDivergentTests
 {
-    private const string SkipReason = "Real Cosmos DB's Database.GetContainer returns a lightweight " +
-        "proxy reference. It does NOT create the container. The first data operation on a non-existent " +
-        "container throws CosmosException with 404 NotFound. InMemoryDatabase.GetContainer uses " +
-        "ConcurrentDictionary.GetOrAdd, creating the container lazily.";
-
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task GetContainer_NonExistent_ShouldBeProxyOnly()
     {
         var client = new InMemoryCosmosClient();
@@ -2911,24 +2843,12 @@ public class QueryIteratorContinuationTokenDivergentTests
 
 public class CreateDatabaseStreamResponseBodyDivergentTests
 {
-    private const string SkipReason = "Real Cosmos DB includes the resource properties JSON in the " +
-        "response body of CreateDatabaseStreamAsync. The in-memory emulator returns ResponseMessage " +
-        "with Content = null.";
-
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task CreateDatabaseStreamAsync_ResponseBody_ShouldContainJson()
     {
         var client = new InMemoryCosmosClient();
         var response = await client.CreateDatabaseStreamAsync(new DatabaseProperties("test-db"));
         response.Content.Should().NotBeNull();
-    }
-
-    [Fact]
-    public async Task DivergentBehavior_CreateDatabaseStreamAsync_ResponseBodyIsNull()
-    {
-        var client = new InMemoryCosmosClient();
-        var response = await client.CreateDatabaseStreamAsync(new DatabaseProperties("test-db"));
-        response.Content.Should().BeNull("emulator returns ResponseMessage with no content body");
     }
 }
 
@@ -2950,11 +2870,7 @@ public class DeleteStreamAsyncResponseBodyDivergentTests
 
 public class PermissionDeleteNonExistentDivergentTests
 {
-    private const string SkipReason = "Real Cosmos DB returns 404 NotFound when deleting a permission " +
-        "that doesn't exist. InMemoryPermission.DeleteAsync uses TryRemove which is a no-op for " +
-        "non-existent keys, always returning 204 NoContent.";
-
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task Permission_DeleteAsync_NonExistent_ShouldThrowNotFound()
     {
         var client = new InMemoryCosmosClient();
@@ -2967,23 +2883,6 @@ public class PermissionDeleteNonExistentDivergentTests
 
         var act = () => perm.DeleteAsync();
         await act.Should().ThrowAsync<CosmosException>();
-    }
-
-    [Fact]
-    public async Task DivergentBehavior_Permission_DeleteAsync_NonExistent_Returns204()
-    {
-        var client = new InMemoryCosmosClient();
-        var db = (await client.CreateDatabaseAsync("test-db")).Database;
-        var user = (await db.CreateUserAsync("user1")).User;
-        await user.CreatePermissionAsync(new PermissionProperties("p1", PermissionMode.All, db.GetContainer("c1")));
-
-        var perm = user.GetPermission("p1");
-        await perm.DeleteAsync();
-
-        // Second delete — emulator returns 204 silently
-        var response = await perm.DeleteAsync();
-        response.StatusCode.Should().Be(HttpStatusCode.NoContent,
-            "emulator returns 204 even for non-existent permissions");
     }
 }
 
@@ -3014,27 +2913,6 @@ public class PermissionQueryDefinitionOverloadTests
 public class UserReplaceIdDivergentTests
 {
     [Fact]
-    public async Task User_ReplaceAsync_DoesNotRenameInParentDictionary()
-    {
-        var client = new InMemoryCosmosClient();
-        var db = (await client.CreateDatabaseAsync("test-db")).Database;
-        await db.CreateUserAsync("user1");
-
-        var user = db.GetUser("user1");
-        await user.ReplaceAsync(new UserProperties("user1-renamed"));
-
-        // The user's Id changed internally...
-        user.Id.Should().Be("user1-renamed");
-
-        // ...but the old key still works in the parent DB
-        var sameUser = db.GetUser("user1");
-        sameUser.Should().NotBeNull();
-    }
-
-    private const string SkipReason = "Real Cosmos DB's User.ReplaceAsync does not allow changing the " +
-        "user Id. The Id in the replacement UserProperties must match the existing user's Id.";
-
-    [Fact(Skip = SkipReason)]
     public async Task User_ReplaceAsync_ChangingId_ShouldPreserveConsistency()
     {
         var client = new InMemoryCosmosClient();
@@ -3044,23 +2922,6 @@ public class UserReplaceIdDivergentTests
         // Real SDK would reject this
         var act = () => user.ReplaceAsync(new UserProperties("user1-renamed"));
         await act.Should().ThrowAsync<CosmosException>();
-    }
-
-    [Fact]
-    public async Task DivergentBehavior_User_ReplaceAsync_ChangingId_InternalStateOnly()
-    {
-        var client = new InMemoryCosmosClient();
-        var db = (await client.CreateDatabaseAsync("test-db")).Database;
-        await db.CreateUserAsync("user1");
-        var user = db.GetUser("user1");
-
-        await user.ReplaceAsync(new UserProperties("user1-renamed"));
-
-        // Internal Id changed
-        user.Id.Should().Be("user1-renamed");
-        // But stored under old key — new key auto-creates a different user
-        var newUser = db.GetUser("user1-renamed");
-        newUser.Id.Should().Be("user1-renamed", "GetUser auto-creates with the new name");
     }
 }
 

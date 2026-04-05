@@ -41,6 +41,7 @@ namespace CosmosDB.InMemoryEmulator;
 public class InMemoryCosmosClient : CosmosClient
 {
     private readonly ConcurrentDictionary<string, InMemoryDatabase> _databases = new();
+    private readonly ConcurrentDictionary<string, bool> _explicitlyCreatedDatabases = new();
     private bool _disposed;
 
     private static readonly Uri EmulatorEndpoint = new("https://localhost:8081/");
@@ -75,6 +76,7 @@ public class InMemoryCosmosClient : CosmosClient
         ValidateResourceName(id, "Database");
         var created = false;
         var database = _databases.GetOrAdd(id, name => { created = true; return new InMemoryDatabase(name, this); });
+        _explicitlyCreatedDatabases.TryAdd(id, true);
         var response = BuildDatabaseResponse(database, created ? HttpStatusCode.Created : HttpStatusCode.OK);
         return Task.FromResult(response);
     }
@@ -108,6 +110,7 @@ public class InMemoryCosmosClient : CosmosClient
         {
             throw new CosmosException("Database already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
         }
+        _explicitlyCreatedDatabases.TryAdd(id, true);
         var response = BuildDatabaseResponse(database, HttpStatusCode.Created);
         return Task.FromResult(response);
     }
@@ -133,15 +136,21 @@ public class InMemoryCosmosClient : CosmosClient
         {
             return Task.FromResult(CreateStreamResponse(HttpStatusCode.Conflict));
         }
-        return Task.FromResult(CreateStreamResponse(HttpStatusCode.Created));
+        _explicitlyCreatedDatabases.TryAdd(id, true);
+        return Task.FromResult(CreateStreamResponse(HttpStatusCode.Created, databaseProperties));
     }
 
-    private static ResponseMessage CreateStreamResponse(HttpStatusCode statusCode)
+    private static ResponseMessage CreateStreamResponse(HttpStatusCode statusCode, DatabaseProperties databaseProperties = null)
     {
         var msg = new ResponseMessage(statusCode);
         msg.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
         msg.Headers["x-ms-request-charge"] = "1";
         msg.Headers["x-ms-session-token"] = "0:0#1";
+        if (databaseProperties != null)
+        {
+            var json = Newtonsoft.Json.JsonConvert.SerializeObject(databaseProperties);
+            msg.Content = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+        }
         return msg;
     }
 
@@ -250,7 +259,13 @@ public class InMemoryCosmosClient : CosmosClient
 
     internal bool RemoveDatabase(string id)
     {
+        _explicitlyCreatedDatabases.TryRemove(id, out _);
         return _databases.TryRemove(id, out _);
+    }
+
+    internal bool IsDatabaseExplicitlyCreated(string id)
+    {
+        return _explicitlyCreatedDatabases.ContainsKey(id);
     }
 
     /// <summary>
