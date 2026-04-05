@@ -39,6 +39,11 @@ public class JintTriggerEngine : IJsTriggerEngine
                             getBody: function() { return __getBody(); },
                             setBody: function(doc) { __setBody(doc); }
                         };
+                    },
+                    getCollection: function() {
+                        return {
+                            getSelfLink: function() { return ""; }
+                        };
                     }
                 };
             }
@@ -66,9 +71,10 @@ public class JintTriggerEngine : IJsTriggerEngine
         return document;
     }
 
-    public void ExecutePostTrigger(string jsBody, JObject document)
+    public JObject? ExecutePostTrigger(string jsBody, JObject document)
     {
         var bodyJson = document.ToString(Newtonsoft.Json.Formatting.None);
+        JsValue? updatedBody = null;
 
         var engine = new Engine(options =>
         {
@@ -80,13 +86,26 @@ public class JintTriggerEngine : IJsTriggerEngine
         var jsDoc = engine.Evaluate($"({bodyJson})");
 
         // Wire up the Cosmos DB server-side post-trigger API
+        // Post-triggers have access to both getResponse() and getRequest()
         engine.SetValue("__getBody", new Func<JsValue>(() => jsDoc));
+        engine.SetValue("__setBody", new Action<JsValue>(val => updatedBody = val));
         engine.Execute("""
             function getContext() {
                 return {
                     getResponse: function() {
                         return {
+                            getBody: function() { return __getBody(); },
+                            setBody: function(doc) { __setBody(doc); }
+                        };
+                    },
+                    getRequest: function() {
+                        return {
                             getBody: function() { return __getBody(); }
+                        };
+                    },
+                    getCollection: function() {
+                        return {
+                            getSelfLink: function() { return ""; }
                         };
                     }
                 };
@@ -104,6 +123,15 @@ public class JintTriggerEngine : IJsTriggerEngine
                 $"Post-trigger failed: {ex.Message}",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
+
+        if (updatedBody is not null)
+        {
+            engine.SetValue("__toSerialize", updatedBody);
+            var json = engine.Evaluate("JSON.stringify(__toSerialize)").AsString();
+            return JObject.Parse(json);
+        }
+
+        return null;
     }
 
     private static void InvokeFirstFunction(Engine engine, string jsBody)

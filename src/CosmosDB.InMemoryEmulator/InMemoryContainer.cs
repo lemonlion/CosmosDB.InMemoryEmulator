@@ -84,6 +84,13 @@ public class InMemoryContainer : Container
     /// </summary>
     public IJsTriggerEngine JsTriggerEngine { get; set; }
 
+    /// <summary>
+    /// Optional JavaScript stored procedure engine. When set, stored procedures that have a
+    /// <see cref="StoredProcedureProperties.Body"/> but no C# handler will be executed via this engine.
+    /// Set by calling <c>UseJsStoredProcedures()</c> from the <c>CosmosDB.InMemoryEmulator.JsTriggers</c> package.
+    /// </summary>
+    public ISprocEngine SprocEngine { get; set; }
+
     private sealed record RegisteredTrigger(
         TriggerType TriggerType,
         TriggerOperation TriggerOperation,
@@ -2357,7 +2364,28 @@ public class InMemoryContainer : Container
                         HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
 
+                var originalId = jObj["id"]?.ToString();
+                var pkPath = PartitionKeyPaths[0].TrimStart('/');
+                var originalPk = jObj.SelectToken(pkPath)?.ToString();
+
                 jObj = JsTriggerEngine.ExecutePreTrigger(props.Body, jObj);
+
+                // Validate the trigger did not change id or partition key
+                var newId = jObj["id"]?.ToString();
+                var newPk = jObj.SelectToken(pkPath)?.ToString();
+                if (!string.Equals(originalId, newId, StringComparison.Ordinal))
+                {
+                    throw new CosmosException(
+                        $"Pre-trigger '{name}' is not allowed to modify the document id.",
+                        HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                }
+                if (!string.Equals(originalPk, newPk, StringComparison.Ordinal))
+                {
+                    throw new CosmosException(
+                        $"Pre-trigger '{name}' is not allowed to modify the partition key.",
+                        HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                }
+
                 continue;
             }
 
@@ -2877,6 +2905,26 @@ public class InMemoryContainer : Container
                             $"Stored procedure '{sprocId}' response exceeds the 2MB size limit.",
                             (HttpStatusCode)413, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                     }
+                }
+                else if (SprocEngine is not null
+                    && _storedProcedureProperties.TryGetValue(sprocId, out var sprocProps)
+                    && sprocProps.Body is not null)
+                {
+                    try
+                    {
+                        handlerResult = SprocEngine.Execute(sprocProps.Body, pk, sprocArgs);
+                    }
+                    catch (CosmosException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new CosmosException(
+                            $"Stored procedure '{sprocId}' failed: {ex.Message}",
+                            HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                    }
+                    hasHandler = true;
                 }
                 var r = Substitute.For<StoredProcedureExecuteResponse<string>>();
                 r.StatusCode.Returns(HttpStatusCode.OK);

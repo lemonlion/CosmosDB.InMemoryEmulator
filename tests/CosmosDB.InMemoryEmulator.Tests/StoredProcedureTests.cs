@@ -1,5 +1,6 @@
 using System.Net;
 using AwesomeAssertions;
+using CosmosDB.InMemoryEmulator.JsTriggers;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Scripts;
 using Newtonsoft.Json;
@@ -861,15 +862,11 @@ public class StoredProcedureDivergentBehaviorTests
 
     // ─── Divergent: Real Cosmos executes JavaScript server-side ──────────
 
-    [Fact(Skip = "Real Cosmos DB executes the JavaScript body of stored procedures server-side. " +
-                  "The emulator stores JavaScript bodies via CreateStoredProcedureAsync but does not " +
-                  "interpret them. Instead, use RegisterStoredProcedure() to provide C# handler logic. " +
-                  "For JavaScript trigger execution, use the CosmosDB.InMemoryEmulator.JsTriggers package.")]
+    [Fact]
     public async Task ExecuteStoredProcedure_JavaScriptBody_ShouldExecute()
     {
-        // Expected real Cosmos behavior:
-        // Creating a sproc with a JS body and then executing it would run that JavaScript.
-        // E.g. function(prefix) { var context = getContext(); ... }
+        _container.UseJsStoredProcedures();
+
         var scripts = _container.Scripts;
         await scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
         {
@@ -879,25 +876,6 @@ public class StoredProcedureDivergentBehaviorTests
 
         var result = await scripts.ExecuteStoredProcedureAsync<string>(
             "spJs", new PartitionKey("pk1"), new dynamic[] { "test" });
-        result.Resource.Should().Be("test-result");
-    }
-
-    // Sister test: shows the actual emulator behavior
-    [Fact]
-    public async Task ExecuteStoredProcedure_WithCSharpHandler_ExecutesLogicInstead()
-    {
-        // InMemoryContainer uses C# handlers registered via RegisterStoredProcedure().
-        // JavaScript bodies stored via CreateStoredProcedureAsync are metadata-only.
-        // This test shows the C# handler pattern that replaces JS execution.
-        _container.RegisterStoredProcedure("spJs", (pk, args) =>
-        {
-            var prefix = args[0]?.ToString() ?? "";
-            return prefix + "-result";
-        });
-
-        var result = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
-            "spJs", new PartitionKey("pk1"), new dynamic[] { "test" });
-
         result.Resource.Should().Be("test-result");
     }
 

@@ -1420,28 +1420,17 @@ public class JsTriggerTests
         // that's unlikely to affect most unit test scenarios.
 
         [Fact(Skip = "Real Cosmos DB supports response.setBody() in post-triggers to modify the " +
-            "response body returned to the client. The emulator's IJsTriggerEngine.ExecutePostTrigger " +
-            "returns void and the Jint engine does not wire setBody() on the response object, so " +
-            "post-trigger response modifications are silently ignored. Implementing this would require " +
-            "changing the IJsTriggerEngine interface signature and threading modified response bodies " +
-            "through all write paths.")]
+            "response body returned to the client. The emulator wires setBody() but does not thread " +
+            "the modified response through to the ItemResponse returned by CreateItemAsync. " +
+            "The trigger runs without error but the response body seen by the client is unmodified.")]
         public async Task PostTrigger_Js_SetBody_ModifiesResponse_RealCosmos()
         {
-            // In real Cosmos, this post-trigger would modify the response:
-            //   var resp = getContext().getResponse();
-            //   var doc = resp.getBody();
-            //   doc.modified = true;
-            //   resp.setBody(doc);
-            // The client would see "modified: true" in the response, even though the
-            // persisted document doesn't have it.
             await Task.CompletedTask;
         }
 
         [Fact]
-        public async Task PostTrigger_Js_SetBody_IsIgnored_InEmulator()
+        public async Task PostTrigger_Js_SetBody_RunsWithoutError()
         {
-            // Sister test: In the emulator, setBody() on the response is undefined/ignored.
-            // The post-trigger runs without error but the response body is not modified.
             _container.UseJsTriggers();
 
             await _container.Scripts.CreateTriggerAsync(new TriggerProperties
@@ -1455,22 +1444,19 @@ public class JsTriggerTests
                         var resp = ctx.getResponse();
                         var doc = resp.getBody();
                         doc["modifiedByPost"] = true;
-                        // In real Cosmos, resp.setBody(doc) would change the response.
-                        // In the emulator, setBody is not available on the response object,
-                        // so this line would throw if uncommented. The trigger just reads.
+                        resp.setBody(doc);
                     }
                     """
             });
 
-            // The trigger runs without error — it just can't modify the response
+            // The trigger runs without error — setBody is available
             await _container.CreateItemAsync(
                 JObject.FromObject(new { id = "1", pk = "a" }),
                 new PartitionKey("a"),
                 new ItemRequestOptions { PostTriggers = new List<string> { "modifyResponse" } });
 
             var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
-            // The persisted document does NOT have "modifiedByPost" because the trigger
-            // only read the body but couldn't call setBody() on the response
+            // The persisted document does NOT have "modifiedByPost" — setBody modifies only the response
             item.ContainsKey("modifiedByPost").Should().BeFalse();
         }
 
@@ -1618,23 +1604,9 @@ public class JsTriggerTests
         // refactor to pass container state into the JS engine and support
         // createDocument/readDocument/queryDocuments within the JS sandbox.
 
-        [Fact(Skip = "Real Cosmos DB provides getContext().getCollection() inside triggers, enabling " +
-            "CRUD and queries on other documents in the same collection/partition within the trigger " +
-            "transaction. The emulator's Jint engine does not wire getCollection() — implementing it " +
-            "would require passing container state into the JS sandbox and supporting " +
-            "createDocument/readDocument/queryDocuments. Use C# trigger handlers (RegisterTrigger) " +
-            "to achieve equivalent functionality in tests.")]
-        public void Trigger_Collection_Access_RealCosmos()
-        {
-            // In real Cosmos, getContext().getCollection().createDocument(...) works.
-        }
-
         [Fact]
-        public async Task Trigger_GetCollection_NotAvailable_InEmulator()
+        public async Task Trigger_GetCollection_Available()
         {
-            // Sister test: getContext().getCollection is undefined in the emulator.
-            // Triggers that access the collection will get undefined, not an error,
-            // unless they try to call methods on it (which would throw).
             _container.UseJsTriggers();
 
             await _container.Scripts.CreateTriggerAsync(new TriggerProperties
@@ -1645,7 +1617,6 @@ public class JsTriggerTests
                 Body = """
                     function checkCollection() {
                         var ctx = getContext();
-                        // getCollection is not defined — typeof returns "undefined"
                         var hasCollection = typeof ctx.getCollection === "function";
                         var req = ctx.getRequest();
                         var doc = req.getBody();
@@ -1661,8 +1632,7 @@ public class JsTriggerTests
                 new ItemRequestOptions { PreTriggers = new List<string> { "checkCollection" } });
 
             var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
-            // getCollection is NOT available in the emulator
-            item["hasCollection"]!.Value<bool>().Should().BeFalse();
+            item["hasCollection"]!.Value<bool>().Should().BeTrue();
         }
 
         // ── Divergence: getRequest() in post-triggers ────────────────────
@@ -1674,21 +1644,9 @@ public class JsTriggerTests
         // Emulator: The Jint post-trigger API only wires getContext().getResponse().
         // getRequest() is not defined, so it returns undefined.
 
-        [Fact(Skip = "Real Cosmos DB makes getContext().getRequest() available in post-triggers, " +
-            "allowing inspection of the original request body and headers. The emulator's Jint " +
-            "post-trigger API only wires getResponse() — getRequest() returns undefined. " +
-            "Implementing this would require capturing the original request body and passing it " +
-            "through to the post-trigger execution context.")]
-        public void PostTrigger_Js_GetRequest_Available_RealCosmos()
-        {
-            // In real Cosmos, post-triggers can call getContext().getRequest().getBody()
-        }
-
         [Fact]
-        public async Task PostTrigger_Js_GetRequest_NotAvailable_InEmulator()
+        public async Task PostTrigger_Js_GetRequest_Available()
         {
-            // Sister test: getRequest() is not wired in the emulator's post-trigger context.
-            // Accessing it returns undefined rather than throwing.
             _container.UseJsTriggers();
 
             await _container.Scripts.CreateTriggerAsync(new TriggerProperties
@@ -1699,17 +1657,16 @@ public class JsTriggerTests
                 Body = """
                     function checkRequest() {
                         var ctx = getContext();
-                        // getRequest is not defined in post-trigger context
                         var hasRequest = typeof ctx.getRequest === "function";
-                        var resp = ctx.getResponse();
-                        var doc = resp.getBody();
-                        // We just verify the trigger ran; can't easily pass
-                        // hasRequest back without setBody. Just don't throw.
+                        // Verify getRequest is available — should not throw
+                        if (hasRequest) {
+                            var body = ctx.getRequest().getBody();
+                        }
                     }
                     """
             });
 
-            // Should not throw — trigger runs successfully even though getRequest is undefined
+            // Should not throw — getRequest is available in post-triggers
             await _container.CreateItemAsync(
                 JObject.FromObject(new { id = "1", pk = "a" }),
                 new PartitionKey("a"),
@@ -2824,9 +2781,8 @@ public class TriggerFeatureInteractionTests
         await act.Should().ThrowAsync<CosmosException>();
     }
 
-    [Fact(Skip = "Real Cosmos DB prevents pre-triggers from changing the id field. " +
-        "Emulator behavior is undefined — the id used for storage depends on extraction timing.")]
-    public async Task PreTrigger_Js_ModifiesIdField_Undefined()
+    [Fact]
+    public async Task PreTrigger_Js_ModifiesIdField_ThrowsBadRequest()
     {
         var container = new InMemoryContainer("test", "/pk");
         container.UseJsTriggers();
@@ -2838,15 +2794,17 @@ public class TriggerFeatureInteractionTests
             Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.id = 'modified-id'; req.setBody(doc); }"
         });
 
-        await container.CreateItemAsync(
+        var act = () => container.CreateItemAsync(
             JObject.FromObject(new { id = "original-id", pk = "a" }),
             new PartitionKey("a"),
             new ItemRequestOptions { PreTriggers = new List<string> { "id-changer" } });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
-    [Fact(Skip = "Real Cosmos DB prevents pre-triggers from changing the partition key. " +
-        "Emulator behavior is undefined — the pk used for storage depends on extraction timing.")]
-    public async Task PreTrigger_Js_ModifiesPartitionKey_Undefined()
+    [Fact]
+    public async Task PreTrigger_Js_ModifiesPartitionKey_ThrowsBadRequest()
     {
         var container = new InMemoryContainer("test", "/pk");
         container.UseJsTriggers();
@@ -2858,10 +2816,13 @@ public class TriggerFeatureInteractionTests
             Body = "function run() { var ctx = getContext(); var req = ctx.getRequest(); var doc = req.getBody(); doc.pk = 'modified-pk'; req.setBody(doc); }"
         });
 
-        await container.CreateItemAsync(
+        var act = () => container.CreateItemAsync(
             JObject.FromObject(new { id = "1", pk = "a" }),
             new PartitionKey("a"),
             new ItemRequestOptions { PreTriggers = new List<string> { "pk-changer" } });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }
 
