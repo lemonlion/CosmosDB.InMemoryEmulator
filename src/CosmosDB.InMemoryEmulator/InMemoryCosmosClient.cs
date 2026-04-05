@@ -200,18 +200,19 @@ public class InMemoryCosmosClient : CosmosClient
         QueryRequestOptions requestOptions = null)
     {
         var offset = int.TryParse(continuationToken, out var o) ? o : 0;
-        var items = _databases.Values
-            .Select(db => new DatabaseProperties(db.Id))
-            .Cast<T>()
-            .ToList();
-        return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, offset);
+        IEnumerable<DatabaseProperties> items = _databases.Values
+            .Select(db => new DatabaseProperties(db.Id));
+        var idFilter = ExtractIdFilter(queryText);
+        if (idFilter is not null)
+            items = items.Where(d => string.Equals(d.Id, idFilter, StringComparison.Ordinal));
+        return new InMemoryFeedIterator<T>(items.Cast<T>().ToList(), requestOptions?.MaxItemCount, offset);
     }
 
     public override FeedIterator<T> GetDatabaseQueryIterator<T>(
         QueryDefinition queryDefinition, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
     {
-        return GetDatabaseQueryIterator<T>((string)null, continuationToken, requestOptions);
+        return GetDatabaseQueryIterator<T>(queryDefinition?.QueryText, continuationToken, requestOptions);
     }
 
     public override FeedIterator GetDatabaseQueryStreamIterator(
@@ -306,5 +307,17 @@ public class InMemoryCosmosClient : CosmosClient
         response.StatusCode.Returns(statusCode);
         response.Resource.Returns(new DatabaseProperties(database.Id));
         return response;
+    }
+
+    /// <summary>
+    /// Extracts a simple <c>WHERE c.id = 'value'</c> filter from SQL text.
+    /// Returns the extracted id value, or null if no simple id filter is found.
+    /// </summary>
+    internal static string ExtractIdFilter(string queryText)
+    {
+        if (string.IsNullOrWhiteSpace(queryText)) return null;
+        var match = System.Text.RegularExpressions.Regex.Match(queryText,
+            @"WHERE\s+\w+\.id\s*=\s*'([^']*)'", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups[1].Value : null;
     }
 }

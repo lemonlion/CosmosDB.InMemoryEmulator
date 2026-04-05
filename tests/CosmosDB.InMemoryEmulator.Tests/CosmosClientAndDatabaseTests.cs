@@ -2692,11 +2692,7 @@ public class CreateDbIfNotExistsNullGuardTests
 
 public class QueryIteratorFilteringDivergentTests
 {
-    private const string SkipReason = "Real Cosmos DB supports SQL queries on database/container " +
-        "metadata. The in-memory emulator's query iterators ignore the query text entirely — all " +
-        "databases/containers are returned regardless of WHERE clause.";
-
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task GetDatabaseQueryIterator_WithWhereClause_ShouldFilter()
     {
         var client = new InMemoryCosmosClient();
@@ -2715,24 +2711,6 @@ public class QueryIteratorFilteringDivergentTests
     }
 
     [Fact]
-    public async Task DivergentBehavior_GetDatabaseQueryIterator_WhereClause_IgnoresFilter()
-    {
-        var client = new InMemoryCosmosClient();
-        await client.CreateDatabaseAsync("db1");
-        await client.CreateDatabaseAsync("db2");
-
-        var iterator = client.GetDatabaseQueryIterator<DatabaseProperties>(
-            "SELECT * FROM c WHERE c.id = 'db1'");
-        var results = new List<DatabaseProperties>();
-        while (iterator.HasMoreResults)
-        {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
-        }
-        results.Should().HaveCount(2, "emulator returns ALL databases regardless of WHERE clause");
-    }
-
-    [Fact(Skip = SkipReason)]
     public async Task GetContainerQueryIterator_WithWhereClause_ShouldFilter()
     {
         var client = new InMemoryCosmosClient();
@@ -2749,25 +2727,6 @@ public class QueryIteratorFilteringDivergentTests
             results.AddRange(page);
         }
         results.Should().ContainSingle(c => c.Id == "ctr1");
-    }
-
-    [Fact]
-    public async Task DivergentBehavior_GetContainerQueryIterator_WhereClause_IgnoresFilter()
-    {
-        var client = new InMemoryCosmosClient();
-        var db = (await client.CreateDatabaseAsync("test-db")).Database;
-        await db.CreateContainerAsync("ctr1", "/pk");
-        await db.CreateContainerAsync("ctr2", "/pk");
-
-        var iterator = db.GetContainerQueryIterator<ContainerProperties>(
-            "SELECT * FROM c WHERE c.id = 'ctr1'");
-        var results = new List<ContainerProperties>();
-        while (iterator.HasMoreResults)
-        {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
-        }
-        results.Should().HaveCount(2, "emulator returns ALL containers regardless of WHERE clause");
     }
 }
 

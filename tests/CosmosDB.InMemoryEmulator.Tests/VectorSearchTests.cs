@@ -856,11 +856,7 @@ public class VectorSearchTests
     // this throws. Fixing requires the GROUP BY aggregate pipeline to evaluate arbitrary
     // SQL expressions (not just property paths) before aggregating. This is a general
     // limitation of GROUP BY + aggregate(functionCall), not specific to vectors.
-    [Fact(Skip = "D10: GROUP BY with AVG(VectorDistance(...)) is not supported. " +
-                  "The GROUP BY aggregate handler (ExtractNumericValues) tries to use the inner " +
-                  "function call as a JSON path via SelectToken, which fails. Fixing requires " +
-                  "the aggregate pipeline to evaluate arbitrary SQL expressions before aggregating. " +
-                  "This is a general GROUP BY + aggregate(functionCall) limitation, not vector-specific.")]
+    [Fact]
     public async Task VectorDistance_WithGroupBy_AggregatesCorrectly()
     {
         var container = new InMemoryContainer("vector-test", "/pk");

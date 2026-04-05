@@ -230,17 +230,19 @@ public class InMemoryDatabase : Database
         QueryRequestOptions requestOptions = null)
     {
         var offset = int.TryParse(continuationToken, out var o) ? o : 0;
-        var items = _containers.Values
-            .Select(c => (T)(object)new ContainerProperties(c.Id, c.PartitionKeyPaths))
-            .ToList();
-        return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, offset);
+        IEnumerable<ContainerProperties> items = _containers.Values
+            .Select(c => new ContainerProperties(c.Id, c.PartitionKeyPaths));
+        var idFilter = InMemoryCosmosClient.ExtractIdFilter(queryText);
+        if (idFilter is not null)
+            items = items.Where(cp => string.Equals(cp.Id, idFilter, StringComparison.Ordinal));
+        return new InMemoryFeedIterator<T>(items.Select(cp => (T)(object)cp).ToList(), requestOptions?.MaxItemCount, offset);
     }
 
     public override FeedIterator<T> GetContainerQueryIterator<T>(
         QueryDefinition queryDefinition, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
     {
-        return GetContainerQueryIterator<T>((string)null, continuationToken, requestOptions);
+        return GetContainerQueryIterator<T>(queryDefinition?.QueryText, continuationToken, requestOptions);
     }
 
     // ── Read / Delete ───────────────────────────────────────────────────────

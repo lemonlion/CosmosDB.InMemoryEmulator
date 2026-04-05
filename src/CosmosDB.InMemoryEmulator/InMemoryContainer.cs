@@ -3623,17 +3623,43 @@ public class InMemoryContainer : Container
     private static List<double> ExtractNumericValues(List<string> items, string innerArg, string fromAlias)
     {
         var values = new List<double>();
+        var isFunctionCall = innerArg.Contains('(');
+        SqlExpression parsedInnerExpr = null;
+        if (isFunctionCall)
+        {
+            CosmosSqlParser.TryParse($"SELECT VALUE {innerArg} FROM {fromAlias}", out var innerParsed);
+            if (innerParsed?.SelectFields.Length > 0)
+                parsedInnerExpr = innerParsed.SelectFields[0].SqlExpr;
+        }
+
         foreach (var json in items)
         {
             var jObj = JsonParseHelpers.ParseJson(json);
-            var path = StripAliasPrefix(innerArg, fromAlias);
+            double? val = null;
 
-            var token = jObj.SelectToken(path);
-            if (token != null && double.TryParse(token.ToString(), NumberStyles.Any,
-                    CultureInfo.InvariantCulture, out var val))
+            if (parsedInnerExpr is not null)
             {
-                values.Add(val);
+                var result = EvaluateSqlExpression(parsedInnerExpr, jObj, fromAlias,
+                    new Dictionary<string, object>());
+                if (result is double d)
+                    val = d;
+                else if (result is long l)
+                    val = l;
+                else if (result != null && double.TryParse(result.ToString(), NumberStyles.Any,
+                    CultureInfo.InvariantCulture, out var parsed2))
+                    val = parsed2;
             }
+            else
+            {
+                var path = StripAliasPrefix(innerArg, fromAlias);
+                var token = jObj.SelectToken(path);
+                if (token != null && double.TryParse(token.ToString(), NumberStyles.Any,
+                        CultureInfo.InvariantCulture, out var parsed3))
+                    val = parsed3;
+            }
+
+            if (val.HasValue)
+                values.Add(val.Value);
         }
         return values;
     }

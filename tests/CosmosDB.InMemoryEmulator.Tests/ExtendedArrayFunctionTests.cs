@@ -1344,7 +1344,7 @@ public class ExtendedArrayFunctionTests
         combined.Should().HaveCount(3);
     }
 
-    [Fact(Skip = "Object literal arguments in variadic form require the SQL parser to handle inline object expressions as function arguments. The emulator's parser may not support this syntax.")]
+    [Fact]
     public async Task ArrayContainsAny_WithObjectElementInVariadicForm_Works()
     {
         await SeedTypeDiverseItems();
