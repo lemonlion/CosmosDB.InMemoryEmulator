@@ -72,6 +72,22 @@ public class InMemoryCosmosOptions
     }
 
     /// <summary>
+    /// Adds a container configuration using full <see cref="ContainerProperties"/>,
+    /// which supports UniqueKeyPolicy, DefaultTimeToLive, hierarchical partition keys, etc.
+    /// </summary>
+    public InMemoryCosmosOptions AddContainer(
+        ContainerProperties containerProperties,
+        string? databaseName = null)
+    {
+        Containers.Add(new ContainerConfig(
+            containerProperties.Id,
+            containerProperties.PartitionKeyPath,
+            databaseName,
+            containerProperties));
+        return this;
+    }
+
+    /// <summary>
     /// Sets <see cref="HttpMessageHandlerWrapper"/> to the specified function.
     /// The function receives the <see cref="FakeCosmosHandler"/> (or multi-container
     /// router) and must return the handler to use as the outermost handler in

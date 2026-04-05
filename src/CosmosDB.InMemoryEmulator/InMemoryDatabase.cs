@@ -69,6 +69,17 @@ public class InMemoryDatabase : Database
         return container;
     }
 
+    internal InMemoryContainer GetOrCreateContainer(ContainerProperties containerProperties)
+    {
+        var isNew = false;
+        var container = _containers.GetOrAdd(containerProperties.Id, _ => { isNew = true; return new InMemoryContainer(containerProperties); });
+        if (isNew)
+            container.ExplicitlyCreated = false;
+        container.OnDeleted ??= () => _containers.TryRemove(containerProperties.Id, out _);
+        container.SetParentDatabase(Id);
+        return container;
+    }
+
     // ── CreateContainerIfNotExistsAsync ─────────────────────────────────────
 
     public override Task<ContainerResponse> CreateContainerIfNotExistsAsync(
@@ -218,10 +229,11 @@ public class InMemoryDatabase : Database
         string queryText = null, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
     {
-        return new InMemoryFeedIterator<T>(
-            () => _containers.Values
-                .Select(c => (T)(object)new ContainerProperties(c.Id, c.PartitionKeyPaths))
-                .ToList());
+        var offset = int.TryParse(continuationToken, out var o) ? o : 0;
+        var items = _containers.Values
+            .Select(c => (T)(object)new ContainerProperties(c.Id, c.PartitionKeyPaths))
+            .ToList();
+        return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, offset);
     }
 
     public override FeedIterator<T> GetContainerQueryIterator<T>(

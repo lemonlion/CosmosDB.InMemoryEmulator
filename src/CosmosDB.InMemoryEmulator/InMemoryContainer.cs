@@ -518,7 +518,14 @@ public class InMemoryContainer : Container
 
         try
         {
-            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(_items[key]), "Create");
+            var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
+            ExecutePostTriggers(requestOptions, committedDoc, "Create");
+            var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
+            if (postTriggerJson != _items[key])
+            {
+                ValidateDocumentSize(postTriggerJson);
+                _items[key] = postTriggerJson;
+            }
         }
         catch
         {
@@ -5478,11 +5485,11 @@ public class InMemoryContainer : Container
                 return args.Length >= 2 ? VectorDistanceFunc(args) : null;
 
             // ── Date/time functions ──
-            case "GETCURRENTDATETIME": return DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
-            case "GETCURRENTTIMESTAMP": return (long)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            case "GETCURRENTDATETIME":
             case "GETCURRENTDATETIMESTATIC": return parameters.TryGetValue("__staticDateTime", out var sdt) ? sdt : DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
-            case "GETCURRENTTICKSSTATIC": return parameters.TryGetValue("__staticTicks", out var stk) ? stk : (object)DateTime.UtcNow.Ticks;
+            case "GETCURRENTTIMESTAMP":
             case "GETCURRENTTIMESTAMPSTATIC": return parameters.TryGetValue("__staticTimestamp", out var sts) ? sts : (object)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            case "GETCURRENTTICKSSTATIC": return parameters.TryGetValue("__staticTicks", out var stk) ? stk : (object)DateTime.UtcNow.Ticks;
             case "DATETIMEADD":
                 {
                     if (args.Length < 3)

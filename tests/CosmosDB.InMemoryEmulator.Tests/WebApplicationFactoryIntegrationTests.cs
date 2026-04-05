@@ -1870,10 +1870,46 @@ public class WafDivergentBehaviorDeepTests : IDisposable
                + "which HTTP endpoints don't expose.")]
     public void Trigger_ViaWaf_RequiresBackingContainerAndHeaders() { }
 
-    [Fact(Skip = "DIVERGENT: UseInMemoryCosmosDB AddContainer() doesn't expose ContainerProperties "
-               + "for unique key configuration. Users must capture the backing InMemoryContainer "
-               + "via OnHandlerCreated and create it with ContainerProperties directly.")]
-    public void UniqueKeyPolicy_ViaWaf_NotExposedViaAddContainer() { }
+    [Fact]
+    public async Task UniqueKeyPolicy_ViaWaf_AddContainerWithContainerProperties()
+    {
+        var containerProps = new ContainerProperties("unique-test", "/partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/Email" } } }
+            }
+        };
+
+        using var host = new HostBuilder()
+            .ConfigureWebHost(web =>
+            {
+                web.UseTestServer();
+                web.ConfigureServices(services =>
+                {
+                    services.UseInMemoryCosmosDB(opts =>
+                        opts.AddContainer(containerProps));
+                });
+                web.Configure(_ => { });
+            })
+            .Build();
+
+        await host.StartAsync();
+        var client = host.Services.GetRequiredService<CosmosClient>();
+        var container = client.GetContainer("in-memory-db", "unique-test");
+
+        // First insert succeeds
+        await container.CreateItemAsync(
+            new { id = "1", partitionKey = "pk", Email = "a@b.com" },
+            new PartitionKey("pk"));
+
+        // Duplicate unique key should fail with Conflict
+        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+            container.CreateItemAsync(
+                new { id = "2", partitionKey = "pk", Email = "a@b.com" },
+                new PartitionKey("pk")));
+        Assert.Equal(HttpStatusCode.Conflict, ex.StatusCode);
+    }
 
     [Fact(Skip = "DIVERGENT: Deleting a container via DeleteContainerAsync() removes it from "
                + "the in-memory database, but the DI container retains its reference to the "

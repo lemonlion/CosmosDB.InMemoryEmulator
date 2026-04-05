@@ -1,3 +1,5 @@
+using Microsoft.Azure.Cosmos;
+
 namespace CosmosDB.InMemoryEmulator;
 
 /// <summary>
@@ -6,4 +8,5 @@ namespace CosmosDB.InMemoryEmulator;
 public record ContainerConfig(
     string ContainerName,
     string PartitionKeyPath = "/id",
-    string? DatabaseName = null);
+    string? DatabaseName = null,
+    ContainerProperties? ContainerProperties = null);

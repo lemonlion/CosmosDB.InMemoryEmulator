@@ -199,11 +199,12 @@ public class InMemoryCosmosClient : CosmosClient
         string queryText = null, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
     {
-        return new InMemoryFeedIterator<T>(
-            () => _databases.Values
-                .Select(db => new DatabaseProperties(db.Id))
-                .Cast<T>()
-                .ToList());
+        var offset = int.TryParse(continuationToken, out var o) ? o : 0;
+        var items = _databases.Values
+            .Select(db => new DatabaseProperties(db.Id))
+            .Cast<T>()
+            .ToList();
+        return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, offset);
     }
 
     public override FeedIterator<T> GetDatabaseQueryIterator<T>(

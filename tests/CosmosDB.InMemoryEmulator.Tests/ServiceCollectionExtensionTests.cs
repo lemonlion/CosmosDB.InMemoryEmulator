@@ -1995,7 +1995,7 @@ public class ServiceCollectionEdgeCaseDeepDiveTests : IDisposable
     public void ContainerConfig_WithDeconstruction()
     {
         var config = new ContainerConfig("my-container", "/pk", "mydb");
-        var (name, pkPath, dbName) = config;
+        var (name, pkPath, dbName, _) = config;
         name.Should().Be("my-container");
         pkPath.Should().Be("/pk");
         dbName.Should().Be("mydb");

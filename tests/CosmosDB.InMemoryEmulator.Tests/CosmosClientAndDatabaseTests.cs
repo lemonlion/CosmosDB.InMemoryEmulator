@@ -2773,11 +2773,7 @@ public class QueryIteratorFilteringDivergentTests
 
 public class QueryIteratorPagingDivergentTests
 {
-    private const string SkipReasonPaging = "Real Cosmos DB respects QueryRequestOptions.MaxItemCount " +
-        "for database and container query iterators. The in-memory emulator returns all items in a " +
-        "single page and does not support MaxItemCount-based paging for metadata queries.";
-
-    [Fact(Skip = SkipReasonPaging)]
+    [Fact]
     public async Task GetDatabaseQueryIterator_WithMaxItemCount_Pages()
     {
         var client = new InMemoryCosmosClient();
@@ -2790,50 +2786,31 @@ public class QueryIteratorPagingDivergentTests
         var firstPage = await iterator.ReadNextAsync();
         firstPage.Count.Should().Be(1);
     }
-
-    [Fact]
-    public async Task DivergentBehavior_GetDatabaseQueryIterator_MaxItemCount_IgnoredReturnsAllInOnePage()
-    {
-        var client = new InMemoryCosmosClient();
-        await client.CreateDatabaseAsync("db1");
-        await client.CreateDatabaseAsync("db2");
-        await client.CreateDatabaseAsync("db3");
-
-        var iterator = client.GetDatabaseQueryIterator<DatabaseProperties>(
-            requestOptions: new QueryRequestOptions { MaxItemCount = 1 });
-        var firstPage = await iterator.ReadNextAsync();
-        firstPage.Count.Should().Be(3, "emulator returns all items in a single page regardless of MaxItemCount");
-    }
 }
 
 public class QueryIteratorContinuationTokenDivergentTests
 {
-    private const string SkipReason = "Real Cosmos DB supports continuation tokens for database " +
-        "query iterators. InMemoryFeedIterator returns all items in a single page and ignores the " +
-        "continuationToken parameter.";
-
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task GetDatabaseQueryIterator_WithContinuationToken_Resumes()
     {
         var client = new InMemoryCosmosClient();
         await client.CreateDatabaseAsync("db1");
         await client.CreateDatabaseAsync("db2");
 
-        var iterator = client.GetDatabaseQueryIterator<DatabaseProperties>(continuationToken: "someToken");
-        var page = await iterator.ReadNextAsync();
-        page.Count.Should().BeLessThan(2);
-    }
+        // First page with MaxItemCount=1
+        var iterator = client.GetDatabaseQueryIterator<DatabaseProperties>(
+            requestOptions: new QueryRequestOptions { MaxItemCount = 1 });
+        var firstPage = await iterator.ReadNextAsync();
+        firstPage.Count.Should().Be(1);
 
-    [Fact]
-    public async Task DivergentBehavior_GetDatabaseQueryIterator_ContinuationToken_Ignored()
-    {
-        var client = new InMemoryCosmosClient();
-        await client.CreateDatabaseAsync("db1");
-        await client.CreateDatabaseAsync("db2");
-
-        var iterator = client.GetDatabaseQueryIterator<DatabaseProperties>(continuationToken: "someToken");
-        var page = await iterator.ReadNextAsync();
-        page.Count.Should().Be(2, "emulator ignores continuation token and returns all items");
+        // Resume from continuation token
+        var token = firstPage.ContinuationToken;
+        var iterator2 = client.GetDatabaseQueryIterator<DatabaseProperties>(
+            continuationToken: token,
+            requestOptions: new QueryRequestOptions { MaxItemCount = 1 });
+        var secondPage = await iterator2.ReadNextAsync();
+        secondPage.Count.Should().Be(1);
+        secondPage.First().Id.Should().NotBe(firstPage.First().Id);
     }
 }
 

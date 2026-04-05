@@ -1205,19 +1205,18 @@ public class ConcurrentSizeValidationTests
 
 public class StoredProcedureSizeLimitDivergenceTests
 {
-    [Fact(Skip = "KNOWN DIVERGENCE: Real Cosmos rejects stored procedure responses > 2MB. " +
-                  "Emulator has no stored procedure body/response size validation because stored procedures " +
-                  "are C# delegates, not JavaScript bodies with server-side execution limits.")]
+    [Fact]
     public async Task StoredProcedure_OversizedResponse_RealCosmosWouldReject()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
         container.RegisterStoredProcedure("bigSproc", (pk, args) => new string('x', 5 * 1024 * 1024));
 
         var scripts = container.Scripts;
-        var response = await scripts.ExecuteStoredProcedureAsync<string>(
-            "bigSproc", new PartitionKey("pk1"), []);
+        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+            scripts.ExecuteStoredProcedureAsync<string>(
+                "bigSproc", new PartitionKey("pk1"), []));
 
-        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+        ex.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
     }
 }
 
@@ -1265,19 +1264,16 @@ public class BatchOverheadDivergenceTests
 
 public class PostTriggerSizeDivergenceTests
 {
-    [Fact(Skip = "KNOWN DIVERGENCE: Real Cosmos validates document size after post-trigger execution " +
-                  "and rolls back if exceeded. Emulator runs post-triggers as Action<JObject> and doesn't " +
-                  "re-validate size. Impact: post-triggers rarely inflate documents.")]
+    [Fact]
     public async Task PostTrigger_InflatesDocumentPast2MB_RealCosmosWouldReject()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
         container.RegisterTrigger("inflatePost", Microsoft.Azure.Cosmos.Scripts.TriggerType.Post,
             Microsoft.Azure.Cosmos.Scripts.TriggerOperation.Create,
-            doc =>
+            (Action<JObject>)(doc =>
             {
                 doc["hugeField"] = new string('z', 3 * 1024 * 1024);
-                return doc;
-            });
+            }));
 
         var smallDoc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "tiny" };
         var act = () => container.CreateItemAsync(smallDoc, new PartitionKey("pk1"),

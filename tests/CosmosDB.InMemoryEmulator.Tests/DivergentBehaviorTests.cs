@@ -90,19 +90,21 @@ public class ArrayFunctionLiteralTests
 
 public class GetCurrentDateTimeConsistencyTests
 {
-    // DIVERGENT: Each evaluation of GetCurrentDateTime() may return a slightly
-    // different value as it calls DateTime.UtcNow independently for each row.
-    // Real Cosmos DB evaluates system functions once per query execution.
-    [Fact(Skip = "L3: GetCurrentDateTime() is evaluated per-row rather than per-query. " +
-                  "Each row may get a slightly different timestamp (sub-millisecond drift). " +
-                  "Real Cosmos DB returns a consistent timestamp for all rows in a single " +
-                  "query execution. The drift is negligible for all practical purposes but " +
-                  "could theoretically cause ordering inconsistencies.")]
-    public void GetCurrentDateTime_ShouldReturnSameValueForAllRows()
+    // Previously divergent: Each evaluation called DateTime.UtcNow independently per row.
+    // Now fixed: GetCurrentDateTime() returns/uses the per-query snapshot like GetCurrentDateTimeStatic().
+    [Fact]
+    public async Task GetCurrentDateTime_ShouldReturnSameValueForAllRows()
     {
-        // Expected real Cosmos behavior:
-        // SELECT GetCurrentDateTime() as ts FROM c (with multiple docs)
-        // -> all rows have identical ts values
+        var container = new InMemoryContainer("test-l3", "/pk");
+        for (var i = 0; i < 20; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"doc{i}", pk = "a" }), new PartitionKey("a"));
+
+        var results = await container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT GetCurrentDateTime() AS ts FROM c")).ReadNextAsync();
+
+        var timestamps = results.Resource.Select(r => r["ts"]!.ToString()).Distinct().ToList();
+        Assert.Single(timestamps);
     }
 }
 

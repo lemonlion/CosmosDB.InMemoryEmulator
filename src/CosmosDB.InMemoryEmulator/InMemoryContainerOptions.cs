@@ -1,3 +1,5 @@
+using Microsoft.Azure.Cosmos;
+
 namespace CosmosDB.InMemoryEmulator;
 
 /// <summary>
@@ -30,6 +32,19 @@ public class InMemoryContainerOptions
         string partitionKeyPath = "/id")
     {
         Containers.Add(new ContainerConfig(containerName, partitionKeyPath));
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a container configuration using full <see cref="ContainerProperties"/>,
+    /// which supports UniqueKeyPolicy, DefaultTimeToLive, hierarchical partition keys, etc.
+    /// </summary>
+    public InMemoryContainerOptions AddContainer(ContainerProperties containerProperties)
+    {
+        Containers.Add(new ContainerConfig(
+            containerProperties.Id,
+            containerProperties.PartitionKeyPath,
+            ContainerProperties: containerProperties));
         return this;
     }
 }

@@ -64,7 +64,9 @@ public static class ServiceCollectionExtensions
         var handlers = new Dictionary<string, FakeCosmosHandler>();
         foreach (var config in containerConfigs)
         {
-            var container = new InMemoryContainer(config.ContainerName, config.PartitionKeyPath);
+            var container = config.ContainerProperties != null
+                ? new InMemoryContainer(config.ContainerProperties)
+                : new InMemoryContainer(config.ContainerName, config.PartitionKeyPath);
             var handler = new FakeCosmosHandler(container);
             handlers[config.ContainerName] = handler;
             options.OnHandlerCreated?.Invoke(config.ContainerName, handler);
@@ -140,9 +142,11 @@ public static class ServiceCollectionExtensions
         // Register InMemoryContainers
         foreach (var containerConfig in containers)
         {
-            var container = new InMemoryContainer(
-                containerConfig.ContainerName,
-                containerConfig.PartitionKeyPath);
+            var container = containerConfig.ContainerProperties != null
+                ? new InMemoryContainer(containerConfig.ContainerProperties)
+                : new InMemoryContainer(
+                    containerConfig.ContainerName,
+                    containerConfig.PartitionKeyPath);
 
             options.OnContainerCreated?.Invoke(container);
 
@@ -205,7 +209,10 @@ public static class ServiceCollectionExtensions
         {
             var dbName = containerConfig.DatabaseName ?? databaseName;
             var db = (InMemoryDatabase)client.GetDatabase(dbName);
-            db.GetOrCreateContainer(containerConfig.ContainerName, containerConfig.PartitionKeyPath);
+            if (containerConfig.ContainerProperties != null)
+                db.GetOrCreateContainer(containerConfig.ContainerProperties);
+            else
+                db.GetOrCreateContainer(containerConfig.ContainerName, containerConfig.PartitionKeyPath);
         }
 
         options.OnClientCreated?.Invoke(client);

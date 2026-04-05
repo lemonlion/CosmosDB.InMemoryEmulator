@@ -1239,16 +1239,6 @@ public class ExtendedArrayFunctionTests
         results[0]["diff"].Should().BeNull(); // property absent = undefined
     }
 
-    [Fact(Skip = "Real Cosmos returns undefined for non-existent property. The emulator now correctly returns undefined matching real Cosmos behavior. See SetDifference_NonExistentProperty_ReturnsUndefined.")]
-    public async Task SetDifference_NonExistentProperty_EmulatorReturnsEmptyArray()
-    {
-        await SeedTypeDiverseItems();
-        var query = new QueryDefinition("SELECT SetDifference(c.nonExistent, ['a']) AS diff FROM c WHERE c.id = '8'");
-        var results = await QueryAll<JObject>(query);
-        results.Should().ContainSingle();
-        ((JArray)results[0]["diff"]!).Should().BeEmpty();
-    }
-
     [Fact]
     public async Task SetDifference_InWhereClause_WithArrayLength()
     {
