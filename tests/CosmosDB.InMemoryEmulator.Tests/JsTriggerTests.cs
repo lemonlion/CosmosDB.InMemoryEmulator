@@ -1419,17 +1419,8 @@ public class JsTriggerTests
         // response construction in every write path — a significant interface change
         // that's unlikely to affect most unit test scenarios.
 
-        [Fact(Skip = "Real Cosmos DB supports response.setBody() in post-triggers to modify the " +
-            "response body returned to the client. The emulator wires setBody() but does not thread " +
-            "the modified response through to the ItemResponse returned by CreateItemAsync. " +
-            "The trigger runs without error but the response body seen by the client is unmodified.")]
-        public async Task PostTrigger_Js_SetBody_ModifiesResponse_RealCosmos()
-        {
-            await Task.CompletedTask;
-        }
-
         [Fact]
-        public async Task PostTrigger_Js_SetBody_RunsWithoutError()
+        public async Task PostTrigger_Js_SetBody_ModifiesResponse()
         {
             _container.UseJsTriggers();
 
@@ -1449,15 +1440,17 @@ public class JsTriggerTests
                     """
             });
 
-            // The trigger runs without error — setBody is available
-            await _container.CreateItemAsync(
+            var response = await _container.CreateItemAsync(
                 JObject.FromObject(new { id = "1", pk = "a" }),
                 new PartitionKey("a"),
                 new ItemRequestOptions { PostTriggers = new List<string> { "modifyResponse" } });
 
-            var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
-            // The persisted document does NOT have "modifiedByPost" — setBody modifies only the response
-            item.ContainsKey("modifiedByPost").Should().BeFalse();
+            // setBody modifies the response body — client sees the override
+            response.Resource["modifiedByPost"]!.Value<bool>().Should().BeTrue();
+
+            // But the persisted document is NOT affected by setBody
+            var persisted = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+            persisted.ContainsKey("modifiedByPost").Should().BeFalse();
         }
 
         // ── Divergence: Pre-trigger getResponse() ────────────────────────

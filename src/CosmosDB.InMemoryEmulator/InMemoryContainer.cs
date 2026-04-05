@@ -527,13 +527,25 @@ public class InMemoryContainer : Container
         try
         {
             var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
-            ExecutePostTriggers(requestOptions, committedDoc, "Create");
+            var responseBodyOverride = ExecutePostTriggers(requestOptions, committedDoc, "Create");
             var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
             if (postTriggerJson != _items[key])
             {
                 ValidateDocumentSize(postTriggerJson);
                 _items[key] = postTriggerJson;
             }
+
+            RecordChangeFeed(itemId, pk, _items[key]);
+
+            var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
+            if (responseBodyOverride is not null && !suppressContent)
+            {
+                return Task.FromResult(CreateItemResponse(
+                    responseBodyOverride.ToObject<T>(JsonSerializer.Create(JsonSettings)),
+                    HttpStatusCode.Created, etag, suppressContent));
+            }
+
+            return Task.FromResult(CreateItemResponse(item, HttpStatusCode.Created, etag, suppressContent));
         }
         catch
         {
@@ -542,11 +554,6 @@ public class InMemoryContainer : Container
             _timestamps.TryRemove(key, out _);
             throw;
         }
-
-        RecordChangeFeed(itemId, pk, _items[key]);
-
-        var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
-        return Task.FromResult(CreateItemResponse(item, HttpStatusCode.Created, etag, suppressContent));
     }
 
     public override Task<ItemResponse<T>> ReadItemAsync<T>(
@@ -2397,11 +2404,12 @@ public class InMemoryContainer : Container
         return jObj;
     }
 
-    private void ExecutePostTriggers(ItemRequestOptions requestOptions, JObject committedDoc, string operationName)
+    private JObject ExecutePostTriggers(ItemRequestOptions requestOptions, JObject committedDoc, string operationName)
     {
         var triggerNames = requestOptions?.PostTriggers;
-        if (triggerNames is null) return;
+        if (triggerNames is null) return null;
 
+        JObject responseBodyOverride = null;
         var currentOp = OperationNameToTriggerOp(operationName);
 
         foreach (var name in triggerNames)
@@ -2445,7 +2453,11 @@ public class InMemoryContainer : Container
 
                 try
                 {
-                    JsTriggerEngine.ExecutePostTrigger(props.Body, committedDoc);
+                    var setBodyResult = JsTriggerEngine.ExecutePostTrigger(props.Body, committedDoc);
+                    if (setBodyResult is not null)
+                    {
+                        responseBodyOverride = setBodyResult;
+                    }
                 }
                 catch (CosmosException)
                 {
@@ -2464,6 +2476,8 @@ public class InMemoryContainer : Container
                 $"Trigger '{name}' is not registered. Register it via RegisterTrigger() or CreateTriggerAsync() before referencing it in PostTriggers.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
+
+        return responseBodyOverride;
     }
 
     private void CheckIfMatch(ItemRequestOptions requestOptions, (string Id, string PartitionKey) key)
@@ -2933,6 +2947,20 @@ public class InMemoryContainer : Container
                 {
                     r.Resource.Returns(handlerResult);
                 }
+
+                // Populate script log headers from JS engine console.log() output
+                if (SprocEngine?.CapturedLogs is { Count: > 0 } logs)
+                {
+                    var logString = Uri.EscapeDataString(string.Join("\n", logs));
+                    var headers = new Headers
+                    {
+                        ["x-ms-request-charge"] = SyntheticRequestCharge.ToString(CultureInfo.InvariantCulture),
+                        ["x-ms-documentdb-script-log-results"] = logString
+                    };
+                    r.Headers.Returns(headers);
+                    r.ScriptLog.Returns(Uri.UnescapeDataString(logString));
+                }
+
                 return r;
             });
 
@@ -4133,10 +4161,21 @@ public class InMemoryContainer : Container
         {
             jsonPath = jsonPath[(fromAlias.Length + 1)..];
         }
+        else if (jsonPath.StartsWith(fromAlias + "[", StringComparison.OrdinalIgnoreCase))
+        {
+            jsonPath = jsonPath[fromAlias.Length..]; // Keep brackets — SelectToken handles ['prop']
+        }
 
         var token = item.SelectToken(jsonPath);
         if (token == null)
         {
+            // Handle string pseudo-properties: SDK LINQ translates d.Name.Length
+            // to root["name"]["Length"] which SelectToken can't resolve on a string value.
+            if (TryResolveStringPseudoProperty(jsonPath, item, out var pseudoResult))
+            {
+                return pseudoResult;
+            }
+
             return UndefinedValue.Instance;
         }
 
@@ -4150,6 +4189,42 @@ public class InMemoryContainer : Container
             JTokenType.Undefined => UndefinedValue.Instance,
             _ => token.ToString()
         };
+    }
+
+    /// <summary>
+    /// Handles string/array pseudo-properties that the SDK LINQ provider generates.
+    /// For example, <c>d.Name.Length</c> is translated to <c>root["name"]["Length"]</c>
+    /// which SelectToken cannot resolve on a string JValue. This method detects the
+    /// pattern and returns the string length (or array count) instead.
+    /// </summary>
+    private static bool TryResolveStringPseudoProperty(string jsonPath, JObject item, out object result)
+    {
+        result = null;
+
+        string parentPath = null;
+        if (jsonPath.EndsWith("['Length']", StringComparison.OrdinalIgnoreCase))
+            parentPath = jsonPath[..^"['Length']".Length];
+        else if (jsonPath.EndsWith("[\"Length\"]", StringComparison.OrdinalIgnoreCase))
+            parentPath = jsonPath[..^"[\"Length\"]".Length];
+        else if (jsonPath.EndsWith(".Length", StringComparison.OrdinalIgnoreCase))
+            parentPath = jsonPath[..^".Length".Length];
+
+        if (parentPath is null || parentPath.Length == 0) return false;
+
+        var parentToken = item.SelectToken(parentPath);
+        if (parentToken is JValue { Type: JTokenType.String } sv)
+        {
+            result = (long)sv.Value<string>()!.Length;
+            return true;
+        }
+
+        if (parentToken is JArray arr)
+        {
+            result = (long)arr.Count;
+            return true;
+        }
+
+        return false;
     }
 
     private static bool ValuesEqual(object left, object right)

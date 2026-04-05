@@ -957,17 +957,32 @@ public class StoredProcedureDivergentBehaviorTests
 
     // ─── Divergent: Script logging not available (T41) ──────────────────
 
-    [Fact(Skip = "Real Cosmos DB supports StoredProcedureRequestOptions.EnableScriptLogging = true which " +
-                  "captures console.log() output from JavaScript stored procedures and returns it in the " +
-                  "response headers (x-ms-documentdb-script-log-results). The emulator does not interpret " +
-                  "JavaScript and does not populate script log headers. Workaround: use C# logging directly " +
-                  "in your handler.")]
+    [Fact]
     public async Task ExecuteStoredProcedure_EnableScriptLogging_ShouldReturnLogs()
     {
-        // Expected real Cosmos behavior:
-        // var options = new StoredProcedureRequestOptions { EnableScriptLogging = true };
-        // var response = await scripts.ExecuteStoredProcedureAsync<string>("sp", pk, args, options);
-        // response.Headers["x-ms-documentdb-script-log-results"] contains console.log output
+        _container.UseJsStoredProcedures();
+
+        await _container.Scripts.CreateStoredProcedureAsync(
+            new StoredProcedureProperties
+            {
+                Id = "spLog",
+                Body = """
+                    function spLog(prefix) {
+                        console.log("hello from sproc");
+                        console.log("prefix=" + prefix);
+                        var context = getContext();
+                        var response = context.getResponse();
+                        response.setBody(prefix + "-done");
+                    }
+                    """
+            });
+
+        var response = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spLog", new PartitionKey("pk1"), new dynamic[] { "test" });
+
+        response.Resource.Should().Be("test-done");
+        response.ScriptLog.Should().Contain("hello from sproc");
+        response.ScriptLog.Should().Contain("prefix=test");
     }
 
     // ─── Divergent: Handler exceptions differ from real Cosmos (T42) ────

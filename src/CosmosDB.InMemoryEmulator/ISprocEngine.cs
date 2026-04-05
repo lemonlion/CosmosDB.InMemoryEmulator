@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Microsoft.Azure.Cosmos;
 
 namespace CosmosDB.InMemoryEmulator;
@@ -16,4 +17,9 @@ public interface ISprocEngine
     /// <param name="args">Arguments passed by the caller.</param>
     /// <returns>The JSON string result (from <c>response.setBody()</c>), or null if setBody was not called.</returns>
     string? Execute(string jsBody, PartitionKey partitionKey, dynamic[] args);
+
+    /// <summary>
+    /// Log messages captured from <c>console.log()</c> calls during the most recent <see cref="Execute"/> invocation.
+    /// </summary>
+    IReadOnlyList<string> CapturedLogs { get; }
 }

@@ -13,10 +13,14 @@ namespace CosmosDB.InMemoryEmulator.JsTriggers;
 /// </summary>
 public class JintSprocEngine : ISprocEngine
 {
+    private List<string> _capturedLogs = new();
+
+    public IReadOnlyList<string> CapturedLogs => _capturedLogs;
+
     public string? Execute(string jsBody, PartitionKey partitionKey, dynamic[] args)
     {
         string? result = null;
-        var logMessages = new List<string>();
+        _capturedLogs = new List<string>();
 
         var engine = new Engine(options =>
         {
@@ -42,7 +46,7 @@ public class JintSprocEngine : ISprocEngine
         }));
         engine.SetValue("__log", new Action<JsValue>(msg =>
         {
-            logMessages.Add(msg.ToString());
+            _capturedLogs.Add(msg.ToString());
         }));
 
         engine.Execute("""

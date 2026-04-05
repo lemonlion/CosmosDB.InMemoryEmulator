@@ -4583,8 +4583,7 @@ public class QueryDivergentBehaviorDeepDiveTests
         results.Should().ContainSingle().Which.Should().Be(1);
     }
 
-    [Fact(Skip = "GROUP BY + ORDER BY on aggregate alias may not be supported. " +
-                 "See sister test: GroupBy_WithOrderByAggregate_EmulatorBehavior")]
+    [Fact]
     public async Task GroupBy_WithOrderByAggregate_SortsByAggregateValue()
     {
         await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", cat = "A", value = 10 }), new PartitionKey("pk1"));
@@ -4596,17 +4595,4 @@ public class QueryDivergentBehaviorDeepDiveTests
         results[1]["cat"]!.ToString().Should().Be("A");
     }
 
-    [Fact]
-    public async Task GroupBy_WithOrderByAggregate_EmulatorBehavior()
-    {
-        // DIVERGENT BEHAVIOR: ORDER BY on aggregate alias may not resolve correctly.
-        // Emulator may sort by the literal field name rather than the computed aggregate.
-        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", cat = "A", value = 10 }), new PartitionKey("pk1"));
-        await _container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", cat = "A", value = 20 }), new PartitionKey("pk1"));
-        await _container.CreateItemAsync(JObject.FromObject(new { id = "3", partitionKey = "pk1", cat = "B", value = 5 }), new PartitionKey("pk1"));
-
-        // Just verify GROUP BY + SUM returns correct aggregates (without relying on ORDER BY alias)
-        var results = await Query("SELECT c.cat, SUM(c.value) AS total FROM c GROUP BY c.cat");
-        results.Should().HaveCount(2);
-    }
 }
