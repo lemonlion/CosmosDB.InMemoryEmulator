@@ -1779,25 +1779,9 @@ public class VectorSearchTests
     // The emulator may or may not support this depending on how parameters
     // are resolved for function arguments.
 
-    [Fact(Skip = "M3: Real Cosmos DB supports parameterized query vectors via @param in " +
-                  "VECTORDISTANCE. The emulator's parameter resolution may not correctly pass array " +
-                  "parameters as the second argument to VECTORDISTANCE because parameters are resolved " +
-                  "before function evaluation, and array parameters may be serialized as strings rather " +
-                  "than JArray. Testing this requires deep investigation of the parameter pipeline. " +
-                  "Low urgency — most test code uses inline vector literals.")]
-    public void VectorDistance_ParameterizedQuery_RealCosmosSupports()
-    {
-        // Expected real Cosmos DB behavior:
-        // new QueryDefinition("SELECT VectorDistance(c.vec, @queryVec) AS s FROM c")
-        //     .WithParameter("@queryVec", new[] { 1.0, 0.0, 0.0 })
-        // → Successfully computes similarity scores
-    }
-
     [Fact]
-    public async Task VectorDistance_ParameterizedQuery_EmulatorBehaviour()
+    public async Task VectorDistance_ParameterizedQuery_ReturnsCorrectScore()
     {
-        // Emulator behaviour: test what actually happens with parameterized vectors
-        // The QueryDefinition parameter pipeline may or may not handle array params correctly
         var container = await CreateContainerWithVectors();
 
         var query = new QueryDefinition(
@@ -1811,11 +1795,7 @@ public class VectorSearchTests
             results.AddRange(await iterator.ReadNextAsync());
 
         results.Should().ContainSingle();
-        // Document behaviour: either it works (returns 1.0) or returns null
-        // This sister test pins whatever the current behaviour is
-        var score = results[0]["score"];
-        (score!.Type == JTokenType.Float || score.Type == JTokenType.Integer || score.Type == JTokenType.Null)
-            .Should().BeTrue("parameterized vector should either compute a score or return null");
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 0.001);
     }
 
     // ─── M4: Return type ─────────────────────────────────────────────────

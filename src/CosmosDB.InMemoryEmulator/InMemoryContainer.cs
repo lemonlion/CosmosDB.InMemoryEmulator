@@ -62,6 +62,7 @@ public class InMemoryContainer : Container
     private readonly List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> _changeFeed = new();
     private readonly object _changeFeedLock = new();
     private readonly object _uniqueKeyWriteLock = new();
+    private readonly ConcurrentDictionary<(string Id, string PartitionKey), SemaphoreSlim> _patchLocks = new();
     private int _throughput = 400;
 
     private bool HasUniqueKeys =>
@@ -769,7 +770,7 @@ public class InMemoryContainer : Container
         return Task.FromResult(CreateItemResponse(default(T), HttpStatusCode.NoContent));
     }
 
-    public override Task<ItemResponse<T>> PatchItemAsync<T>(
+    public override async Task<ItemResponse<T>> PatchItemAsync<T>(
         string id, PartitionKey partitionKey,
         IReadOnlyList<PatchOperation> patchOperations,
         PatchItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -793,6 +794,23 @@ public class InMemoryContainer : Container
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
 
+        var itemLock = _patchLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await itemLock.WaitAsync(cancellationToken);
+        try
+        {
+            return PatchItemCore<T>(id, pk, key, patchOperations, requestOptions);
+        }
+        finally
+        {
+            itemLock.Release();
+        }
+    }
+
+    private ItemResponse<T> PatchItemCore<T>(
+        string id, string pk, (string Id, string PartitionKey) key,
+        IReadOnlyList<PatchOperation> patchOperations,
+        PatchItemRequestOptions requestOptions)
+    {
         if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
         {
             EvictIfExpired(key);
@@ -853,7 +871,7 @@ public class InMemoryContainer : Container
 
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         var result = JsonConvert.DeserializeObject<T>(enrichedJson, JsonSettings);
-        return Task.FromResult(CreateItemResponse(result, HttpStatusCode.OK, etag, suppressContent));
+        return CreateItemResponse(result, HttpStatusCode.OK, etag, suppressContent);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1531,34 +1549,39 @@ public class InMemoryContainer : Container
         ChangeFeedRequestOptions changeFeedRequestOptions = null)
     {
         var feedRange = ExtractFeedRangeFromStartFrom(changeFeedStartFrom);
-        List<string> items;
-        lock (_changeFeedLock)
+        var pageSizeHint = changeFeedRequestOptions?.PageSizeHint;
+        var creationTime = DateTimeOffset.UtcNow;
+        return CreateStreamFeedIteratorFromFactory(() =>
         {
-            var entries = FilterChangeFeedByStartFrom(changeFeedStartFrom);
-            entries = FilterChangeFeedEntriesByFeedRange(entries, feedRange);
-
-            if (changeFeedMode == ChangeFeedMode.Incremental)
+            List<string> items;
+            lock (_changeFeedLock)
             {
-                entries = entries
-                    .GroupBy(entry => (entry.Id, entry.PartitionKey))
-                    .Select(group => group.Last())
-                    .Where(entry => !entry.IsDelete)
-                    .ToList();
-            }
+                var entries = FilterChangeFeedByStartFrom(changeFeedStartFrom, creationTime);
+                entries = FilterChangeFeedEntriesByFeedRange(entries, feedRange);
 
-            items = entries.Select(entry => entry.Json).ToList();
-        }
-        return CreateStreamFeedIterator(items);
+                if (changeFeedMode == ChangeFeedMode.Incremental)
+                {
+                    entries = entries
+                        .GroupBy(entry => (entry.Id, entry.PartitionKey))
+                        .Select(group => group.Last())
+                        .Where(entry => !entry.IsDelete)
+                        .ToList();
+                }
+
+                items = entries.Select(entry => entry.Json).ToList();
+            }
+            return items;
+        }, 0, pageSizeHint);
     }
 
     private List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> FilterChangeFeedByStartFrom(
-        ChangeFeedStartFrom startFrom)
+        ChangeFeedStartFrom startFrom, DateTimeOffset? creationTime = null)
     {
         var typeName = startFrom.GetType().Name;
 
         if (typeName.Contains("Now", StringComparison.OrdinalIgnoreCase))
         {
-            var now = DateTimeOffset.UtcNow;
+            var now = creationTime ?? DateTimeOffset.UtcNow;
             return _changeFeed.Where(entry => entry.Timestamp > now).ToList();
         }
 
@@ -1621,13 +1644,23 @@ public class InMemoryContainer : Container
 
     private List<string> FilterByFeedRange(List<string> items, FeedRange feedRange)
     {
+        var pkValue = TryExtractPartitionKeyFromFeedRange(feedRange);
+        if (pkValue != null)
+        {
+            return items.Where(json =>
+            {
+                var itemPk = ExtractPartitionKeyValueFromJson(json);
+                return string.Equals(itemPk, pkValue, StringComparison.Ordinal);
+            }).ToList();
+        }
+
         var (min, max) = ParseFeedRangeBoundaries(feedRange);
         if (min == null) return items;
 
         return items.Where(json =>
         {
-            var pkValue = ExtractPartitionKeyValueFromJson(json);
-            var hash = PartitionKeyHash.MurmurHash3(pkValue);
+            var itemPk = ExtractPartitionKeyValueFromJson(json);
+            var hash = PartitionKeyHash.MurmurHash3(itemPk);
             return IsHashInRange(hash, min.Value, max.Value);
         }).ToList();
     }
@@ -1637,6 +1670,13 @@ public class InMemoryContainer : Container
             List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> entries,
             FeedRange feedRange)
     {
+        var pkValue = TryExtractPartitionKeyFromFeedRange(feedRange);
+        if (pkValue != null)
+        {
+            return entries.Where(entry =>
+                string.Equals(entry.PartitionKey ?? "", pkValue, StringComparison.Ordinal)).ToList();
+        }
+
         var (min, max) = ParseFeedRangeBoundaries(feedRange);
         if (min == null) return entries;
 
@@ -1671,6 +1711,28 @@ public class InMemoryContainer : Container
         catch
         {
             return (null, null);
+        }
+    }
+
+    private static string TryExtractPartitionKeyFromFeedRange(FeedRange feedRange)
+    {
+        if (feedRange == null) return null;
+        try
+        {
+            var json = feedRange.ToJsonString();
+            var obj = JObject.Parse(json);
+            var pkToken = obj["PK"];
+            if (pkToken == null) return null;
+
+            // PK value is a string containing a JSON array, e.g. "[\"pk-5\"]"
+            var pkStr = pkToken.ToString();
+            var pkArray = JArray.Parse(pkStr);
+            if (pkArray.Count == 0) return null;
+            return pkArray[0]?.ToString();
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -2973,9 +3035,39 @@ public class InMemoryContainer : Container
             && requestOptions.PartitionKey != PartitionKey.None)
         {
             var pk = PartitionKeyToString(requestOptions.PartitionKey.Value);
+
+            // Hierarchical PK prefix match: when the query PK has fewer components
+            // than the container's partition key paths, treat it as a prefix filter.
+            if (PartitionKeyPaths is { Count: > 1 })
+            {
+                var queryComponents = CountPartitionKeyComponents(requestOptions.PartitionKey.Value);
+                if (queryComponents > 0 && queryComponents < PartitionKeyPaths.Count)
+                {
+                    var prefix = pk + "|";
+                    return _items
+                        .Where(kvp => (kvp.Key.PartitionKey?.StartsWith(prefix, StringComparison.Ordinal) ?? false) && !IsExpired(kvp.Key))
+                        .Select(kvp => kvp.Value).ToList();
+                }
+            }
+
             return _items.Where(kvp => kvp.Key.PartitionKey == pk && !IsExpired(kvp.Key)).Select(kvp => kvp.Value).ToList();
         }
         return _items.Where(kvp => !IsExpired(kvp.Key)).Select(kvp => kvp.Value).ToList();
+    }
+
+    private static int CountPartitionKeyComponents(PartitionKey partitionKey)
+    {
+        try
+        {
+            var raw = partitionKey.ToString();
+            if (raw.StartsWith("["))
+            {
+                var arr = JArray.Parse(raw);
+                return arr.Count;
+            }
+            return 1;
+        }
+        catch { return 1; }
     }
 
     private const string UdfRegistryKey = "__udf_registry__";
@@ -6394,18 +6486,30 @@ public class InMemoryContainer : Container
 
     private static FeedIterator CreateStreamFeedIterator(List<string> items, int initialOffset = 0, int? maxItemCount = null)
     {
-        var pageSize = maxItemCount ?? items.Count;
-        if (pageSize <= 0) pageSize = items.Count;
+        return CreateStreamFeedIteratorFromFactory(() => items, initialOffset, maxItemCount ?? items.Count);
+    }
+
+    private static FeedIterator CreateStreamFeedIterator(Func<IReadOnlyList<object>> itemsFactory)
+    {
+        return CreateStreamFeedIteratorFromFactory(() => itemsFactory().Select(o => o?.ToString() ?? "").ToList(), 0, null);
+    }
+
+    private static FeedIterator CreateStreamFeedIteratorFromFactory(Func<List<string>> itemsFactory, int initialOffset, int? maxItemCount)
+    {
         var offset = initialOffset;
-        var hasRead = false;
+        var done = false;
 
         var feedIterator = Substitute.For<FeedIterator>();
-        feedIterator.HasMoreResults.Returns(_ => !hasRead || offset < items.Count);
+        feedIterator.HasMoreResults.Returns(_ => !done);
         feedIterator.ReadNextAsync(Arg.Any<CancellationToken>()).Returns(_ =>
         {
-            hasRead = true;
+            var items = itemsFactory();
+            var pageSize = maxItemCount ?? items.Count;
+            if (pageSize <= 0) pageSize = items.Count;
             var page = items.Skip(offset).Take(pageSize).ToList();
             offset += page.Count;
+            if (offset >= items.Count)
+                done = true;
             var documentsArray = new JArray(page.Select(JsonParseHelpers.ParseJson));
             var envelope = new JObject
             {
@@ -6418,7 +6522,7 @@ public class InMemoryContainer : Container
             response.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
             response.Headers["x-ms-request-charge"] = "1";
             response.Headers["x-ms-session-token"] = "0:0#1";
-            if (offset < items.Count)
+            if (!done)
                 response.Headers.Add("x-ms-continuation", offset.ToString());
             return Task.FromResult(response);
         });
@@ -6537,6 +6641,10 @@ public class InMemoryContainer : Container
 
     private static double[] ToDoubleArray(object value)
     {
+        if (value is double[] dArr) return dArr;
+        if (value is float[] fArr) return Array.ConvertAll(fArr, f => (double)f);
+        if (value is IEnumerable<double> dEnum) return dEnum.ToArray();
+
         JArray ja = value switch
         {
             JArray arr => arr,

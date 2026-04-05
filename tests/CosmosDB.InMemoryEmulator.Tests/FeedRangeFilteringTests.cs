@@ -1398,13 +1398,7 @@ public class FeedRangeStreamFilteringParityTests
 
 public class FeedRangeQueryFilteringDivergentTests
 {
-    [Fact(Skip = "FeedRange.FromPartitionKey() produces PK-based JSON format " +
-        "({\"PK\":[\"pk-5\"]}) instead of EPK-based format " +
-        "({\"Range\":{\"min\":\"...\",\"max\":\"...\"}}). " +
-        "ParseFeedRangeBoundaries only supports EPK ranges. PK-based FeedRanges " +
-        "fall back to (null,null) boundaries, causing FilterByFeedRange to return " +
-        "all items instead of scoping to the single partition. Real Cosmos DB " +
-        "correctly scopes to the partition.")]
+    [Fact]
     public async Task QueryIterator_FeedRangeFromPartitionKey_ScopesToSinglePartition()
     {
         var container = new InMemoryContainer("test", "/partitionKey") { FeedRangeCount = 4 };
@@ -1427,41 +1421,6 @@ public class FeedRangeQueryFilteringDivergentTests
         results.Should().HaveCount(1);
         results[0].Id.Should().Be("5");
     }
-
-    [Fact]
-    public async Task QueryIterator_FeedRangeFromPartitionKey_EmulatorBehavior_ReturnsAllItems()
-    {
-        // DIVERGENT BEHAVIOUR: FeedRange.FromPartitionKey() in emulator returns ALL items
-        // instead of scoping to the single partition.
-        //
-        // Real Cosmos DB: FeedRange.FromPartitionKey(pk) scopes to that partition's hash range.
-        //
-        // Emulator: FeedRange.FromPartitionKey(pk) produces {"PK":["pk-5"]} JSON.
-        // ParseFeedRangeBoundaries looks for obj["Range"] which is null → returns (null,null).
-        // FilterByFeedRange sees min==null → returns all items unfiltered.
-        //
-        // Workaround: Use QueryRequestOptions { PartitionKey = new PartitionKey("pk-5") }
-        // instead of FeedRange.FromPartitionKey().
-        var container = new InMemoryContainer("test", "/partitionKey") { FeedRangeCount = 4 };
-
-        for (var i = 0; i < 20; i++)
-            await container.CreateItemAsync(
-                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"Item{i}" },
-                new PartitionKey($"pk-{i}"));
-
-        var pkRange = FeedRange.FromPartitionKey(new PartitionKey("pk-5"));
-        var iterator = container.GetItemQueryIterator<TestDocument>(
-            pkRange, new QueryDefinition("SELECT * FROM c"));
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
-        {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
-        }
-
-        // Emulator returns ALL items because PK-based FeedRange is not recognized
-        results.Should().HaveCount(20, "emulator falls back to returning all items for PK-based FeedRanges");
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1470,12 +1429,7 @@ public class FeedRangeQueryFilteringDivergentTests
 
 public class FeedRangeChangeFeedStreamDivergentTests
 {
-    [Fact(Skip = "GetChangeFeedStreamIterator uses eager evaluation for all " +
-        "ChangeFeedStartFrom types (including Now and Time), while " +
-        "GetChangeFeedIterator<T> uses lazy evaluation for Now and Time types. " +
-        "The stream iterator captures a snapshot at creation time, so items added " +
-        "after creation are NOT visible. Implementing lazy evaluation for streams " +
-        "would require refactoring InMemoryStreamFeedIterator.")]
+    [Fact]
     public async Task ChangeFeedStream_Now_WithFeedRange_LazyEvaluation_SeesNewItems()
     {
         var container = new InMemoryContainer("test", "/partitionKey") { FeedRangeCount = 2 };
@@ -1506,53 +1460,5 @@ public class FeedRangeChangeFeedStreamDivergentTests
         }
 
         allIds.Should().NotBeEmpty("lazy evaluation should see items added after creation");
-    }
-
-    [Fact]
-    public async Task ChangeFeedStream_Now_WithFeedRange_EmulatorBehavior_EagerSnapshot()
-    {
-        // DIVERGENT BEHAVIOUR: Stream change feed with Now uses eager evaluation.
-        //
-        // Typed iterator (GetChangeFeedIterator<T>): Uses lazy evaluation via factory
-        // function. Items added AFTER iterator creation ARE visible on ReadNextAsync.
-        //
-        // Stream iterator (GetChangeFeedStreamIterator): Uses eager evaluation.
-        // Items added AFTER iterator creation are NOT visible because the snapshot
-        // was captured at creation time.
-        //
-        // Real Cosmos DB: Both iterators use continuation-token-based polling, so both
-        // see items added after creation.
-        var container = new InMemoryContainer("test", "/partitionKey") { FeedRangeCount = 2 };
-        var ranges = await container.GetFeedRangesAsync();
-
-        var streamIterator = container.GetChangeFeedStreamIterator(
-            ChangeFeedStartFrom.Now(ranges[0]),
-            ChangeFeedMode.Incremental);
-
-        // Add items after iterator creation
-        for (var i = 0; i < 5; i++)
-            await container.CreateItemAsync(
-                new TestDocument { Id = $"{i}", PartitionKey = $"pk-{i}", Name = $"Item{i}" },
-                new PartitionKey($"pk-{i}"));
-
-        // Stream iterator should NOT see the new items (eager snapshot was empty)
-        // The stream iterator always starts with HasMoreResults=true, but ReadNextAsync
-        // returns an empty document set since the snapshot was captured before items were added
-        var allIds = new HashSet<string>();
-        while (streamIterator.HasMoreResults)
-        {
-            var response = await streamIterator.ReadNextAsync();
-            using var reader = new StreamReader(response.Content);
-            var json = await reader.ReadToEndAsync();
-            var doc = JObject.Parse(json);
-            if (doc["Documents"] is JArray docs)
-            {
-                foreach (var item in docs)
-                    allIds.Add(item["id"]!.ToString());
-            }
-        }
-
-        allIds.Should().BeEmpty(
-            "stream iterator uses eager evaluation — snapshot was empty at creation time");
     }
 }

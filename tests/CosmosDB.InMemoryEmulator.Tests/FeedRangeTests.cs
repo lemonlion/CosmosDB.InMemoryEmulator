@@ -964,7 +964,7 @@ public class FeedRangeChangeFeedDeepTests
         allIds.Should().HaveCount(20);
     }
 
-    [Fact(Skip = "GetChangeFeedStreamIterator evaluates eagerly — it captures a snapshot of entries at creation time. Items added after creation are NOT visible. Implementing lazy evaluation for stream iterators requires adding factory delegate support to InMemoryStreamFeedIterator.")]
+    [Fact]
     public async Task ChangeFeed_Now_ThenAddItems_StreamIterator_MayNotSeeNewItems()
     {
         var container = new InMemoryContainer("fr-cf-stream-now", "/partitionKey") { FeedRangeCount = 2 };
@@ -982,47 +982,16 @@ public class FeedRangeChangeFeedDeepTests
             while (it.HasMoreResults)
             {
                 var resp = await it.ReadNextAsync();
-                if (resp.IsSuccessStatusCode)
-                    total += JArray.Parse(await new StreamReader(resp.Content).ReadToEndAsync()).Count;
-            }
-
-        total.Should().Be(10);
-    }
-
-    [Fact]
-    public async Task ChangeFeed_Now_StreamIterator_EagerSnapshot_Sister()
-    {
-        // Sister test: documents the eager evaluation behavior of GetChangeFeedStreamIterator
-        var container = new InMemoryContainer("fr-cf-stream-sister", "/partitionKey") { FeedRangeCount = 2 };
-        var ranges = await container.GetFeedRangesAsync();
-
-        // Create stream iterators from Now BEFORE adding items
-        var iterators = ranges.Select(r => container.GetChangeFeedStreamIterator(
-            ChangeFeedStartFrom.Now(r), ChangeFeedMode.LatestVersion)).ToList();
-
-        // Add items AFTER creating iterators
-        for (var i = 0; i < 10; i++)
-            await container.CreateItemAsync(
-                JObject.FromObject(new { id = $"{i}", partitionKey = $"pk-{i}" }),
-                new PartitionKey($"pk-{i}"));
-
-        // Stream iterator uses eager evaluation — it captured empty state at "Now"
-        var total = 0;
-        foreach (var it in iterators)
-        {
-            while (it.HasMoreResults)
-            {
-                var resp = await it.ReadNextAsync();
                 if (!resp.IsSuccessStatusCode || resp.Content == null) break;
                 using var reader = new StreamReader(resp.Content);
                 var body = await reader.ReadToEndAsync();
                 if (string.IsNullOrWhiteSpace(body)) break;
-                try { total += JArray.Parse(body).Count; } catch { break; }
+                var jObj = JObject.Parse(body);
+                if (jObj["Documents"] is JArray docs)
+                    total += docs.Count;
             }
-        }
 
-        // Eager evaluation means we get 0 items (snapshot was empty)
-        total.Should().Be(0, "stream iterator uses eager evaluation and captured empty state at Now");
+        total.Should().Be(10);
     }
 
     [Fact]

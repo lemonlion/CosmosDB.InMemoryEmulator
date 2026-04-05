@@ -1057,26 +1057,26 @@ public class PkValidationMismatchTests
 
 public class HierarchicalPkAdvancedTests
 {
-    [Fact(Skip = "Real Cosmos DB supports querying by PK prefix (first N components of hierarchical key). " +
-        "The emulator requires the full composite key for partition scoping.")]
+    [Fact]
     public async Task HierarchicalPk_PartialKeyQuery_ShouldFilterByPrefix()
     {
         var container = new InMemoryContainer("test", ["/country", "/city", "/district"]);
-        var pk = new PartitionKeyBuilder().Add("US").Add("NYC").Add("Manhattan").Build();
-        await container.CreateItemAsync(JObject.FromObject(new { id = "1", country = "US", city = "NYC", district = "Manhattan" }), pk);
-    }
 
-    [Fact]
-    public async Task HierarchicalPk_PartialKeyQuery_EmulatorRequiresFullKey()
-    {
-        // DIVERGENT BEHAVIOR: Emulator requires the full composite key for partition scoping.
-        var container = new InMemoryContainer("test", ["/country", "/city", "/district"]);
-        var pk = new PartitionKeyBuilder().Add("US").Add("NYC").Add("Manhattan").Build();
-        await container.CreateItemAsync(JObject.FromObject(new { id = "1", country = "US", city = "NYC", district = "Manhattan" }), pk);
+        var pk1 = new PartitionKeyBuilder().Add("US").Add("NYC").Add("Manhattan").Build();
+        var pk2 = new PartitionKeyBuilder().Add("US").Add("NYC").Add("Brooklyn").Build();
+        var pk3 = new PartitionKeyBuilder().Add("UK").Add("London").Add("Westminster").Build();
 
-        // Cross-partition query with no PK scope returns all items
-        var results = container.GetItemLinqQueryable<JObject>().ToList();
-        results.Should().ContainSingle();
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", country = "US", city = "NYC", district = "Manhattan" }), pk1);
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", country = "US", city = "NYC", district = "Brooklyn" }), pk2);
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", country = "UK", city = "London", district = "Westminster" }), pk3);
+
+        // Query with partial key (first 2 of 3 components) — should match items 1 & 2
+        var prefixKey = new PartitionKeyBuilder().Add("US").Add("NYC").Build();
+        var results = container.GetItemLinqQueryable<JObject>(
+            requestOptions: new QueryRequestOptions { PartitionKey = prefixKey }).ToList();
+
+        results.Should().HaveCount(2);
+        results.Select(r => r["id"]!.ToString()).Should().BeEquivalentTo("1", "2");
     }
 
     [Fact]

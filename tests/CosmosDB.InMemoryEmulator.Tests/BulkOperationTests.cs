@@ -1510,8 +1510,7 @@ public class BulkOperationTests
         container.ItemCount.Should().Be(0);
     }
 
-    [Fact(Skip = "InMemoryContainer uses read-then-write for Patch Increment; concurrent increments " +
-                 "may lose updates. Real Cosmos DB serialises patches per-partition.")]
+    [Fact]
     public async Task BulkPatch_ConcurrentOnSameItem_AtomicIncrement()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
@@ -1527,34 +1526,6 @@ public class BulkOperationTests
         await Task.WhenAll(tasks);
         var final = await container.ReadItemAsync<TestDocument>("counter", new PartitionKey("pk1"));
         final.Resource.Value.Should().Be(50);
-    }
-
-    /// <summary>
-    /// Divergent behaviour: InMemoryContainer's Patch uses read-then-write without per-item locking.
-    /// Concurrent increments may lose updates, resulting in a final value &lt;= 50.
-    /// Real Cosmos DB serialises patches per-partition guaranteeing exactly 50.
-    /// </summary>
-    [Fact]
-    public async Task BulkPatch_ConcurrentOnSameItem_LastWriterWins_DivergentBehaviour()
-    {
-        var container = new InMemoryContainer("test", "/partitionKey");
-
-        await container.CreateItemAsync(
-            new TestDocument { Id = "counter", PartitionKey = "pk1", Name = "Counter", Value = 0 },
-            new PartitionKey("pk1"));
-
-        var tasks = Enumerable.Range(0, 50).Select(_ =>
-            container.PatchItemAsync<TestDocument>("counter", new PartitionKey("pk1"),
-                new[] { PatchOperation.Increment("/value", 1) }));
-
-        var results = await Task.WhenAll(tasks);
-        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.OK);
-        container.ItemCount.Should().Be(1);
-
-        var final = await container.ReadItemAsync<TestDocument>("counter", new PartitionKey("pk1"));
-        // Due to lost updates under concurrency, final value may be < 50
-        final.Resource.Value.Should().BeGreaterThan(0);
-        final.Resource.Value.Should().BeLessThanOrEqualTo(50);
     }
 
     [Fact]

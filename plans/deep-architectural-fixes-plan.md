@@ -167,7 +167,7 @@ These are gaps in the existing JS trigger implementation that the unified engine
 
 **Effort:** ~200 lines incremental on top of C1.
 
-### C3. FakeCosmosHandler GROUP BY / DISTINCT+ORDER BY Wire Format (4 tests)
+### C3. FakeCosmosHandler GROUP BY / DISTINCT+ORDER BY — Hybrid Approach (4 tests)
 
 **Tests:**
 - `FakeCosmosHandlerTests:924` — GROUP BY
@@ -175,22 +175,26 @@ These are gaps in the existing JS trigger implementation that the unified engine
 - `FakeCosmosHandlerTests:2026` — Multiple aggregates
 - `RealToFeedIteratorTests:2035` — LINQ GroupBy via SDK
 
-**Problem:** The Cosmos SDK's internal query pipeline stages (`GroupByQueryPipelineStage`, `OrderByQueryPipelineStage`, `AggregateQueryPipelineStage`) expect responses in specific **undocumented wire formats**. For example, GROUP BY results must be wrapped as:
-```json
-{"groupByItems": [{"item": "keyValue"}], "payload": {"$1": 42}}
-```
+**Problem:** The Cosmos SDK's internal query pipeline stages (`GroupByQueryPipelineStage`, `OrderByQueryPipelineStage`, `AggregateQueryPipelineStage`) expect responses in specific **undocumented wire formats**. The handler already wraps ORDER BY results correctly, but GROUP BY, multi-aggregate, and DISTINCT+ORDER BY are broken.
 
-**Approach:**
-1. Intercept GROUP BY/DISTINCT/ORDER BY/aggregate queries in `FakeCosmosHandler`
-2. Execute the query against `InMemoryContainer` to get raw results
-3. Wrap results in the wire format the SDK pipeline expects
-4. This requires reverse-engineering the formats by inspecting SDK source or Fiddler traces
+**Approach: Hybrid** (see `plans/c3-wire-format-analysis.md` for full analysis)
 
-**Risk:** High. The wire formats are undocumented internal SDK details that may change between SDK versions. Each SDK update could break the wrapping logic.
+Use **query plan bypass** for GROUP BY and multi-aggregate (avoid complex undocumented wrapping), and a **minor wire format fix** for DISTINCT+ORDER BY (tweak to existing proven ORDER BY wrapping).
 
-**Alternative approach:** Instead of wrapping results for the SDK pipeline, intercept the query *before* the SDK sends it through its pipeline. `FakeCosmosHandler` could detect GROUP BY/aggregate queries and return already-computed final results, setting the query plan to indicate "no pipeline processing needed." This would require setting `hasNonStreamingOrderBy`, `hasGroupBy`, and `hasAggregates` to `false` in the query plan response.
+| Scenario | Strategy | Detail |
+|----------|----------|--------|
+| GROUP BY | Query plan bypass | Suppress `groupByExpressions`, `aggregates`, `groupByAliasToAggregateType` in query plan. `InMemoryContainer` evaluates GROUP BY fully; return pre-computed results. |
+| Multi-aggregate | Query plan bypass | Suppress `aggregates` in query plan. `InMemoryContainer` evaluates aggregates fully; return pre-computed results. |
+| DISTINCT + ORDER BY | Wire format fix | Fix `BuildOrderByRewrittenQuery` to use SELECT expression as payload instead of `c`. ~20 LOC tweak to existing working code. |
+| LINQ GroupBy | Query plan bypass | Same as GROUP BY (LINQ generates GROUP BY SQL). |
 
-**Effort:** ~300+ lines. High risk of SDK-version coupling.
+**Implementation steps:**
+1. In `HandleQueryPlanAsync`: detect GROUP BY / multi-aggregate queries → suppress pipeline flags (set `groupByExpressions=[]`, `aggregates=[]`, `groupByAliasToAggregateType={}`, `hasNonStreamingOrderBy=false` for GROUP BY)
+2. In `BuildOrderByRewrittenQuery`: when DISTINCT is present, use SELECT expression(s) as payload instead of `c`
+3. In `HandleQueryAsync`: ensure `SimplifySdkQuery` correctly passes through GROUP BY and multi-aggregate queries for direct execution by `InMemoryContainer`
+
+**Effort:** ~40 lines. Low risk.
+**Risk:** Low — bypass avoids undocumented wire formats; DISTINCT+ORDER BY fix extends proven code.
 
 ### C4. Undefined Propagation in SQL Functions (3 tests)
 
@@ -249,11 +253,12 @@ These are lower priority but could be added incrementally:
 - **This is the most impactful architectural change.** A single `container.UseJavaScript()` call enables full JS execution for both triggers and stored procedures.
 - Creates a reusable pattern for any future "server-side JS" needs
 
-### Phase 4: FakeCosmosHandler Wire Format (Wave C3) — 1-2 commits
-- 4 tests
-- **Highest risk** in the entire plan. SDK internal wire formats are undocumented and fragile.
-- Consider deferring unless GROUP BY through the handler is a high-priority user request.
+### Phase 4: FakeCosmosHandler Hybrid Fix (Wave C3) — 1 commit
+- 4 tests, ~40 LOC
+- **Hybrid approach:** query plan bypass for GROUP BY / multi-aggregate + wire format tweak for DISTINCT+ORDER BY
+- Low risk — avoids undocumented wire formats; DISTINCT+ORDER BY extends proven ORDER BY code
 - Gets us from ~124 → ~120 skipped
+- See `plans/c3-wire-format-analysis.md` for detailed analysis of all approaches considered.
 
 ### Phase 5: Undefined Propagation (Wave C4) — 1 commit
 - 3 tests
@@ -357,8 +362,12 @@ A: Real Cosmos uses callbacks (`collection.createDocument(link, doc, opts, callb
 | A (Quick Wins) | 7 | ~146 | Low | Low |
 | B (Targeted) | 11 | ~135 | Medium | Low-Medium |
 | C1+C2 (JS Engine) | 11 | ~124 | High | Medium |
-| C3 (Wire Format) | 4 | ~120 | High | **High** |
+| C3 (Hybrid Fix) | 4 | ~120 | Low | Low |
 | C4 (Undefined) | 3 | ~117 | High | Medium |
 | D (Nice-to-Haves) | ~13 | ~104 | Varies | Varies |
 | **Total fixable** | **~49** | **~104** | | |
 | Intentional + Blocked | 63 | — | N/A | — |
+
+### Post-Implementation Note
+
+The C3 hybrid approach was chosen after detailed analysis. See `plans/c3-wire-format-analysis.md` for the full comparison of wire format wrapping vs query plan bypass vs hybrid.

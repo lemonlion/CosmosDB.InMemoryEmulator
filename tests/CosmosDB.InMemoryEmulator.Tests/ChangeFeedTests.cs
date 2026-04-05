@@ -1928,10 +1928,7 @@ public class ChangeFeedStreamIteratorTests
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    [Fact(Skip = "InMemoryStreamFeedIterator returns all items in a single response. " +
-                   "It does not support PageSizeHint for pagination. This is a known limitation " +
-                   "because implementing pagination for stream iterators would require significant " +
-                   "refactoring of the stream iterator infrastructure for limited practical benefit.")]
+    [Fact]
     public async Task ChangeFeedStream_PageSizeHint_LimitsResults()
     {
         for (var i = 0; i < 5; i++)
@@ -1950,13 +1947,8 @@ public class ChangeFeedStreamIteratorTests
         ((JArray)jObj["Documents"]!).Should().HaveCount(2);
     }
 
-    /// <summary>
-    /// DIVERGENT BEHAVIOR: InMemoryStreamFeedIterator returns all items in a single page.
-    /// Real Cosmos DB supports pagination for stream change feed iterators.
-    /// This test documents the actual in-memory behavior.
-    /// </summary>
     [Fact]
-    public async Task ChangeFeedStream_SinglePageBehavior_ReturnsAllItemsAtOnce()
+    public async Task ChangeFeedStream_PageSizeHint_PagesAllItems()
     {
         for (var i = 0; i < 5; i++)
             await _container.CreateItemAsync(
@@ -1967,14 +1959,20 @@ public class ChangeFeedStreamIteratorTests
             ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental,
             new ChangeFeedRequestOptions { PageSizeHint = 2 });
 
-        using var response = await iterator.ReadNextAsync();
-        using var reader = new StreamReader(response.Content);
-        var body = await reader.ReadToEndAsync();
-        var jObj = JObject.Parse(body);
+        var totalItems = 0;
+        var pages = 0;
+        while (iterator.HasMoreResults)
+        {
+            using var response = await iterator.ReadNextAsync();
+            using var reader = new StreamReader(response.Content);
+            var body = await reader.ReadToEndAsync();
+            var jObj = JObject.Parse(body);
+            totalItems += ((JArray)jObj["Documents"]!).Count;
+            pages++;
+        }
 
-        // InMemory returns all 5 items in a single page, ignoring PageSizeHint
-        ((JArray)jObj["Documents"]!).Should().HaveCount(5);
-        iterator.HasMoreResults.Should().BeFalse();
+        totalItems.Should().Be(5);
+        pages.Should().BeGreaterThan(1, "PageSizeHint=2 should require multiple pages for 5 items");
     }
 }
 
@@ -3663,9 +3661,9 @@ public class ChangeFeedDeepDiveSkippedAndSisterTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
-    [Fact(Skip = "ChangeFeedMode.AllVersionsAndDeletes is not yet exposed through the typed " +
-                   "change feed iterator. The emulator supports all-versions semantics via the " +
-                   "checkpoint-based GetChangeFeedIterator<T>(long checkpoint) overload.")]
+    [Fact(Skip = "ChangeFeedMode.AllVersionsAndDeletes is internal in the Cosmos SDK (v3.58). " +
+                   "The emulator supports all-versions semantics via GetChangeFeedIterator<T>(long checkpoint). " +
+                   "See sister test ChangeFeed_AllVersionsAndDeletes_ViaCheckpoint_WorksCorrectly.")]
     public async Task ChangeFeed_AllVersionsAndDeletes_ViaSDKEnum()
     {
         await Task.CompletedTask;
@@ -3700,19 +3698,8 @@ public class ChangeFeedDeepDiveSkippedAndSisterTests
         results[2]["_deleted"]!.Value<bool>().Should().BeTrue();
     }
 
-    [Fact(Skip = "Change feed processor delivers all versions (including intermediates), " +
-                   "not just latest version per item. Handlers should be idempotent per " +
-                   "Cosmos DB's 'at least once' guarantee regardless.")]
-    public async Task ChangeFeed_Processor_DeliversOnlyLatestVersion()
-    {
-        await Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// SISTER TEST: Documents that the processor delivers all versions including intermediates.
-    /// </summary>
     [Fact]
-    public async Task ChangeFeed_Processor_DeliversAllVersions_IncludingIntermediates()
+    public async Task ChangeFeed_Processor_DeliversOnlyLatestVersion()
     {
         var receivedNames = new List<string>();
         var allDone = new TaskCompletionSource<bool>();
@@ -3725,8 +3712,7 @@ public class ChangeFeedDeepDiveSkippedAndSisterTests
                     {
                         receivedNames.AddRange(changes.Select(c => c.Name));
                     }
-                    if (receivedNames.Count >= 3)
-                        allDone.TrySetResult(true);
+                    allDone.TrySetResult(true);
                     return Task.CompletedTask;
                 })
             .WithInstanceName("instance1")
@@ -3738,11 +3724,9 @@ public class ChangeFeedDeepDiveSkippedAndSisterTests
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V1" },
             new PartitionKey("pk1"));
-        await Task.Delay(200);
         await _container.UpsertItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V2" },
             new PartitionKey("pk1"));
-        await Task.Delay(200);
         await _container.UpsertItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V3" },
             new PartitionKey("pk1"));
@@ -3750,9 +3734,9 @@ public class ChangeFeedDeepDiveSkippedAndSisterTests
         await Task.WhenAny(allDone.Task, Task.Delay(TimeSpan.FromSeconds(10)));
         await processor.StopAsync();
 
-        receivedNames.Should().Contain("V1");
-        receivedNames.Should().Contain("V2");
+        // Processor should deduplicate to latest version only
         receivedNames.Should().Contain("V3");
+        receivedNames.Should().NotContain("V1");
     }
 
     [Fact(Skip = "TTL eviction in the emulator is lazy (items removed on next read access). " +

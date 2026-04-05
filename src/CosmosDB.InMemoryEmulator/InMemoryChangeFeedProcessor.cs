@@ -92,10 +92,13 @@ internal sealed class InMemoryChangeFeedProcessor<T> : ChangeFeedProcessor
 
             if (changes.Count > 0)
             {
+                // Deduplicate: keep only the latest version per item (by id),
+                // matching LatestVersion change feed processor behavior.
+                var deduped = DeduplicateByItemId(changes);
                 try
                 {
-                    await _handler(context, changes, cancellationToken);
-                    _checkpoint += changes.Count;
+                    await _handler(context, deduped, cancellationToken);
+                    _checkpoint += changes.Count; // advance past ALL entries, including intermediates
                 }
                 catch (Exception) when (!cancellationToken.IsCancellationRequested)
                 {
@@ -103,6 +106,25 @@ internal sealed class InMemoryChangeFeedProcessor<T> : ChangeFeedProcessor
                 }
             }
         }
+    }
+
+    private static IReadOnlyCollection<T> DeduplicateByItemId(List<T> changes)
+    {
+        var seen = new Dictionary<string, T>();
+        foreach (var item in changes)
+        {
+            var id = ExtractId(item);
+            if (id != null)
+                seen[id] = item; // last write wins — keeps latest version per item
+        }
+        return seen.Count == changes.Count ? changes : seen.Values.ToList();
+    }
+
+    private static string ExtractId(T item)
+    {
+        if (item is JObject jo) return jo["id"]?.ToString();
+        var prop = typeof(T).GetProperty("Id") ?? typeof(T).GetProperty("id");
+        return prop?.GetValue(item)?.ToString();
     }
 }
 
