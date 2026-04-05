@@ -1808,10 +1808,51 @@ public class WafDivergentBehaviorDeepTests : IDisposable
         results.Should().HaveCount(1);
     }
 
-    [Fact(Skip = "DIVERGENT: FakeCosmosHandler routes by container name only, not database+container. "
-               + "Two containers with the same name in different databases would collide. "
-               + "Real Cosmos SDK sends container-specific requests to different endpoints based on database URI.")]
-    public void PerContainerDatabaseName_MultipleDbsSameContainerName_ShouldIsolate() { }
+    [Fact]
+    public async Task PerContainerDatabaseName_MultipleDbsSameContainerName_ShouldIsolate()
+    {
+        // Two containers with the same name in different databases should be isolated
+        await using var app = await TestAppHost.CreateAsync(
+            configureBaseServices: services =>
+            {
+                services.AddSingleton<CosmosClient>(_ =>
+                    new CosmosClient("AccountEndpoint=https://fail.example.com:9999/;AccountKey=dGVzdA==;"));
+                services.AddSingleton<TestRepository>();
+                services.AddSingleton(sp => sp.GetRequiredService<CosmosClient>().GetContainer("Db1", "items"));
+            },
+            configureTestServices: services =>
+                services.UseInMemoryCosmosDB(o =>
+                {
+                    o.AddContainer("items", "/partitionKey", databaseName: "Db1");
+                    o.AddContainer("items", "/partitionKey", databaseName: "Db2");
+                }));
+
+        var client = app.Services.GetRequiredService<CosmosClient>();
+        var db1Items = client.GetContainer("Db1", "items");
+        var db2Items = client.GetContainer("Db2", "items");
+
+        await db1Items.CreateItemAsync(
+            new CosmosTestItem("i1", "i1", "FromDb1"),
+            new PartitionKey("i1"));
+        await db2Items.CreateItemAsync(
+            new CosmosTestItem("i2", "i2", "FromDb2"),
+            new PartitionKey("i2"));
+
+        var db1Iterator = db1Items.GetItemQueryIterator<CosmosTestItem>("SELECT * FROM c");
+        var db1Results = new List<CosmosTestItem>();
+        while (db1Iterator.HasMoreResults)
+            db1Results.AddRange(await db1Iterator.ReadNextAsync());
+
+        var db2Iterator = db2Items.GetItemQueryIterator<CosmosTestItem>("SELECT * FROM c");
+        var db2Results = new List<CosmosTestItem>();
+        while (db2Iterator.HasMoreResults)
+            db2Results.AddRange(await db2Iterator.ReadNextAsync());
+
+        db1Results.Should().HaveCount(1);
+        db1Results[0].Name.Should().Be("FromDb1");
+        db2Results.Should().HaveCount(1);
+        db2Results[0].Name.Should().Be("FromDb2");
+    }
 
     [Fact]
     public async Task PerContainerDatabaseName_DifferentContainerNames_IsolatesCorrectly()

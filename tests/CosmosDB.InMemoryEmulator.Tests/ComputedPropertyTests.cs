@@ -767,13 +767,9 @@ public class ComputedPropertyTests
     //  Phase 5: Divergent behaviour
     // ═══════════════════════════════════════════════════════════════════════════
 
-    [Fact(Skip = "Emulator returns null instead of undefined for functions with missing-property " +
-                 "inputs. LOWER(undefined) should evaluate to undefined (property absent), but " +
-                 "emulator evaluates to null (property present with null value). Fixing requires " +
-                 "UndefinedValue propagation through all 120+ SQL function implementations.")]
+    [Fact]
     public async Task ComputedProperty_UndefinedPropagation_RealCosmos()
     {
-        // EXPECTED REAL COSMOS BEHAVIOUR:
         // When the source property is missing (undefined), LOWER(undefined) → undefined,
         // meaning the computed property should be ABSENT from the result document entirely.
         var container = CreateContainerWithComputedProperties(
@@ -786,28 +782,8 @@ public class ComputedPropertyTests
         var response = await iterator.ReadNextAsync();
         var doc = response.First();
 
-        // Real Cosmos: property should be absent (undefined), not present as null
+        // Property should be absent (undefined), not present as null
         doc["cp_lowerName"].Should().BeNull("property should be absent from the result entirely");
-    }
-
-    [Fact]
-    public async Task ComputedProperty_UndefinedPropagation_EmulatorBehaviour()
-    {
-        // DIVERGENT: In real Cosmos DB, LOWER(undefined) → undefined (property absent)
-        // EMULATOR: LOWER(undefined) → null (property present with null value)
-        // Root cause: UndefinedValue.ToString() returns null → LOWER(null) → null
-        var container = CreateContainerWithComputedProperties(
-            ("cp_lowerName", "SELECT VALUE LOWER(c.name) FROM c"));
-
-        await SeedItems(container, new { id = "1", pk = "p", age = 30 }); // no "name" field
-
-        var query = new QueryDefinition("SELECT c.id, c.cp_lowerName FROM c");
-        var iterator = container.GetItemQueryIterator<JObject>(query);
-        var response = await iterator.ReadNextAsync();
-        var doc = response.First();
-
-        // Emulator: property is present but null-valued
-        doc["cp_lowerName"]!.Type.Should().Be(JTokenType.Null);
     }
 }
 
@@ -841,9 +817,7 @@ public class ComputedPropertyImplementationBugTests
         }
     }
 
-    [Fact(Skip = "Real Cosmos DB treats SELECT c.* identically to SELECT *. The emulator's parser " +
-                 "fails to parse c.* because * is a Star token, not an identifier or keyword, so " +
-                 "DottedPath cannot handle it. Fixing requires parser changes.")]
+    [Fact]
     public async Task ComputedProperty_NotIncludedInSelectAliasStar_RealCosmos()
     {
         // EXPECTED REAL COSMOS: SELECT c.* should exclude computed properties,
@@ -862,32 +836,9 @@ public class ComputedPropertyImplementationBugTests
     }
 
     [Fact]
-    public async Task ComputedProperty_NotIncludedInSelectAliasStar_EmulatorBehaviour()
-    {
-        // DIVERGENT: The emulator's parser throws on SELECT c.* because
-        // DottedPath expects AnyIdentifierOrKeyword after a dot, but * is a Star token.
-        var container = CreateContainerWithComputedProperties(
-            ("cp_lowerName", "SELECT VALUE LOWER(c.name) FROM c"));
-
-        await SeedItems(container, new { id = "1", pk = "p", name = "Alice" });
-
-        // Emulator: throws because parser cannot handle c.*
-        var act = () =>
-        {
-            var query = new QueryDefinition("SELECT c.* FROM c");
-            var iterator = container.GetItemQueryIterator<JObject>(query);
-            return iterator.ReadNextAsync();
-        };
-        await act.Should().ThrowAsync<CosmosException>();
-    }
-
-    [Fact(Skip = "Real Cosmos DB returns undefined when any CONCAT argument is undefined. " +
-                 "The emulator's property resolution returns null (not UndefinedValue) for " +
-                 "missing properties, so CONCAT produces an empty-string contribution instead. " +
-                 "Fixing requires changes to property resolution throughout the evaluator.")]
     public async Task ComputedProperty_ConcatWithUndefinedArg_RealCosmos()
     {
-        // EXPECTED REAL COSMOS: CONCAT with any undefined arg → entire result undefined
+        // CONCAT with any undefined arg → entire result undefined
         var container = CreateContainerWithComputedProperties(
             ("cp_fullName", "SELECT VALUE CONCAT(c.first, ' ', c.last) FROM c"));
 
@@ -899,25 +850,6 @@ public class ComputedPropertyImplementationBugTests
         var doc = response.First();
 
         doc["cp_fullName"].Should().BeNull("CONCAT with undefined arg should not produce a value");
-    }
-
-    [Fact]
-    public async Task ComputedProperty_ConcatWithUndefinedArg_EmulatorBehaviour()
-    {
-        // DIVERGENT: Missing property resolves to null, not UndefinedValue.
-        // CONCAT("Jane", " ", null) → "Jane " (null → empty string contribution)
-        var container = CreateContainerWithComputedProperties(
-            ("cp_fullName", "SELECT VALUE CONCAT(c.first, ' ', c.last) FROM c"));
-
-        await SeedItems(container, new { id = "1", pk = "p", first = "Jane" });
-
-        var query = new QueryDefinition("SELECT c.id, c.cp_fullName FROM c");
-        var iterator = container.GetItemQueryIterator<JObject>(query);
-        var response = await iterator.ReadNextAsync();
-        var doc = response.First();
-
-        // Emulator: produces "Jane " because null arg → empty string in CONCAT
-        doc["cp_fullName"]!.ToString().Should().Be("Jane ");
     }
 
     [Fact]
@@ -1470,10 +1402,7 @@ public class ComputedPropertyExpressionTests
         response.Should().ContainSingle().Which["id"]!.ToString().Should().Be("2");
     }
 
-    [Fact(Skip = "Real Cosmos DB supports ARRAY_CONTAINS on computed properties that return " +
-                 "arrays. The emulator's CP augmentation stores the array as a JArray token " +
-                 "but the SQL evaluator's ARRAY_CONTAINS does not resolve it correctly from " +
-                 "the augmented document.")]
+    [Fact]
     public async Task ComputedProperty_ArrayContainsOnCPResult_RealCosmos()
     {
         var container = CreateContainerWithComputedProperties(
@@ -1493,28 +1422,6 @@ public class ComputedPropertyExpressionTests
         var response = await iterator.ReadNextAsync();
 
         response.Should().ContainSingle().Which["id"]!.ToString().Should().Be("1");
-    }
-
-    [Fact]
-    public async Task ComputedProperty_ArrayContainsOnCPResult_EmulatorBehaviour()
-    {
-        // DIVERGENT: Using ARRAY_CONTAINS on a CP that returns an array doesn't work
-        // because the CP augmentation stores the value as a nested JArray that the
-        // evaluator doesn't resolve correctly.
-        var container = CreateContainerWithComputedProperties(
-            ("cp_tags", "SELECT VALUE c.tags FROM c"));
-
-        var item1 = JObject.FromObject(new { id = "1", pk = "p" });
-        item1["tags"] = new JArray("important", "urgent");
-        await container.CreateItemAsync(item1, new PartitionKey("p"));
-
-        // Verify the CP exists and returns the array
-        var query = new QueryDefinition("SELECT c.cp_tags FROM c");
-        var iterator = container.GetItemQueryIterator<JObject>(query);
-        var response = await iterator.ReadNextAsync();
-
-        response.First()["cp_tags"].Should().NotBeNull(
-            "CP should produce the tags array value");
     }
 
     [Fact]

@@ -3444,11 +3444,25 @@ public class InMemoryContainer : Container
         {
             var jObj = JsonParseHelpers.ParseJson(json);
             var keyParts = new List<string>();
-            foreach (var field in parsed.GroupByFields)
+            var groupByExprs = parsed.GroupByExpressions;
+            for (var i = 0; i < parsed.GroupByFields.Length; i++)
             {
-                var path = StripAliasPrefix(field, fromAlias);
-                var token = jObj.SelectToken(path);
-                keyParts.Add(token?.ToString() ?? "null");
+                // If the GROUP BY field is a function expression (e.g., LOWER(c.name)),
+                // evaluate it with the expression tree rather than treating it as a path.
+                if (groupByExprs != null && i < groupByExprs.Length
+                    && groupByExprs[i] is not IdentifierExpression
+                    && groupByExprs[i] is not null)
+                {
+                    var val = EvaluateSqlExpression(groupByExprs[i], jObj, fromAlias,
+                        parameters ?? new Dictionary<string, object>());
+                    keyParts.Add(val?.ToString() ?? "null");
+                }
+                else
+                {
+                    var path = StripAliasPrefix(parsed.GroupByFields[i], fromAlias);
+                    var token = jObj.SelectToken(path);
+                    keyParts.Add(token?.ToString() ?? "null");
+                }
             }
             return string.Join("|", keyParts);
         });
@@ -3467,10 +3481,21 @@ public class InMemoryContainer : Container
                 var projected = new JObject();
                 foreach (var field in parsed.SelectFields)
                 {
-                    var path = StripAliasPrefix(field.Expression, fromAlias);
+                    var outputName = field.Alias ?? field.Expression.Split('.').Last();
 
-                    var outputName = field.Alias ?? path.Split('.').Last();
-                    projected[outputName] = jObj.SelectToken(path)?.DeepClone();
+                    // If the select field has a non-trivial expression (function call, etc.),
+                    // evaluate it rather than treating it as a property path.
+                    if (field.SqlExpr is not null and not IdentifierExpression)
+                    {
+                        var val = EvaluateSqlExpression(field.SqlExpr, jObj, fromAlias,
+                            parameters ?? new Dictionary<string, object>());
+                        projected[outputName] = val is not null ? JToken.FromObject(val) : JValue.CreateNull();
+                    }
+                    else
+                    {
+                        var path = StripAliasPrefix(field.Expression, fromAlias);
+                        projected[outputName] = jObj.SelectToken(path)?.DeepClone();
+                    }
                 }
                 return projected.ToString(Formatting.None);
             }).ToList();
@@ -3562,11 +3587,23 @@ public class InMemoryContainer : Container
                 }
                 else
                 {
-                    var path = StripAliasPrefix(field.Expression, fromAlias);
-
-                    var fieldOutputName = field.Alias ?? path.Split('.').Last();
                     var jObj = JsonParseHelpers.ParseJson(groupItems[0]);
-                    resultObj[fieldOutputName] = jObj.SelectToken(path)?.DeepClone();
+
+                    // If the select field has a non-trivial expression (function call, etc.),
+                    // evaluate it rather than treating it as a property path.
+                    if (field.SqlExpr is not null and not IdentifierExpression && funcName is null)
+                    {
+                        var fieldOutputName = field.Alias ?? field.Expression;
+                        var val = EvaluateSqlExpression(field.SqlExpr, jObj, fromAlias,
+                            parameters ?? new Dictionary<string, object>());
+                        resultObj[fieldOutputName] = val is not null ? JToken.FromObject(val) : JValue.CreateNull();
+                    }
+                    else
+                    {
+                        var path = StripAliasPrefix(field.Expression, fromAlias);
+                        var fieldOutputName = field.Alias ?? path.Split('.').Last();
+                        resultObj[fieldOutputName] = jObj.SelectToken(path)?.DeepClone();
+                    }
                 }
             }
 
@@ -3870,7 +3907,8 @@ public class InMemoryContainer : Container
 
                     var token = jObj.SelectToken(path);
                     outputName = field.Alias ?? path.Split('.').Last();
-                    resultObj[outputName] = token?.DeepClone();
+                    if (token is not null)
+                        resultObj[outputName] = token.DeepClone();
                 }
             }
             projected.Add(resultObj.ToString(Formatting.None));
@@ -4187,6 +4225,8 @@ public class InMemoryContainer : Container
             JTokenType.Boolean => token.Value<bool>(),
             JTokenType.Null => null,
             JTokenType.Undefined => UndefinedValue.Instance,
+            JTokenType.Array => (object)token,
+            JTokenType.Object => (object)token,
             _ => token.ToString()
         };
     }
@@ -4711,6 +4751,23 @@ public class InMemoryContainer : Container
 
         var args = func.Arguments.Select(a => EvaluateSqlExpression(a, item, fromAlias, parameters)).ToArray();
 
+        // Undefined propagation: most scalar functions return undefined when any
+        // argument is undefined (missing property). Type-checking functions (IS_*),
+        // emulator-specific functions that handle missing values with special
+        // semantics, and a few other functions are excluded.
+        if (args.Any(a => a is UndefinedValue))
+        {
+            var name = func.FunctionName.ToUpperInvariant();
+            if (!name.StartsWith("IS_") && name is not "COALESCE" and not "IIF"
+                and not "ARRAY_CONTAINS" and not "ARRAY_CONTAINS_ANY" and not "ARRAY_CONTAINS_ALL"
+                and not "DOCUMENTID" and not "VECTORDISTANCE"
+                and not "FULLTEXTSCORE" and not "FULLTEXTCONTAINS" and not "FULLTEXTCONTAINSALL"
+                and not "INDEX_OF")
+            {
+                return UndefinedValue.Instance;
+            }
+        }
+
         switch (func.FunctionName)
         {
             // ── Type checking ──
@@ -5125,6 +5182,7 @@ public class InMemoryContainer : Container
                         return false;
                     }
 
+                    JArray jArray = null;
                     if (func.Arguments[0] is IdentifierExpression ident)
                     {
                         var arrayPath = ident.Name;
@@ -5134,11 +5192,19 @@ public class InMemoryContainer : Container
                         }
 
                         var arrayToken = item.SelectToken(arrayPath);
-                        if (arrayToken is not JArray jArray)
-                        {
-                            return false;
-                        }
+                        jArray = arrayToken as JArray;
+                    }
+                    else if (args[0] is JArray evalArr)
+                    {
+                        jArray = evalArr;
+                    }
 
+                    if (jArray is null)
+                    {
+                        return false;
+                    }
+
+                    {
                         var partial = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                         var searchValue = args[1];
                         if (searchValue is JObject searchObj)
@@ -5154,7 +5220,6 @@ public class InMemoryContainer : Container
                         var searchStr = searchValue.ToString();
                         return ArrayContainsMatch(jArray, searchStr, partial);
                     }
-                    return false;
                 }
             case "ARRAY_LENGTH":
                 {

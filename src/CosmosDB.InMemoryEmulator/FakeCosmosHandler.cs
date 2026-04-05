@@ -589,6 +589,28 @@ public class FakeCosmosHandler : HttpMessageHandler
             queryInfo["rewrittenQuery"] = sqlQuery;
         }
 
+        // COUNT(DISTINCT ...) — dCountInfo (regex-based, works even when parser
+        // cannot handle the DISTINCT keyword inside a function call)
+        var countDistinctMatch = Regex.Match(sqlQuery,
+            @"COUNT\s*\(\s*DISTINCT\s+([\w.]+)\s*\)", RegexOptions.IgnoreCase);
+        if (countDistinctMatch.Success)
+        {
+            var distinctPath = countDistinctMatch.Groups[1].Value;
+            var aliasMatch = Regex.Match(sqlQuery, @"\bFROM\s+(\w+)", RegexOptions.IgnoreCase);
+            var fromAlias = aliasMatch.Success ? aliasMatch.Groups[1].Value : "c";
+            if (distinctPath.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                distinctPath = distinctPath[(fromAlias.Length + 1)..];
+            queryInfo["dCountInfo"] = new JObject
+            {
+                ["dCountAlias"] = "$1",
+                ["dCountExpressionBase"] = new JObject
+                {
+                    ["kind"] = "PropertyRef",
+                    ["propertyPath"] = distinctPath
+                }
+            };
+        }
+
         var queryPlan = new JObject
         {
             ["partitionedQueryExecutionInfoVersion"] = 2,
@@ -1687,10 +1709,19 @@ public class FakeCosmosHandler : HttpMessageHandler
                 return InvokeHandlerAsync(_default, request, cancellationToken);
             }
 
-            var match = Regex.Match(path, @"/dbs/[^/]+/colls/([^/]+)");
+            var match = Regex.Match(path, @"/dbs/([^/]+)/colls/([^/]+)");
             if (match.Success)
             {
-                var containerName = match.Groups[1].Value;
+                var dbName = match.Groups[1].Value;
+                var containerName = match.Groups[2].Value;
+
+                // Try database+container compound key first, then fall back to container-only
+                var compoundKey = $"{dbName}/{containerName}";
+                if (_handlers.TryGetValue(compoundKey, out var compoundHandler))
+                {
+                    return InvokeHandlerAsync(compoundHandler, request, cancellationToken);
+                }
+
                 if (_handlers.TryGetValue(containerName, out var handler))
                 {
                     return InvokeHandlerAsync(handler, request, cancellationToken);

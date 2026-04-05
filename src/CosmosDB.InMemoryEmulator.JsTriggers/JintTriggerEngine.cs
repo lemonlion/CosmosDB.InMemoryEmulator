@@ -40,6 +40,9 @@ public class JintTriggerEngine : IJsTriggerEngine
                             setBody: function(doc) { __setBody(doc); }
                         };
                     },
+                    getResponse: function() {
+                        throw new Error("getResponse() is not available in pre-triggers.");
+                    },
                     getCollection: function() {
                         return {
                             getSelfLink: function() { return ""; }

@@ -192,6 +192,7 @@ public sealed record CosmosSqlQuery(
     JoinClause[] Joins = null,
     OrderByField[] OrderByFields = null,
     string[] GroupByFields = null,
+    SqlExpression[] GroupByExpressions = null,
     WhereExpression Having = null,
     SqlExpression WhereExpr = null,
     SqlExpression HavingExpr = null,
@@ -733,6 +734,13 @@ public static class CosmosSqlParser
     private static readonly TokenListParser<CosmosSqlToken, SelectField> StarField =
         Token.EqualTo(CosmosSqlToken.Star).Select(_ => new SelectField("*", null));
 
+    // Handle "c.*" (alias DOT STAR) as equivalent to "*"
+    private static readonly TokenListParser<CosmosSqlToken, SelectField> AliasDotStarField =
+        from ident in AnyIdentifierOrKeyword
+        from dot in Token.EqualTo(CosmosSqlToken.Dot)
+        from star in Token.EqualTo(CosmosSqlToken.Star)
+        select new SelectField("*", null);
+
     private static readonly TokenListParser<CosmosSqlToken, SelectField> ExpressionField =
         from expr in Expr
         from alias in (
@@ -743,7 +751,7 @@ public static class CosmosSqlParser
         select new SelectField(ExprToString(expr), alias, expr);
 
     private static readonly TokenListParser<CosmosSqlToken, SelectField> SingleSelectField =
-        StarField.Try().Or(ExpressionField);
+        StarField.Try().Or(AliasDotStarField.Try()).Or(ExpressionField);
 
     // ──────────────────────────────────────────────
     //  JOIN clause parsing
@@ -841,6 +849,7 @@ public static class CosmosSqlParser
             distinct.HasValue, top, value_.HasValue, fields,
             fromAlias, fromSource, joins, where_,
             groupBy?.Select(ExprToString).ToArray(),
+            groupBy?.ToArray(),
             having, orderByResult.Fields, offset, limit, orderByResult.RankExpr);
 
     // ──────────────────────────────────────────────
@@ -1337,7 +1346,7 @@ public static class CosmosSqlParser
         bool isDistinct, int? top, bool isValue,
         SelectField[] fields, string fromAlias, string fromSource,
         JoinClause[] joins, SqlExpression whereExpr,
-        string[] groupBy, SqlExpression havingExpr,
+        string[] groupBy, SqlExpression[] groupByExpressions, SqlExpression havingExpr,
         OrderByField[] orderByFields,
         int? offset, int? limit, SqlExpression rankExpr = null)
     {
@@ -1369,6 +1378,7 @@ public static class CosmosSqlParser
             Joins: joins,
             OrderByFields: orderByFields,
             GroupByFields: groupBy,
+            GroupByExpressions: groupByExpressions,
             Having: having,
             WhereExpr: whereExpr,
             HavingExpr: rawHavingExpr,

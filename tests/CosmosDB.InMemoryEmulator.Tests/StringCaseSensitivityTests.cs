@@ -1155,9 +1155,7 @@ public class StringComposedOperationTests
         page.Select(t => t.Value<string>()).Should().BeEquivalentTo("alice", "bob");
     }
 
-    [Fact(Skip = "Divergent: emulator does not support function expressions in GROUP BY clause. " +
-        "GROUP BY only handles property paths (e.g. c.name), not function calls (e.g. LOWER(c.name)). " +
-        "Requires parser changes to support expression-based grouping keys.")]
+    [Fact]
     public async Task Query_GroupByLower_MergesCaseVariants()
     {
         var c = await SeedAsync();

@@ -803,27 +803,12 @@ public class QueryPlanTests : IDisposable
         aggregates.Should().Contain(t => t.ToString() == "Sum");
     }
 
-    [Fact(Skip = "Emulator does not support dCountInfo for COUNT(DISTINCT) queries. " +
-                 "See sister test: QueryPlan_CountDistinct_DivergentBehavior_NoDCountInfo")]
+    [Fact]
     public async Task QueryPlan_CountDistinct_SetsDCountInfo()
     {
         var plan = await GetQueryPlanAsync("SELECT COUNT(DISTINCT c.name) FROM c");
         var info = plan["queryInfo"]!;
         info["dCountInfo"].Should().NotBeNull();
-    }
-
-    [Fact]
-    public async Task QueryPlan_CountDistinct_DivergentBehavior_NoDCountInfo()
-    {
-        // DIVERGENT BEHAVIOR: Emulator does not support COUNT(DISTINCT ...) via dCountInfo.
-        // Real Cosmos DB sets dCountInfo with the distinct expression path.
-        // Emulator detects COUNT as aggregate but has no dCountInfo concept.
-        var plan = await GetQueryPlanAsync("SELECT COUNT(c.name) FROM c");
-        var info = plan["queryInfo"]!;
-
-        info["dCountInfo"].Should().BeNull();
-        var aggregates = (JArray)info["aggregates"]!;
-        aggregates.Should().Contain(t => t.ToString() == "Count");
     }
 
     // ══════════════════════════════════════════════════════════════

@@ -1464,54 +1464,33 @@ public class JsTriggerTests
         // returns undefined rather than throwing. This is functionally equivalent
         // (the trigger can't use the response) but the failure mode differs.
 
-        [Fact(Skip = "Real Cosmos DB throws a runtime error when a pre-trigger calls " +
-            "getContext().getResponse() because the response doesn't exist yet. The emulator's " +
-            "Jint pre-trigger API simply doesn't define getResponse() on the context, so it returns " +
-            "undefined instead of throwing. The end result is equivalent (response is inaccessible) " +
-            "but the failure mode differs — undefined vs explicit error.")]
-        public void PreTrigger_Js_GetResponse_Throws_RealCosmos()
-        {
-            // In real Cosmos, a pre-trigger calling getContext().getResponse() would get
-            // a 400 Bad Request with a message like "getResponse() is not available in pre-triggers".
-        }
-
         [Fact]
-        public async Task PreTrigger_Js_GetResponse_ReturnsUndefined_InEmulator()
+        public async Task PreTrigger_Js_GetResponse_Throws_RealCosmos()
         {
-            // Sister test: In the emulator, getResponse() is simply not defined in pre-triggers.
-            // Accessing it returns undefined rather than throwing. The trigger below accesses
-            // getResponse() and silently gets undefined — no error is thrown.
+            // Real Cosmos DB throws a runtime error when a pre-trigger calls
+            // getContext().getResponse() because the response doesn't exist yet.
             _container.UseJsTriggers();
 
             await _container.Scripts.CreateTriggerAsync(new TriggerProperties
             {
-                Id = "accessResponse",
+                Id = "callGetResponse",
                 TriggerType = TriggerType.Pre,
                 TriggerOperation = TriggerOperation.All,
                 Body = """
-                    function accessResponse() {
+                    function callGetResponse() {
                         var ctx = getContext();
-                        // getResponse is not defined in the emulator's pre-trigger context.
-                        // typeof returns "undefined" — no error thrown.
-                        var resp = ctx.getResponse;
-                        // resp is undefined; we just don't use it.
-
-                        // Still do the normal pre-trigger work
-                        var req = ctx.getRequest();
-                        var doc = req.getBody();
-                        doc["preRan"] = true;
-                        req.setBody(doc);
+                        var resp = ctx.getResponse();
                     }
                     """
             });
 
-            await _container.CreateItemAsync(
+            var act = async () => await _container.CreateItemAsync(
                 JObject.FromObject(new { id = "1", pk = "a" }),
                 new PartitionKey("a"),
-                new ItemRequestOptions { PreTriggers = new List<string> { "accessResponse" } });
+                new ItemRequestOptions { PreTriggers = new List<string> { "callGetResponse" } });
 
-            var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
-            item["preRan"]!.Value<bool>().Should().BeTrue();
+            await act.Should().ThrowAsync<CosmosException>()
+                .WithMessage("*getResponse*");
         }
 
         // ── Divergence: Multiple triggers per operation ──────────────────
@@ -2874,9 +2853,7 @@ public class TriggerPatchBatchDivergentTests
         patched.Resource["stamped"].Should().BeNull("triggers not requested in this call");
     }
 
-    [Fact(Skip = "Real Cosmos DB records change feed only for committed transactions. " +
-        "The emulator records change feed before post-trigger execution, so failed post-triggers " +
-        "leave orphan change feed entries.")]
+    [Fact]
     public async Task ChangeFeed_RolledBack_OnPostTriggerFailure()
     {
         var container = new InMemoryContainer("test", "/pk");

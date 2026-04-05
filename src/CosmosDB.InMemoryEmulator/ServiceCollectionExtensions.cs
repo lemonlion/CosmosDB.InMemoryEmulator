@@ -68,7 +68,17 @@ public static class ServiceCollectionExtensions
                 ? new InMemoryContainer(config.ContainerProperties)
                 : new InMemoryContainer(config.ContainerName, config.PartitionKeyPath);
             var handler = new FakeCosmosHandler(container);
-            handlers[config.ContainerName] = handler;
+            // Use compound key (db/container) when databaseName is specified
+            if (config.DatabaseName is not null)
+            {
+                handlers[$"{config.DatabaseName}/{config.ContainerName}"] = handler;
+            }
+            // Also register container-only key (for backward compat and single-db scenarios),
+            // but only if no other container with the same name but different database exists.
+            if (!handlers.ContainsKey(config.ContainerName))
+            {
+                handlers[config.ContainerName] = handler;
+            }
             options.OnHandlerCreated?.Invoke(config.ContainerName, handler);
         }
 
