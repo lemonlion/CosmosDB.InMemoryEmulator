@@ -1189,9 +1189,12 @@ public class LinqDivergentBehaviorTests
         await _container.CreateItemAsync(new TestDocument { Id = "3", PartitionKey = "pk2", Name = "Charlie", Value = 30 }, new PartitionKey("pk2"));
     }
 
-    [Fact(Skip = "DIVERGENT: Cosmos SDK LINQ provider does not translate GroupBy to SQL. " +
-        "Real Cosmos throws NotSupportedException. InMemoryContainer returns LINQ-to-Objects " +
-        "where GroupBy is natively supported by System.Linq.")]
+    [Fact(Skip = "APPROACH 1 PERMISSIVENESS: InMemoryContainer uses LINQ-to-Objects, where " +
+        "GroupBy is natively supported by System.Linq. Real Cosmos SDK's CosmosLinqQueryProvider " +
+        "cannot translate GroupBy to SQL and throws NotSupportedException. This divergence only " +
+        "affects Approach 1 (direct InMemoryContainer). With Approach 3 (CosmosClient + " +
+        "FakeCosmosHandler), the real SDK correctly rejects GroupBy — see " +
+        "RealToFeedIteratorLinqDeepDiveTests.ToFeedIterator_GroupBy_SdkRejectsTranslation.")]
     public async Task Linq_GroupBy_RealCosmos_ShouldThrowNotSupported()
     {
         await SeedData();
@@ -1210,8 +1213,11 @@ public class LinqDivergentBehaviorTests
         groups.Should().HaveCount(2);
     }
 
-    [Fact(Skip = "DIVERGENT: Cosmos SDK LINQ provider does not support Last()/LastOrDefault(). " +
-        "Cosmos SQL has no LAST equivalent. InMemoryContainer uses LINQ-to-Objects.")]
+    [Fact(Skip = "APPROACH 1 PERMISSIVENESS: InMemoryContainer uses LINQ-to-Objects, where " +
+        "Last()/LastOrDefault() work natively. Cosmos SQL has no LAST equivalent, so the real " +
+        "SDK rejects these. This divergence only affects Approach 1 (direct InMemoryContainer). " +
+        "With Approach 3 (CosmosClient + FakeCosmosHandler), the real SDK correctly rejects " +
+        "Last() — see RealToFeedIteratorLinqDeepDiveTests.ToFeedIterator_Last_SdkRejectsTranslation.")]
     public async Task Linq_Last_RealCosmos_ShouldThrowNotSupported()
     {
         await SeedData();
@@ -1228,8 +1234,11 @@ public class LinqDivergentBehaviorTests
         result.Should().NotBeNull();
     }
 
-    [Fact(Skip = "DIVERGENT: Cosmos SDK LINQ provider only translates Sum/Average/Count/Min/Max. " +
-        "Custom Aggregate() has no SQL equivalent. InMemoryContainer uses LINQ-to-Objects.")]
+    [Fact(Skip = "APPROACH 1 PERMISSIVENESS: InMemoryContainer uses LINQ-to-Objects, where " +
+        "custom Aggregate() works natively. The real SDK only translates Sum/Average/Count/Min/Max " +
+        "to Cosmos SQL. This divergence only affects Approach 1 (direct InMemoryContainer). " +
+        "With Approach 3 (CosmosClient + FakeCosmosHandler), the real SDK correctly rejects " +
+        "Aggregate() — see RealToFeedIteratorLinqDeepDiveTests.ToFeedIterator_Aggregate_SdkRejectsTranslation.")]
     public async Task Linq_Aggregate_RealCosmos_ShouldThrowNotSupported()
     {
         await SeedData();
@@ -1248,8 +1257,11 @@ public class LinqDivergentBehaviorTests
         total.Should().Be(60);
     }
 
-    [Fact(Skip = "DIVERGENT: Cosmos SDK LINQ provider does not support Reverse(). " +
-        "SQL has no REVERSE ordering clause. InMemoryContainer uses LINQ-to-Objects.")]
+    [Fact(Skip = "APPROACH 1 PERMISSIVENESS: InMemoryContainer uses LINQ-to-Objects, where " +
+        "Reverse() works natively. Cosmos SQL has no REVERSE ordering clause, so the real SDK " +
+        "rejects it. This divergence only affects Approach 1 (direct InMemoryContainer). " +
+        "With Approach 3 (CosmosClient + FakeCosmosHandler), the real SDK correctly rejects " +
+        "Reverse() — see RealToFeedIteratorLinqDeepDiveTests.ToFeedIterator_Reverse_SdkRejectsTranslation.")]
     public async Task Linq_Reverse_RealCosmos_ShouldThrowNotSupported()
     {
         await SeedData();
@@ -1266,9 +1278,12 @@ public class LinqDivergentBehaviorTests
         results.Should().HaveCount(3);
     }
 
-    [Fact(Skip = "DIVERGENT: Real Cosmos SDK enforces allowSynchronousQueryExecution=false by " +
-        "throwing on ToList()/foreach, forcing ToFeedIterator(). InMemoryContainer ignores this " +
-        "parameter — the queryable is always synchronously enumerable via LINQ-to-Objects.")]
+    [Fact(Skip = "APPROACH 1 PERMISSIVENESS: InMemoryContainer ignores allowSynchronousQueryExecution " +
+        "because the queryable is always synchronously enumerable via LINQ-to-Objects. The real " +
+        "SDK enforces this flag by throwing on ToList()/foreach, forcing ToFeedIterator(). This " +
+        "divergence only affects Approach 1 (direct InMemoryContainer). With Approach 3 " +
+        "(CosmosClient + FakeCosmosHandler), the real SDK correctly enforces async — see " +
+        "RealToFeedIteratorLinqDeepDiveTests.ToFeedIterator_AllowSynchronousQueryExecution_False_SdkEnforcesAsync.")]
     public async Task Linq_AllowSynchronousQueryExecution_False_ShouldThrow()
     {
         await SeedData();
@@ -1285,9 +1300,12 @@ public class LinqDivergentBehaviorTests
         results.Should().HaveCount(3);
     }
 
-    [Fact(Skip = "DIVERGENT (L4): continuationToken on GetItemLinqQueryable is accepted but " +
-        "ignored. Real Cosmos uses it to resume from a server-side checkpoint. InMemoryContainer " +
-        "materializes all items — there is no query execution plan to resume.")]
+    [Fact(Skip = "APPROACH 1 PERMISSIVENESS (L4): InMemoryContainer accepts continuationToken " +
+        "on GetItemLinqQueryable but ignores it — all items are always materialized via " +
+        "LINQ-to-Objects. Real Cosmos uses continuation tokens to resume from a server-side " +
+        "checkpoint. This divergence only affects Approach 1 (direct InMemoryContainer). " +
+        "With Approach 3 (CosmosClient + FakeCosmosHandler), the real SDK handles continuation " +
+        "tokens through the HTTP pipeline.")]
     public async Task Linq_ContinuationToken_ShouldResumeFromCheckpoint()
     {
         await SeedData();

@@ -113,11 +113,13 @@ public class GetCurrentDateTimeConsistencyTests
 
 public class LinqQueryableOptionsTests
 {
-    // DIVERGENT: GetItemLinqQueryable ignores linqSerializerOptions and continuationToken parameters.
-    [Fact(Skip = "L4: linqSerializerOptions and continuationToken on GetItemLinqQueryable are ignored. " +
-                  "The emulator uses Newtonsoft.Json internally and doesn't support custom LINQ " +
-                  "serializer options. The continuationToken parameter is also ignored since " +
-                  "all data is in-memory. This is documented in Known Limitations.")]
+    // APPROACH 1 PERMISSIVENESS: GetItemLinqQueryable ignores linqSerializerOptions and continuationToken.
+    [Fact(Skip = "APPROACH 1 PERMISSIVENESS (L4): InMemoryContainer ignores linqSerializerOptions " +
+                  "and continuationToken on GetItemLinqQueryable because it uses Newtonsoft.Json " +
+                  "internally and materializes all items via LINQ-to-Objects. This divergence only " +
+                  "affects Approach 1 (direct InMemoryContainer). With Approach 3 (CosmosClient + " +
+                  "FakeCosmosHandler), the real SDK's CosmosLinqQueryProvider handles serializer " +
+                  "options and continuation tokens through the HTTP pipeline.")]
     public void GetItemLinqQueryable_WithSerializerOptions_ShouldRespectOptions()
     {
         // Expected real Cosmos behavior:

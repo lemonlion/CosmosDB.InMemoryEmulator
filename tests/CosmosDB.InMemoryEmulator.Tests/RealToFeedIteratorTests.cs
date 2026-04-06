@@ -2123,6 +2123,94 @@ public class RealToFeedIteratorLinqDeepDiveTests : IAsyncLifetime
 
         results.Should().HaveCount(2);
     }
+
+    // ── Approach 3 LINQ rejection tests ──────────────────────────────────────
+    // These operations work in Approach 1 (InMemoryContainer → LINQ-to-Objects) but are
+    // correctly rejected in Approach 3 (CosmosClient + FakeCosmosHandler) because the real
+    // SDK's CosmosLinqQueryProvider cannot translate them to Cosmos SQL.
+    // See Integration-Approaches wiki, Decision 2, for why this distinction exists.
+
+    [Fact]
+    public async Task ToFeedIterator_GroupBy_SdkRejectsTranslation()
+    {
+        // Approach 3: The real SDK's CosmosLinqQueryProvider throws DocumentQueryException
+        // because GroupBy has no Cosmos SQL equivalent. In Approach 1 (InMemoryContainer),
+        // this works via LINQ-to-Objects — see LinqDivergentBehaviorTests.Linq_GroupBy_WorksInMemory_DivergentBehavior.
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 },
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20 },
+            new TestDocument { Id = "3", PartitionKey = "pk2", Name = "Charlie", Value = 30 });
+
+        var act = () => _realContainer.GetItemLinqQueryable<TestDocument>()
+            .GroupBy(d => d.PartitionKey)
+            .ToFeedIterator();
+
+        act.Should().Throw<Exception>().WithMessage("*GroupBy*");
+    }
+
+    [Fact]
+    public async Task ToFeedIterator_Last_SdkRejectsTranslation()
+    {
+        // Approach 3: Last()/LastOrDefault() have no Cosmos SQL equivalent.
+        // In Approach 1, this works via LINQ-to-Objects — see LinqDivergentBehaviorTests.Linq_Last_WorksInMemory_DivergentBehavior.
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice", Value = 10 });
+
+        var act = () => _realContainer.GetItemLinqQueryable<TestDocument>().LastOrDefault();
+
+        act.Should().Throw<Exception>().WithMessage("*LastOrDefault*");
+    }
+
+    [Fact]
+    public async Task ToFeedIterator_Aggregate_SdkRejectsTranslation()
+    {
+        // Approach 3: Custom Aggregate() has no Cosmos SQL equivalent. Only Sum/Average/Count/Min/Max
+        // are translated. In Approach 1, this works via LINQ-to-Objects —
+        // see LinqDivergentBehaviorTests.Linq_Aggregate_WorksInMemory_DivergentBehavior.
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice", Value = 10 },
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "Bob", Value = 20 });
+
+        var act = () => _realContainer.GetItemLinqQueryable<TestDocument>()
+            .Aggregate(0, (acc, d) => acc + d.Value);
+
+        act.Should().Throw<Exception>().WithMessage("*Aggregate*");
+    }
+
+    [Fact]
+    public async Task ToFeedIterator_Reverse_SdkRejectsTranslation()
+    {
+        // Approach 3: Reverse() has no Cosmos SQL equivalent. Use OrderByDescending() instead.
+        // In Approach 1, this works via LINQ-to-Objects —
+        // see LinqDivergentBehaviorTests.Linq_Reverse_WorksInMemory_DivergentBehavior.
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice", Value = 10 },
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "Bob", Value = 20 });
+
+        var act = () => _realContainer.GetItemLinqQueryable<TestDocument>()
+            .Reverse()
+            .ToFeedIterator();
+
+        act.Should().Throw<Exception>().WithMessage("*Reverse*");
+    }
+
+    [Fact]
+    public async Task ToFeedIterator_AllowSynchronousQueryExecution_False_SdkEnforcesAsync()
+    {
+        // Approach 3: The real SDK enforces allowSynchronousQueryExecution=false by throwing
+        // on synchronous enumeration (ToList()/foreach), requiring ToFeedIterator() instead.
+        // In Approach 1 (InMemoryContainer), this flag is ignored because the queryable is
+        // always synchronously enumerable via LINQ-to-Objects —
+        // see LinqDivergentBehaviorTests.Linq_AllowSynchronousQueryExecution_False_StillWorksInMemory_DivergentBehavior.
+        await SeedAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice", Value = 10 });
+
+        var queryable = _realContainer.GetItemLinqQueryable<TestDocument>(
+            allowSynchronousQueryExecution: false);
+
+        var act = () => queryable.ToList();
+        act.Should().Throw<NotSupportedException>();
+    }
 }
 
 public class NameProjection
