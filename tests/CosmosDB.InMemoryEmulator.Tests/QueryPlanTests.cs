@@ -176,31 +176,29 @@ public class QueryPlanTests : IDisposable
     [Fact]
     public async Task QueryPlan_MinMaxAvg_DetectsAll()
     {
+        // Multi-aggregate bypass: aggregates and alias map suppressed (Linux compatibility).
         var plan = await GetQueryPlanAsync(
             "SELECT MIN(c.value) AS minVal, MAX(c.value) AS maxVal, AVG(c.value) AS avgVal FROM c");
         var info = plan["queryInfo"]!;
 
         var aggregates = (JArray)info["aggregates"]!;
-        aggregates.Select(t => t.ToString()).Should().Contain("Min");
-        aggregates.Select(t => t.ToString()).Should().Contain("Max");
-        aggregates.Select(t => t.ToString()).Should().Contain("Average");
+        aggregates.Should().BeEmpty();
 
         var aliasMap = (JObject)info["groupByAliasToAggregateType"]!;
-        aliasMap["minVal"]!.ToString().Should().Be("Min");
-        aliasMap["maxVal"]!.ToString().Should().Be("Max");
-        aliasMap["avgVal"]!.ToString().Should().Be("Average");
+        aliasMap.Should().BeEmpty();
     }
 
     [Fact]
     public async Task QueryPlan_GroupBy_SetsGroupByExpressions()
     {
+        // GROUP BY bypass: pipeline flags are suppressed so the SDK
+        // doesn't activate GroupByQueryPipelineStage on Linux.
         var plan = await GetQueryPlanAsync(
             "SELECT c.status, COUNT(1) AS cnt FROM c GROUP BY c.status");
         var info = plan["queryInfo"]!;
 
         var groupBy = (JArray)info["groupByExpressions"]!;
-        groupBy.Should().HaveCount(1);
-        groupBy[0]!.ToString().Should().Be("c.status");
+        groupBy.Should().BeEmpty();
     }
 
     [Fact]
@@ -239,6 +237,8 @@ public class QueryPlanTests : IDisposable
     [Fact]
     public async Task QueryPlan_ComplexQuery_SetsAllRelevantFlags()
     {
+        // GROUP BY bypass: groupBy, aggregates, orderBy, and alias map are suppressed
+        // (Linux compatibility). DISTINCT and TOP are preserved.
         var plan = await GetQueryPlanAsync(
             "SELECT DISTINCT TOP 5 c.category, SUM(c.value) AS total " +
             "FROM c WHERE c.isActive = true " +
@@ -250,17 +250,16 @@ public class QueryPlanTests : IDisposable
         ((int)info["top"]!).Should().Be(5);
 
         var orderBy = (JArray)info["orderBy"]!;
-        orderBy.Should().HaveCount(1);
-        orderBy[0]!.ToString().Should().Be("Ascending");
+        orderBy.Should().BeEmpty();
 
         var aggregates = (JArray)info["aggregates"]!;
-        aggregates.Should().Contain(t => t.ToString() == "Sum");
+        aggregates.Should().BeEmpty();
 
         var groupBy = (JArray)info["groupByExpressions"]!;
-        groupBy.Should().HaveCount(1);
+        groupBy.Should().BeEmpty();
 
         var aliasMap = (JObject)info["groupByAliasToAggregateType"]!;
-        aliasMap["total"]!.ToString().Should().Be("Sum");
+        aliasMap.Should().BeEmpty();
     }
 
     [Fact]
@@ -399,34 +398,31 @@ public class QueryPlanTests : IDisposable
     [Fact]
     public async Task QueryPlan_AggregateInArithmeticExpression_DetectsAggregate()
     {
-        // Bug test: SUM(c.a) * 2 AS total — the aggregate is inside a BinaryExpression.
-        // DetectAggregates should still find it and map alias "total" → "Sum".
+        // GROUP BY bypass: aggregates and alias map suppressed (Linux compatibility).
         var plan = await GetQueryPlanAsync(
             "SELECT c.category, SUM(c.value) * 2 AS total FROM c GROUP BY c.category");
         var info = plan["queryInfo"]!;
 
         var aggregates = (JArray)info["aggregates"]!;
-        aggregates.Should().Contain(t => t.ToString() == "Sum");
+        aggregates.Should().BeEmpty();
 
         var aliasMap = (JObject)info["groupByAliasToAggregateType"]!;
-        aliasMap["total"]!.ToString().Should().Be("Sum");
+        aliasMap.Should().BeEmpty();
     }
 
     [Fact]
     public async Task QueryPlan_DuplicateAggregateType_DeduplicatesInArray()
     {
+        // Multi-aggregate bypass: aggregates and alias map suppressed (Linux compatibility).
         var plan = await GetQueryPlanAsync(
             "SELECT SUM(c.price) AS sumPrice, SUM(c.quantity) AS sumQty FROM c");
         var info = plan["queryInfo"]!;
 
         var aggregates = (JArray)info["aggregates"]!;
-        // "Sum" should appear only once in the aggregates array
-        aggregates.Count(t => t.ToString() == "Sum").Should().Be(1);
+        aggregates.Should().BeEmpty();
 
-        // But both aliases should be mapped
         var aliasMap = (JObject)info["groupByAliasToAggregateType"]!;
-        aliasMap["sumPrice"]!.ToString().Should().Be("Sum");
-        aliasMap["sumQty"]!.ToString().Should().Be("Sum");
+        aliasMap.Should().BeEmpty();
     }
 
     [Fact]
@@ -466,14 +462,13 @@ public class QueryPlanTests : IDisposable
     [Fact]
     public async Task QueryPlan_MultipleGroupByFields_SetsAll()
     {
+        // GROUP BY bypass: expressions suppressed (Linux compatibility).
         var plan = await GetQueryPlanAsync(
             "SELECT c.status, c.region, COUNT(1) AS cnt FROM c GROUP BY c.status, c.region");
         var info = plan["queryInfo"]!;
 
         var groupBy = (JArray)info["groupByExpressions"]!;
-        groupBy.Should().HaveCount(2);
-        groupBy.Select(t => t.ToString()).Should().Contain("c.status");
-        groupBy.Select(t => t.ToString()).Should().Contain("c.region");
+        groupBy.Should().BeEmpty();
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -712,54 +707,52 @@ public class QueryPlanTests : IDisposable
     [Fact]
     public async Task QueryPlan_GroupBy_PopulatesGroupByAliases()
     {
+        // GROUP BY bypass: aliases suppressed (Linux compatibility).
         var plan = await GetQueryPlanAsync(
             "SELECT c.status, COUNT(1) AS cnt FROM c GROUP BY c.status");
         var info = plan["queryInfo"]!;
 
         var aliases = (JArray)info["groupByAliases"]!;
-        aliases.Should().NotBeEmpty();
-        aliases.Select(t => t.ToString()).Should().Contain("cnt");
+        aliases.Should().BeEmpty();
     }
 
     [Fact]
     public async Task QueryPlan_GroupByNestedProperty_SetsExpression()
     {
+        // GROUP BY bypass: expressions suppressed (Linux compatibility).
         var plan = await GetQueryPlanAsync(
             "SELECT c.address.city, COUNT(1) AS cnt FROM c GROUP BY c.address.city");
         var info = plan["queryInfo"]!;
 
         var groupBy = (JArray)info["groupByExpressions"]!;
-        groupBy.Should().HaveCount(1);
-        groupBy[0]!.ToString().Should().Contain("address.city");
+        groupBy.Should().BeEmpty();
     }
 
     [Fact]
     public async Task QueryPlan_GroupByWithHaving_SetsGroupByExpressions()
     {
+        // GROUP BY bypass: expressions and aggregates suppressed (Linux compatibility).
         var plan = await GetQueryPlanAsync(
             "SELECT c.status, COUNT(1) AS cnt FROM c GROUP BY c.status HAVING COUNT(1) > 1");
         var info = plan["queryInfo"]!;
 
         var groupBy = (JArray)info["groupByExpressions"]!;
-        groupBy.Should().HaveCount(1);
-        groupBy[0]!.ToString().Should().Contain("status");
+        groupBy.Should().BeEmpty();
 
         var aggregates = (JArray)info["aggregates"]!;
-        aggregates.Should().Contain(t => t.ToString() == "Count");
+        aggregates.Should().BeEmpty();
     }
 
     [Fact]
     public async Task QueryPlan_GroupByMultipleWithAliases_PopulatesAllAliases()
     {
+        // GROUP BY bypass: aliases suppressed (Linux compatibility).
         var plan = await GetQueryPlanAsync(
             "SELECT c.status AS s, c.region AS r, COUNT(1) AS cnt FROM c GROUP BY c.status, c.region");
         var info = plan["queryInfo"]!;
 
         var aliases = (JArray)info["groupByAliases"]!;
-        aliases.Should().NotBeEmpty();
-        aliases.Select(t => t.ToString()).Should().Contain("s");
-        aliases.Select(t => t.ToString()).Should().Contain("r");
-        aliases.Select(t => t.ToString()).Should().Contain("cnt");
+        aliases.Should().BeEmpty();
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -769,38 +762,39 @@ public class QueryPlanTests : IDisposable
     [Fact]
     public async Task QueryPlan_AggregateInBinaryExpression_MapsAlias()
     {
+        // GROUP BY bypass: aggregates and alias map suppressed (Linux compatibility).
         var plan = await GetQueryPlanAsync(
             "SELECT c.category, SUM(c.value) * 2 AS total FROM c GROUP BY c.category");
         var info = plan["queryInfo"]!;
 
         var aggregates = (JArray)info["aggregates"]!;
-        aggregates.Should().Contain(t => t.ToString() == "Sum");
+        aggregates.Should().BeEmpty();
 
         var aliasMap = (JObject)info["groupByAliasToAggregateType"]!;
-        aliasMap["total"]!.ToString().Should().Be("Sum");
+        aliasMap.Should().BeEmpty();
     }
 
     [Fact]
     public async Task QueryPlan_MultipleAggregatesWithGroupBy_AllDetected()
     {
+        // GROUP BY bypass: aggregates suppressed (Linux compatibility).
         var plan = await GetQueryPlanAsync(
             "SELECT c.cat, COUNT(1) AS cnt, AVG(c.val) AS avg FROM c GROUP BY c.cat");
         var info = plan["queryInfo"]!;
 
         var aggregates = (JArray)info["aggregates"]!;
-        aggregates.Should().Contain(t => t.ToString() == "Count");
-        aggregates.Should().Contain(t => t.ToString() == "Average");
+        aggregates.Should().BeEmpty();
     }
 
     [Fact]
     public async Task QueryPlan_AggregateWithoutGroupBy_StillDetected()
     {
+        // Multi-aggregate bypass: aggregates suppressed (Linux compatibility).
         var plan = await GetQueryPlanAsync("SELECT COUNT(1) AS cnt, SUM(c.val) AS total FROM c");
         var info = plan["queryInfo"]!;
 
         var aggregates = (JArray)info["aggregates"]!;
-        aggregates.Should().Contain(t => t.ToString() == "Count");
-        aggregates.Should().Contain(t => t.ToString() == "Sum");
+        aggregates.Should().BeEmpty();
     }
 
     [Fact]

@@ -565,6 +565,29 @@ public class FakeCosmosHandler : HttpMessageHandler
                 queryInfo["hasSelectValue"] = true;
             }
 
+            // Suppress SDK pipeline for GROUP BY and non-VALUE multi-aggregate queries.
+            // InMemoryContainer evaluates these fully; return pre-computed results.
+            // On Linux (no ServiceInterop), the SDK would otherwise activate
+            // GroupByQueryPipelineStage / AggregateQueryPipelineStage which expect
+            // undocumented wire formats (groupByItems/payload wrapping).
+            var isGroupByBypass = parsed.GroupByFields is { Length: > 0 };
+            var aggregateFieldCount = parsed.SelectFields.Count(f => ContainsAggregate(f.SqlExpr));
+            var isMultiAggregateBypass = !isGroupByBypass && !parsed.IsValueSelect && aggregateFieldCount > 1;
+
+            if (isGroupByBypass || isMultiAggregateBypass)
+            {
+                queryInfo["groupByExpressions"] = new JArray();
+                queryInfo["groupByAliases"] = new JArray();
+                queryInfo["groupByAliasToAggregateType"] = new JObject();
+                queryInfo["aggregates"] = new JArray();
+                if (isGroupByBypass)
+                {
+                    queryInfo["hasNonStreamingOrderBy"] = false;
+                    queryInfo["orderBy"] = new JArray();
+                    queryInfo["orderByExpressions"] = new JArray();
+                }
+            }
+
             // Rewritten query — on non-Windows platforms the SDK uses this verbatim.
             // For ORDER BY queries the SDK expects documents wrapped with
             // orderByItems + payload as separate SELECT fields (not SELECT VALUE).
@@ -1056,7 +1079,26 @@ public class FakeCosmosHandler : HttpMessageHandler
         var sb = new StringBuilder($"SELECT {alias}._rid, ");
         sb.Append(orderByItemsArray);
         sb.Append(" AS orderByItems, ");
-        sb.Append($"{alias} AS payload");
+
+        // For DISTINCT+ORDER BY, the payload must be the projected SELECT fields
+        // (not the full document), so the SDK's DistinctQueryPipelineStage can
+        // correctly deduplicate by projected value.
+        // Skip when SELECT * (fields have null SqlExpr) — use full document instead.
+        if (parsed.IsDistinct && parsed.SelectFields.Length > 0
+            && parsed.SelectFields.All(f => f.SqlExpr is not null))
+        {
+            var payloadParts = parsed.SelectFields.Select(f =>
+            {
+                var expr = CosmosSqlParser.ExprToString(f.SqlExpr);
+                var key = f.Alias ?? f.Expression ?? expr;
+                return $"\"{key}\": {expr}";
+            });
+            sb.Append($"{{{string.Join(", ", payloadParts)}}} AS payload");
+        }
+        else
+        {
+            sb.Append($"{alias} AS payload");
+        }
 
         // FROM clause
         sb.Append($" FROM {alias}");
