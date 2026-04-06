@@ -58,6 +58,102 @@ public class CrossPartitionAggregateTests
             .ReadNextAsync();
         sum.Resource.Single().Should().Be(3);
     }
+
+    [Fact]
+    public async Task CrossPartition_Count_Diagnostic()
+    {
+        var container = new InMemoryContainer("test-diag", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "b" }), new PartitionKey("b"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "c" }), new PartitionKey("c"));
+
+        var log = new System.Collections.Concurrent.ConcurrentQueue<string>();
+
+        using var innerHandler = new FakeCosmosHandler(container, new FakeCosmosHandlerOptions { PartitionKeyRangeCount = 2 });
+        using var handler = new LoggingHandler(innerHandler, log);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                RequestTimeout = TimeSpan.FromSeconds(10),
+                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+        var cosmosContainer = client.GetContainer("db", "test-diag");
+
+        int result;
+        try
+        {
+            var response = await cosmosContainer.GetItemQueryIterator<int>(
+                new QueryDefinition("SELECT VALUE COUNT(1) FROM c"))
+                .ReadNextAsync();
+            result = response.Resource.SingleOrDefault();
+        }
+        catch (Exception ex)
+        {
+            result = -999;
+            log.Enqueue($"EXCEPTION: {ex.GetType().Name}: {ex.Message}");
+        }
+
+        var fullLog = string.Join("\n", log);
+        // This assertion will fail on purpose and dump the full HTTP traffic log
+        if (result != 3)
+        {
+            throw new Xunit.Sdk.XunitException(
+                $"Expected 3 but got {result}. OS={System.Runtime.InteropServices.RuntimeInformation.OSDescription}\n\n" +
+                $"HTTP Traffic Log ({log.Count} entries):\n{fullLog}");
+        }
+    }
+
+    private class LoggingHandler : DelegatingHandler
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _log;
+
+        public LoggingHandler(HttpMessageHandler inner,
+            System.Collections.Concurrent.ConcurrentQueue<string> log) : base(inner)
+        {
+            _log = log;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, System.Threading.CancellationToken ct)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($">>> {request.Method} {request.RequestUri?.PathAndQuery}");
+            foreach (var h in request.Headers)
+            {
+                if (h.Key.StartsWith("x-ms-documentdb-partitionkeyrangeid", StringComparison.OrdinalIgnoreCase)
+                    || h.Key.StartsWith("x-ms-cosmos-is-query-plan", StringComparison.OrdinalIgnoreCase)
+                    || h.Key.StartsWith("x-ms-documentdb-isquery", StringComparison.OrdinalIgnoreCase)
+                    || h.Key.StartsWith("x-ms-documentdb-query-enable", StringComparison.OrdinalIgnoreCase)
+                    || h.Key.StartsWith("Content-Type", StringComparison.OrdinalIgnoreCase))
+                    sb.AppendLine($"  {h.Key}: {string.Join(",", h.Value)}");
+            }
+            if (request.Content != null)
+            {
+                var reqBody = await request.Content.ReadAsStringAsync();
+                sb.AppendLine($"  ContentType: {request.Content.Headers?.ContentType?.MediaType}");
+                if (reqBody.Length < 2000)
+                    sb.AppendLine($"  Body: {reqBody}");
+            }
+
+            var response = await base.SendAsync(request, ct);
+
+            sb.AppendLine($"<<< {(int)response.StatusCode}");
+            if (response.Content != null)
+            {
+                var respBody = await response.Content.ReadAsStringAsync();
+                if (respBody.Length < 3000)
+                    sb.AppendLine($"  RespBody: {respBody}");
+                else
+                    sb.AppendLine($"  RespBody: ({respBody.Length} chars) {respBody[..500]}...");
+            }
+            _log.Enqueue(sb.ToString());
+            return response;
+        }
+    }
 }
 
 // ─── M9: Subquery ORDER BY and OFFSET/LIMIT — RESOLVED ──────────────────
