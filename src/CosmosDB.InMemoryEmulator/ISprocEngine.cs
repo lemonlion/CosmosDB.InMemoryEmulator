@@ -19,6 +19,11 @@ public interface ISprocEngine
     string? Execute(string jsBody, PartitionKey partitionKey, dynamic[] args);
 
     /// <summary>
+    /// Executes a stored procedure JavaScript body with access to the collection context for CRUD operations.
+    /// </summary>
+    string? Execute(string jsBody, PartitionKey partitionKey, dynamic[] args, ICollectionContext context);
+
+    /// <summary>
     /// Log messages captured from <c>console.log()</c> calls during the most recent <see cref="Execute"/> invocation.
     /// </summary>
     IReadOnlyList<string> CapturedLogs { get; }

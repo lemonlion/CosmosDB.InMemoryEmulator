@@ -1,6 +1,6 @@
 # Query Flow Comparison — Integration Approaches
 
-This page compares the query execution flow across the three integration approaches described in [Integration Approaches](../../../wiki/Integration-Approaches.md). SQL queries are shown first (simpler pattern), then LINQ queries.
+This page compares the query execution flow across the three integration approaches described in [Integration Approaches](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Integration-Approaches). SQL queries are shown first (simpler pattern), then LINQ queries.
 
 > **Approach 1** (InMemoryContainer) is included standalone — Approaches 2 and 3 are shown side-by-side for comparison since they both involve a `CosmosClient`.
 

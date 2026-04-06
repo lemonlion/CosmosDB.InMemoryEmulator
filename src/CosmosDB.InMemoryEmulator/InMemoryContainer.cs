@@ -70,6 +70,7 @@ public class InMemoryContainer : Container
     private ContainerProperties _containerProperties;
     private readonly Scripts _scripts;
     private readonly Dictionary<string, Func<object[], object>> _userDefinedFunctions = new(StringComparer.Ordinal);
+    private static readonly Func<object[], object> UdfPlaceholder = _ => null;
     private readonly Dictionary<string, Func<PartitionKey, dynamic[], string>> _storedProcedures = new(StringComparer.Ordinal);
     private readonly Dictionary<string, StoredProcedureProperties> _storedProcedureProperties = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RegisteredTrigger> _triggers = new(StringComparer.Ordinal);
@@ -2377,6 +2378,13 @@ public class InMemoryContainer : Container
         _ => TriggerOperation.All
     };
 
+    private PartitionScopedCollectionContext CreateCollectionContextFromDoc(JObject jObj)
+    {
+        var pkValue = ExtractPartitionKeyValueCore(null, jObj);
+        var pk = pkValue is null ? PartitionKey.Null : new PartitionKey(pkValue);
+        return new PartitionScopedCollectionContext(this, pk);
+    }
+
     private static bool TriggerOperationMatches(TriggerOperation registered, TriggerOperation current)
         => registered == TriggerOperation.All || registered == current;
 
@@ -2396,7 +2404,7 @@ public class InMemoryContainer : Container
                 if (!TriggerOperationMatches(trigger.TriggerOperation, currentOp)) continue;
 
                 jObj = trigger.PreHandler(jObj);
-                continue;
+                break; // Real Cosmos only fires the first matching trigger
             }
 
             // Priority 2: JS body via JsTriggerEngine
@@ -2417,7 +2425,8 @@ public class InMemoryContainer : Container
                 var pkPath = PartitionKeyPaths[0].TrimStart('/');
                 var originalPk = jObj.SelectToken(pkPath)?.ToString();
 
-                jObj = JsTriggerEngine.ExecutePreTrigger(props.Body, jObj);
+                jObj = JsTriggerEngine.ExecutePreTrigger(props.Body, jObj,
+                    CreateCollectionContextFromDoc(jObj));
 
                 // Validate the trigger did not change id or partition key
                 var newId = jObj["id"]?.ToString();
@@ -2435,7 +2444,7 @@ public class InMemoryContainer : Container
                         HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
 
-                continue;
+                break; // Real Cosmos only fires the first matching trigger
             }
 
             throw new CosmosException(
@@ -2476,7 +2485,7 @@ public class InMemoryContainer : Container
                         $"Post-trigger '{name}' failed: {ex.Message}",
                         HttpStatusCode.InternalServerError, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
-                continue;
+                break; // Real Cosmos only fires the first matching trigger
             }
 
             // Priority 2: JS body via JsTriggerEngine
@@ -2495,7 +2504,8 @@ public class InMemoryContainer : Container
 
                 try
                 {
-                    var setBodyResult = JsTriggerEngine.ExecutePostTrigger(props.Body, committedDoc);
+                    var setBodyResult = JsTriggerEngine.ExecutePostTrigger(props.Body, committedDoc,
+                        CreateCollectionContextFromDoc(committedDoc));
                     if (setBodyResult is not null)
                     {
                         responseBodyOverride = setBodyResult;
@@ -2511,7 +2521,7 @@ public class InMemoryContainer : Container
                         $"Post-trigger '{name}' failed: {ex.Message}",
                         HttpStatusCode.InternalServerError, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
-                continue;
+                break; // Real Cosmos only fires the first matching trigger
             }
 
             throw new CosmosException(
@@ -3130,7 +3140,7 @@ public class InMemoryContainer : Container
                     HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._udfProperties[userDefinedFunctionProperties.Id] = userDefinedFunctionProperties;
             if (!_c._userDefinedFunctions.ContainsKey("UDF." + userDefinedFunctionProperties.Id))
-                _c._userDefinedFunctions["UDF." + userDefinedFunctionProperties.Id] = _ => null;
+                _c._userDefinedFunctions["UDF." + userDefinedFunctionProperties.Id] = UdfPlaceholder;
             var r = Substitute.For<UserDefinedFunctionResponse>();
             r.StatusCode.Returns(HttpStatusCode.Created);
             r.Resource.Returns(userDefinedFunctionProperties);
@@ -3186,7 +3196,7 @@ public class InMemoryContainer : Container
                     HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._udfProperties[userDefinedFunctionProperties.Id] = userDefinedFunctionProperties;
             if (!_c._userDefinedFunctions.ContainsKey("UDF." + userDefinedFunctionProperties.Id))
-                _c._userDefinedFunctions["UDF." + userDefinedFunctionProperties.Id] = _ => null;
+                _c._userDefinedFunctions["UDF." + userDefinedFunctionProperties.Id] = UdfPlaceholder;
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created,
                 JsonConvert.SerializeObject(userDefinedFunctionProperties)));
         }
@@ -3227,55 +3237,103 @@ public class InMemoryContainer : Container
 
         public override FeedIterator<T> GetStoredProcedureQueryIterator<T>(
             string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
-            => new InMemoryFeedIterator<T>(() => _c._storedProcedureProperties.Values.Cast<T>().ToList());
+            => new InMemoryFeedIterator<T>(() => FilterById(_c._storedProcedureProperties, queryText).Cast<T>().ToList());
 
         public override FeedIterator<T> GetStoredProcedureQueryIterator<T>(
             QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
-            => new InMemoryFeedIterator<T>(() => _c._storedProcedureProperties.Values.Cast<T>().ToList());
+            => new InMemoryFeedIterator<T>(() => FilterById(_c._storedProcedureProperties, queryDefinition).Cast<T>().ToList());
 
         public override FeedIterator<T> GetTriggerQueryIterator<T>(
             string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
-            => new InMemoryFeedIterator<T>(() => _c._triggerProperties.Values.Cast<T>().ToList());
+            => new InMemoryFeedIterator<T>(() => FilterById(_c._triggerProperties, queryText).Cast<T>().ToList());
 
         public override FeedIterator<T> GetTriggerQueryIterator<T>(
             QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
-            => new InMemoryFeedIterator<T>(() => _c._triggerProperties.Values.Cast<T>().ToList());
+            => new InMemoryFeedIterator<T>(() => FilterById(_c._triggerProperties, queryDefinition).Cast<T>().ToList());
 
         public override FeedIterator<T> GetUserDefinedFunctionQueryIterator<T>(
             string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
-            => new InMemoryFeedIterator<T>(() => _c._udfProperties.Values.Cast<T>().ToList());
+            => new InMemoryFeedIterator<T>(() => FilterById(_c._udfProperties, queryText).Cast<T>().ToList());
 
         public override FeedIterator<T> GetUserDefinedFunctionQueryIterator<T>(
             QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
-            => new InMemoryFeedIterator<T>(() => _c._udfProperties.Values.Cast<T>().ToList());
+            => new InMemoryFeedIterator<T>(() => FilterById(_c._udfProperties, queryDefinition).Cast<T>().ToList());
 
-        // ── Query iterators (stream) — not yet implemented ────────────────
+        // ── Query iterators (stream) ──────────────────────────────────────
 
         public override FeedIterator GetStoredProcedureQueryStreamIterator(
             string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
-            => throw new NotImplementedException("Stream query iterators for stored procedures are not supported by InMemoryContainer.");
+            => new InMemoryStreamFeedIterator(
+                () => _c._storedProcedureProperties.Values.Cast<object>().ToList(), "StoredProcedures");
 
         public override FeedIterator GetStoredProcedureQueryStreamIterator(
             QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
-            => throw new NotImplementedException("Stream query iterators for stored procedures are not supported by InMemoryContainer.");
+            => new InMemoryStreamFeedIterator(
+                () => _c._storedProcedureProperties.Values.Cast<object>().ToList(), "StoredProcedures");
 
         public override FeedIterator GetTriggerQueryStreamIterator(
             string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
-            => throw new NotImplementedException("Stream query iterators for triggers are not supported by InMemoryContainer.");
+            => new InMemoryStreamFeedIterator(
+                () => _c._triggerProperties.Values.Cast<object>().ToList(), "Triggers");
 
         public override FeedIterator GetTriggerQueryStreamIterator(
             QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
-            => throw new NotImplementedException("Stream query iterators for triggers are not supported by InMemoryContainer.");
+            => new InMemoryStreamFeedIterator(
+                () => _c._triggerProperties.Values.Cast<object>().ToList(), "Triggers");
 
         public override FeedIterator GetUserDefinedFunctionQueryStreamIterator(
             string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
-            => throw new NotImplementedException("Stream query iterators for UDFs are not supported by InMemoryContainer.");
+            => new InMemoryStreamFeedIterator(
+                () => _c._udfProperties.Values.Cast<object>().ToList(), "UserDefinedFunctions");
 
         public override FeedIterator GetUserDefinedFunctionQueryStreamIterator(
             QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
-            => throw new NotImplementedException("Stream query iterators for UDFs are not supported by InMemoryContainer.");
+            => new InMemoryStreamFeedIterator(
+                () => _c._udfProperties.Values.Cast<object>().ToList(), "UserDefinedFunctions");
 
         // ── Private helpers ───────────────────────────────────────────────
+
+        private static IEnumerable<TValue> FilterById<TValue>(
+            Dictionary<string, TValue> dict, string queryText)
+        {
+            var id = ExtractIdFromQueryText(queryText);
+            return id != null && dict.TryGetValue(id, out var match)
+                ? new[] { match }
+                : dict.Values;
+        }
+
+        private static IEnumerable<TValue> FilterById<TValue>(
+            Dictionary<string, TValue> dict, QueryDefinition queryDefinition)
+        {
+            if (queryDefinition == null) return dict.Values;
+            var id = ExtractIdFromQueryText(queryDefinition.QueryText);
+            if (id != null && id.StartsWith("@"))
+            {
+                var parameters = ExtractQueryParameters(queryDefinition);
+                if (parameters.TryGetValue(id, out var paramValue))
+                    id = paramValue?.ToString();
+                else
+                    return dict.Values;
+            }
+            return id != null && dict.TryGetValue(id, out var match)
+                ? new[] { match }
+                : dict.Values;
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex IdFilterRegex =
+            new(@"WHERE\s+c\.id\s*=\s*(?:'([^']+)'|""([^""]+)""|(@\w+))",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static string ExtractIdFromQueryText(string queryText)
+        {
+            if (string.IsNullOrWhiteSpace(queryText)) return null;
+            var m = IdFilterRegex.Match(queryText);
+            if (!m.Success) return null;
+            return m.Groups[1].Success ? m.Groups[1].Value
+                 : m.Groups[2].Success ? m.Groups[2].Value
+                 : m.Groups[3].Success ? m.Groups[3].Value
+                 : null;
+        }
 
         private string ExecuteHandler(string sprocId, Func<string> invoker)
         {
@@ -3314,7 +3372,8 @@ public class InMemoryContainer : Container
         {
             try
             {
-                return _c.SprocEngine.Execute(jsBody, pk, args);
+                var context = new PartitionScopedCollectionContext(_c, pk);
+                return _c.SprocEngine.Execute(jsBody, pk, args, context);
             }
             catch (CosmosException) { throw; }
             catch (Exception ex)
@@ -3403,6 +3462,8 @@ public class InMemoryContainer : Container
     }
 
     private const string UdfRegistryKey = "__udf_registry__";
+    private const string UdfPropertiesKey = "__udf_properties__";
+    private const string UdfEngineKey = "__udf_engine__";
 
     private (string Name, string FromAlias, SqlExpression Expr)[] GetParsedComputedProperties()
     {
@@ -3485,6 +3546,11 @@ public class InMemoryContainer : Container
         {
             parameters[UdfRegistryKey] = _userDefinedFunctions;
         }
+
+        if (_udfProperties.Count > 0)
+            parameters[UdfPropertiesKey] = _udfProperties;
+        if (JsTriggerEngine is IJsUdfEngine udfEngine)
+            parameters[UdfEngineKey] = udfEngine;
 
         // Snapshot static datetime values so they remain constant for the entire query
         parameters["__staticDateTime"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
@@ -6269,11 +6335,26 @@ public class InMemoryContainer : Container
             default:
                 if (func.FunctionName.StartsWith("UDF.", StringComparison.OrdinalIgnoreCase))
                 {
+                    var udfName = func.FunctionName.Substring(4); // strip "UDF." prefix
+                    
+                    // Priority 1: C# handler (skip placeholder delegates)
                     if (parameters.TryGetValue(UdfRegistryKey, out var registry) &&
                         registry is Dictionary<string, Func<object[], object>> udfs &&
-                        udfs.TryGetValue(func.FunctionName, out var udfImpl))
+                        udfs.TryGetValue(func.FunctionName, out var udfImpl) &&
+                        !ReferenceEquals(udfImpl, UdfPlaceholder))
                     {
                         return udfImpl(args);
+                    }
+
+                    // Priority 2: JS body via engine
+                    if (parameters.TryGetValue(UdfPropertiesKey, out var propsObj) &&
+                        propsObj is Dictionary<string, UserDefinedFunctionProperties> udfProps &&
+                        udfProps.TryGetValue(udfName, out var udfProp) &&
+                        udfProp.Body is not null &&
+                        parameters.TryGetValue(UdfEngineKey, out var engineObj) &&
+                        engineObj is IJsUdfEngine jsUdfEngine)
+                    {
+                        return jsUdfEngine.ExecuteUdf(udfProp.Body, args);
                     }
 
                     throw new NotSupportedException(

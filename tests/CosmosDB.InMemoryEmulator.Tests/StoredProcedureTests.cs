@@ -1610,4 +1610,462 @@ public class StoredProcedureContainerIsolationTests
         r1.Resource.Body.Should().Be("function() { return 'body-1'; }");
         r2.Resource.Body.Should().Be("function() { return 'body-2'; }");
     }
+
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Gap 5: Stream Query Iterator Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ScriptStreamQueryIteratorTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task GetStoredProcedureQueryStreamIterator_ReturnsSerializedProperties()
+    {
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp1", Body = "function(){}" });
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp2", Body = "function(){}" });
+
+        var iterator = _container.Scripts.GetStoredProcedureQueryStreamIterator();
+        var response = await iterator.ReadNextAsync();
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+        response.Content.Should().NotBeNull();
+
+        using var reader = new StreamReader(response.Content);
+        var json = await reader.ReadToEndAsync();
+        json.Should().Contain("sp1");
+        json.Should().Contain("sp2");
+    }
+
+    [Fact]
+    public async Task GetStoredProcedureQueryStreamIterator_WithQueryDefinition_ReturnsAll()
+    {
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp1", Body = "function(){}" });
+
+        var iterator = _container.Scripts.GetStoredProcedureQueryStreamIterator(
+            new QueryDefinition("SELECT * FROM c"));
+        var response = await iterator.ReadNextAsync();
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+
+        using var reader = new StreamReader(response.Content);
+        var json = await reader.ReadToEndAsync();
+        json.Should().Contain("sp1");
+    }
+
+    [Fact]
+    public async Task GetUserDefinedFunctionQueryStreamIterator_ReturnsSerializedProperties()
+    {
+        await _container.Scripts.CreateUserDefinedFunctionAsync(
+            new UserDefinedFunctionProperties { Id = "udf1", Body = "function(x){return x;}" });
+        await _container.Scripts.CreateUserDefinedFunctionAsync(
+            new UserDefinedFunctionProperties { Id = "udf2", Body = "function(x){return x*2;}" });
+
+        var iterator = _container.Scripts.GetUserDefinedFunctionQueryStreamIterator();
+        var response = await iterator.ReadNextAsync();
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+
+        using var reader = new StreamReader(response.Content);
+        var json = await reader.ReadToEndAsync();
+        json.Should().Contain("udf1");
+        json.Should().Contain("udf2");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Gap 6: Script Metadata Query Filtering Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ScriptMetadataQueryFilteringTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task GetStoredProcedureQueryIterator_WithIdFilter_ReturnsOnlyMatching()
+    {
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp1", Body = "function(){}" });
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp2", Body = "function(){}" });
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp3", Body = "function(){}" });
+
+        var iterator = _container.Scripts.GetStoredProcedureQueryIterator<StoredProcedureProperties>(
+            "SELECT * FROM c WHERE c.id = 'sp2'");
+        var results = new List<StoredProcedureProperties>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Id.Should().Be("sp2");
+    }
+
+    [Fact]
+    public async Task GetStoredProcedureQueryIterator_WithQueryDefinition_FiltersById()
+    {
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp1", Body = "function(){}" });
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp2", Body = "function(){}" });
+
+        var qd = new QueryDefinition("SELECT * FROM c WHERE c.id = @id")
+            .WithParameter("@id", "sp1");
+        var iterator = _container.Scripts.GetStoredProcedureQueryIterator<StoredProcedureProperties>(qd);
+        var results = new List<StoredProcedureProperties>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Id.Should().Be("sp1");
+    }
+
+    [Fact]
+    public async Task GetTriggerQueryIterator_WithIdFilter_ReturnsOnlyMatching()
+    {
+        await _container.Scripts.CreateTriggerAsync(new TriggerProperties
+            { Id = "t1", TriggerType = TriggerType.Pre, TriggerOperation = TriggerOperation.All, Body = "function(){}" });
+        await _container.Scripts.CreateTriggerAsync(new TriggerProperties
+            { Id = "t2", TriggerType = TriggerType.Post, TriggerOperation = TriggerOperation.Create, Body = "function(){}" });
+
+        var iterator = _container.Scripts.GetTriggerQueryIterator<TriggerProperties>(
+            "SELECT * FROM c WHERE c.id = 't1'");
+        var results = new List<TriggerProperties>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Id.Should().Be("t1");
+    }
+
+    [Fact]
+    public async Task GetUserDefinedFunctionQueryIterator_WithIdFilter_ReturnsOnlyMatching()
+    {
+        await _container.Scripts.CreateUserDefinedFunctionAsync(
+            new UserDefinedFunctionProperties { Id = "udf1", Body = "function(x){return x;}" });
+        await _container.Scripts.CreateUserDefinedFunctionAsync(
+            new UserDefinedFunctionProperties { Id = "udf2", Body = "function(x){return x*2;}" });
+
+        var iterator = _container.Scripts.GetUserDefinedFunctionQueryIterator<UserDefinedFunctionProperties>(
+            "SELECT * FROM c WHERE c.id = 'udf2'");
+        var results = new List<UserDefinedFunctionProperties>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Id.Should().Be("udf2");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Gap 1: JS Stored Procedure Collection Access Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class JsSprocCollectionAccessTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task JsSproc_CreateDocument_InsertsItem()
+    {
+        _container.UseJsStoredProcedures();
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+        {
+            Id = "spCreate",
+            Body = @"function() {
+                var collection = getContext().getCollection();
+                collection.createDocument(collection.getSelfLink(),
+                    { id: 'new-doc', pk: 'a', value: 42 },
+                    {}, function(err, doc) {
+                        if (err) throw err;
+                        getContext().getResponse().setBody(doc.id);
+                    });
+            }"
+        });
+
+        var result = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spCreate", new PartitionKey("a"), Array.Empty<dynamic>());
+        result.Resource.Should().Be("new-doc");
+
+        // Verify the document was actually inserted
+        var item = await _container.ReadItemAsync<JObject>("new-doc", new PartitionKey("a"));
+        item.Resource["value"]!.Value<int>().Should().Be(42);
+    }
+
+    [Fact]
+    public async Task JsSproc_ReadDocument_ReturnsItem()
+    {
+        _container.UseJsStoredProcedures();
+        // Seed an item
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "doc1", pk = "a", data = "hello" }),
+            new PartitionKey("a"));
+
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+        {
+            Id = "spRead",
+            Body = @"function(docId) {
+                var collection = getContext().getCollection();
+                collection.readDocument(collection.getSelfLink() + '/docs/' + docId,
+                    {}, function(err, doc) {
+                        if (err) throw err;
+                        getContext().getResponse().setBody(doc.data);
+                    });
+            }"
+        });
+
+        var result = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spRead", new PartitionKey("a"), new dynamic[] { "doc1" });
+        result.Resource.Should().Be("hello");
+    }
+
+    [Fact]
+    public async Task JsSproc_QueryDocuments_ReturnsFiltered()
+    {
+        _container.UseJsStoredProcedures();
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "d1", pk = "a", val = 1 }), new PartitionKey("a"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "d2", pk = "a", val = 2 }), new PartitionKey("a"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "d3", pk = "a", val = 3 }), new PartitionKey("a"));
+
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+        {
+            Id = "spQuery",
+            Body = @"function() {
+                var collection = getContext().getCollection();
+                collection.queryDocuments(collection.getSelfLink(),
+                    'SELECT * FROM c WHERE c.val >= 2',
+                    {}, function(err, docs) {
+                        if (err) throw err;
+                        getContext().getResponse().setBody(JSON.stringify(docs.length));
+                    });
+            }"
+        });
+
+        var result = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spQuery", new PartitionKey("a"), Array.Empty<dynamic>());
+        result.Resource.Should().Be("2");
+    }
+
+    [Fact]
+    public async Task JsSproc_ReplaceDocument_UpdatesItem()
+    {
+        _container.UseJsStoredProcedures();
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "doc1", pk = "a", status = "draft" }),
+            new PartitionKey("a"));
+
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+        {
+            Id = "spReplace",
+            Body = @"function(docId) {
+                var collection = getContext().getCollection();
+                collection.readDocument(collection.getSelfLink() + '/docs/' + docId,
+                    {}, function(err, doc) {
+                        if (err) throw err;
+                        doc.status = 'published';
+                        collection.replaceDocument(doc._self || (collection.getSelfLink() + '/docs/' + doc.id),
+                            doc, {}, function(err2, replaced) {
+                                if (err2) throw err2;
+                                getContext().getResponse().setBody(replaced.status);
+                            });
+                    });
+            }"
+        });
+
+        var result = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spReplace", new PartitionKey("a"), new dynamic[] { "doc1" });
+        result.Resource.Should().Be("published");
+
+        var item = await _container.ReadItemAsync<JObject>("doc1", new PartitionKey("a"));
+        item.Resource["status"]!.Value<string>().Should().Be("published");
+    }
+
+    [Fact]
+    public async Task JsSproc_DeleteDocument_RemovesItem()
+    {
+        _container.UseJsStoredProcedures();
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "doc1", pk = "a" }),
+            new PartitionKey("a"));
+
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+        {
+            Id = "spDelete",
+            Body = @"function(docId) {
+                var collection = getContext().getCollection();
+                collection.deleteDocument(collection.getSelfLink() + '/docs/' + docId,
+                    {}, function(err) {
+                        if (err) throw err;
+                        getContext().getResponse().setBody('deleted');
+                    });
+            }"
+        });
+
+        var result = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spDelete", new PartitionKey("a"), new dynamic[] { "doc1" });
+        result.Resource.Should().Be("deleted");
+
+        var act = () => _container.ReadItemAsync<JObject>("doc1", new PartitionKey("a"));
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task JsSproc_PartitionScoped_CannotAccessOtherPartition()
+    {
+        _container.UseJsStoredProcedures();
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "a1", pk = "a" }), new PartitionKey("a"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "b1", pk = "b" }), new PartitionKey("b"));
+
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+        {
+            Id = "spPartition",
+            Body = @"function() {
+                var collection = getContext().getCollection();
+                collection.queryDocuments(collection.getSelfLink(),
+                    'SELECT * FROM c',
+                    {}, function(err, docs) {
+                        if (err) throw err;
+                        getContext().getResponse().setBody(JSON.stringify(docs.length));
+                    });
+            }"
+        });
+
+        // Execute in partition 'a' — should only see 1 doc
+        var result = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spPartition", new PartitionKey("a"), Array.Empty<dynamic>());
+        result.Resource.Should().Be("1");
+    }
+
+    [Fact]
+    public async Task JsSproc_BulkDelete_Pattern()
+    {
+        _container.UseJsStoredProcedures();
+        for (int i = 0; i < 5; i++)
+            await _container.CreateItemAsync(JObject.FromObject(new { id = $"d{i}", pk = "a" }), new PartitionKey("a"));
+
+        await _container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties
+        {
+            Id = "spBulkDelete",
+            Body = @"function() {
+                var collection = getContext().getCollection();
+                var count = 0;
+                collection.queryDocuments(collection.getSelfLink(),
+                    'SELECT * FROM c',
+                    {}, function(err, docs) {
+                        if (err) throw err;
+                        for (var i = 0; i < docs.length; i++) {
+                            collection.deleteDocument(docs[i]._self || (collection.getSelfLink() + '/docs/' + docs[i].id),
+                                {}, function(delErr) { if (delErr) throw delErr; });
+                            count++;
+                        }
+                        getContext().getResponse().setBody(JSON.stringify(count));
+                    });
+            }"
+        });
+
+        var result = await _container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "spBulkDelete", new PartitionKey("a"), Array.Empty<dynamic>());
+        result.Resource.Should().Be("5");
+
+        // All should be gone
+        var remaining = _container.GetItemLinqQueryable<JObject>(allowSynchronousQueryExecution: true).ToList();
+        remaining.Should().BeEmpty();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Gap 2: JS UDF Execution Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class JsUdfExecutionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task JsUdf_SimpleFunction_ReturnsResult()
+    {
+        _container.UseJsTriggers();
+        await _container.Scripts.CreateUserDefinedFunctionAsync(new UserDefinedFunctionProperties
+        {
+            Id = "double", Body = "function double(x) { return x * 2; }"
+        });
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", value = 5 }), new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>("SELECT udf.double(c.value) AS result FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Count.Should().Be(1);
+        results[0]["result"]!.Value<double>().Should().Be(10);
+    }
+
+    [Fact]
+    public async Task JsUdf_StringFunction_Works()
+    {
+        _container.UseJsTriggers();
+        await _container.Scripts.CreateUserDefinedFunctionAsync(new UserDefinedFunctionProperties
+        {
+            Id = "greet", Body = "function greet(name) { return 'Hello, ' + name + '!'; }"
+        });
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "World" }), new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>("SELECT udf.greet(c.name) AS greeting FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Count.Should().Be(1);
+        results[0]["greeting"]!.Value<string>().Should().Be("Hello, World!");
+    }
+
+    [Fact]
+    public async Task JsUdf_MultipleArgs_PassedCorrectly()
+    {
+        _container.UseJsTriggers();
+        await _container.Scripts.CreateUserDefinedFunctionAsync(new UserDefinedFunctionProperties
+        {
+            Id = "add", Body = "function add(a, b) { return a + b; }"
+        });
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", x = 3, y = 7 }), new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>("SELECT udf.add(c.x, c.y) AS sum FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results[0]["sum"]!.Value<long>().Should().Be(10);
+    }
+
+    [Fact]
+    public async Task JsUdf_CSharpPriority_OverJsBody()
+    {
+        _container.UseJsTriggers();
+        // Register C# handler first
+        _container.RegisterUdf("priority", args => "csharp-wins");
+        // Also register JS body via metadata
+        await _container.Scripts.CreateUserDefinedFunctionAsync(new UserDefinedFunctionProperties
+        {
+            Id = "priority", Body = "function priority() { return 'js-wins'; }"
+        });
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>("SELECT udf.priority() AS result FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results[0]["result"]!.Value<string>().Should().Be("csharp-wins");
+    }
+
+    [Fact]
+    public async Task JsUdf_InWhereClause_FiltersCorrectly()
+    {
+        _container.UseJsTriggers();
+        await _container.Scripts.CreateUserDefinedFunctionAsync(new UserDefinedFunctionProperties
+        {
+            Id = "isEven", Body = "function isEven(n) { return n % 2 === 0; }"
+        });
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", val = 2 }), new PartitionKey("a"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", val = 3 }), new PartitionKey("a"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", val = 4 }), new PartitionKey("a"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE udf.isEven(c.val)");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+        results.Select(r => r["id"]!.Value<string>()).Should().BeEquivalentTo("1", "3");
+    }
 }

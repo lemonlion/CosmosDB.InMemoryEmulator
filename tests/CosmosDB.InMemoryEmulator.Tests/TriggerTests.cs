@@ -338,9 +338,10 @@ public class PreTriggerExecutionTests
             new ItemRequestOptions { PreTriggers = new List<string> { "first", "second" } });
 
         var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        // Real Cosmos only fires the first matching trigger
         item["first"]!.Value<bool>().Should().BeTrue();
-        item["second"]!.Value<bool>().Should().BeTrue();
-        item["order"]!.Value<string>().Should().Be("1,2");
+        item["order"]!.Value<string>().Should().Be("1");
+        item.ContainsKey("second").Should().BeFalse();
     }
 
     [Fact]
@@ -922,7 +923,8 @@ public class PostTriggerEdgeCaseTests
             new PartitionKey("a"),
             new ItemRequestOptions { PostTriggers = new List<string> { "first", "second" } });
 
-        order.Should().BeEquivalentTo(new[] { "first", "second" }, opt => opt.WithStrictOrdering());
+        // Real Cosmos only fires the first matching trigger
+        order.Should().BeEquivalentTo(new[] { "first" });
     }
 
     [Fact]

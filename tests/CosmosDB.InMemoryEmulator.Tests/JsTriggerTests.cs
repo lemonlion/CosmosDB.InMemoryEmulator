@@ -211,6 +211,7 @@ public class JsTriggerTests
         [Fact]
         public async Task PreTrigger_MultipleChainedJsTriggers()
         {
+            // Real Cosmos only fires the first matching trigger from the list.
             _container.UseJsTriggers();
 
             await RegisterJsPreTrigger("first", """
@@ -239,8 +240,8 @@ public class JsTriggerTests
                 new ItemRequestOptions { PreTriggers = new List<string> { "first", "second" } });
 
             var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
-            item["step1"]!.Value<bool>().Should().BeTrue();
-            item["step2"]!.Value<bool>().Should().BeTrue();
+            item["step1"]!.Value<bool>().Should().BeTrue("first trigger should fire");
+            item.ContainsKey("step2").Should().BeFalse("second trigger should not fire — real Cosmos only fires first");
         }
 
         [Fact]
@@ -1503,53 +1504,21 @@ public class JsTriggerTests
         // actually more permissive than real Cosmos and may mask issues where code
         // relies on multiple triggers executing when only one would in production.
 
-        [Fact(Skip = "Real Cosmos DB only executes one pre-trigger per operation despite the SDK " +
-            "accepting a List<string> of trigger names. The emulator chains and executes ALL listed " +
-            "triggers in order, which is more permissive. This divergence is intentional — it's more " +
-            "useful for testing to support chaining, and the SDK API shape suggests multiple triggers " +
-            "were intended. Code relying on multiple triggers should be aware only one fires in production.")]
-        public void MultipleTriggers_RealCosmosOnlyExecutesOne()
-        {
-            // In real Cosmos with PreTriggers = ["t1", "t2"], only one trigger executes.
-        }
-
         [Fact]
-        public async Task MultipleTriggers_EmulatorChainsAll()
+        public async Task MultipleTriggers_RealCosmosOnlyExecutesOne()
         {
-            // Sister test: The emulator runs ALL triggers in the PreTriggers list in order.
-            // Each trigger's output becomes the next trigger's input.
+            // Real Cosmos DB only fires the FIRST listed trigger, even when multiple are specified.
             _container.UseJsTriggers();
 
             await _container.Scripts.CreateTriggerAsync(new TriggerProperties
             {
-                Id = "addA",
-                TriggerType = TriggerType.Pre,
-                TriggerOperation = TriggerOperation.All,
-                Body = """
-                    function addA() {
-                        var ctx = getContext();
-                        var req = ctx.getRequest();
-                        var doc = req.getBody();
-                        doc["a"] = true;
-                        req.setBody(doc);
-                    }
-                    """
+                Id = "addA", TriggerType = TriggerType.Pre, TriggerOperation = TriggerOperation.All,
+                Body = "function addA() { var r = getContext().getRequest(); var d = r.getBody(); d['a'] = true; r.setBody(d); }"
             });
-
             await _container.Scripts.CreateTriggerAsync(new TriggerProperties
             {
-                Id = "addB",
-                TriggerType = TriggerType.Pre,
-                TriggerOperation = TriggerOperation.All,
-                Body = """
-                    function addB() {
-                        var ctx = getContext();
-                        var req = ctx.getRequest();
-                        var doc = req.getBody();
-                        doc["b"] = true;
-                        req.setBody(doc);
-                    }
-                    """
+                Id = "addB", TriggerType = TriggerType.Pre, TriggerOperation = TriggerOperation.All,
+                Body = "function addB() { var r = getContext().getRequest(); var d = r.getBody(); d['b'] = true; r.setBody(d); }"
             });
 
             await _container.CreateItemAsync(
@@ -1558,9 +1527,52 @@ public class JsTriggerTests
                 new ItemRequestOptions { PreTriggers = new List<string> { "addA", "addB" } });
 
             var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
-            // Both triggers ran — emulator chains all listed triggers
+            item["a"]!.Value<bool>().Should().BeTrue("first trigger should fire");
+            item.ContainsKey("b").Should().BeFalse("second trigger should NOT fire — real Cosmos only fires first");
+        }
+
+        [Fact]
+        public async Task MultipleTriggers_OnlyFirstCSharpHandlerExecuted()
+        {
+            // With multiple pre-triggers listed, only the first matching one executes.
+            var aFired = false;
+            var bFired = false;
+
+            _container.RegisterTrigger("tA", TriggerType.Pre, TriggerOperation.All,
+                (Func<JObject, JObject>)(doc => { aFired = true; doc["a"] = true; return doc; }));
+            _container.RegisterTrigger("tB", TriggerType.Pre, TriggerOperation.All,
+                (Func<JObject, JObject>)(doc => { bFired = true; doc["b"] = true; return doc; }));
+
+            await _container.CreateItemAsync(
+                JObject.FromObject(new { id = "1", pk = "a" }),
+                new PartitionKey("a"),
+                new ItemRequestOptions { PreTriggers = new List<string> { "tA", "tB" } });
+
+            aFired.Should().BeTrue("first trigger should fire");
+            bFired.Should().BeFalse("second trigger should NOT fire");
+            var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
             item["a"]!.Value<bool>().Should().BeTrue();
-            item["b"]!.Value<bool>().Should().BeTrue();
+            item.ContainsKey("b").Should().BeFalse();
+        }
+
+        [Fact]
+        public async Task MultiplePostTriggers_OnlyFirstExecuted()
+        {
+            var aFired = false;
+            var bFired = false;
+
+            _container.RegisterTrigger("postA", TriggerType.Post, TriggerOperation.All,
+                (Action<JObject>)(_ => aFired = true));
+            _container.RegisterTrigger("postB", TriggerType.Post, TriggerOperation.All,
+                (Action<JObject>)(_ => bFired = true));
+
+            await _container.CreateItemAsync(
+                JObject.FromObject(new { id = "1", pk = "a" }),
+                new PartitionKey("a"),
+                new ItemRequestOptions { PostTriggers = new List<string> { "postA", "postB" } });
+
+            aFired.Should().BeTrue("first post-trigger should fire");
+            bFired.Should().BeFalse("second post-trigger should NOT fire");
         }
 
         // ── Divergence: getCollection() not supported ────────────────────
@@ -3460,5 +3472,141 @@ public class JsTriggerDeleteStreamTests
             new ItemRequestOptions { PreTriggers = new List<string> { "pre-del" } });
 
         preFired.Should().BeTrue();
+    }
+
+    // ── Gap 5: Trigger stream query iterator ──────────────────────────
+
+    [Fact]
+    public async Task GetTriggerQueryStreamIterator_ReturnsSerializedProperties()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "t1", TriggerType = TriggerType.Pre, TriggerOperation = TriggerOperation.All, Body = "function(){}"
+        });
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "t2", TriggerType = TriggerType.Post, TriggerOperation = TriggerOperation.Create, Body = "function(){}"
+        });
+
+        var iterator = container.Scripts.GetTriggerQueryStreamIterator();
+        var response = await iterator.ReadNextAsync();
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+
+        using var reader = new StreamReader(response.Content);
+        var json = await reader.ReadToEndAsync();
+        json.Should().Contain("t1");
+        json.Should().Contain("t2");
+    }
+
+    // ── Gap 1: Trigger Collection Access ──────────────────────────────
+
+    [Fact]
+    public async Task PreTrigger_Js_CollectionAccess_QueryDocuments()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+
+        // Seed a reference doc
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "ref1", pk = "a", category = "premium" }),
+            new PartitionKey("a"));
+
+        // Pre-trigger reads the reference doc and stamps the incoming doc
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "pre-enrich",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.Create,
+            Body = @"function enrich() {
+                var ctx = getContext();
+                var request = ctx.getRequest();
+                var body = request.getBody();
+                var collection = ctx.getCollection();
+                collection.queryDocuments(collection.getSelfLink(),
+                    ""SELECT * FROM c WHERE c.id = 'ref1'"",
+                    {}, function(err, docs) {
+                        if (err) throw err;
+                        body.enrichedFrom = docs[0].category;
+                        request.setBody(body);
+                    });
+            }"
+        });
+
+        var doc = JObject.FromObject(new { id = "new1", pk = "a" });
+        await container.CreateItemAsync(doc, new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "pre-enrich" } });
+
+        var result = await container.ReadItemAsync<JObject>("new1", new PartitionKey("a"));
+        result.Resource["enrichedFrom"]!.Value<string>().Should().Be("premium");
+    }
+
+    [Fact]
+    public async Task PostTrigger_Js_CollectionAccess_CreateAuditDoc()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "post-audit",
+            TriggerType = TriggerType.Post,
+            TriggerOperation = TriggerOperation.Create,
+            Body = @"function audit() {
+                var ctx = getContext();
+                var doc = ctx.getResponse().getBody();
+                var collection = ctx.getCollection();
+                collection.createDocument(collection.getSelfLink(),
+                    { id: 'audit-' + doc.id, pk: doc.pk, action: 'created', sourceId: doc.id },
+                    {}, function(err) { if (err) throw err; });
+            }"
+        });
+
+        var doc = JObject.FromObject(new { id = "order1", pk = "a", total = 100 });
+        await container.CreateItemAsync(doc, new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "post-audit" } });
+
+        var audit = await container.ReadItemAsync<JObject>("audit-order1", new PartitionKey("a"));
+        audit.Resource["action"]!.Value<string>().Should().Be("created");
+        audit.Resource["sourceId"]!.Value<string>().Should().Be("order1");
+    }
+
+    [Fact]
+    public async Task Trigger_Js_CollectionScoped_SamePartition()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.UseJsTriggers();
+
+        // Seed docs in two partitions
+        await container.CreateItemAsync(JObject.FromObject(new { id = "a1", pk = "a" }), new PartitionKey("a"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "b1", pk = "b" }), new PartitionKey("b"));
+
+        await container.Scripts.CreateTriggerAsync(new TriggerProperties
+        {
+            Id = "pre-count",
+            TriggerType = TriggerType.Pre,
+            TriggerOperation = TriggerOperation.Create,
+            Body = @"function countNeighbors() {
+                var ctx = getContext();
+                var request = ctx.getRequest();
+                var body = request.getBody();
+                var collection = ctx.getCollection();
+                collection.queryDocuments(collection.getSelfLink(),
+                    'SELECT * FROM c',
+                    {}, function(err, docs) {
+                        if (err) throw err;
+                        body.neighborCount = docs.length;
+                        request.setBody(body);
+                    });
+            }"
+        });
+
+        // Create in partition 'a' — should only see the 1 existing doc in partition 'a'
+        var doc = JObject.FromObject(new { id = "a2", pk = "a" });
+        await container.CreateItemAsync(doc, new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "pre-count" } });
+
+        var result = await container.ReadItemAsync<JObject>("a2", new PartitionKey("a"));
+        result.Resource["neighborCount"]!.Value<int>().Should().Be(1);
     }
 }

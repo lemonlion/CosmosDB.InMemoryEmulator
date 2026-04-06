@@ -3,6 +3,8 @@ using Jint;
 using Jint.Native;
 using Jint.Runtime;
 using Microsoft.Azure.Cosmos;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace CosmosDB.InMemoryEmulator.JsTriggers;
 
@@ -18,6 +20,9 @@ public class JintSprocEngine : ISprocEngine
     public IReadOnlyList<string> CapturedLogs => _capturedLogs;
 
     public string? Execute(string jsBody, PartitionKey partitionKey, dynamic[] args)
+        => Execute(jsBody, partitionKey, args, null!);
+
+    public string? Execute(string jsBody, PartitionKey partitionKey, dynamic[] args, ICollectionContext context)
     {
         string? result = null;
         _capturedLogs = new List<string>();
@@ -49,6 +54,8 @@ public class JintSprocEngine : ISprocEngine
             _capturedLogs.Add(msg.ToString());
         }));
 
+        WireCollectionContext(engine, context);
+
         engine.Execute("""
             var console = { log: function(msg) { __log(msg); } };
             function getContext() {
@@ -58,11 +65,7 @@ public class JintSprocEngine : ISprocEngine
                             setBody: function(val) { __setBody(val); }
                         };
                     },
-                    getCollection: function() {
-                        return {
-                            getSelfLink: function() { return ""; }
-                        };
-                    }
+                    getCollection: function() { return __collection; }
                 };
             }
             """);
@@ -112,5 +115,85 @@ public class JintSprocEngine : ISprocEngine
         }
 
         return result;
+    }
+
+    internal static void WireCollectionContext(Engine engine, ICollectionContext context)
+    {
+        if (context == null)
+        {
+            engine.Execute("""
+                var __collection = { getSelfLink: function() { return ""; } };
+                """);
+            return;
+        }
+
+        var selfLink = context.SelfLink ?? "";
+
+        engine.SetValue("__selfLink", selfLink);
+        engine.SetValue("__createDocument", new Func<string, string>(jsonDoc =>
+        {
+            var doc = JObject.Parse(jsonDoc);
+            var created = context.CreateDocument(doc);
+            return created.ToString(Formatting.None);
+        }));
+        engine.SetValue("__readDocument", new Func<string, string>(docId =>
+        {
+            var doc = context.ReadDocument(docId);
+            return doc.ToString(Formatting.None);
+        }));
+        engine.SetValue("__queryDocuments", new Func<string, string>(sql =>
+        {
+            var docs = context.QueryDocuments(sql);
+            return JsonConvert.SerializeObject(docs, Formatting.None);
+        }));
+        engine.SetValue("__replaceDocument", new Func<string, string, string>((docId, jsonDoc) =>
+        {
+            var doc = JObject.Parse(jsonDoc);
+            var replaced = context.ReplaceDocument(docId, doc);
+            return replaced.ToString(Formatting.None);
+        }));
+        engine.SetValue("__deleteDocument", new Action<string>(docId =>
+        {
+            context.DeleteDocument(docId);
+        }));
+
+        engine.Execute("""
+            var __collection = {
+                getSelfLink: function() { return __selfLink; },
+                createDocument: function(link, doc, opts, cb) {
+                    var result = JSON.parse(__createDocument(JSON.stringify(doc)));
+                    if (typeof opts === 'function') { opts(null, result); }
+                    else if (cb) { cb(null, result); }
+                    return true;
+                },
+                readDocument: function(link, opts, cb) {
+                    var docId = link.split('/').pop();
+                    var result = JSON.parse(__readDocument(docId));
+                    if (typeof opts === 'function') { opts(null, result); }
+                    else if (cb) { cb(null, result); }
+                    return true;
+                },
+                queryDocuments: function(link, query, opts, cb) {
+                    var results = JSON.parse(__queryDocuments(query));
+                    if (typeof opts === 'function') { opts(null, results); }
+                    else if (cb) { cb(null, results); }
+                    return true;
+                },
+                replaceDocument: function(link, doc, opts, cb) {
+                    var docId = doc.id || link.split('/').pop();
+                    var result = JSON.parse(__replaceDocument(docId, JSON.stringify(doc)));
+                    if (typeof opts === 'function') { opts(null, result); }
+                    else if (cb) { cb(null, result); }
+                    return true;
+                },
+                deleteDocument: function(link, opts, cb) {
+                    var docId = link.split('/').pop();
+                    __deleteDocument(docId);
+                    if (typeof opts === 'function') { opts(null); }
+                    else if (cb) { cb(null); }
+                    return true;
+                }
+            };
+            """);
     }
 }
