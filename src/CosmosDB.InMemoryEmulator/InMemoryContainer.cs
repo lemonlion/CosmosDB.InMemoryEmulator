@@ -3989,15 +3989,32 @@ public class InMemoryContainer : Container
     private static List<JToken> ExtractTokenValues(List<string> items, string innerArg, string fromAlias)
     {
         var tokens = new List<JToken>();
+        var isFunctionCall = innerArg.Contains('(');
+        SqlExpression parsedInnerExpr = null;
+        if (isFunctionCall)
+        {
+            CosmosSqlParser.TryParse($"SELECT VALUE {innerArg} FROM {fromAlias}", out var innerParsed);
+            if (innerParsed?.SelectFields.Length > 0)
+                parsedInnerExpr = innerParsed.SelectFields[0].SqlExpr;
+        }
+
         foreach (var json in items)
         {
             var jObj = JsonParseHelpers.ParseJson(json);
-            var path = StripAliasPrefix(innerArg, fromAlias);
 
-            var token = jObj.SelectToken(path);
-            if (token != null && token.Type != JTokenType.Null)
+            if (parsedInnerExpr is not null)
             {
-                tokens.Add(token);
+                var result = EvaluateSqlExpression(parsedInnerExpr, jObj, fromAlias,
+                    new Dictionary<string, object>());
+                if (result is not null and not UndefinedValue)
+                    tokens.Add(JToken.FromObject(result));
+            }
+            else
+            {
+                var path = StripAliasPrefix(innerArg, fromAlias);
+                var token = jObj.SelectToken(path);
+                if (token != null && token.Type != JTokenType.Null)
+                    tokens.Add(token);
             }
         }
         return tokens;

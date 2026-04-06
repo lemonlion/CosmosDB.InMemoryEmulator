@@ -880,6 +880,30 @@ public class VectorSearchTests
             "category A vectors are closer to [1,0] than category B");
     }
 
+    [Fact]
+    public async Task VectorDistance_WithGroupBy_MinMax_AggregatesCorrectly()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", category = "A", embedding = new[] { 1.0, 0.0 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", category = "A", embedding = new[] { 0.8, 0.6 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "3", pk = "a", category = "B", embedding = new[] { 0.0, 1.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT c.category, MIN(VectorDistance(c.embedding, [1.0, 0.0])) AS minDist, " +
+            "MAX(VectorDistance(c.embedding, [1.0, 0.0])) AS maxDist FROM c GROUP BY c.category");
+
+        results.Should().HaveCount(2);
+        var catA = results.First(r => r["category"]!.ToString() == "A");
+        catA["minDist"]!.Value<double>().Should().BeLessThan(catA["maxDist"]!.Value<double>(),
+            "category A should have distinct MIN and MAX distances");
+    }
+
     // Sister test: GROUP BY works fine with VectorDistance when used outside aggregates
     [Fact]
     public async Task VectorDistance_WithGroupBy_NonAggregated_WorksInSelect()
