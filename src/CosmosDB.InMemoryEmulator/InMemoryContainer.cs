@@ -5622,6 +5622,16 @@ public class InMemoryContainer : Container
                         var length = args.Length >= 3 ? (int)(ToLong(args[2]) ?? arr.Count) : arr.Count;
                         return new JArray(arr.Skip(start).Take(length));
                     }
+
+                    // Support literal arrays and nested expressions like ARRAY_SLICE([1,2,3], 0, 2)
+                    var sliceEval = EvaluateSqlExpression(func.Arguments[0], item, fromAlias, parameters);
+                    if (sliceEval is JArray evalArr2)
+                    {
+                        var start2 = (int)(ToLong(args[1]) ?? 0);
+                        if (start2 < 0) start2 = Math.Max(0, evalArr2.Count + start2);
+                        var length2 = args.Length >= 3 ? (int)(ToLong(args[2]) ?? evalArr2.Count) : evalArr2.Count;
+                        return new JArray(evalArr2.Skip(start2).Take(length2));
+                    }
                     return null;
                 }
             case "ARRAY_CONCAT":

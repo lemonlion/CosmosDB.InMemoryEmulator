@@ -71,18 +71,31 @@ public class SubqueryOrderByTests
 
 public class ArrayFunctionLiteralTests
 {
-    // DIVERGENT: ARRAY_CONTAINS, ARRAY_LENGTH, ARRAY_SLICE only work with
-    // identifier references (e.g., c.tags), not with inline array literals.
-    [Fact(Skip = "L2: Array functions only accept identifier expressions, not literal arrays. " +
-                  "ARRAY_CONTAINS([1,2,3], 2), ARRAY_LENGTH([1,2,3]), and ARRAY_SLICE([1,2,3], 0, 2) " +
-                  "all fail because the function dispatch resolves arguments via identifier paths " +
-                  "rather than evaluating arbitrary expressions. Fixing requires changing array " +
-                  "function argument resolution to use full expression evaluation. " +
-                  "Literal arrays in SQL queries are rare in practice.")]
-    public void ArrayContains_WithLiteralArray_ShouldWork()
+    [Fact]
+    public async Task ArrayContains_WithLiteralArray_ShouldWork()
     {
-        // Expected real Cosmos behavior:
-        // SELECT VALUE ARRAY_CONTAINS([1,2,3], 2) FROM c -> true
+        var container = new InMemoryContainer("test-l2-literal", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        // ARRAY_CONTAINS with literal array
+        var iter1 = container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE ARRAY_CONTAINS([1,2,3], 2) FROM c");
+        var r1 = await iter1.ReadNextAsync();
+        r1.First().Value<bool>().Should().BeTrue();
+
+        // ARRAY_LENGTH with literal array
+        var iter2 = container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE ARRAY_LENGTH([10,20,30,40]) FROM c");
+        var r2 = await iter2.ReadNextAsync();
+        r2.First().Value<long>().Should().Be(4);
+
+        // ARRAY_SLICE with literal array
+        var iter3 = container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE ARRAY_SLICE([10,20,30,40,50], 1, 2) FROM c");
+        var r3 = await iter3.ReadNextAsync();
+        var arr = r3.First() as JArray ?? JArray.Parse(r3.First().ToString());
+        arr.Select(t => t.Value<int>()).Should().Equal(20, 30);
     }
 }
 
