@@ -13,7 +13,7 @@ There are five main approaches to seeding data, each suited to different situati
 | [SDK methods](#seeding-via-sdk-methods) (`CreateItemAsync` / `UpsertItemAsync`) | Seed through the real SDK pipeline — highest fidelity, per-test data |
 | [State persistence](#seeding-from-a-file-or-snapshot) (`ImportState` / `ImportStateFromFile`) | Restore a pre-built dataset from JSON — fast, repeatable, shareable |
 | [Direct container access](#seeding-with-direct-container-access) (resolve from DI or capture reference) | Seed after the host is built but before tests run |
-| [Automatic persistence](#persisting-state-between-test-runs) (`StatePersistenceDirectory`) | Automatically save/restore container state between test runs — zero manual export/import |
+| [Automatic persistence](#persisting-state-between-test-runs) (`StatePersistenceDirectory`) | Automatically save/restore container state between test runs — see [State Persistence](State-Persistence) |
 
 All approaches work with every [DI pattern](Dependency-Injection) and with [direct instantiation](Unit-Testing).
 
@@ -503,123 +503,7 @@ The emulator can automatically save and restore container state between test run
 when you want data created during one test run to be available in the next, without manually calling
 `ExportState`/`ImportState`.
 
-### How It Works
-
-Set `StatePersistenceDirectory` on the DI options. On startup, each container checks for an existing
-state file and loads it. On disposal, each container saves its current state back to the file.
-
-| Step | What happens |
-|---|---|
-| **Startup** | If a state file exists for the container, `ImportState` loads it automatically |
-| **First run** | No file exists — container starts empty (no error) |
-| **Disposal** | Container saves its state via `ExportState` to the file |
-| **Next run** | Container loads the previously saved state |
-
-### Via `UseInMemoryCosmosDB` (Pattern 1)
-
-```csharp
-builder.ConfigureTestServices(services =>
-{
-    services.UseInMemoryCosmosDB(options =>
-    {
-        options.AddContainer("orders", "/customerId");
-        options.StatePersistenceDirectory = "./test-state";
-    });
-});
-```
-
-Files are named `{DatabaseName}_{ContainerName}.json` — e.g. `test-state/in-memory-db_orders.json`.
-
-### Via `UseInMemoryCosmosContainers` (Pattern 3)
-
-```csharp
-builder.ConfigureTestServices(services =>
-{
-    services.UseInMemoryCosmosContainers(options =>
-    {
-        options.AddContainer("orders", "/customerId");
-        options.StatePersistenceDirectory = "./test-state";
-    });
-});
-```
-
-Files are named `{ContainerName}.json` — e.g. `test-state/orders.json`.
-
-### Via `UseInMemoryCosmosDB<TClient>` (Pattern 2)
-
-```csharp
-builder.ConfigureTestServices(services =>
-{
-    services.UseInMemoryCosmosDB<EmployeeCosmosClient>(options =>
-    {
-        options.AddContainer("employees", "/departmentId");
-        options.StatePersistenceDirectory = "./test-state";
-    });
-});
-```
-
-### Direct Instantiation (No DI)
-
-For unit tests without DI, use `StateFilePath` and `LoadPersistedState()` directly:
-
-```csharp
-public class OrderRepositoryTests : IDisposable
-{
-    private readonly InMemoryContainer _container;
-
-    public OrderRepositoryTests()
-    {
-        _container = new InMemoryContainer("orders", "/customerId");
-        _container.StateFilePath = "./test-state/orders.json";
-        _container.LoadPersistedState(); // Loads existing state, or no-op if file doesn't exist
-    }
-
-    [Fact]
-    public async Task CreateOrder_PersistsBetweenRuns()
-    {
-        await _container.CreateItemAsync(
-            new Order { Id = "order-1", CustomerId = "cust-1" },
-            new PartitionKey("cust-1"));
-    }
-
-    public void Dispose()
-    {
-        _container.Dispose(); // Saves state to file
-    }
-}
-```
-
-### File Naming Convention
-
-| DI Extension | File name pattern | Example |
-|---|---|---|
-| `UseInMemoryCosmosDB` | `{DatabaseName}_{ContainerName}.json` | `in-memory-db_orders.json` |
-| `UseInMemoryCosmosDB<T>` | `{DatabaseName}_{ContainerName}.json` | `in-memory-db_employees.json` |
-| `UseInMemoryCosmosContainers` | `{ContainerName}.json` | `orders.json` |
-| Direct (`StateFilePath`) | Whatever you set | `./my-state/orders.json` |
-
-### Behaviour Details
-
-- **First run:** No state file → container starts empty. State is saved on disposal.
-- **Subsequent runs:** State file is loaded on creation. Any changes are saved on disposal.
-- **Directory creation:** The directory is created automatically if it doesn't exist (on save).
-- **ETags and timestamps:** `ImportState` generates new ETags and timestamps on load. This matches
-  the existing `ImportState` behaviour — items get fresh system properties each run.
-- **Change feed:** Not persisted. The change feed starts fresh each run.
-- **Multiple containers:** Each container gets its own file. Multiple containers in the same
-  persistence directory coexist without conflict.
-
-### Adding State Files to `.gitignore`
-
-If you don't want state files committed to source control:
-
-```gitignore
-# In-memory emulator persisted state
-test-state/
-```
-
-If you _do_ want to commit them (e.g. as seed data that evolves over time), that also works — the
-files are standard JSON in the same `{"items":[...]}` format used by `ExportState`.
+For the full guide — including DI setup, direct instantiation, file naming conventions, and behaviour details — see **[State Persistence](State-Persistence)**.
 
 ---
 

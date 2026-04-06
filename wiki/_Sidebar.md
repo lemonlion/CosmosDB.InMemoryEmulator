@@ -25,7 +25,7 @@
   - [Pattern 2: Typed Client](Dependency-Injection#pattern-2-typed-cosmosclient-subclasses)
   - [Pattern 3: GetContainer()](Dependency-Injection#pattern-3-singleton-client-repos-call-getcontainer)
   - [Pattern 4: Container-Only](Dependency-Injection#pattern-4-container-only-replacement)
-  - [Pattern 5 & 6: Custom Factory](Dependency-Injection#pattern-5-custom-factory-interface--direct-inmemorycosclient)
+  - [Pattern 5 & 6: Custom Factory](Dependency-Injection#pattern-5-custom-factory-interface--direct-inmemorycosmosclient)
   - [Configuration Options](Dependency-Injection#configuration-options)
 - [Feed Iterator Usage](Feed-Iterator-Usage-Guide)
 
