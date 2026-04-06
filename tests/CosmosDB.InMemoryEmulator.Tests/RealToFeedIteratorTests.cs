@@ -2683,19 +2683,17 @@ public class RealToFeedIteratorErrorHandlingDeepDiveTests : IAsyncLifetime
         results[0].Name.Length.Should().Be(10_000);
     }
 
-    [Fact(Skip = "Numeric partition keys require a separate container setup with a non-string PK path and the FakeCosmosHandler PK extraction may not support numeric PK values through the real SDK HTTP path.")]
+    [Fact(Skip = "Would need a separate container with a numeric PK path — not available in this fixture's shared container.")]
     public async Task NumericPartitionKey_CreatesAndQueriesCorrectly()
     {
-        // Would need a container with numeric PK type
+        // Numeric PKs through FakeCosmosHandler are tested in FakeCosmosHandlerCrudTests.Handler_CreateItem_WithNumericPartitionKey_Succeeds
         await Task.CompletedTask;
     }
 
     [Fact]
-    public async Task NumericPartitionKey_Divergent_StringPkWorksAsAlternative()
+    public async Task NumericPartitionKey_StringPkAlsoWorksAsAlternative()
     {
-        // DIVERGENT BEHAVIOUR: The emulator's FakeCosmosHandler extracts partition keys from
-        // the x-ms-documentdb-partitionkey header as JSON strings. Numeric PKs would need
-        // specific parsing. String PKs with numeric values work as an alternative.
+        // String PKs with numeric values work as expected.
         await _inMemoryContainer.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "12345", Name = "NumericAsString" },
             new PartitionKey("12345"));

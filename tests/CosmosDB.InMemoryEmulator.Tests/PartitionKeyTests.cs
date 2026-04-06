@@ -842,14 +842,12 @@ public class PartitionKeyChangeFeedTests
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Phase 7: PK Type Discrimination (BUG 6)
+//  Phase 7: PK Type Discrimination (Fixed)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 public class PartitionKeyTypeDiscriminationTests
 {
-    [Fact(Skip = "Real Cosmos DB treats numeric and string PKs as distinct partitions. " +
-        "The emulator's PartitionKeyToString converts both PK(42) and PK(\"42\") to the same " +
-        "storage key \"42\", causing a collision. Fix would require a pervasive storage format change.")]
+    [Fact]
     public async Task PartitionKey_NumericVsString_ShouldBeDistinct()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -862,38 +860,15 @@ public class PartitionKeyTypeDiscriminationTests
     }
 
     [Fact]
-    public async Task PartitionKey_NumericVsString_EmulatorBehavior_Collides()
-    {
-        // DIVERGENT BEHAVIOR: PartitionKeyToString loses type information.
-        // PK(42) and PK("42") produce the same storage key, causing collision.
-        var container = new InMemoryContainer("test", "/pk");
-        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = 42 }), new PartitionKey(42));
-        // Creating a second item with string "42" in same partition should collide
-        var act = () => container.CreateItemAsync(
-            JObject.FromObject(new { id = "1", pk = "42" }), new PartitionKey("42"));
-        await act.Should().ThrowAsync<CosmosException>()
-            .Where(e => e.StatusCode == HttpStatusCode.Conflict);
-    }
-
-    [Fact(Skip = "Real Cosmos DB treats boolean and string PKs as distinct. " +
-        "The emulator's PartitionKeyToString causes PK(true) and PK(\"True\") to collide.")]
     public async Task PartitionKey_BooleanVsString_ShouldBeDistinct()
     {
         var container = new InMemoryContainer("test", "/pk");
         await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = true }), new PartitionKey(true));
         await container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "True" }), new PartitionKey("True"));
-    }
-
-    [Fact]
-    public async Task PartitionKey_BooleanVsString_EmulatorBehavior_Collides()
-    {
-        // DIVERGENT BEHAVIOR: PK(true) → "True", PK("True") → "True" — collision.
-        var container = new InMemoryContainer("test", "/pk");
-        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = true }), new PartitionKey(true));
-        var act = () => container.CreateItemAsync(
-            JObject.FromObject(new { id = "1", pk = "True" }), new PartitionKey("True"));
-        await act.Should().ThrowAsync<CosmosException>()
-            .Where(e => e.StatusCode == HttpStatusCode.Conflict);
+        var item1 = (await container.ReadItemAsync<JObject>("1", new PartitionKey(true))).Resource;
+        var item2 = (await container.ReadItemAsync<JObject>("2", new PartitionKey("True"))).Resource;
+        item1["id"]!.ToString().Should().Be("1");
+        item2["id"]!.ToString().Should().Be("2");
     }
 
     [Fact]

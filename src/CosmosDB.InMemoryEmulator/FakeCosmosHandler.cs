@@ -1232,7 +1232,8 @@ public class FakeCosmosHandler : HttpMessageHandler
 
         var targetDoc = payloadPropertyName is not null && obj[payloadPropertyName] is JObject payload
             ? payload : obj;
-        var pkValue = targetDoc.SelectToken(_partitionKeyPath)?.ToString() ?? "";
+        var pkToken = targetDoc.SelectToken(_partitionKeyPath);
+        var pkValue = pkToken is not null ? InMemoryContainer.JTokenToTypedKey(pkToken) ?? "" : "";
         return PartitionKeyHash.GetRangeIndex(pkValue, _partitionKeyRangeCount);
     }
 

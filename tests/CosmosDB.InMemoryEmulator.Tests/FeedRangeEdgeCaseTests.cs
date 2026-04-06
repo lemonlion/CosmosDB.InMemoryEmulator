@@ -1313,7 +1313,7 @@ public class FeedRangeBoundaryDeepDiveTests
         var lastMin = Convert.ToUInt32(lastMinStr, 16);
         foreach (var item in lastRangeItems)
         {
-            var hash = PartitionKeyHash.MurmurHash3(item.PartitionKey);
+            var hash = PartitionKeyHash.MurmurHash3(InMemoryContainer.JTokenToTypedKey(new Newtonsoft.Json.Linq.JValue(item.PartitionKey)));
             hash.Should().BeGreaterThanOrEqualTo(lastMin,
                 $"item {item.Id} with PK '{item.PartitionKey}' should hash to the last range");
         }

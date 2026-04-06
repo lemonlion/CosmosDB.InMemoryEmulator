@@ -1781,11 +1781,11 @@ public class InMemoryContainer : Container
             var pkToken = obj["PK"];
             if (pkToken == null) return null;
 
-            // PK value is a string containing a JSON array, e.g. "[\"pk-5\"]"
+            // PK value is a string containing a JSON array, e.g. "[\"pk-5\"]" or "[42]"
             var pkStr = pkToken.ToString();
             var pkArray = JArray.Parse(pkStr);
             if (pkArray.Count == 0) return null;
-            return pkArray[0]?.ToString();
+            return JTokenToTypedKey(pkArray[0]);
         }
         catch
         {
@@ -1805,7 +1805,11 @@ public class InMemoryContainer : Container
 
         if (PartitionKeyPaths is { Count: > 0 })
         {
-            var parts = PartitionKeyPaths.Select(path => jObj.SelectToken(path.TrimStart('/'))?.ToString()).ToList();
+            var parts = PartitionKeyPaths.Select(path =>
+            {
+                var t = jObj.SelectToken(path.TrimStart('/'));
+                return t is not null ? JTokenToTypedKey(t) : null;
+            }).ToList();
             if (parts.Count == 1) return parts[0] ?? "";
             return string.Join("|", parts.Select(p => p ?? ""));
         }
@@ -2069,7 +2073,11 @@ public class InMemoryContainer : Container
             {
                 // Composite key — preserve null positions as empty strings for consistency
                 // with PartitionKeyToString which also uses empty string for null components
-                var parts = PartitionKeyPaths.Select(path => jObj.SelectToken(path.TrimStart('/'))?.ToString()).ToList();
+                var parts = PartitionKeyPaths.Select(path =>
+                {
+                    var t = jObj.SelectToken(path.TrimStart('/'));
+                    return t is not null ? JTokenToTypedKey(t) : string.Empty;
+                }).ToList();
                 return string.Join("|", parts.Select(p => p ?? string.Empty));
             }
 
@@ -2078,11 +2086,63 @@ public class InMemoryContainer : Container
             if (token is not null)
             {
                 // Field exists — if value is null, return null (don't fall back to id)
-                return token.Type == JTokenType.Null ? null : token.ToString();
+                return token.Type == JTokenType.Null ? null : JTokenToTypedKey(token);
             }
         }
 
-        return jObj["id"]?.ToString();
+        return jObj["id"] is { } idToken ? JTokenToTypedKey(idToken) : null;
+    }
+
+    internal static string JTokenToTypedKey(JToken token)
+    {
+        return token.Type switch
+        {
+            JTokenType.String => "S:" + token.Value<string>(),
+            JTokenType.Integer or JTokenType.Float => "N:" + token.Value<double>().ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+            JTokenType.Boolean => "B:" + (token.Value<bool>() ? "true" : "false"),
+            JTokenType.Null => null,
+            _ => token.ToString()
+        };
+    }
+
+    /// <summary>
+    /// Converts a type-prefixed internal key back to a JToken for document fields.
+    /// </summary>
+    private static JToken TypedKeyToJToken(string typedKey)
+    {
+        if (typedKey is null) return JValue.CreateNull();
+        if (typedKey.Length >= 2 && typedKey[1] == ':')
+        {
+            var value = typedKey.Substring(2);
+            return typedKey[0] switch
+            {
+                'S' => new JValue(value),
+                'N' => new JValue(double.Parse(value, System.Globalization.CultureInfo.InvariantCulture)),
+                'B' => new JValue(value == "true"),
+                _ => new JValue(typedKey)
+            };
+        }
+        return new JValue(typedKey);
+    }
+
+    /// <summary>
+    /// Converts a type-prefixed internal key back to a typed PartitionKey.
+    /// </summary>
+    private static PartitionKey TypedKeyToPartitionKey(string typedKey)
+    {
+        if (typedKey is null) return PartitionKey.Null;
+        if (typedKey.Length >= 2 && typedKey[1] == ':')
+        {
+            var value = typedKey.Substring(2);
+            return typedKey[0] switch
+            {
+                'S' => new PartitionKey(value),
+                'N' => new PartitionKey(double.Parse(value, System.Globalization.CultureInfo.InvariantCulture)),
+                'B' => new PartitionKey(bool.Parse(value)),
+                _ => new PartitionKey(typedKey)
+            };
+        }
+        return new PartitionKey(typedKey);
     }
 
     private static string PartitionKeyToString(PartitionKey partitionKey)
@@ -2100,10 +2160,10 @@ public class InMemoryContainer : Container
                 var arr = JArray.Parse(raw);
                 if (arr.Count == 1)
                 {
-                    return arr[0].Type == JTokenType.String ? arr[0].Value<string>() : arr[0].ToString();
+                    return JTokenToTypedKey(arr[0]);
                 }
 
-                return string.Join("|", arr.Select(t => t.Type == JTokenType.String ? t.Value<string>() : t.ToString()));
+                return string.Join("|", arr.Select(JTokenToTypedKey));
             }
             catch { /* fall through */ }
         }
@@ -2127,7 +2187,7 @@ public class InMemoryContainer : Container
             return; // Field not present in body — nothing to validate
 
         var explicitPk = PartitionKeyToString(explicitKey.Value);
-        var bodyPk = bodyToken.ToString();
+        var bodyPk = JTokenToTypedKey(bodyToken);
 
         if (bodyPk != explicitPk)
         {
@@ -2344,7 +2404,7 @@ public class InMemoryContainer : Container
                 var pkValues = (pk ?? string.Empty).Split('|');
                 for (var i = 0; i < PartitionKeyPaths.Count; i++)
                 {
-                    tombstone[PartitionKeyPaths[i].TrimStart('/')] = i < pkValues.Length ? pkValues[i] : null;
+                    tombstone[PartitionKeyPaths[i].TrimStart('/')] = i < pkValues.Length ? TypedKeyToJToken(pkValues[i]) : null;
                 }
             }
         }
@@ -2352,16 +2412,15 @@ public class InMemoryContainer : Container
         {
             if (PartitionKeyPaths.Count == 1)
             {
-                // Single PK path — use the value directly to avoid splitting on pipe
-                // characters that may appear in the PK value itself.
-                tombstone[PartitionKeyPaths[0].TrimStart('/')] = pk;
+                // Single PK path — convert the typed key back to a JToken value
+                tombstone[PartitionKeyPaths[0].TrimStart('/')] = TypedKeyToJToken(pk);
             }
             else
             {
                 var pkValues = pk.Split('|');
                 for (var i = 0; i < PartitionKeyPaths.Count; i++)
                 {
-                    tombstone[PartitionKeyPaths[i].TrimStart('/')] = i < pkValues.Length ? pkValues[i] : null;
+                    tombstone[PartitionKeyPaths[i].TrimStart('/')] = i < pkValues.Length ? TypedKeyToJToken(pkValues[i]) : null;
                 }
             }
         }
@@ -2381,7 +2440,7 @@ public class InMemoryContainer : Container
     private PartitionScopedCollectionContext CreateCollectionContextFromDoc(JObject jObj)
     {
         var pkValue = ExtractPartitionKeyValueCore(null, jObj);
-        var pk = pkValue is null ? PartitionKey.Null : new PartitionKey(pkValue);
+        var pk = TypedKeyToPartitionKey(pkValue);
         return new PartitionScopedCollectionContext(this, pk);
     }
 
