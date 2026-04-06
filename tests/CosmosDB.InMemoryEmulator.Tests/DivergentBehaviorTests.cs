@@ -20,20 +20,43 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 
 public class CrossPartitionAggregateTests
 {
-    // DIVERGENT: The emulator duplicates aggregate results when PartitionKeyRangeCount > 1
-    // because FakeCosmosHandler repeats query results for each simulated range.
-    // Real Cosmos DB merges partition-level partial aggregates server-side.
-    // Default PartitionKeyRangeCount is 1, so this only affects non-default configurations.
-    [Fact(Skip = "M7: Cross-partition aggregates are duplicated when PartitionKeyRangeCount > 1. " +
-                  "FakeCosmosHandler repeats query results for each simulated partition range. " +
-                  "Real Cosmos DB merges partial aggregates server-side. Fixing requires " +
-                  "aggregate-aware result merging in FakeCosmosHandler. Only affects " +
-                  "non-default InMemoryCosmosOptions.PartitionKeyRangeCount configurations.")]
-    public void CrossPartition_Count_ShouldNotMultiplyResults()
+    private static CosmosClient CreateClient(FakeCosmosHandler handler) =>
+        new("AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                RequestTimeout = TimeSpan.FromSeconds(10),
+                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+
+    [Fact]
+    public async Task CrossPartition_Count_ShouldNotMultiplyResults()
     {
-        // Expected real Cosmos behavior:
-        // With 3 items and PartitionKeyRangeCount=2, COUNT should still return 3.
-        // Emulator currently returns 6 (3 * 2 ranges).
+        var container = new InMemoryContainer("test-agg", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "b" }), new PartitionKey("b"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "c" }), new PartitionKey("c"));
+
+        using var handler = new FakeCosmosHandler(container, new FakeCosmosHandlerOptions
+        {
+            PartitionKeyRangeCount = 2
+        });
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "test-agg");
+
+        // COUNT should return 3, not 3 * 2 = 6
+        var count = await cosmosContainer.GetItemQueryIterator<int>(
+            new QueryDefinition("SELECT VALUE COUNT(1) FROM c"))
+            .ReadNextAsync();
+        count.Resource.Single().Should().Be(3);
+
+        // SUM should return correct value, not doubled
+        var sum = await cosmosContainer.GetItemQueryIterator<int>(
+            new QueryDefinition("SELECT VALUE SUM(1) FROM c"))
+            .ReadNextAsync();
+        sum.Resource.Single().Should().Be(3);
     }
 }
 
