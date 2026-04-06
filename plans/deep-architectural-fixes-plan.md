@@ -6,20 +6,22 @@ After cataloging all 153 remaining skipped tests, the breakdown is:
 
 | Classification | Count | Notes |
 |---|---|---|
-| **INTENTIONAL_DIVERGENCE** | 58 | By-design tradeoffs (synthetic RU, lazy TTL, etc.) — leave skipped |
+| **INTENTIONAL_DIVERGENCE** | 57 | By-design tradeoffs (synthetic RU, lazy TTL, etc.) — leave skipped |
 | **BLOCKED** | 5 | SDK internals (ContainerInternal cast, encryption keys, CosmosDiagnostics) |
-| **FIXABLE_SMALL** (< 20 LOC) | 7 | Quick wins for next batch |
-| **FIXABLE_MEDIUM** (20-100 LOC) | 11 | Targeted feature additions |
+| **FIXABLE_SMALL** (< 20 LOC) | 8 | Quick wins for next batch |
+| **FIXABLE_MEDIUM** (20-100 LOC) | 12 | Targeted feature additions |
 | **FIXABLE_HARD** (100+ LOC / new abstractions) | 12 | Architectural work covered below |
 
-**Maximum fixable: 30 tests** (7 small + 11 medium + 12 hard).
-After those, the remaining 63 are either intentional divergences or blocked. These are the hard ceiling.
+**Maximum fixable: 32 tests** (8 small + 12 medium + 12 hard).
+After those, the remaining 62 are either intentional divergences or blocked. These are the hard ceiling.
 
-The 58 intentional divergences are deliberately kept. These represent conscious design decisions (synthetic RU charges, lazy TTL, LINQ permissiveness, etc.) where matching real Cosmos would either add complexity with no testing value, or make the emulator harder to use. Each one has a sister test documenting the actual behavior.
+The 57 intentional divergences are deliberately kept. These represent conscious design decisions (synthetic RU charges, lazy TTL, etc.) where matching real Cosmos would either add complexity with no testing value, or make the emulator harder to use. Each one has a sister test documenting the actual behavior.
+
+> **Note:** `MultipleTriggers_RealCosmosOnlyExecutesOne` was reclassified from INTENTIONAL_DIVERGENCE to FIXABLE_SMALL. The emulator chaining all triggers while real Cosmos only fires one is not "more useful for testing" — it gives false confidence. Tests pass in the emulator but production only fires one trigger, creating a silent behavioral mismatch. The fix is trivial (~5 LOC) and matches real Cosmos behavior.
 
 ---
 
-## Wave A — Quick Wins (7 tests, ~1 session)
+## Wave A — Quick Wins (8 tests, ~1 session)
 
 These require < 20 lines each and can be bundled into the next commit.
 
@@ -32,10 +34,11 @@ These require < 20 lines each and can be bundled into the next commit.
 | A5 | `PostTrigger_InflatesDocumentPast2MB_RealCosmosWouldReject` | DocumentSizeLimitTests:1268 | Re-validate document size after post-trigger execution in `CreateItemAsync` before committing |
 | A6 | `GetCurrentDateTime_ShouldReturnSameValueForAllRows` | DivergentBehaviorTests:96 | Snapshot `DateTime.UtcNow` once per query execution (add a thread-local/parameter in `EvaluateQuery`) |
 | A7 | `SetDifference_NonExistentProperty_EmulatorReturnsEmptyArray` | ExtendedArrayFunctionTests:1242 | Skip reason says "now correctly returns undefined"; try unskip — likely already passing |
+| A8 | `MultipleTriggers_RealCosmosOnlyExecutesOne` | JsTriggerTests:1508 | In `ExecutePreTriggers` and `ExecutePostTriggers`, execute only the **first** matching trigger then `break`. Real Cosmos only fires one trigger per operation despite the SDK accepting `List<string>`. The current chaining behavior is dangerous — tests pass in CI but production silently fires only one trigger. ~5 LOC change (add `break` after first matching trigger executes in each `foreach` loop). |
 
 ---
 
-## Wave B — Targeted Feature Additions (11 tests, ~2-3 sessions)
+## Wave B — Targeted Feature Additions (12 tests, ~2-3 sessions)
 
 Each needs 20-100 lines but is self-contained.
 
@@ -83,6 +86,11 @@ Each needs 20-100 lines but is self-contained.
 **Test:** `BulkOperationTests:1513`
 **Fix:** Add per-item lock (`ConcurrentDictionary<string, SemaphoreSlim>`) in `PatchItemAsync` to serialize concurrent increments on the same item.
 **Effort:** ~30 lines.
+
+### B10. TransactionalBatch trigger support (1 test)
+**Test:** `Trigger_Js_TransactionalBatch_NotSupported` — JsTriggerTests:2891
+**Fix:** In `InMemoryTransactionalBatch.ExecuteAsync()`, check each operation's `TransactionalBatchItemRequestOptions` for `PreTriggers`/`PostTriggers`. For each batch item that has trigger options, invoke `ExecutePreTriggers`/`ExecutePostTriggers` using the same logic as single-item CRUD operations. Requires threading the trigger execution through the batch pipeline.
+**Effort:** ~60 lines. The batch currently constructs `ItemRequestOptions` internally but ignores trigger-related properties.
 
 ---
 
@@ -236,20 +244,22 @@ These are lower priority but could be added incrementally:
 ## Recommended Execution Order
 
 ### Phase 1: Quick Wins (Wave A) — Next commit
-- 7 tests, ~1 session
+- 8 tests, ~1 session
 - Low risk, high value
-- Gets us from 153 → ~146 skipped
+- Gets us from 153 → ~145 skipped
+- **A8 (MultipleTriggers) is a safety fix** — current behavior masks production failures
 
 ### Phase 2: Targeted Features (Wave B) — 2-3 commits
-- 11 tests across 2-3 sessions
+- 12 tests across 2-3 sessions
 - Medium risk, high value
-- Gets us from ~146 → ~135 skipped
+- Gets us from ~145 → ~133 skipped
 - **B7 (FakeCosmosHandler WHERE delegation) is highest ROI** — unlocks future query-through-handler fixes
+- **B10 (TransactionalBatch triggers)** completes the trigger execution story
 
 ### Phase 3: Unified JS Engine (Wave C1 + C2) — 2-3 commits
 - 11 tests (6 sproc + 5 trigger)
 - Medium-high risk, very high value
-- Gets us from ~135 → ~124 skipped
+- Gets us from ~133 → ~122 skipped
 - **This is the most impactful architectural change.** A single `container.UseJavaScript()` call enables full JS execution for both triggers and stored procedures.
 - Creates a reusable pattern for any future "server-side JS" needs
 
@@ -257,7 +267,7 @@ These are lower priority but could be added incrementally:
 - 4 tests, ~40 LOC
 - **Hybrid approach:** query plan bypass for GROUP BY / multi-aggregate + wire format tweak for DISTINCT+ORDER BY
 - Low risk — avoids undocumented wire formats; DISTINCT+ORDER BY extends proven ORDER BY code
-- Gets us from ~124 → ~120 skipped
+- Gets us from ~122 → ~118 skipped
 - See `plans/c3-wire-format-analysis.md` for detailed analysis of all approaches considered.
 
 ### Phase 5: Undefined Propagation (Wave C4) — 1 commit
@@ -277,12 +287,12 @@ After all waves (A through D):
 
 | Category | Count | Disposition |
 |---|---|---|
-| Fixable (A+B+C+D) | ~30 | Gets us from 153 → ~123 skipped |
-| Intentional divergences | 58 | Stay skipped by design |
+| Fixable (A+B+C+D) | ~32 | Gets us from 153 → ~121 skipped |
+| Intentional divergences | 57 | Stay skipped by design |
 | Blocked (SDK internals) | 5 | Cannot fix without SDK changes |
-| Duplicate/overlapping | ~60 | Tests that document the same divergence from different angles |
+| Duplicate/overlapping | ~59 | Tests that document the same divergence from different angles |
 
-The **realistic floor is ~120-125 skipped tests**. Below that requires either:
+The **realistic floor is ~118-123 skipped tests**. Below that requires either:
 - Changing fundamental design decisions (lazy TTL → proactive, LINQ-to-Objects → SQL translation)
 - Implementing an RU cost model
 - Implementing index enforcement
@@ -359,14 +369,14 @@ A: Real Cosmos uses callbacks (`collection.createDocument(link, doc, opts, callb
 
 | Wave | Tests Fixed | Cumulative Skipped | Effort | Risk |
 |------|------------|-------------------|--------|------|
-| A (Quick Wins) | 7 | ~146 | Low | Low |
-| B (Targeted) | 11 | ~135 | Medium | Low-Medium |
-| C1+C2 (JS Engine) | 11 | ~124 | High | Medium |
-| C3 (Hybrid Fix) | 4 | ~120 | Low | Low |
-| C4 (Undefined) | 3 | ~117 | High | Medium |
-| D (Nice-to-Haves) | ~13 | ~104 | Varies | Varies |
-| **Total fixable** | **~49** | **~104** | | |
-| Intentional + Blocked | 63 | — | N/A | — |
+| A (Quick Wins) | 8 | ~145 | Low | Low |
+| B (Targeted) | 12 | ~133 | Medium | Low-Medium |
+| C1+C2 (JS Engine) | 11 | ~122 | High | Medium |
+| C3 (Hybrid Fix) | 4 | ~118 | Low | Low |
+| C4 (Undefined) | 3 | ~115 | High | Medium |
+| D (Nice-to-Haves) | ~13 | ~102 | Varies | Varies |
+| **Total fixable** | **~51** | **~102** | | |
+| Intentional + Blocked | 62 | — | N/A | — |
 
 ### Post-Implementation Note
 

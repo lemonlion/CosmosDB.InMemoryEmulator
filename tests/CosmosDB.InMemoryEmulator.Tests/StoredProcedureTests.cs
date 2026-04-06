@@ -900,18 +900,20 @@ public class StoredProcedureDivergentBehaviorTests
         all.Select(s => s.Id).Should().BeEquivalentTo("sp1", "sp2");
     }
 
-    // ─── Divergent: Only ExecuteStoredProcedureAsync<string> is mocked ──
+    // ─── Generic type support (was blocked by NSubstitute) ─────────────
 
-    [Fact(Skip = "Real Cosmos DB supports ExecuteStoredProcedureAsync<T> for any serializable type T. " +
-                  "The emulator only mocks ExecuteStoredProcedureAsync<string> via NSubstitute. " +
-                  "For other types, use <string> and deserialize the JSON result manually: " +
-                  "var result = JsonConvert.DeserializeObject<MyType>(response.Resource). " +
-                  "Adding generic type mocks for all possible T is not feasible with NSubstitute.")]
+    [Fact]
     public async Task ExecuteStoredProcedure_NonStringGenericType_ShouldDeserialize()
     {
-        // Expected real Cosmos behavior:
-        // var response = await scripts.ExecuteStoredProcedureAsync<MyComplexType>(...);
-        // response.Resource would be a deserialized MyComplexType instance.
+        _container.RegisterStoredProcedure("spTyped", (pk, args) =>
+            JsonConvert.SerializeObject(new { count = 42, items = new[] { "a", "b" } }));
+
+        var response = await _container.Scripts.ExecuteStoredProcedureAsync<JObject>(
+            "spTyped", new PartitionKey("pk1"), Array.Empty<dynamic>());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        ((int)response.Resource["count"]!).Should().Be(42);
+        response.Resource["items"]!.ToObject<string[]>().Should().BeEquivalentTo("a", "b");
     }
 
     // Sister test: shows the workaround for non-string types
@@ -931,28 +933,53 @@ public class StoredProcedureDivergentBehaviorTests
         result["items"]!.ToObject<string[]>().Should().BeEquivalentTo("a", "b");
     }
 
-    // ─── Divergent: Stream variants not implemented (T39, T40) ──────────
+    // ─── Stream variants (was blocked by NSubstitute) ─────────────────
 
-    [Fact(Skip = "Real Cosmos DB supports ExecuteStoredProcedureStreamAsync which returns a ResponseMessage " +
-                  "with a Content Stream. The emulator does not mock this method on the Scripts NSubstitute " +
-                  "proxy. Workaround: use ExecuteStoredProcedureAsync<string> and convert to stream manually " +
-                  "if needed. The stream variants require mocking ResponseMessage which is non-trivial.")]
+    [Fact]
     public async Task ExecuteStoredProcedureStreamAsync_ShouldReturnStream()
     {
-        // Expected real Cosmos behavior:
-        // var response = await scripts.ExecuteStoredProcedureStreamAsync("spId", pk, args);
-        // using var sr = new StreamReader(response.Content);
-        // var body = await sr.ReadToEndAsync();
+        _container.RegisterStoredProcedure("spStream", (pk, args) =>
+            JsonConvert.SerializeObject(new { message = "hello" }));
+
+        var response = await _container.Scripts.ExecuteStoredProcedureStreamAsync(
+            "spStream", new PartitionKey("pk1"), Array.Empty<dynamic>());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var sr = new StreamReader(response.Content);
+        var body = await sr.ReadToEndAsync();
+        var result = JObject.Parse(body);
+        ((string)result["message"]!).Should().Be("hello");
     }
 
-    [Fact(Skip = "Real Cosmos DB supports stream CRUD: CreateStoredProcedureStreamAsync, " +
-                  "ReadStoredProcedureStreamAsync, ReplaceStoredProcedureStreamAsync, " +
-                  "DeleteStoredProcedureStreamAsync. The emulator does not mock these methods. " +
-                  "Workaround: use the typed CRUD variants which are fully supported.")]
-    public void CrudStreamVariants_ShouldWork()
+    [Fact]
+    public async Task CrudStreamVariants_ShouldWork()
     {
-        // Expected real Cosmos behavior:
-        // Stream-based CRUD for stored procedures, returning ResponseMessage.
+        // Create
+        var createResp = await _container.Scripts.CreateStoredProcedureStreamAsync(
+            new StoredProcedureProperties { Id = "sp1", Body = "function(){}" });
+        createResp.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // Read
+        var readResp = await _container.Scripts.ReadStoredProcedureStreamAsync("sp1");
+        readResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        using (var sr = new StreamReader(readResp.Content))
+        {
+            var json = await sr.ReadToEndAsync();
+            json.Should().Contain("sp1");
+        }
+
+        // Replace
+        var replaceResp = await _container.Scripts.ReplaceStoredProcedureStreamAsync(
+            new StoredProcedureProperties { Id = "sp1", Body = "function() { return 1; }" });
+        replaceResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Delete
+        var deleteResp = await _container.Scripts.DeleteStoredProcedureStreamAsync("sp1");
+        deleteResp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        // Verify deleted — should throw 404
+        Func<Task> act = () => _container.Scripts.ReadStoredProcedureStreamAsync("sp1");
+        await act.Should().ThrowAsync<CosmosException>().Where(e => e.StatusCode == HttpStatusCode.NotFound);
     }
 
     // ─── Divergent: Script logging not available (T41) ──────────────────

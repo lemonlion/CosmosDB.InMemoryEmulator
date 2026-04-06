@@ -169,7 +169,7 @@ public class InMemoryContainer : Container
         Id = id;
         _containerProperties = new ContainerProperties(id, partitionKeyPath);
         PartitionKeyPaths = new[] { partitionKeyPath };
-        _scripts = ConfigureScripts();
+        _scripts = new InMemoryScripts(this);
     }
 
     /// <summary>
@@ -182,7 +182,7 @@ public class InMemoryContainer : Container
         Id = id;
         PartitionKeyPaths = partitionKeyPaths;
         _containerProperties = new ContainerProperties(id, partitionKeyPaths);
-        _scripts = ConfigureScripts();
+        _scripts = new InMemoryScripts(this);
     }
 
     /// <summary>
@@ -206,7 +206,7 @@ public class InMemoryContainer : Container
         {
             PartitionKeyPaths = paths;
         }
-        _scripts = ConfigureScripts();
+        _scripts = new InMemoryScripts(this);
     }
 
     // ─── Properties ───────────────────────────────────────────────────────────
@@ -2782,306 +2782,520 @@ public class InMemoryContainer : Container
         }
     }
 
-    private Scripts ConfigureScripts()
+    private sealed class InMemoryScripts : Scripts
     {
-        var scripts = Substitute.For<Scripts>();
+        private readonly InMemoryContainer _c;
 
-        scripts.CreateStoredProcedureAsync(
-            Arg.Any<StoredProcedureProperties>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(ci =>
+        public InMemoryScripts(InMemoryContainer container) => _c = container;
+
+        // ── Stored Procedure CRUD (typed) ─────────────────────────────────
+
+        public override Task<StoredProcedureResponse> CreateStoredProcedureAsync(
+            StoredProcedureProperties storedProcedureProperties, RequestOptions requestOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (_c._storedProcedureProperties.ContainsKey(storedProcedureProperties.Id))
+                throw new CosmosException($"StoredProcedure '{storedProcedureProperties.Id}' already exists.",
+                    HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._storedProcedureProperties[storedProcedureProperties.Id] = storedProcedureProperties;
+            EnrichStoredProcedureSystemProperties(storedProcedureProperties);
+            var r = Substitute.For<StoredProcedureResponse>();
+            r.StatusCode.Returns(HttpStatusCode.Created);
+            r.Resource.Returns(storedProcedureProperties);
+            return Task.FromResult(r);
+        }
+
+        public override Task<StoredProcedureResponse> ReadStoredProcedureAsync(
+            string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._storedProcedureProperties.TryGetValue(id, out var props))
+                throw new CosmosException($"StoredProcedure '{id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            EnrichStoredProcedureSystemProperties(props);
+            var r = Substitute.For<StoredProcedureResponse>();
+            r.StatusCode.Returns(HttpStatusCode.OK);
+            r.Resource.Returns(props);
+            return Task.FromResult(r);
+        }
+
+        public override Task<StoredProcedureResponse> ReplaceStoredProcedureAsync(
+            StoredProcedureProperties storedProcedureProperties, RequestOptions requestOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_c._storedProcedureProperties.ContainsKey(storedProcedureProperties.Id))
+                throw new CosmosException($"StoredProcedure '{storedProcedureProperties.Id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._storedProcedureProperties[storedProcedureProperties.Id] = storedProcedureProperties;
+            EnrichStoredProcedureSystemProperties(storedProcedureProperties);
+            var r = Substitute.For<StoredProcedureResponse>();
+            r.StatusCode.Returns(HttpStatusCode.OK);
+            r.Resource.Returns(storedProcedureProperties);
+            return Task.FromResult(r);
+        }
+
+        public override Task<StoredProcedureResponse> DeleteStoredProcedureAsync(
+            string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._storedProcedureProperties.Remove(id))
+                throw new CosmosException($"StoredProcedure '{id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._storedProcedures.Remove(id);
+            var r = Substitute.For<StoredProcedureResponse>();
+            r.StatusCode.Returns(HttpStatusCode.NoContent);
+            return Task.FromResult(r);
+        }
+
+        // ── Stored Procedure CRUD (stream) ────────────────────────────────
+
+        public override Task<ResponseMessage> CreateStoredProcedureStreamAsync(
+            StoredProcedureProperties storedProcedureProperties, RequestOptions requestOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (_c._storedProcedureProperties.ContainsKey(storedProcedureProperties.Id))
+                throw new CosmosException($"StoredProcedure '{storedProcedureProperties.Id}' already exists.",
+                    HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._storedProcedureProperties[storedProcedureProperties.Id] = storedProcedureProperties;
+            EnrichStoredProcedureSystemProperties(storedProcedureProperties);
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created,
+                JsonConvert.SerializeObject(storedProcedureProperties)));
+        }
+
+        public override Task<ResponseMessage> ReadStoredProcedureStreamAsync(
+            string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._storedProcedureProperties.TryGetValue(id, out var props))
+                throw new CosmosException($"StoredProcedure '{id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            EnrichStoredProcedureSystemProperties(props);
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+                JsonConvert.SerializeObject(props)));
+        }
+
+        public override Task<ResponseMessage> ReplaceStoredProcedureStreamAsync(
+            StoredProcedureProperties storedProcedureProperties, RequestOptions requestOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_c._storedProcedureProperties.ContainsKey(storedProcedureProperties.Id))
+                throw new CosmosException($"StoredProcedure '{storedProcedureProperties.Id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._storedProcedureProperties[storedProcedureProperties.Id] = storedProcedureProperties;
+            EnrichStoredProcedureSystemProperties(storedProcedureProperties);
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+                JsonConvert.SerializeObject(storedProcedureProperties)));
+        }
+
+        public override Task<ResponseMessage> DeleteStoredProcedureStreamAsync(
+            string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._storedProcedureProperties.Remove(id))
+                throw new CosmosException($"StoredProcedure '{id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._storedProcedures.Remove(id);
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
+        }
+
+        // ── Stored Procedure Execute ──────────────────────────────────────
+
+        public override Task<StoredProcedureExecuteResponse<TOutput>> ExecuteStoredProcedureAsync<TOutput>(
+            string storedProcedureId, PartitionKey partitionKey, dynamic[] parameters,
+            StoredProcedureRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._storedProcedures.ContainsKey(storedProcedureId) && !_c._storedProcedureProperties.ContainsKey(storedProcedureId))
+                throw new CosmosException($"StoredProcedure '{storedProcedureId}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+
+            string handlerResult = null;
+            var hasHandler = false;
+            if (_c._storedProcedures.TryGetValue(storedProcedureId, out var handler))
             {
-                var props = ci.Arg<StoredProcedureProperties>();
-                if (_storedProcedureProperties.ContainsKey(props.Id))
-                {
-                    throw new CosmosException($"StoredProcedure '{props.Id}' already exists.",
-                        HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                }
-                _storedProcedureProperties[props.Id] = props;
-                EnrichStoredProcedureSystemProperties(props);
-                var r = Substitute.For<StoredProcedureResponse>();
-                r.StatusCode.Returns(HttpStatusCode.Created);
-                r.Resource.Returns(props);
-                return r;
-            });
-
-        scripts.ReadStoredProcedureAsync(
-            Arg.Any<string>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(ci =>
+                handlerResult = ExecuteHandler(storedProcedureId, () => handler(partitionKey, parameters));
+                hasHandler = true;
+            }
+            else if (_c.SprocEngine is not null
+                && _c._storedProcedureProperties.TryGetValue(storedProcedureId, out var sprocProps)
+                && sprocProps.Body is not null)
             {
-                var sprocId = ci.ArgAt<string>(0);
-                if (!_storedProcedureProperties.TryGetValue(sprocId, out var props))
-                {
-                    throw new CosmosException($"StoredProcedure '{sprocId}' not found.",
-                        HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                }
-                EnrichStoredProcedureSystemProperties(props);
-                var r = Substitute.For<StoredProcedureResponse>();
-                r.StatusCode.Returns(HttpStatusCode.OK);
-                r.Resource.Returns(props);
-                return r;
-            });
+                handlerResult = ExecuteJsEngine(storedProcedureId, sprocProps.Body, partitionKey, parameters);
+                hasHandler = true;
+            }
 
-        scripts.ReplaceStoredProcedureAsync(
-            Arg.Any<StoredProcedureProperties>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(ci =>
+            var r = Substitute.For<StoredProcedureExecuteResponse<TOutput>>();
+            r.StatusCode.Returns(HttpStatusCode.OK);
+            r.RequestCharge.Returns(SyntheticRequestCharge);
+            if (hasHandler)
             {
-                var props = ci.Arg<StoredProcedureProperties>();
-                if (!_storedProcedureProperties.ContainsKey(props.Id))
+                if (handlerResult is not null)
                 {
-                    throw new CosmosException($"StoredProcedure '{props.Id}' not found.",
-                        HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                    TOutput deserialized = typeof(TOutput) == typeof(string)
+                        ? (TOutput)(object)handlerResult
+                        : JsonConvert.DeserializeObject<TOutput>(handlerResult);
+                    r.Resource.Returns(deserialized);
                 }
-                _storedProcedureProperties[props.Id] = props;
-                EnrichStoredProcedureSystemProperties(props);
-                var r = Substitute.For<StoredProcedureResponse>();
-                r.StatusCode.Returns(HttpStatusCode.OK);
-                r.Resource.Returns(props);
-                return r;
-            });
+                else
+                {
+                    r.Resource.Returns(default(TOutput));
+                }
+            }
 
-        scripts.DeleteStoredProcedureAsync(
-            Arg.Any<string>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(ci =>
+            PopulateScriptLogHeaders(r);
+            return Task.FromResult(r);
+        }
+
+        public override Task<ResponseMessage> ExecuteStoredProcedureStreamAsync(
+            string storedProcedureId, PartitionKey partitionKey, dynamic[] parameters,
+            StoredProcedureRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._storedProcedures.ContainsKey(storedProcedureId) && !_c._storedProcedureProperties.ContainsKey(storedProcedureId))
+                throw new CosmosException($"StoredProcedure '{storedProcedureId}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+
+            string handlerResult = null;
+            if (_c._storedProcedures.TryGetValue(storedProcedureId, out var handler))
             {
-                var sprocId = ci.ArgAt<string>(0);
-                if (!_storedProcedureProperties.Remove(sprocId))
-                {
-                    throw new CosmosException($"StoredProcedure '{sprocId}' not found.",
-                        HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                }
-                _storedProcedures.Remove(sprocId);
-                var r = Substitute.For<StoredProcedureResponse>();
-                r.StatusCode.Returns(HttpStatusCode.NoContent);
-                return r;
-            });
-
-        scripts.ExecuteStoredProcedureAsync<string>(
-            Arg.Any<string>(), Arg.Any<PartitionKey>(), Arg.Any<dynamic[]>(),
-            Arg.Any<StoredProcedureRequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(ci =>
+                handlerResult = ExecuteHandler(storedProcedureId, () => handler(partitionKey, parameters));
+            }
+            else if (_c.SprocEngine is not null
+                && _c._storedProcedureProperties.TryGetValue(storedProcedureId, out var sprocProps)
+                && sprocProps.Body is not null)
             {
-                var sprocId = ci.ArgAt<string>(0);
-                var pk = ci.Arg<PartitionKey>();
-                var sprocArgs = ci.ArgAt<dynamic[]>(2);
+                handlerResult = ExecuteJsEngine(storedProcedureId, sprocProps.Body, partitionKey, parameters);
+            }
 
-                // Real Cosmos DB returns 404 if the sproc doesn't exist
-                if (!_storedProcedures.ContainsKey(sprocId) && !_storedProcedureProperties.ContainsKey(sprocId))
-                {
-                    throw new CosmosException($"StoredProcedure '{sprocId}' not found.",
-                        HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                }
+            var msg = CreateResponseMessage(HttpStatusCode.OK, handlerResult);
+            if (_c.SprocEngine?.CapturedLogs is { Count: > 0 } logs)
+                msg.Headers["x-ms-documentdb-script-log-results"] = Uri.EscapeDataString(string.Join("\n", logs));
+            return Task.FromResult(msg);
+        }
 
-                // Execute handler BEFORE creating NSubstitute mocks to avoid
-                // nested Returns() context corruption when the handler calls
-                // container methods that internally create NSubstitute mocks.
-                string handlerResult = null;
-                var hasHandler = false;
-                if (_storedProcedures.TryGetValue(sprocId, out var handler))
-                {
-                    try
-                    {
-                        var task = Task.Run(() => handler(pk, sprocArgs));
-                        if (!task.Wait(TimeSpan.FromSeconds(10)))
-                        {
-                            throw new CosmosException(
-                                $"Stored procedure '{sprocId}' exceeded the 10-second execution timeout.",
-                                HttpStatusCode.RequestTimeout, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                        }
-                        handlerResult = task.Result;
-                    }
-                    catch (CosmosException)
-                    {
-                        throw;
-                    }
-                    catch (AggregateException ae) when (ae.InnerException is CosmosException)
-                    {
-                        throw ae.InnerException;
-                    }
-                    catch (AggregateException ae)
-                    {
-                        var inner = ae.InnerException ?? ae;
-                        throw new CosmosException(
-                            $"Stored procedure '{sprocId}' failed: {inner.Message}",
-                            HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                    }
-                    catch (Exception ex)
-                    {
-                        throw new CosmosException(
-                            $"Stored procedure '{sprocId}' failed: {ex.Message}",
-                            HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                    }
-                    hasHandler = true;
+        public override Task<ResponseMessage> ExecuteStoredProcedureStreamAsync(
+            string storedProcedureId, Stream streamPayload, PartitionKey partitionKey,
+            StoredProcedureRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            using var reader = new StreamReader(streamPayload);
+            var json = reader.ReadToEnd();
+            var parameters = JsonConvert.DeserializeObject<dynamic[]>(json) ?? Array.Empty<dynamic>();
+            return ExecuteStoredProcedureStreamAsync(storedProcedureId, partitionKey, parameters, requestOptions, cancellationToken);
+        }
 
-                    const int MaxResponseSize = 2 * 1024 * 1024;
-                    if (handlerResult != null && Encoding.UTF8.GetByteCount(handlerResult) > MaxResponseSize)
-                    {
-                        throw new CosmosException(
-                            $"Stored procedure '{sprocId}' response exceeds the 2MB size limit.",
-                            (HttpStatusCode)413, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                    }
-                }
-                else if (SprocEngine is not null
-                    && _storedProcedureProperties.TryGetValue(sprocId, out var sprocProps)
-                    && sprocProps.Body is not null)
-                {
-                    try
-                    {
-                        handlerResult = SprocEngine.Execute(sprocProps.Body, pk, sprocArgs);
-                    }
-                    catch (CosmosException)
-                    {
-                        throw;
-                    }
-                    catch (Exception ex)
-                    {
-                        throw new CosmosException(
-                            $"Stored procedure '{sprocId}' failed: {ex.Message}",
-                            HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                    }
-                    hasHandler = true;
-                }
-                var r = Substitute.For<StoredProcedureExecuteResponse<string>>();
-                r.StatusCode.Returns(HttpStatusCode.OK);
-                r.RequestCharge.Returns(SyntheticRequestCharge);
-                if (hasHandler)
-                {
-                    r.Resource.Returns(handlerResult);
-                }
+        // ── Trigger CRUD (typed) ──────────────────────────────────────────
 
-                // Populate script log headers from JS engine console.log() output
-                if (SprocEngine?.CapturedLogs is { Count: > 0 } logs)
-                {
-                    var logString = Uri.EscapeDataString(string.Join("\n", logs));
-                    var headers = new Headers
-                    {
-                        ["x-ms-request-charge"] = SyntheticRequestCharge.ToString(CultureInfo.InvariantCulture),
-                        ["x-ms-documentdb-script-log-results"] = logString
-                    };
-                    r.Headers.Returns(headers);
-                    r.ScriptLog.Returns(Uri.UnescapeDataString(logString));
-                }
+        public override Task<TriggerResponse> CreateTriggerAsync(
+            TriggerProperties triggerProperties, RequestOptions requestOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (_c._triggerProperties.ContainsKey(triggerProperties.Id))
+                throw new CosmosException($"Trigger '{triggerProperties.Id}' already exists.",
+                    HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._triggerProperties[triggerProperties.Id] = triggerProperties;
+            var r = Substitute.For<TriggerResponse>();
+            r.StatusCode.Returns(HttpStatusCode.Created);
+            r.Resource.Returns(triggerProperties);
+            return Task.FromResult(r);
+        }
 
-                return r;
-            });
+        public override Task<TriggerResponse> ReadTriggerAsync(
+            string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._triggerProperties.TryGetValue(id, out var props))
+                throw new CosmosException($"Trigger '{id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            var r = Substitute.For<TriggerResponse>();
+            r.StatusCode.Returns(HttpStatusCode.OK);
+            r.Resource.Returns(props);
+            return Task.FromResult(r);
+        }
 
-        scripts.CreateTriggerAsync(
-            Arg.Any<TriggerProperties>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(ci =>
+        public override Task<TriggerResponse> ReplaceTriggerAsync(
+            TriggerProperties triggerProperties, RequestOptions requestOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_c._triggerProperties.ContainsKey(triggerProperties.Id))
+                throw new CosmosException($"Trigger '{triggerProperties.Id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._triggerProperties[triggerProperties.Id] = triggerProperties;
+            var r = Substitute.For<TriggerResponse>();
+            r.StatusCode.Returns(HttpStatusCode.OK);
+            r.Resource.Returns(triggerProperties);
+            return Task.FromResult(r);
+        }
+
+        public override Task<TriggerResponse> DeleteTriggerAsync(
+            string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._triggerProperties.Remove(id))
+                throw new CosmosException($"Trigger '{id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._triggers.Remove(id);
+            var r = Substitute.For<TriggerResponse>();
+            r.StatusCode.Returns(HttpStatusCode.NoContent);
+            return Task.FromResult(r);
+        }
+
+        // ── Trigger CRUD (stream) ─────────────────────────────────────────
+
+        public override Task<ResponseMessage> CreateTriggerStreamAsync(
+            TriggerProperties triggerProperties, RequestOptions requestOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (_c._triggerProperties.ContainsKey(triggerProperties.Id))
+                throw new CosmosException($"Trigger '{triggerProperties.Id}' already exists.",
+                    HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._triggerProperties[triggerProperties.Id] = triggerProperties;
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created,
+                JsonConvert.SerializeObject(triggerProperties)));
+        }
+
+        public override Task<ResponseMessage> ReadTriggerStreamAsync(
+            string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._triggerProperties.TryGetValue(id, out var props))
+                throw new CosmosException($"Trigger '{id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+                JsonConvert.SerializeObject(props)));
+        }
+
+        public override Task<ResponseMessage> ReplaceTriggerStreamAsync(
+            TriggerProperties triggerProperties, RequestOptions requestOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_c._triggerProperties.ContainsKey(triggerProperties.Id))
+                throw new CosmosException($"Trigger '{triggerProperties.Id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._triggerProperties[triggerProperties.Id] = triggerProperties;
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+                JsonConvert.SerializeObject(triggerProperties)));
+        }
+
+        public override Task<ResponseMessage> DeleteTriggerStreamAsync(
+            string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._triggerProperties.Remove(id))
+                throw new CosmosException($"Trigger '{id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._triggers.Remove(id);
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
+        }
+
+        // ── UDF CRUD (typed) ──────────────────────────────────────────────
+
+        public override Task<UserDefinedFunctionResponse> CreateUserDefinedFunctionAsync(
+            UserDefinedFunctionProperties userDefinedFunctionProperties, RequestOptions requestOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (_c._udfProperties.ContainsKey(userDefinedFunctionProperties.Id))
+                throw new CosmosException($"UDF '{userDefinedFunctionProperties.Id}' already exists.",
+                    HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._udfProperties[userDefinedFunctionProperties.Id] = userDefinedFunctionProperties;
+            if (!_c._userDefinedFunctions.ContainsKey("UDF." + userDefinedFunctionProperties.Id))
+                _c._userDefinedFunctions["UDF." + userDefinedFunctionProperties.Id] = _ => null;
+            var r = Substitute.For<UserDefinedFunctionResponse>();
+            r.StatusCode.Returns(HttpStatusCode.Created);
+            r.Resource.Returns(userDefinedFunctionProperties);
+            return Task.FromResult(r);
+        }
+
+        public override Task<UserDefinedFunctionResponse> ReadUserDefinedFunctionAsync(
+            string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._udfProperties.TryGetValue(id, out var props))
+                throw new CosmosException($"UDF '{id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            var r = Substitute.For<UserDefinedFunctionResponse>();
+            r.StatusCode.Returns(HttpStatusCode.OK);
+            r.Resource.Returns(props);
+            return Task.FromResult(r);
+        }
+
+        public override Task<UserDefinedFunctionResponse> ReplaceUserDefinedFunctionAsync(
+            UserDefinedFunctionProperties userDefinedFunctionProperties, RequestOptions requestOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_c._udfProperties.ContainsKey(userDefinedFunctionProperties.Id))
+                throw new CosmosException($"UDF '{userDefinedFunctionProperties.Id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._udfProperties[userDefinedFunctionProperties.Id] = userDefinedFunctionProperties;
+            var r = Substitute.For<UserDefinedFunctionResponse>();
+            r.StatusCode.Returns(HttpStatusCode.OK);
+            r.Resource.Returns(userDefinedFunctionProperties);
+            return Task.FromResult(r);
+        }
+
+        public override Task<UserDefinedFunctionResponse> DeleteUserDefinedFunctionAsync(
+            string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._udfProperties.Remove(id))
+                throw new CosmosException($"UDF '{id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._userDefinedFunctions.Remove("UDF." + id);
+            var r = Substitute.For<UserDefinedFunctionResponse>();
+            r.StatusCode.Returns(HttpStatusCode.NoContent);
+            return Task.FromResult(r);
+        }
+
+        // ── UDF CRUD (stream) ─────────────────────────────────────────────
+
+        public override Task<ResponseMessage> CreateUserDefinedFunctionStreamAsync(
+            UserDefinedFunctionProperties userDefinedFunctionProperties, RequestOptions requestOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (_c._udfProperties.ContainsKey(userDefinedFunctionProperties.Id))
+                throw new CosmosException($"UDF '{userDefinedFunctionProperties.Id}' already exists.",
+                    HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._udfProperties[userDefinedFunctionProperties.Id] = userDefinedFunctionProperties;
+            if (!_c._userDefinedFunctions.ContainsKey("UDF." + userDefinedFunctionProperties.Id))
+                _c._userDefinedFunctions["UDF." + userDefinedFunctionProperties.Id] = _ => null;
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created,
+                JsonConvert.SerializeObject(userDefinedFunctionProperties)));
+        }
+
+        public override Task<ResponseMessage> ReadUserDefinedFunctionStreamAsync(
+            string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._udfProperties.TryGetValue(id, out var props))
+                throw new CosmosException($"UDF '{id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+                JsonConvert.SerializeObject(props)));
+        }
+
+        public override Task<ResponseMessage> ReplaceUserDefinedFunctionStreamAsync(
+            UserDefinedFunctionProperties userDefinedFunctionProperties, RequestOptions requestOptions = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_c._udfProperties.ContainsKey(userDefinedFunctionProperties.Id))
+                throw new CosmosException($"UDF '{userDefinedFunctionProperties.Id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._udfProperties[userDefinedFunctionProperties.Id] = userDefinedFunctionProperties;
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+                JsonConvert.SerializeObject(userDefinedFunctionProperties)));
+        }
+
+        public override Task<ResponseMessage> DeleteUserDefinedFunctionStreamAsync(
+            string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
+        {
+            if (!_c._udfProperties.Remove(id))
+                throw new CosmosException($"UDF '{id}' not found.",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            _c._userDefinedFunctions.Remove("UDF." + id);
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
+        }
+
+        // ── Query iterators (typed) ───────────────────────────────────────
+
+        public override FeedIterator<T> GetStoredProcedureQueryIterator<T>(
+            string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
+            => new InMemoryFeedIterator<T>(() => _c._storedProcedureProperties.Values.Cast<T>().ToList());
+
+        public override FeedIterator<T> GetStoredProcedureQueryIterator<T>(
+            QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
+            => new InMemoryFeedIterator<T>(() => _c._storedProcedureProperties.Values.Cast<T>().ToList());
+
+        public override FeedIterator<T> GetTriggerQueryIterator<T>(
+            string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
+            => new InMemoryFeedIterator<T>(() => _c._triggerProperties.Values.Cast<T>().ToList());
+
+        public override FeedIterator<T> GetTriggerQueryIterator<T>(
+            QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
+            => new InMemoryFeedIterator<T>(() => _c._triggerProperties.Values.Cast<T>().ToList());
+
+        public override FeedIterator<T> GetUserDefinedFunctionQueryIterator<T>(
+            string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
+            => new InMemoryFeedIterator<T>(() => _c._udfProperties.Values.Cast<T>().ToList());
+
+        public override FeedIterator<T> GetUserDefinedFunctionQueryIterator<T>(
+            QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
+            => new InMemoryFeedIterator<T>(() => _c._udfProperties.Values.Cast<T>().ToList());
+
+        // ── Query iterators (stream) — not yet implemented ────────────────
+
+        public override FeedIterator GetStoredProcedureQueryStreamIterator(
+            string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
+            => throw new NotImplementedException("Stream query iterators for stored procedures are not supported by InMemoryContainer.");
+
+        public override FeedIterator GetStoredProcedureQueryStreamIterator(
+            QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
+            => throw new NotImplementedException("Stream query iterators for stored procedures are not supported by InMemoryContainer.");
+
+        public override FeedIterator GetTriggerQueryStreamIterator(
+            string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
+            => throw new NotImplementedException("Stream query iterators for triggers are not supported by InMemoryContainer.");
+
+        public override FeedIterator GetTriggerQueryStreamIterator(
+            QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
+            => throw new NotImplementedException("Stream query iterators for triggers are not supported by InMemoryContainer.");
+
+        public override FeedIterator GetUserDefinedFunctionQueryStreamIterator(
+            string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
+            => throw new NotImplementedException("Stream query iterators for UDFs are not supported by InMemoryContainer.");
+
+        public override FeedIterator GetUserDefinedFunctionQueryStreamIterator(
+            QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
+            => throw new NotImplementedException("Stream query iterators for UDFs are not supported by InMemoryContainer.");
+
+        // ── Private helpers ───────────────────────────────────────────────
+
+        private string ExecuteHandler(string sprocId, Func<string> invoker)
+        {
+            string result;
+            try
             {
-                var props = ci.Arg<TriggerProperties>();
-                if (_triggerProperties.ContainsKey(props.Id))
-                {
-                    throw new CosmosException($"Trigger '{props.Id}' already exists.",
-                        HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                }
-                _triggerProperties[props.Id] = props;
-                var r = Substitute.For<TriggerResponse>();
-                r.StatusCode.Returns(HttpStatusCode.Created);
-                r.Resource.Returns(props);
-                return r;
-            });
-
-        scripts.ReadTriggerAsync(
-            Arg.Any<string>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(ci =>
+                var task = Task.Run(invoker);
+                if (!task.Wait(TimeSpan.FromSeconds(10)))
+                    throw new CosmosException(
+                        $"Stored procedure '{sprocId}' exceeded the 10-second execution timeout.",
+                        HttpStatusCode.RequestTimeout, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                result = task.Result;
+            }
+            catch (CosmosException) { throw; }
+            catch (AggregateException ae) when (ae.InnerException is CosmosException) { throw ae.InnerException; }
+            catch (AggregateException ae)
             {
-                var triggerId = ci.ArgAt<string>(0);
-                if (!_triggerProperties.TryGetValue(triggerId, out var props))
-                {
-                    throw new CosmosException($"Trigger '{triggerId}' not found.",
-                        HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                }
-                var r = Substitute.For<TriggerResponse>();
-                r.StatusCode.Returns(HttpStatusCode.OK);
-                r.Resource.Returns(props);
-                return r;
-            });
-
-        scripts.ReplaceTriggerAsync(
-            Arg.Any<TriggerProperties>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(ci =>
+                var inner = ae.InnerException ?? ae;
+                throw new CosmosException($"Stored procedure '{sprocId}' failed: {inner.Message}",
+                    HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            }
+            catch (Exception ex)
             {
-                var props = ci.Arg<TriggerProperties>();
-                if (!_triggerProperties.ContainsKey(props.Id))
-                {
-                    throw new CosmosException($"Trigger '{props.Id}' not found.",
-                        HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                }
-                _triggerProperties[props.Id] = props;
-                var r = Substitute.For<TriggerResponse>();
-                r.StatusCode.Returns(HttpStatusCode.OK);
-                r.Resource.Returns(props);
-                return r;
-            });
+                throw new CosmosException($"Stored procedure '{sprocId}' failed: {ex.Message}",
+                    HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            }
 
-        scripts.DeleteTriggerAsync(
-            Arg.Any<string>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(ci =>
+            const int MaxResponseSize = 2 * 1024 * 1024;
+            if (result != null && Encoding.UTF8.GetByteCount(result) > MaxResponseSize)
+                throw new CosmosException($"Stored procedure '{sprocId}' response exceeds the 2MB size limit.",
+                    (HttpStatusCode)413, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            return result;
+        }
+
+        private string ExecuteJsEngine(string sprocId, string jsBody, PartitionKey pk, dynamic[] args)
+        {
+            try
             {
-                var triggerId = ci.ArgAt<string>(0);
-                if (!_triggerProperties.Remove(triggerId))
-                {
-                    throw new CosmosException($"Trigger '{triggerId}' not found.",
-                        HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                }
-                _triggers.Remove(triggerId);
-                var r = Substitute.For<TriggerResponse>();
-                r.StatusCode.Returns(HttpStatusCode.NoContent);
-                return r;
-            });
-
-        scripts.CreateUserDefinedFunctionAsync(
-            Arg.Any<UserDefinedFunctionProperties>(), Arg.Any<RequestOptions>(), Arg.Any<CancellationToken>())
-            .Returns(ci =>
+                return _c.SprocEngine.Execute(jsBody, pk, args);
+            }
+            catch (CosmosException) { throw; }
+            catch (Exception ex)
             {
-                var props = ci.Arg<UserDefinedFunctionProperties>();
-                if (_udfProperties.ContainsKey(props.Id))
+                throw new CosmosException($"Stored procedure '{sprocId}' failed: {ex.Message}",
+                    HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            }
+        }
+
+        private void PopulateScriptLogHeaders<TOutput>(StoredProcedureExecuteResponse<TOutput> r)
+        {
+            if (_c.SprocEngine?.CapturedLogs is { Count: > 0 } logs)
+            {
+                var logString = Uri.EscapeDataString(string.Join("\n", logs));
+                var headers = new Headers
                 {
-                    throw new CosmosException($"UDF '{props.Id}' already exists.",
-                        HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-                }
-                _udfProperties[props.Id] = props;
-                if (!_userDefinedFunctions.ContainsKey("UDF." + props.Id))
-                {
-                    _userDefinedFunctions["UDF." + props.Id] = _ => null;
-                }
-                var r = Substitute.For<UserDefinedFunctionResponse>();
-                r.StatusCode.Returns(HttpStatusCode.Created);
-                r.Resource.Returns(props);
-                return r;
-            });
-
-        scripts.GetStoredProcedureQueryIterator<StoredProcedureProperties>(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<QueryRequestOptions>())
-            .Returns(_ => new InMemoryFeedIterator<StoredProcedureProperties>(
-                () => _storedProcedureProperties.Values.ToList()));
-
-        scripts.GetStoredProcedureQueryIterator<StoredProcedureProperties>(
-            Arg.Any<QueryDefinition>(), Arg.Any<string>(), Arg.Any<QueryRequestOptions>())
-            .Returns(_ => new InMemoryFeedIterator<StoredProcedureProperties>(
-                () => _storedProcedureProperties.Values.ToList()));
-
-        scripts.GetTriggerQueryIterator<TriggerProperties>(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<QueryRequestOptions>())
-            .Returns(_ => new InMemoryFeedIterator<TriggerProperties>(
-                () => _triggerProperties.Values.ToList()));
-
-        scripts.GetTriggerQueryIterator<TriggerProperties>(
-            Arg.Any<QueryDefinition>(), Arg.Any<string>(), Arg.Any<QueryRequestOptions>())
-            .Returns(_ => new InMemoryFeedIterator<TriggerProperties>(
-                () => _triggerProperties.Values.ToList()));
-
-        scripts.GetUserDefinedFunctionQueryIterator<UserDefinedFunctionProperties>(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<QueryRequestOptions>())
-            .Returns(_ => new InMemoryFeedIterator<UserDefinedFunctionProperties>(
-                () => _udfProperties.Values.ToList()));
-
-        scripts.GetUserDefinedFunctionQueryIterator<UserDefinedFunctionProperties>(
-            Arg.Any<QueryDefinition>(), Arg.Any<string>(), Arg.Any<QueryRequestOptions>())
-            .Returns(_ => new InMemoryFeedIterator<UserDefinedFunctionProperties>(
-                () => _udfProperties.Values.ToList()));
-
-        return scripts;
+                    ["x-ms-request-charge"] = SyntheticRequestCharge.ToString(CultureInfo.InvariantCulture),
+                    ["x-ms-documentdb-script-log-results"] = logString
+                };
+                r.Headers.Returns(headers);
+                r.ScriptLog.Returns(Uri.UnescapeDataString(logString));
+            }
+        }
     }
 
     private static void EnrichStoredProcedureSystemProperties(StoredProcedureProperties props)
