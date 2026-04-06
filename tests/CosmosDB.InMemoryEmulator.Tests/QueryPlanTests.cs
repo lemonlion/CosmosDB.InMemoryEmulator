@@ -483,8 +483,11 @@ public class QueryPlanTests : IDisposable
 
         ((bool)info["hasSelectValue"]!).Should().BeTrue();
 
+        // Aggregates are cleared from the query plan for VALUE aggregate queries
+        // so the SDK doesn't activate AggregateQueryPipelineStage (which fails on Linux).
+        // The container computes the aggregate directly and returns the raw result.
         var aggregates = (JArray)info["aggregates"]!;
-        aggregates.Should().Contain(t => t.ToString() == "Count");
+        aggregates.Should().BeEmpty();
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -892,8 +895,9 @@ public class QueryPlanTests : IDisposable
         var info = plan["queryInfo"]!;
 
         ((bool)info["hasSelectValue"]!).Should().BeTrue();
+        // Aggregates bypassed for VALUE aggregate queries (container computes the result)
         var aggregates = (JArray)info["aggregates"]!;
-        aggregates.Should().Contain(t => t.ToString() == "Count");
+        aggregates.Should().BeEmpty();
     }
 
     // ══════════════════════════════════════════════════════════════

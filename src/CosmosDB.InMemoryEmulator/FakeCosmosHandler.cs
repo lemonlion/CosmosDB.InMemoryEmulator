@@ -565,22 +565,19 @@ public class FakeCosmosHandler : HttpMessageHandler
                 queryInfo["hasSelectValue"] = true;
             }
 
-            // Suppress SDK pipeline for GROUP BY and non-VALUE multi-aggregate queries.
-            // InMemoryContainer evaluates these fully; return pre-computed results.
+            // Suppress SDK pipeline for GROUP BY, multi-aggregate, and VALUE aggregate
+            // queries. InMemoryContainer evaluates these fully; return pre-computed results.
             // On Linux (no ServiceInterop), the SDK would otherwise activate
             // GroupByQueryPipelineStage / AggregateQueryPipelineStage which expect
-            // undocumented wire formats (groupByItems/payload wrapping).
+            // undocumented wire formats (groupByItems/payload wrapping, [{"item":...}]
+            // arrays). By clearing aggregates from the query plan, the SDK treats the
+            // response as raw documents and the pre-computed result passes through.
             var isGroupByBypass = parsed.GroupByFields is { Length: > 0 };
             var aggregateFieldCount = parsed.SelectFields.Count(f => ContainsAggregate(f.SqlExpr));
             var isMultiAggregateBypass = !isGroupByBypass && !parsed.IsValueSelect && aggregateFieldCount > 1;
+            var isValueAggregateBypass = !isGroupByBypass && parsed.IsValueSelect && aggregateFieldCount > 0;
 
-            // Note: cross-partition aggregates (PartitionKeyRangeCount > 1) are NOT bypassed.
-            // The emulator computes the global aggregate once, wraps it in aggregate wire
-            // format, and FilterDocumentsByRange ensures only one range returns the result
-            // (JArray values always hash to range 0). The SDK's AggregateQueryPipelineStage
-            // then merges: global_result + 0*(N-1 empty ranges) = correct result.
-
-            if (isGroupByBypass || isMultiAggregateBypass)
+            if (isGroupByBypass || isMultiAggregateBypass || isValueAggregateBypass)
             {
                 queryInfo["groupByExpressions"] = new JArray();
                 queryInfo["groupByAliases"] = new JArray();
@@ -790,25 +787,10 @@ public class FakeCosmosHandler : HttpMessageHandler
                         _container.GetItemQueryIterator<JToken>(queryDef, requestOptions: requestOptions),
                         cancellationToken);
 
-                    // On non-Windows platforms, the SDK's AggregateQueryPipelineStage
-                    // expects each document to be a CosmosArray containing an object
-                    // with an "item" field. AVG additionally needs {"sum", "count"} form
-                    // since the SDK computes weighted averages across partitions.
-                    // When PartitionKeyRangeCount > 1, wrapping still happens; the
-                    // wrapped JArray hashes to range 0, so only that range returns data
-                    // while other ranges return empty — giving the SDK the correct total.
-                    if (parsed.IsValueSelect && HasAggregateInSelect(parsed)
-                        && allDocuments.Count > 0 && allDocuments[0] is not JArray)
-                    {
-                        var isAvg = ContainsAvg(parsed.SelectFields[0].SqlExpr);
-                        allDocuments = allDocuments.Select(d =>
-                        {
-                            JToken itemValue = isAvg
-                                ? new JObject { ["sum"] = d, ["count"] = 1 }
-                                : d.DeepClone();
-                            return (JToken)new JArray(new JObject { ["item"] = itemValue });
-                        }).ToList();
-                    }
+                    // VALUE aggregate wrapping is no longer needed because the query plan
+                    // now bypasses the SDK's AggregateQueryPipelineStage for VALUE
+                    // aggregate queries. The container computes the final result directly
+                    // and the raw value is returned without wire-format wrapping.
                 }
             }
             else
