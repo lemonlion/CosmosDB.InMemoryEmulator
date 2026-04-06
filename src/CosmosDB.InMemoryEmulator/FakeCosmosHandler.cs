@@ -574,15 +574,13 @@ public class FakeCosmosHandler : HttpMessageHandler
             var aggregateFieldCount = parsed.SelectFields.Count(f => ContainsAggregate(f.SqlExpr));
             var isMultiAggregateBypass = !isGroupByBypass && !parsed.IsValueSelect && aggregateFieldCount > 1;
 
-            // When PartitionKeyRangeCount > 1, the SDK queries each range separately
-            // and AggregateQueryPipelineStage merges per-range results. But the emulator
-            // computes the global aggregate, so the SDK would sum identical values
-            // (e.g. COUNT=3 * 2 ranges = 6). Bypass the aggregate pipeline so the SDK
-            // treats the pre-computed result as a regular document.
-            var isCrossPartitionAggregateBypass = !isGroupByBypass && !isMultiAggregateBypass
-                && aggregateFieldCount > 0 && _partitionKeyRangeCount > 1;
+            // Note: cross-partition aggregates (PartitionKeyRangeCount > 1) are NOT bypassed.
+            // The emulator computes the global aggregate once, wraps it in aggregate wire
+            // format, and FilterDocumentsByRange ensures only one range returns the result
+            // (JArray values always hash to range 0). The SDK's AggregateQueryPipelineStage
+            // then merges: global_result + 0*(N-1 empty ranges) = correct result.
 
-            if (isGroupByBypass || isMultiAggregateBypass || isCrossPartitionAggregateBypass)
+            if (isGroupByBypass || isMultiAggregateBypass)
             {
                 queryInfo["groupByExpressions"] = new JArray();
                 queryInfo["groupByAliases"] = new JArray();
@@ -796,10 +794,10 @@ public class FakeCosmosHandler : HttpMessageHandler
                     // expects each document to be a CosmosArray containing an object
                     // with an "item" field. AVG additionally needs {"sum", "count"} form
                     // since the SDK computes weighted averages across partitions.
-                    // Skip wrapping when PartitionKeyRangeCount > 1 because the aggregate
-                    // pipeline is bypassed (see isCrossPartitionAggregateBypass in query plan).
+                    // When PartitionKeyRangeCount > 1, wrapping still happens; the
+                    // wrapped JArray hashes to range 0, so only that range returns data
+                    // while other ranges return empty — giving the SDK the correct total.
                     if (parsed.IsValueSelect && HasAggregateInSelect(parsed)
-                        && _partitionKeyRangeCount <= 1
                         && allDocuments.Count > 0 && allDocuments[0] is not JArray)
                     {
                         var isAvg = ContainsAvg(parsed.SelectFields[0].SqlExpr);
