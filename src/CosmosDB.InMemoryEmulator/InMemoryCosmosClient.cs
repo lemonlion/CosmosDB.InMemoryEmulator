@@ -271,12 +271,18 @@ public class InMemoryCosmosClient : CosmosClient
     }
 
     /// <summary>
-    /// No-op disposal. Prevents <see cref="NullReferenceException"/> from the base class.
+    /// Disposes the client and cascades disposal to all containers, triggering
+    /// state persistence for any container with <see cref="InMemoryContainer.StateFilePath"/> set.
     /// </summary>
     protected override void Dispose(bool disposing)
     {
+        if (disposing && !_disposed)
+        {
+            foreach (var db in _databases.Values)
+                foreach (var container in db.GetAllContainers())
+                    container.Dispose();
+        }
         _disposed = true;
-        // No-op otherwise — prevent NullReferenceException from base class.
     }
 
     private void ThrowIfDisposed()

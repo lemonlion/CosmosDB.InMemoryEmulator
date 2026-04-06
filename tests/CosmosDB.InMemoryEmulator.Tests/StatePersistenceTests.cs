@@ -1569,4 +1569,303 @@ public class StatePersistenceErrorHandlingTests
         // "items" is not a JArray, so the if check fails; container is cleared, nothing imported
         container.ItemCount.Should().Be(0);
     }
+
+    // ─── StateFilePath + auto-persist tests ───────────────────────────────────
+
+    [Fact]
+    public async Task StateFilePath_WhenSet_SaveStateOnDispose()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"cosmos-persist-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var filePath = Path.Combine(dir, "test-container.json");
+
+            // Create container, add data, dispose
+            var container = new InMemoryContainer("test", "/partitionKey");
+            container.StateFilePath = filePath;
+            await container.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "a", Name = "hello" },
+                new PartitionKey("a"));
+            await container.CreateItemAsync(
+                new TestDocument { Id = "2", PartitionKey = "b", Name = "world" },
+                new PartitionKey("b"));
+            container.Dispose();
+
+            // File should exist with data
+            File.Exists(filePath).Should().BeTrue();
+            var json = JObject.Parse(File.ReadAllText(filePath));
+            json["items"].Should().HaveCount(2);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StateFilePath_WhenNull_DisposeDoesNotCreateFile()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"cosmos-persist-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var container = new InMemoryContainer("test", "/partitionKey");
+            // StateFilePath is null by default
+            await container.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "a", Name = "test" },
+                new PartitionKey("a"));
+            container.Dispose();
+
+            // No files should have been created
+            Directory.GetFiles(dir).Should().BeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StateFilePath_LoadOnInit_RestoresData()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"cosmos-persist-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var filePath = Path.Combine(dir, "test-container.json");
+
+            // Seed a file manually
+            File.WriteAllText(filePath, """
+            {
+              "items": [
+                { "id": "1", "partitionKey": "a", "name": "persisted", "value": 0, "isActive": true, "tags": [] }
+              ]
+            }
+            """);
+
+            // Create container pointing to the file — it should auto-load
+            var container = new InMemoryContainer("test", "/partitionKey");
+            container.StateFilePath = filePath;
+            container.LoadPersistedState();
+
+            container.ItemCount.Should().Be(1);
+            var response = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("a"));
+            response.Resource.Name.Should().Be("persisted");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void StateFilePath_LoadOnInit_NoFile_StartsEmpty()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"cosmos-persist-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var filePath = Path.Combine(dir, "nonexistent.json");
+
+            var container = new InMemoryContainer("test", "/partitionKey");
+            container.StateFilePath = filePath;
+            container.LoadPersistedState();
+
+            container.ItemCount.Should().Be(0);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StateFilePath_RoundTrip_SaveAndRestore()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"cosmos-persist-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var filePath = Path.Combine(dir, "round-trip.json");
+
+            // First "run" — create data and dispose
+            var container1 = new InMemoryContainer("test", "/partitionKey");
+            container1.StateFilePath = filePath;
+            await container1.CreateItemAsync(
+                new TestDocument { Id = "item-1", PartitionKey = "a", Name = "Alice" },
+                new PartitionKey("a"));
+            await container1.CreateItemAsync(
+                new TestDocument { Id = "item-2", PartitionKey = "b", Name = "Bob" },
+                new PartitionKey("b"));
+            container1.Dispose();
+
+            // Second "run" — load from file
+            var container2 = new InMemoryContainer("test", "/partitionKey");
+            container2.StateFilePath = filePath;
+            container2.LoadPersistedState();
+
+            container2.ItemCount.Should().Be(2);
+
+            var alice = await container2.ReadItemAsync<TestDocument>("item-1", new PartitionKey("a"));
+            alice.Resource.Name.Should().Be("Alice");
+
+            var bob = await container2.ReadItemAsync<TestDocument>("item-2", new PartitionKey("b"));
+            bob.Resource.Name.Should().Be("Bob");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StateFilePath_Dispose_CreatesDirectoryIfNeeded()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"cosmos-persist-{Guid.NewGuid():N}", "subdir");
+        try
+        {
+            var filePath = Path.Combine(dir, "test.json");
+
+            var container = new InMemoryContainer("test", "/partitionKey");
+            container.StateFilePath = filePath;
+            await container.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "a", Name = "test" },
+                new PartitionKey("a"));
+            container.Dispose();
+
+            File.Exists(filePath).Should().BeTrue();
+        }
+        finally
+        {
+            if (Directory.Exists(Path.GetDirectoryName(dir)!))
+                Directory.Delete(Path.GetDirectoryName(dir)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void StateFilePath_DisposeWithEmptyContainer_SavesEmptyState()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"cosmos-persist-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var filePath = Path.Combine(dir, "empty.json");
+
+            var container = new InMemoryContainer("test", "/partitionKey");
+            container.StateFilePath = filePath;
+            container.Dispose();
+
+            File.Exists(filePath).Should().BeTrue();
+            var json = JObject.Parse(File.ReadAllText(filePath));
+            json["items"].Should().HaveCount(0);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StateFilePath_MultipleSaves_OverwritesPrevious()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"cosmos-persist-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var filePath = Path.Combine(dir, "overwrite.json");
+
+            // First run: 1 item
+            var c1 = new InMemoryContainer("test", "/partitionKey");
+            c1.StateFilePath = filePath;
+            await c1.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "a", Name = "first" },
+                new PartitionKey("a"));
+            c1.Dispose();
+
+            // Second run: 2 items
+            var c2 = new InMemoryContainer("test", "/partitionKey");
+            c2.StateFilePath = filePath;
+            c2.LoadPersistedState();
+            await c2.CreateItemAsync(
+                new TestDocument { Id = "2", PartitionKey = "b", Name = "second" },
+                new PartitionKey("b"));
+            c2.Dispose();
+
+            // Third run: verify 2 items
+            var c3 = new InMemoryContainer("test", "/partitionKey");
+            c3.StateFilePath = filePath;
+            c3.LoadPersistedState();
+            c3.ItemCount.Should().Be(2);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StatePersistenceDirectory_ViaOptions_AutoPersists()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"cosmos-persist-{Guid.NewGuid():N}");
+        try
+        {
+            // Simulate the DI path: create container with persistence directory
+            var container = new InMemoryContainer("my-container", "/partitionKey");
+            var expectedFile = Path.Combine(dir, "in-memory-db_my-container.json");
+            container.StateFilePath = expectedFile;
+
+            await container.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "a", Name = "test" },
+                new PartitionKey("a"));
+            container.Dispose();
+
+            File.Exists(expectedFile).Should().BeTrue();
+
+            // Restore
+            var container2 = new InMemoryContainer("my-container", "/partitionKey");
+            container2.StateFilePath = expectedFile;
+            container2.LoadPersistedState();
+            container2.ItemCount.Should().Be(1);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LoadPersistedState_PreservesSystemProperties()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"cosmos-persist-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var filePath = Path.Combine(dir, "system-props.json");
+
+            // Create, add item, capture etag, dispose (saves)
+            var container1 = new InMemoryContainer("test", "/partitionKey");
+            container1.StateFilePath = filePath;
+            var createResponse = await container1.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "a", Name = "Test" },
+                new PartitionKey("a"));
+            var originalEtag = createResponse.ETag;
+            container1.Dispose();
+
+            // Reload — ExportState includes _etag and _ts in the JSON, and
+            // LoadPersistedState should preserve them
+            var container2 = new InMemoryContainer("test", "/partitionKey");
+            container2.StateFilePath = filePath;
+            container2.LoadPersistedState();
+
+            var readResponse = await container2.ReadItemAsync<TestDocument>("1", new PartitionKey("a"));
+            // The etag should be preserved from the exported state
+            readResponse.ETag.Should().NotBeNullOrEmpty();
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
 }

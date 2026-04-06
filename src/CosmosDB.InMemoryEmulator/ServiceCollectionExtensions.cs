@@ -67,6 +67,15 @@ public static class ServiceCollectionExtensions
             var container = config.ContainerProperties != null
                 ? new InMemoryContainer(config.ContainerProperties)
                 : new InMemoryContainer(config.ContainerName, config.PartitionKeyPath);
+
+            if (options.StatePersistenceDirectory is not null)
+            {
+                var dbName = config.DatabaseName ?? databaseName;
+                var fileName = $"{dbName}_{config.ContainerName}.json";
+                container.StateFilePath = Path.Combine(options.StatePersistenceDirectory, fileName);
+                container.LoadPersistedState();
+            }
+
             var handler = new FakeCosmosHandler(container);
             // Use compound key (db/container) when databaseName is specified
             if (config.DatabaseName is not null)
@@ -158,6 +167,13 @@ public static class ServiceCollectionExtensions
                     containerConfig.ContainerName,
                     containerConfig.PartitionKeyPath);
 
+            if (options.StatePersistenceDirectory is not null)
+            {
+                var fileName = $"{containerConfig.ContainerName}.json";
+                container.StateFilePath = Path.Combine(options.StatePersistenceDirectory, fileName);
+                container.LoadPersistedState();
+            }
+
             options.OnContainerCreated?.Invoke(container);
 
             services.Add(new ServiceDescriptor(typeof(Container), _ => container, lifetime));
@@ -219,10 +235,18 @@ public static class ServiceCollectionExtensions
         {
             var dbName = containerConfig.DatabaseName ?? databaseName;
             var db = (InMemoryDatabase)client.GetDatabase(dbName);
+            InMemoryContainer container;
             if (containerConfig.ContainerProperties != null)
-                db.GetOrCreateContainer(containerConfig.ContainerProperties);
+                container = db.GetOrCreateContainer(containerConfig.ContainerProperties);
             else
-                db.GetOrCreateContainer(containerConfig.ContainerName, containerConfig.PartitionKeyPath);
+                container = db.GetOrCreateContainer(containerConfig.ContainerName, containerConfig.PartitionKeyPath);
+
+            if (options.StatePersistenceDirectory is not null)
+            {
+                var fileName = $"{dbName}_{containerConfig.ContainerName}.json";
+                container.StateFilePath = Path.Combine(options.StatePersistenceDirectory, fileName);
+                container.LoadPersistedState();
+            }
         }
 
         options.OnClientCreated?.Invoke(client);

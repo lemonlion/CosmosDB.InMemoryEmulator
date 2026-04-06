@@ -270,6 +270,18 @@ public class InMemoryContainer : Container
     /// </summary>
     public int FeedRangeCount { get; set; } = 1;
 
+    /// <summary>
+    /// When set, the container will automatically save its state to this file path on
+    /// <see cref="Dispose"/> and can load state from it via <see cref="LoadPersistedState"/>.
+    /// The directory will be created automatically if it does not exist.
+    /// <para>
+    /// Use with <see cref="LoadPersistedState"/> to preserve container state between test runs.
+    /// Set via the <c>StatePersistenceDirectory</c> option on <c>UseInMemoryCosmosDB</c> /
+    /// <c>UseInMemoryCosmosContainers</c> for automatic DI integration.
+    /// </para>
+    /// </summary>
+    public string StateFilePath { get; set; }
+
     // ─── Public helpers for test infrastructure ───────────────────────────────
 
     /// <summary>
@@ -285,6 +297,36 @@ public class InMemoryContainer : Container
 
     /// <summary>Returns the number of items currently stored in the container.</summary>
     public int ItemCount => _items.Count;
+
+    /// <summary>
+    /// Saves the current container state to the file specified by <see cref="StateFilePath"/>.
+    /// Does nothing if <see cref="StateFilePath"/> is null. Creates the directory if it does not exist.
+    /// </summary>
+    public void Dispose()
+    {
+        if (StateFilePath is not null)
+        {
+            var dir = Path.GetDirectoryName(StateFilePath);
+            if (!string.IsNullOrEmpty(dir))
+                Directory.CreateDirectory(dir);
+            ExportStateToFile(StateFilePath);
+        }
+    }
+
+    /// <summary>
+    /// Loads container state from the file specified by <see cref="StateFilePath"/>.
+    /// If the file does not exist, the container starts empty (no-op).
+    /// If the file exists, its contents are imported via <see cref="ImportState"/>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown when <see cref="StateFilePath"/> is null.</exception>
+    public void LoadPersistedState()
+    {
+        if (StateFilePath is null)
+            throw new InvalidOperationException("StateFilePath must be set before calling LoadPersistedState().");
+
+        if (File.Exists(StateFilePath))
+            ImportStateFromFile(StateFilePath);
+    }
 
     // ─── State persistence ────────────────────────────────────────────────────
 

@@ -1723,6 +1723,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         if (disposing)
         {
             _queryResultCache.Clear();
+            _container.Dispose();
         }
 
         base.Dispose(disposing);

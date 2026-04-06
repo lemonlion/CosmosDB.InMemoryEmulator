@@ -223,6 +223,8 @@ public class InMemoryDatabase : Database
         return _explicitlyCreatedContainers.ContainsKey(id);
     }
 
+    internal IEnumerable<InMemoryContainer> GetAllContainers() => _containers.Values;
+
     // ── GetContainerQueryIterator ───────────────────────────────────────────
 
     public override FeedIterator<T> GetContainerQueryIterator<T>(

@@ -63,7 +63,7 @@ See the **[Feature Comparison With Alternatives](https://github.com/lemonlion/Co
 - **Change feed** — iterators, checkpoints, delete tombstones, `ChangeFeedProcessor`, and manual checkpoint processor
 - **Point-in-time restore** — restore a container to any previous point in time via change feed replay
 - **Partition keys** — single and composite, auto-extraction from documents
-- **State persistence** — export/import container state as JSON
+- **State persistence** — export/import container state as JSON; automatic save/restore between test runs via `StatePersistenceDirectory`
 - **TTL / expiration** — container-level and per-item with lazy eviction
 - **ETag / optimistic concurrency** — `IfMatchEtag`, `IfNoneMatchEtag`, wildcard `*`
 - **System metadata** — `_ts` and `_etag` injected into stored items, matching real Cosmos DB
