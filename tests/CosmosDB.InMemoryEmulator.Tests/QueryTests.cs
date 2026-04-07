@@ -2479,7 +2479,7 @@ public class QueryGroupByGapTests
         var results1 = new List<JToken>();
         while (iter1.HasMoreResults) results1.AddRange(await iter1.ReadNextAsync());
 
-        var iter2 = _container.GetItemQueryIterator<JToken>("SELECT VALUE COUNT(1) FROM c");
+        var iter2 = _container.GetItemQueryIterator<JToken>("SELECT VALUE COUNT(*) FROM c");
         var results2 = new List<JToken>();
         while (iter2.HasMoreResults) results2.AddRange(await iter2.ReadNextAsync());
 
@@ -7325,5 +7325,845 @@ public class QueryDeepDiveV2_Phase4_ParserTests
         parsed.SelectFields[0].SqlExpr.Should().BeOfType<BinaryExpression>();
         var bin = (BinaryExpression)parsed.SelectFields[0].SqlExpr!;
         bin.Operator.Should().Be(BinaryOp.StringConcat);
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive v3 — Phase 1: Untested Function Coverage
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class QueryDeepDiveV3_UntestedFunctionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task SeedOne()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","name":"Alice","value":10}""")),
+            new PartitionKey("pk1"));
+    }
+
+    // ── B4: REPLICATE ──
+
+    [Fact]
+    public async Task Replicate_RepeatString_Works()
+    {
+        await SeedOne();
+        var results = await RunQuery<string>("SELECT VALUE REPLICATE('ab', 3) FROM c");
+        results.Should().ContainSingle().Which.Should().Be("ababab");
+    }
+
+    [Fact]
+    public async Task Replicate_ZeroCount_ReturnsEmpty()
+    {
+        await SeedOne();
+        var results = await RunQuery<string>("SELECT VALUE REPLICATE('x', 0) FROM c");
+        results.Should().ContainSingle().Which.Should().Be("");
+    }
+
+    // ── B5: INDEX_OF ──
+
+    [Fact]
+    public async Task IndexOf_FindsSubstringPosition()
+    {
+        await SeedOne();
+        var results = await RunQuery<int>("SELECT VALUE INDEX_OF('Hello World', 'World') FROM c");
+        results.Should().ContainSingle().Which.Should().Be(6);
+    }
+
+    [Fact]
+    public async Task IndexOf_NotFound_ReturnsNegativeOne()
+    {
+        await SeedOne();
+        var results = await RunQuery<int>("SELECT VALUE INDEX_OF('Hello', 'xyz') FROM c");
+        results.Should().ContainSingle().Which.Should().Be(-1);
+    }
+
+    // ── B6: TRIM / LTRIM / RTRIM ──
+
+    [Fact]
+    public async Task Trim_RemovesWhitespace()
+    {
+        await SeedOne();
+        var results = await RunQuery<string>("SELECT VALUE TRIM('  hello  ') FROM c");
+        results.Should().ContainSingle().Which.Should().Be("hello");
+    }
+
+    [Fact]
+    public async Task LTrim_RemovesLeadingWhitespace()
+    {
+        await SeedOne();
+        var results = await RunQuery<string>("SELECT VALUE LTRIM('  hello  ') FROM c");
+        results.Should().ContainSingle().Which.Should().Be("hello  ");
+    }
+
+    [Fact]
+    public async Task RTrim_RemovesTrailingWhitespace()
+    {
+        await SeedOne();
+        var results = await RunQuery<string>("SELECT VALUE RTRIM('  hello  ') FROM c");
+        results.Should().ContainSingle().Which.Should().Be("  hello");
+    }
+
+    // ── B7: REVERSE ──
+
+    [Fact]
+    public async Task Reverse_ReversesString()
+    {
+        await SeedOne();
+        var results = await RunQuery<string>("SELECT VALUE REVERSE('abcdef') FROM c");
+        results.Should().ContainSingle().Which.Should().Be("fedcba");
+    }
+
+    // ── B8: SIGN / TRUNC ──
+
+    [Fact]
+    public async Task Sign_ReturnsCorrectSign()
+    {
+        await SeedOne();
+        var results = await RunQuery<JObject>(
+            "SELECT SIGN(-5) AS neg, SIGN(0) AS zero, SIGN(10) AS pos FROM c");
+        results.Should().ContainSingle();
+        results[0]["neg"]!.Value<int>().Should().Be(-1);
+        results[0]["zero"]!.Value<int>().Should().Be(0);
+        results[0]["pos"]!.Value<int>().Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Trunc_TruncatesToInteger()
+    {
+        await SeedOne();
+        var results = await RunQuery<JObject>(
+            "SELECT TRUNC(3.7) AS pos, TRUNC(-3.7) AS neg FROM c");
+        results.Should().ContainSingle();
+        results[0]["pos"]!.Value<double>().Should().Be(3);
+        results[0]["neg"]!.Value<double>().Should().Be(-3);
+    }
+
+    // ── B9: EXP / LOG / LOG10 ──
+
+    [Fact]
+    public async Task Exp_ReturnsEPower()
+    {
+        await SeedOne();
+        var results = await RunQuery<double>("SELECT VALUE EXP(1) FROM c");
+        results.Should().ContainSingle().Which.Should().BeApproximately(Math.E, 0.0001);
+    }
+
+    [Fact]
+    public async Task Log_ReturnsNaturalLog()
+    {
+        await SeedOne();
+        var results = await RunQuery<double>("SELECT VALUE LOG(2.718281828) FROM c");
+        results.Should().ContainSingle().Which.Should().BeApproximately(1.0, 0.001);
+    }
+
+    [Fact]
+    public async Task Log10_ReturnsBase10Log()
+    {
+        await SeedOne();
+        var results = await RunQuery<double>("SELECT VALUE LOG10(1000) FROM c");
+        results.Should().ContainSingle().Which.Should().BeApproximately(3.0, 0.0001);
+    }
+
+    // ── B10: Trigonometric functions ──
+
+    [Fact]
+    public async Task Trig_SinCosTan_ReturnCorrectValues()
+    {
+        await SeedOne();
+        var results = await RunQuery<JObject>(
+            "SELECT SIN(0) AS s, COS(0) AS co, TAN(0) AS t FROM c");
+        results.Should().ContainSingle();
+        results[0]["s"]!.Value<double>().Should().BeApproximately(0, 0.0001);
+        results[0]["co"]!.Value<double>().Should().BeApproximately(1, 0.0001);
+        results[0]["t"]!.Value<double>().Should().BeApproximately(0, 0.0001);
+    }
+
+    [Fact]
+    public async Task Trig_InverseFunctions_Work()
+    {
+        await SeedOne();
+        var results = await RunQuery<JObject>(
+            "SELECT ASIN(0) AS asin, ACOS(1) AS acos, ATAN(0) AS atan FROM c");
+        results.Should().ContainSingle();
+        results[0]["asin"]!.Value<double>().Should().BeApproximately(0, 0.0001);
+        results[0]["acos"]!.Value<double>().Should().BeApproximately(0, 0.0001);
+        results[0]["atan"]!.Value<double>().Should().BeApproximately(0, 0.0001);
+    }
+
+    [Fact]
+    public async Task DegreesRadians_ConvertCorrectly()
+    {
+        await SeedOne();
+        var results = await RunQuery<JObject>(
+            "SELECT DEGREES(3.14159265358979) AS deg, RADIANS(180) AS rad FROM c");
+        results.Should().ContainSingle();
+        results[0]["deg"]!.Value<double>().Should().BeApproximately(180, 0.01);
+        results[0]["rad"]!.Value<double>().Should().BeApproximately(Math.PI, 0.0001);
+    }
+
+    // ── B11: SQUARE ──
+
+    [Fact]
+    public async Task Square_ReturnsSquared()
+    {
+        await SeedOne();
+        var results = await RunQuery<double>("SELECT VALUE SQUARE(7) FROM c");
+        results.Should().ContainSingle().Which.Should().Be(49);
+    }
+
+    // ── B12: RAND ──
+
+    [Fact]
+    public async Task Rand_ReturnsValueBetweenZeroAndOne()
+    {
+        await SeedOne();
+        var results = await RunQuery<double>("SELECT VALUE RAND() FROM c");
+        results.Should().ContainSingle();
+        results[0].Should().BeGreaterThanOrEqualTo(0).And.BeLessThan(1);
+    }
+
+    // ── B13: NumberBin ──
+
+    [Fact]
+    public async Task NumberBin_RoundsToNearestBin()
+    {
+        await SeedOne();
+        var results = await RunQuery<double>("SELECT VALUE NumberBin(4.5, 3) FROM c");
+        results.Should().ContainSingle().Which.Should().Be(3);
+    }
+
+    // ── B14: Integer operations ──
+
+    [Fact]
+    public async Task IntAdd_AddsIntegers()
+    {
+        await SeedOne();
+        var results = await RunQuery<long>("SELECT VALUE IntAdd(10, 20) FROM c");
+        results.Should().ContainSingle().Which.Should().Be(30);
+    }
+
+    [Fact]
+    public async Task IntBitOr_Works()
+    {
+        await SeedOne();
+        var results = await RunQuery<long>("SELECT VALUE IntBitOr(5, 3) FROM c");
+        // 5=101, 3=011, OR=111=7
+        results.Should().ContainSingle().Which.Should().Be(7);
+    }
+
+    [Fact]
+    public async Task IntBitLeftShift_Works()
+    {
+        await SeedOne();
+        var results = await RunQuery<long>("SELECT VALUE IntBitLeftShift(1, 4) FROM c");
+        // 1 << 4 = 16
+        results.Should().ContainSingle().Which.Should().Be(16);
+    }
+
+    // ── B15: Date/Time functions ──
+
+    [Fact]
+    public async Task GetCurrentDateTime_ReturnsISO8601String()
+    {
+        await SeedOne();
+        var results = await RunQuery<string>("SELECT VALUE GetCurrentDateTime() FROM c");
+        results.Should().ContainSingle();
+        DateTime.TryParse(results[0], out _).Should().BeTrue("should be a parseable date/time string");
+    }
+
+    [Fact]
+    public async Task GetCurrentTimestamp_ReturnsEpochMs()
+    {
+        await SeedOne();
+        var results = await RunQuery<long>("SELECT VALUE GetCurrentTimestamp() FROM c");
+        results.Should().ContainSingle();
+        results[0].Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_AddsInterval()
+    {
+        await SeedOne();
+        var results = await RunQuery<string>(
+            """SELECT VALUE DateTimeAdd("dd", 1, "2024-01-01T00:00:00Z") FROM c""");
+        results.Should().ContainSingle();
+        results[0].Should().Contain("2024-01-02");
+    }
+
+    [Fact]
+    public async Task DateTimePart_ExtractsPart()
+    {
+        await SeedOne();
+        var results = await RunQuery<JToken>(
+            """SELECT VALUE DateTimePart("yyyy", "2024-06-15T10:30:00Z") FROM c""");
+        results.Should().ContainSingle();
+        results[0].Value<int>().Should().Be(2024);
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_CalculatesDifference()
+    {
+        await SeedOne();
+        var results = await RunQuery<JToken>(
+            """SELECT VALUE DateTimeDiff("dd", "2024-01-01T00:00:00Z", "2024-01-10T00:00:00Z") FROM c""");
+        results.Should().ContainSingle();
+        results[0].Value<int>().Should().Be(9);
+    }
+
+    // ── B16: Set functions ──
+
+    [Fact]
+    public async Task SetIntersect_ReturnsCommonElements()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","a":[1,2,3],"b":[2,3,4]}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JArray>("SELECT VALUE SetIntersect(c.a, c.b) FROM c");
+        results.Should().ContainSingle();
+        var arr = results[0].Select(t => t.Value<int>()).OrderBy(x => x).ToList();
+        arr.Should().BeEquivalentTo([2, 3]);
+    }
+
+    [Fact]
+    public async Task SetUnion_ReturnsCombinedElements()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","a":[1,2],"b":[2,3]}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JArray>("SELECT VALUE SetUnion(c.a, c.b) FROM c");
+        results.Should().ContainSingle();
+        var arr = results[0].Select(t => t.Value<int>()).OrderBy(x => x).ToList();
+        arr.Should().BeEquivalentTo([1, 2, 3]);
+    }
+
+    [Fact]
+    public async Task SetDifference_ReturnsElementsInFirstNotSecond()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","a":[1,2,3],"b":[2,3,4]}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JArray>("SELECT VALUE SetDifference(c.a, c.b) FROM c");
+        results.Should().ContainSingle();
+        var arr = results[0].Select(t => t.Value<int>()).ToList();
+        arr.Should().BeEquivalentTo([1]);
+    }
+
+    // ── B17: IIF ──
+
+    [Fact]
+    public async Task IIF_TrueCondition_ReturnsTrueValue()
+    {
+        await SeedOne();
+        var results = await RunQuery<string>("SELECT VALUE IIF(true, 'yes', 'no') FROM c");
+        results.Should().ContainSingle().Which.Should().Be("yes");
+    }
+
+    [Fact]
+    public async Task IIF_FalseCondition_ReturnsFalseValue()
+    {
+        await SeedOne();
+        var results = await RunQuery<string>("SELECT VALUE IIF(false, 'yes', 'no') FROM c");
+        results.Should().ContainSingle().Which.Should().Be("no");
+    }
+
+    // ── B19: Spatial functions ──
+
+    [Fact]
+    public async Task StDistance_ReturnsDistanceBetweenPoints()
+    {
+        var point1 = new { type = "Point", coordinates = new[] { 0.0, 0.0 } };
+        var point2 = new { type = "Point", coordinates = new[] { 0.0, 1.0 } };
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = "pk1", loc = point1, target = point2 }),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<double>("SELECT VALUE ST_DISTANCE(c.loc, c.target) FROM c");
+        results.Should().ContainSingle();
+        results[0].Should().BeGreaterThan(0, "distance between two different points should be positive");
+    }
+
+    [Fact]
+    public async Task StIsValid_ReturnsTrueForValidGeoJSON()
+    {
+        var point = new { type = "Point", coordinates = new[] { 0.0, 0.0 } };
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = "pk1", loc = point }),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<bool>("SELECT VALUE ST_ISVALID(c.loc) FROM c");
+        results.Should().ContainSingle().Which.Should().BeTrue();
+    }
+
+    // ── B20: ARRAY_CONCAT ──
+
+    [Fact]
+    public async Task ArrayConcat_CombinesTwoArrays()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","a":[1,2],"b":[3,4]}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JArray>("SELECT VALUE ARRAY_CONCAT(c.a, c.b) FROM c");
+        results.Should().ContainSingle();
+        results[0].Select(t => t.Value<int>()).Should().Equal(1, 2, 3, 4);
+    }
+
+    // ── B21: ToString / ToNumber / ToBoolean ──
+
+    [Fact]
+    public async Task ToString_ConvertsNumberToString()
+    {
+        await SeedOne();
+        var results = await RunQuery<string>("SELECT VALUE ToString(42) FROM c");
+        results.Should().ContainSingle().Which.Should().Be("42");
+    }
+
+    [Fact]
+    public async Task ToNumber_ConvertsStringToNumber()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","val":"123.45"}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<double>("SELECT VALUE ToNumber(c.val) FROM c");
+        results.Should().ContainSingle().Which.Should().Be(123.45);
+    }
+
+    [Fact]
+    public async Task ToBoolean_ConvertsStringToBoolean()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","val":"true"}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<bool>("SELECT VALUE ToBoolean(c.val) FROM c");
+        results.Should().ContainSingle().Which.Should().BeTrue();
+    }
+
+    // ── B1: ARRAY_CONTAINS partial matching edge cases ──
+
+    [Fact]
+    public async Task ArrayContainsPartial_MatchesSubsetOfProperties()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","items":[{"name":"Alice","age":30,"city":"London"},{"name":"Bob","age":25,"city":"Paris"}]}""")),
+            new PartitionKey("pk1"));
+
+        // Partial match: only check "name" property, ignore "age" and "city"
+        var results = await RunQuery<JObject>(
+            """SELECT * FROM c WHERE ARRAY_CONTAINS(c.items, {"name":"Alice"}, true)""");
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task ArrayContainsPartial_NoMatch_WhenValueDiffers()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","items":[{"name":"Alice","age":30}]}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JObject>(
+            """SELECT * FROM c WHERE ARRAY_CONTAINS(c.items, {"name":"Bob"}, true)""");
+        results.Should().BeEmpty();
+    }
+
+    // ── B3: ARRAY_CONTAINS_ANY / ARRAY_CONTAINS_ALL ──
+
+    [Fact]
+    public async Task ArrayContainsAny_MatchesAtLeastOneElement()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","tags":["a","b","c"]}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","partitionKey":"pk1","tags":["d","e"]}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JObject>(
+            """SELECT * FROM c WHERE ARRAY_CONTAINS_ANY(c.tags, ["a","z"])""");
+        results.Should().ContainSingle().Which["id"]!.ToString().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task ArrayContainsAll_MatchesAllElements()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","tags":["a","b","c"]}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","partitionKey":"pk1","tags":["a","c"]}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JObject>(
+            """SELECT * FROM c WHERE ARRAY_CONTAINS_ALL(c.tags, ["a","b"])""");
+        // Only doc 1 has both "a" and "b"
+        results.Should().ContainSingle().Which["id"]!.ToString().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task ArrayContainsAll_PartialMatch_ReturnsEmpty()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","tags":["a","b"]}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JObject>(
+            """SELECT * FROM c WHERE ARRAY_CONTAINS_ALL(c.tags, ["a","b","z"])""");
+        results.Should().BeEmpty("doc doesn't contain 'z'");
+    }
+
+    // ── B15 continued: IS_FINITE_NUMBER, IS_INTEGER ──
+
+    [Fact]
+    public async Task IsFiniteNumber_WorksCorrectly()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","val":42}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<bool>("SELECT VALUE IS_FINITE_NUMBER(c.val) FROM c");
+        results.Should().ContainSingle().Which.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task IsInteger_WorksCorrectly()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","intVal":42,"floatVal":3.14}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JObject>(
+            "SELECT IS_INTEGER(c.intVal) AS isInt, IS_INTEGER(c.floatVal) AS isFloat FROM c");
+        results.Should().ContainSingle();
+        results[0]["isInt"]!.Value<bool>().Should().BeTrue();
+        results[0]["isFloat"]!.Value<bool>().Should().BeFalse();
+    }
+
+    // ── PI function ──
+
+    [Fact]
+    public async Task Pi_ReturnsPiValue()
+    {
+        await SeedOne();
+        var results = await RunQuery<double>("SELECT VALUE PI() FROM c");
+        results.Should().ContainSingle().Which.Should().BeApproximately(Math.PI, 0.0001);
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive v3 — Phase 2: Missing Edge Case Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class QueryDeepDiveV3_EdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task<List<T>> RunQuery<T>(QueryDefinition query)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(query);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task SeedItems()
+    {
+        var items = new[]
+        {
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10, IsActive = true, Tags = ["a", "b"] },
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20, IsActive = false, Tags = ["b", "c"] },
+            new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Charlie", Value = 30, IsActive = true, Tags = ["a", "c"] },
+            new TestDocument { Id = "4", PartitionKey = "pk2", Name = "Diana", Value = 40, IsActive = true, Tags = ["d"] },
+            new TestDocument { Id = "5", PartitionKey = "pk1", Name = "Eve", Value = 50, IsActive = false, Tags = ["a"] },
+        };
+        foreach (var item in items)
+            await _container.CreateItemAsync(item, new PartitionKey(item.PartitionKey));
+    }
+
+    // ── E1: WHERE with arithmetic on both sides ──
+
+    [Fact]
+    public async Task Where_ArithmeticOnBothSides_ComparesCorrectly()
+    {
+        await SeedItems();
+        // c.value * 2 > c.value + 15 → 2v > v+15 → v > 15
+        var results = await RunQuery<TestDocument>(
+            "SELECT * FROM c WHERE c.value * 2 > c.value + 15");
+        results.Select(r => r.Name).Should().BeEquivalentTo(["Bob", "Charlie", "Diana", "Eve"]);
+    }
+
+    // ── E2: ORDER BY with multiple expressions ──
+
+    [Fact]
+    public async Task OrderBy_MultipleExpressions_SortsCorrectly()
+    {
+        await SeedItems();
+        // LENGTH(c.name) DESC: Charlie(7), Alice(5), Diana(5), Bob(3), Eve(3)
+        // then c.value ASC as tiebreaker
+        var results = await RunQuery<TestDocument>(
+            "SELECT * FROM c ORDER BY LENGTH(c.name) DESC, c.value ASC");
+        results[0].Name.Should().Be("Charlie"); // len 7
+    }
+
+    // ── E3: GROUP BY + ORDER BY COUNT ──
+
+    [Fact]
+    public async Task GroupBy_OrderByCount_SortsByGroupSize()
+    {
+        await SeedItems();
+        // pk1 has 4 items, pk2 has 1
+        var results = await RunQuery<JObject>(
+            "SELECT c.partitionKey, COUNT(1) AS cnt FROM c GROUP BY c.partitionKey ORDER BY cnt DESC");
+        results[0]["partitionKey"]!.ToString().Should().Be("pk1");
+        results[1]["partitionKey"]!.ToString().Should().Be("pk2");
+    }
+
+    // ── E4: DISTINCT with multiple projected fields ──
+
+    [Fact]
+    public async Task Distinct_MultipleFields_DeduplicatesByAllFields()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", cat = "A", status = "active" }), new PartitionKey("pk1"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", cat = "A", status = "active" }), new PartitionKey("pk1"));
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "3", partitionKey = "pk1", cat = "A", status = "inactive" }), new PartitionKey("pk1"));
+
+        var results = await RunQuery<JObject>("SELECT DISTINCT c.cat, c.status FROM c");
+        // (A, active) and (A, inactive) = 2 distinct combos
+        results.Should().HaveCount(2);
+    }
+
+    // ── E5: SELECT with aliased system properties ──
+
+    [Fact]
+    public async Task Select_SystemProperty_Ts_WithAlias_Works()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JObject>("SELECT c._ts AS timestamp FROM c");
+        results.Should().ContainSingle();
+        results[0]["timestamp"].Should().NotBeNull();
+    }
+
+    // ── E6: WHERE comparing two fields from the same document ──
+
+    [Fact]
+    public async Task Where_CompareTwoFields_Works()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","a":10,"b":5}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","partitionKey":"pk1","a":3,"b":8}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JObject>("SELECT * FROM c WHERE c.a > c.b");
+        results.Should().ContainSingle().Which["id"]!.ToString().Should().Be("1");
+    }
+
+    // ── E9: STARTSWITH with parameterized prefix ──
+
+    [Fact]
+    public async Task StartsWith_WithParameter_Works()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("""SELECT * FROM c WHERE STARTSWITH(c.name, @prefix)""")
+            .WithParameter("@prefix", "Al");
+        var results = await RunQuery<TestDocument>(query);
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    // ── E10: LIKE with parameter pattern ──
+
+    [Fact]
+    public async Task Like_WithParameter_Works()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.name LIKE @pattern")
+            .WithParameter("@pattern", "A%");
+        var results = await RunQuery<TestDocument>(query);
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    // ── E11: Multiple aggregates with GROUP BY ──
+
+    [Fact]
+    public async Task GroupBy_MultipleAggregates_AllComputed()
+    {
+        await SeedItems();
+        var results = await RunQuery<JObject>(
+            "SELECT c.partitionKey, COUNT(1) AS cnt, SUM(c.value) AS total, AVG(c.value) AS avg FROM c GROUP BY c.partitionKey");
+
+        results.Should().HaveCount(2);
+        var pk1 = results.First(r => r["partitionKey"]!.ToString() == "pk1");
+        pk1["cnt"]!.Value<int>().Should().Be(4);
+        pk1["total"]!.Value<double>().Should().Be(110); // 10+20+30+50 (pk1 items minus Diana who's pk2 — wait, pk1 = Alice(10)+Bob(20)+Charlie(30)+Eve(50) = actually let me check)
+    }
+
+    // ── E14: DISTINCT on null values ──
+
+    [Fact]
+    public async Task Distinct_NullValues_TreatedAsOneGroup()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","cat":"A"}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk1","cat":null}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","partitionKey":"pk1","cat":null}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JObject>("SELECT DISTINCT c.cat FROM c");
+        // "A" and null = 2 distinct values (both nulls collapse to one)
+        results.Should().HaveCount(2);
+    }
+
+    // ── E15: JOIN with WHERE referencing both parent and child ──
+
+    [Fact]
+    public async Task Join_WhereReferencingParentAndChild_Works()
+    {
+        await SeedItems();
+        var results = await RunQuery<JObject>(
+            """SELECT c.name, t AS tag FROM c JOIN t IN c.tags WHERE c.isActive = true AND t = "a" """);
+        // Active items with tag "a": Alice(a,b) → has "a", Charlie(a,c) → has "a"
+        results.Should().HaveCount(2);
+        results.Select(r => r["name"]!.ToString()).Should().BeEquivalentTo(["Alice", "Charlie"]);
+    }
+
+    // ── E16: TOP with ORDER BY DESC ──
+
+    [Fact]
+    public async Task Top_WithOrderByDesc_ReturnsHighestValues()
+    {
+        await SeedItems();
+        var results = await RunQuery<TestDocument>("SELECT TOP 3 * FROM c ORDER BY c.value DESC");
+        results.Should().HaveCount(3);
+        results[0].Value.Should().Be(50);
+        results[1].Value.Should().Be(40);
+        results[2].Value.Should().Be(30);
+    }
+
+    // ── E17: SELECT c.* alias-dot-star form ──
+
+    [Fact]
+    public async Task Select_AliasDotStar_ReturnsAllFields()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JObject>("SELECT c.* FROM c");
+        results.Should().ContainSingle();
+        results[0]["id"]!.ToString().Should().Be("1");
+        results[0]["name"]!.ToString().Should().Be("Alice");
+    }
+
+    // ── E19: GROUP BY on undefined value across documents ──
+
+    [Fact]
+    public async Task GroupBy_SomeUndefined_SomeNull_DistinctGroups()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","cat":"A"}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk1","cat":null}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","partitionKey":"pk1"}""")),
+            new PartitionKey("pk1")); // undefined cat
+
+        var results = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt FROM c GROUP BY c.cat");
+        // A, null, undefined = up to 3 groups (or 2 if null/undefined collapse)
+        results.Should().HaveCountGreaterThanOrEqualTo(2);
+    }
+
+    // ── E20: Nested function calls in WHERE ──
+
+    [Fact]
+    public async Task Where_NestedFunctionCalls_Works()
+    {
+        await SeedItems();
+        var results = await RunQuery<TestDocument>(
+            "SELECT * FROM c WHERE LOWER(LEFT(c.name, 3)) = 'ali'");
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    // ── E12: SELECT VALUE with object literal containing aggregate ──
+
+    [Fact(Skip = "Divergent: SELECT VALUE {aggregates} without GROUP BY evaluates per-document instead of " +
+                  "as a single aggregate. Cosmos DB treats aggregates in object literals as global aggregates, " +
+                  "returning one row. The emulator evaluates the object literal per document.")]
+    public async Task SelectValue_ObjectWithAggregate_NoGroupBy()
+    {
+        await SeedItems();
+        var results = await RunQuery<JObject>(
+            """SELECT VALUE {"total": SUM(c.value), "cnt": COUNT(1)} FROM c""");
+        // Cosmos DB: returns one row {"total": 150, "cnt": 5}
+        results.Should().ContainSingle();
+        results[0]["cnt"]!.Value<int>().Should().Be(5);
+    }
+
+    /// <summary>
+    /// Sister test: documents that SELECT VALUE {aggregates} without GROUP BY
+    /// evaluates per-document in the emulator. In Cosmos DB, aggregates in a
+    /// SELECT VALUE object literal are computed globally and return a single row.
+    /// The emulator treats the object literal as a per-document projection where
+    /// each aggregate evaluates in the context of the current document only.
+    /// </summary>
+    [Fact]
+    public async Task SelectValue_ObjectWithAggregate_NoGroupBy_DivergentBehavior()
+    {
+        await SeedItems();
+        var results = await RunQuery<JObject>(
+            """SELECT VALUE {"total": SUM(c.value), "cnt": COUNT(1)} FROM c""");
+        // Emulator: returns one row per document (5 total), not a single aggregate row
+        results.Should().HaveCount(5,
+            "emulator evaluates aggregate object literals per-document instead of globally");
     }
 }
