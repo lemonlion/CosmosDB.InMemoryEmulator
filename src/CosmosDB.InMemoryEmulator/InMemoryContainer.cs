@@ -49,6 +49,20 @@ public class InMemoryContainer : Container
     private static readonly HashSet<string> AggregateFunctions =
         new(StringComparer.OrdinalIgnoreCase) { "COUNT", "SUM", "AVG", "MIN", "MAX" };
 
+    /// <summary>
+    /// Recursively checks whether a SqlExpression tree contains any aggregate function call
+    /// (COUNT, SUM, AVG, MIN, MAX). Used to detect aggregates inside object/array literals.
+    /// </summary>
+    private static bool ContainsAggregateCall(SqlExpression expr) => expr switch
+    {
+        FunctionCallExpression func => AggregateFunctions.Contains(func.FunctionName),
+        ObjectLiteralExpression obj => obj.Properties.Any(p => ContainsAggregateCall(p.Value)),
+        ArrayLiteralExpression arr => arr.Elements.Any(ContainsAggregateCall),
+        BinaryExpression bin => ContainsAggregateCall(bin.Left) || ContainsAggregateCall(bin.Right),
+        UnaryExpression unary => ContainsAggregateCall(unary.Operand),
+        _ => false
+    };
+
     private const int RegexCacheMaxSize = 256;
     private static readonly ConcurrentDictionary<(string Pattern, RegexOptions Options), Regex> RegexCache = new();
 
@@ -3939,7 +3953,9 @@ public class InMemoryContainer : Container
                     var values = ExtractNumericValues(groupItems, innerArg, fromAlias);
                     if (funcName == "SUM")
                     {
-                        resultObj[outputName] = values.Sum();
+                        if (values.Count > 0)
+                            resultObj[outputName] = values.Sum();
+                        // else: omit field entirely (undefined) — matches Cosmos DB
                     }
                     else // AVG
                     {
@@ -3950,25 +3966,9 @@ public class InMemoryContainer : Container
                 else if (funcName is "MIN" or "MAX" && innerArg != null)
                 {
                     var tokens = ExtractTokenValues(groupItems, innerArg, fromAlias);
-                    if (tokens.Count > 0)
-                    {
-                        var numericValues = new List<double>();
-                        var stringValues = new List<string>();
-                        foreach (var t in tokens)
-                        {
-                            if (t.Type is JTokenType.Integer or JTokenType.Float)
-                                numericValues.Add(t.Value<double>());
-                            else if (t.Type == JTokenType.String)
-                                stringValues.Add(t.Value<string>());
-                        }
-
-                        if (numericValues.Count > 0)
-                            resultObj[outputName] = funcName == "MIN" ? numericValues.Min() : numericValues.Max();
-                        else if (stringValues.Count > 0)
-                            resultObj[outputName] = funcName == "MIN"
-                                ? stringValues.OrderBy(s => s, StringComparer.Ordinal).First()
-                                : stringValues.OrderByDescending(s => s, StringComparer.Ordinal).First();
-                    }
+                    var minMaxResult = AggregateMinMax(tokens, funcName == "MIN");
+                    if (minMaxResult is not UndefinedValue)
+                        resultObj[outputName] = JToken.FromObject(minMaxResult);
                 }
                 else
                 {
@@ -4100,6 +4100,70 @@ public class InMemoryContainer : Container
         return tokens;
     }
 
+    /// <summary>
+    /// Computes MIN or MAX across a list of JTokens, respecting Cosmos DB type ordering:
+    /// boolean &lt; number &lt; string. Booleans compare as false &lt; true.
+    /// Returns <see cref="UndefinedValue.Instance"/> when <paramref name="tokens"/> is empty.
+    /// </summary>
+    private static object AggregateMinMax(List<JToken> tokens, bool isMin)
+    {
+        if (tokens.Count == 0)
+            return UndefinedValue.Instance;
+
+        // Cosmos DB MIN/MAX type rank: boolean(0) < number(1) < string(2)
+        // MIN returns the value with the lowest rank; within a rank, the smallest value.
+        // MAX returns the value with the highest rank; within a rank, the largest value.
+        static int MinMaxTypeRank(JToken t) => t.Type switch
+        {
+            JTokenType.Boolean => 0,
+            JTokenType.Integer or JTokenType.Float => 1,
+            JTokenType.String => 2,
+            _ => 3 // other types ignored below
+        };
+
+        var eligible = tokens.Where(t => MinMaxTypeRank(t) <= 2).ToList();
+        if (eligible.Count == 0)
+            return UndefinedValue.Instance;
+
+        JToken best = eligible[0];
+        foreach (var t in eligible.Skip(1))
+        {
+            var rankBest = MinMaxTypeRank(best);
+            var rankT = MinMaxTypeRank(t);
+            bool tIsBetter;
+            if (rankBest != rankT)
+            {
+                tIsBetter = isMin ? rankT < rankBest : rankT > rankBest;
+            }
+            else
+            {
+                tIsBetter = rankBest switch
+                {
+                    0 => isMin
+                        ? !t.Value<bool>() && best.Value<bool>()   // false < true
+                        : t.Value<bool>() && !best.Value<bool>(),
+                    1 => isMin
+                        ? t.Value<double>() < best.Value<double>()
+                        : t.Value<double>() > best.Value<double>(),
+                    2 => isMin
+                        ? string.Compare(t.Value<string>(), best.Value<string>(), StringComparison.Ordinal) < 0
+                        : string.Compare(t.Value<string>(), best.Value<string>(), StringComparison.Ordinal) > 0,
+                    _ => false
+                };
+            }
+            if (tIsBetter) best = t;
+        }
+
+        return best.Type switch
+        {
+            JTokenType.Boolean => best.Value<bool>(),
+            JTokenType.Integer => best.Value<long>(),
+            JTokenType.Float => best.Value<double>(),
+            JTokenType.String => best.Value<string>(),
+            _ => UndefinedValue.Instance
+        };
+    }
+
     private static bool EvaluateHavingCondition(
         WhereExpression having, List<string> groupItems, JObject resultObj,
         string fromAlias, IDictionary<string, object> parameters)
@@ -4172,7 +4236,24 @@ public class InMemoryContainer : Container
     {
         switch (func.FunctionName)
         {
-            case "COUNT": return (double)groupItems.Count;
+            case "COUNT":
+            {
+                // COUNT(1) / COUNT(*) — count all items in group
+                // COUNT(c.field) — count only items where field is defined
+                if (func.Arguments.Length < 1)
+                    return (double)groupItems.Count;
+                var countArg = func.Arguments[0] is IdentifierExpression countIdent ? countIdent.Name : "1";
+                if (countArg is "1" or "*")
+                    return (double)groupItems.Count;
+                var countPath = countArg;
+                if (countPath.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                    countPath = countPath[(fromAlias.Length + 1)..];
+                return (double)groupItems.Count(json =>
+                {
+                    var jObj = JsonParseHelpers.ParseJson(json);
+                    return jObj.SelectToken(countPath) != null;
+                });
+            }
             case "SUM":
             case "AVG":
             case "MIN":
@@ -4185,12 +4266,15 @@ public class InMemoryContainer : Container
 
                     var innerArg = func.Arguments[0] is IdentifierExpression ident ? ident.Name : "1";
                     var values = ExtractNumericValues(groupItems, innerArg, fromAlias);
+                    if (func.FunctionName is "MIN" or "MAX")
+                    {
+                        var tokens = ExtractTokenValues(groupItems, innerArg, fromAlias);
+                        return AggregateMinMax(tokens, func.FunctionName == "MIN");
+                    }
                     return func.FunctionName switch
                     {
-                        "SUM" => values.Sum(),
+                        "SUM" => values.Count > 0 ? (object)values.Sum() : UndefinedValue.Instance,
                         "AVG" => values.Count > 0 ? (object)values.Average() : UndefinedValue.Instance,
-                        "MIN" => values.Count > 0 ? (object)values.Min() : UndefinedValue.Instance,
-                        "MAX" => values.Count > 0 ? (object)values.Max() : UndefinedValue.Instance,
                         _ => 0.0
                     };
                 }
@@ -4300,12 +4384,17 @@ public class InMemoryContainer : Container
         var hasAggregate = parsed.SelectFields.Any(f =>
         {
             var expr = f.Expression.TrimStart();
-            return AggregateFunctions.Any(fn => expr.StartsWith(fn + "(", StringComparison.OrdinalIgnoreCase));
+            if (AggregateFunctions.Any(fn => expr.StartsWith(fn + "(", StringComparison.OrdinalIgnoreCase)))
+                return true;
+            // Also detect aggregates nested inside object/array literals (e.g. SELECT VALUE {"cnt": COUNT(1)})
+            if (f.SqlExpr is not null)
+                return ContainsAggregateCall(f.SqlExpr);
+            return false;
         });
 
         if (hasAggregate)
         {
-            return ProjectAggregateFields(items, parsed);
+            return ProjectAggregateFields(items, parsed, parameters);
         }
 
         var projected = new List<string>();
@@ -4394,7 +4483,7 @@ public class InMemoryContainer : Container
         return unwrapped;
     }
 
-    private static List<string> ProjectAggregateFields(List<string> items, CosmosSqlQuery parsed)
+    private static List<string> ProjectAggregateFields(List<string> items, CosmosSqlQuery parsed, IDictionary<string, object> parameters = null)
     {
         var resultObj = new JObject();
         foreach (var field in parsed.SelectFields)
@@ -4444,7 +4533,9 @@ public class InMemoryContainer : Container
                 var values = ExtractNumericValues(items, innerArg, parsed.FromAlias);
                 if (funcName == "SUM")
                 {
-                    resultObj[outputName] = values.Sum();
+                    if (values.Count > 0)
+                        resultObj[outputName] = values.Sum();
+                    // else: omit field entirely (undefined) — matches Cosmos DB
                 }
                 else // AVG
                 {
@@ -4456,26 +4547,16 @@ public class InMemoryContainer : Container
             else if (funcName is "MIN" or "MAX" && innerArg != null)
             {
                 var tokens = ExtractTokenValues(items, innerArg, parsed.FromAlias);
-                if (tokens.Count > 0)
-                {
-                    // Try numeric first
-                    var numericValues = new List<double>();
-                    var stringValues = new List<string>();
-                    foreach (var t in tokens)
-                    {
-                        if (t.Type is JTokenType.Integer or JTokenType.Float)
-                            numericValues.Add(t.Value<double>());
-                        else if (t.Type == JTokenType.String)
-                            stringValues.Add(t.Value<string>());
-                    }
-
-                    if (numericValues.Count > 0)
-                        resultObj[outputName] = funcName == "MIN" ? numericValues.Min() : numericValues.Max();
-                    else if (stringValues.Count > 0)
-                        resultObj[outputName] = funcName == "MIN"
-                            ? stringValues.OrderBy(s => s, StringComparer.Ordinal).First()
-                            : stringValues.OrderByDescending(s => s, StringComparer.Ordinal).First();
-                }
+                var minMaxResult = AggregateMinMax(tokens, funcName == "MIN");
+                if (minMaxResult is not UndefinedValue)
+                    resultObj[outputName] = JToken.FromObject(minMaxResult);
+            }
+            else if (field.SqlExpr is not null && ContainsAggregateCall(field.SqlExpr))
+            {
+                // Handle aggregates inside object/array literals (e.g. SELECT VALUE {"cnt": COUNT(1), "total": SUM(c.val)})
+                var val = EvaluateAggregateExpression(field.SqlExpr, items, parsed.FromAlias, parameters ?? new Dictionary<string, object>());
+                if (val is not null and not UndefinedValue)
+                    resultObj[outputName] = val is JToken jt ? jt.DeepClone() : JToken.FromObject(val);
             }
             else
             {
@@ -4493,6 +4574,67 @@ public class InMemoryContainer : Container
             }
         }
         return new List<string> { resultObj.ToString(Formatting.None) };
+    }
+
+    /// <summary>
+    /// Evaluates a SqlExpression that may contain aggregate function calls,
+    /// resolving them globally across all items. Used for expressions like
+    /// SELECT VALUE {"cnt": COUNT(1), "total": SUM(c.value)} FROM c.
+    /// </summary>
+    private static object EvaluateAggregateExpression(
+        SqlExpression expr, List<string> items, string fromAlias, IDictionary<string, object> parameters)
+    {
+        switch (expr)
+        {
+            case FunctionCallExpression func when AggregateFunctions.Contains(func.FunctionName):
+            {
+                var innerArg = func.Arguments.Length > 0 ? CosmosSqlParser.ExprToString(func.Arguments[0]) : "1";
+                return func.FunctionName.ToUpperInvariant() switch
+                {
+                    "COUNT" when innerArg is "1" or "*" => (object)items.Count,
+                    "COUNT" => items.Count(json =>
+                    {
+                        var jObj = JsonParseHelpers.ParseJson(json);
+                        var path = StripAliasPrefix(innerArg, fromAlias);
+                        return jObj.SelectToken(path) != null;
+                    }),
+                    "SUM" => ExtractNumericValues(items, innerArg, fromAlias) is var sv && sv.Count > 0 ? sv.Sum() : UndefinedValue.Instance,
+                    "AVG" => ExtractNumericValues(items, innerArg, fromAlias) is var av && av.Count > 0 ? av.Average() : UndefinedValue.Instance,
+                    "MIN" => AggregateMinMax(ExtractTokenValues(items, innerArg, fromAlias), true),
+                    "MAX" => AggregateMinMax(ExtractTokenValues(items, innerArg, fromAlias), false),
+                    _ => null
+                };
+            }
+            case ObjectLiteralExpression obj:
+            {
+                var result = new JObject();
+                foreach (var prop in obj.Properties)
+                {
+                    var val = EvaluateAggregateExpression(prop.Value, items, fromAlias, parameters);
+                    if (val is not null and not UndefinedValue)
+                        result[prop.Key] = val is JToken jt ? jt.DeepClone() : JToken.FromObject(val);
+                }
+                return result;
+            }
+            case ArrayLiteralExpression arr:
+            {
+                var result = new JArray();
+                foreach (var element in arr.Elements)
+                {
+                    var val = EvaluateAggregateExpression(element, items, fromAlias, parameters);
+                    result.Add(val is JToken jt ? jt.DeepClone() : val is not null and not UndefinedValue ? JToken.FromObject(val) : JValue.CreateNull());
+                }
+                return result;
+            }
+            default:
+                // Non-aggregate expression — evaluate against first item (for non-aggregate fields in mixed projection)
+                if (items.Count > 0)
+                {
+                    var jObj = JsonParseHelpers.ParseJson(items[0]);
+                    return EvaluateSqlExpression(expr, jObj, fromAlias, parameters);
+                }
+                return null;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -4998,7 +5140,19 @@ public class InMemoryContainer : Container
             var queryToParse = raw.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)
                 ? raw
                 : "SELECT * FROM " + raw;
-            var subquery = CosmosSqlParser.Parse(queryToParse);
+
+            CosmosSqlQuery subquery;
+            try
+            {
+                subquery = CosmosSqlParser.Parse(queryToParse);
+            }
+            catch (NotSupportedException)
+            {
+                // Malformed SQL — throw 400 like real Cosmos DB
+                throw new CosmosException(
+                    $"Syntax error in EXISTS subquery: {raw}",
+                    System.Net.HttpStatusCode.BadRequest, 0, string.Empty, 0);
+            }
 
             // Handle FROM alias IN source.path (array iteration in EXISTS subquery)
             if (subquery.FromSource is not null)
@@ -5076,9 +5230,13 @@ public class InMemoryContainer : Container
 
             return true;
         }
+        catch (CosmosException)
+        {
+            throw; // Re-throw parse errors (400 Bad Request)
+        }
         catch
         {
-            return false;
+            return false; // Runtime evaluation errors — EXISTS evaluates to false
         }
     }
 
@@ -6483,10 +6641,8 @@ public class InMemoryContainer : Container
         null => false,
         UndefinedValue => false,
         bool b => b,
-        long l => l != 0,
-        double d => d != 0,
-        string s => s.Length > 0,
-        _ => true
+        // Cosmos DB: WHERE requires strict boolean — non-boolean values evaluate to false
+        _ => false
     };
 
     private static int CountOccurrences(string text, string term)
@@ -6537,6 +6693,45 @@ public class InMemoryContainer : Container
         }
 
         return results.Count > 0 ? JsonParseHelpers.ParseJsonToken(results[0]).ToObject<object>() : null;
+    }
+
+    private static object EvaluateSubqueryAggregate(
+        FunctionCallExpression func, List<JObject> sourceItems, string fromAlias, IDictionary<string, object> parameters)
+    {
+        var name = func.FunctionName.ToUpperInvariant();
+        if (name is "COUNT")
+        {
+            // COUNT(1) / COUNT(*) → count all items; COUNT(c.field) → count defined only
+            if (func.Arguments.Length == 1 && func.Arguments[0] is IdentifierExpression ident)
+            {
+                var fieldPath = ident.Name;
+                if (fieldPath.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                    fieldPath = fieldPath[(fromAlias.Length + 1)..];
+                return (double)sourceItems.Count(si => si.SelectToken(fieldPath) is not null);
+            }
+            return (double)sourceItems.Count;
+        }
+
+        // For SUM/AVG/MIN/MAX, extract numeric values from the first argument
+        var argExpr = func.Arguments.Length > 0 ? func.Arguments[0] : null;
+        if (argExpr is null) return null;
+
+        var values = new List<JToken>();
+        foreach (var si in sourceItems)
+        {
+            var val = EvaluateSqlExpression(argExpr, si, fromAlias, parameters);
+            if (val is not null and not UndefinedValue)
+                values.Add(JToken.FromObject(val));
+        }
+
+        return name switch
+        {
+            "SUM" => values.Count > 0 ? values.Sum(v => v.Value<double>()) : (object)UndefinedValue.Instance,
+            "AVG" => values.Count > 0 ? values.Average(v => v.Value<double>()) : (object)UndefinedValue.Instance,
+            "MIN" => AggregateMinMax(values, true),
+            "MAX" => AggregateMinMax(values, false),
+            _ => null
+        };
     }
 
     private static object EvaluateArraySubquery(
@@ -6629,7 +6824,53 @@ public class InMemoryContainer : Container
         }
 
         // Apply SELECT projection
+        // Check if any SELECT field contains an aggregate function — if so, collapse into a single row
+        var hasAggregateSelect = !subquery.IsSelectAll &&
+            subquery.SelectFields.Any(f => f.SqlExpr is not null && ContainsAggregateCall(f.SqlExpr));
+
         var results = new List<string>();
+        if (hasAggregateSelect)
+        {
+            // Aggregate subquery: compute aggregates over all sourceItems and return one row
+            var projected = new JObject();
+            foreach (var field in subquery.SelectFields)
+            {
+                var outputName = field.Alias ?? field.Expression.Split('.').Last();
+                if (field.SqlExpr is FunctionCallExpression func && AggregateFunctions.Contains(func.FunctionName))
+                {
+                    var aggValue = EvaluateSubqueryAggregate(func, sourceItems, subquery.FromAlias, parameters);
+                    if (aggValue is not null and not UndefinedValue)
+                        projected[outputName] = JToken.FromObject(aggValue);
+                }
+                else if (field.SqlExpr is not null)
+                {
+                    // Non-aggregate expression in an aggregate query — evaluate against first item
+                    if (sourceItems.Count > 0)
+                    {
+                        var value = EvaluateSqlExpression(field.SqlExpr, sourceItems[0], subquery.FromAlias, parameters);
+                        if (value is not null and not UndefinedValue)
+                            projected[outputName] = JToken.FromObject(value);
+                    }
+                }
+            }
+
+            if (subquery.IsValueSelect)
+            {
+                var first = projected.Properties().FirstOrDefault();
+                if (first?.Value is not null)
+                {
+                    results.Add(first.Value.Type == JTokenType.String
+                        ? JsonConvert.SerializeObject(first.Value.Value<string>())
+                        : first.Value.ToString(Formatting.None));
+                }
+            }
+            else
+            {
+                results.Add(projected.ToString(Formatting.None));
+            }
+        }
+        else
+        {
         foreach (var sourceItem in sourceItems)
         {
             if (subquery.IsSelectAll)
@@ -6686,6 +6927,7 @@ public class InMemoryContainer : Container
                 }
             }
         }
+        } // end else (non-aggregate)
 
         // Apply DISTINCT
         if (subquery.IsDistinct)

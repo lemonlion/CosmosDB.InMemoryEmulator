@@ -945,7 +945,8 @@ public static class CosmosSqlParser
 
             case BinaryExpression bin when IsComparisonOp(bin.Operator):
                 if (ContainsFunctionCall(bin.Left) || ContainsFunctionCall(bin.Right) ||
-                    ContainsArithmetic(bin.Left) || ContainsArithmetic(bin.Right))
+                    ContainsArithmetic(bin.Left) || ContainsArithmetic(bin.Right) ||
+                    ContainsComplexExpression(bin.Left) || ContainsComplexExpression(bin.Right))
                 {
                     return new SqlExpressionCondition(bin);
                 }
@@ -1185,6 +1186,21 @@ public static class CosmosSqlParser
             BinaryExpression bin when !IsComparisonOp(bin.Operator) => true,
             BinaryExpression bin => ContainsArithmetic(bin.Left) || ContainsArithmetic(bin.Right),
             UnaryExpression unary => ContainsArithmetic(unary.Operand),
+            _ => false
+        };
+
+    /// <summary>
+    /// Returns true when the expression contains a subquery, coalesce, or ternary —
+    /// any of which require full expression evaluation rather than string-based ResolveValue.
+    /// </summary>
+    private static bool ContainsComplexExpression(SqlExpression expr) =>
+        expr switch
+        {
+            SubqueryExpression => true,
+            CoalesceExpression => true,
+            TernaryExpression => true,
+            BinaryExpression bin => ContainsComplexExpression(bin.Left) || ContainsComplexExpression(bin.Right),
+            UnaryExpression unary => ContainsComplexExpression(unary.Operand),
             _ => false
         };
 

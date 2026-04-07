@@ -3579,23 +3579,25 @@ public class RegexMatchModifierTests
 public class ExistsCatchAllTests
 {
     [Fact]
-    public async Task Query_Exists_UnparseableSubquery_ReturnsFalse()
+    public async Task Query_Exists_UnparseableSubquery_ThrowsBadRequest()
     {
         var container = new InMemoryContainer("test-container", "/pk");
         await container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","name":"Alice"}""")),
             new PartitionKey("a"));
 
-        // This subquery is intentionally malformed to trigger the catch block
-        var iterator = container.GetItemQueryIterator<JObject>(
-            "SELECT * FROM c WHERE EXISTS(SELECT %%% INVALID %%%)",
-            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
-        var results = new List<JObject>();
-        while (iterator.HasMoreResults)
-            results.AddRange(await iterator.ReadNextAsync());
+        // This subquery is intentionally malformed to trigger a 400 Bad Request
+        // GetItemQueryIterator eagerly evaluates so the exception is thrown there
+        var act = () =>
+        {
+            container.GetItemQueryIterator<JObject>(
+                "SELECT * FROM c WHERE EXISTS(SELECT %%% INVALID %%%)",
+                requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+            return Task.CompletedTask;
+        };
 
-        // Real Cosmos would reject this; catch-all should be false (safe default)
-        results.Should().BeEmpty();
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == System.Net.HttpStatusCode.BadRequest);
     }
 }
 
@@ -4772,8 +4774,7 @@ public class QueryBugFixTests
 
     // ── Bug 3: MIN/MAX ignores boolean values ──
 
-    [Fact(Skip = "Divergent: MIN/MAX on boolean fields is not supported — emulator only handles numeric and string types. " +
-                  "Cosmos DB treats booleans as orderable with false < true. Low priority edge case.")]
+    [Fact]
     public async Task MinMax_Boolean_ReturnsCorrectValues()
     {
         // Cosmos DB: MIN(c.isActive) returns false, MAX(c.isActive) returns true
@@ -4791,53 +4792,51 @@ public class QueryBugFixTests
     }
 
     /// <summary>
-    /// Sister test for MinMax_Boolean_ReturnsCorrectValues.
-    /// Shows the actual emulator behavior: MIN/MAX silently drops boolean values
-    /// and produces no output for those fields.
-    /// In Cosmos DB, booleans are orderable (false &lt; true) and MIN/MAX work on them.
-    /// The emulator's MIN/MAX implementation only handles JTokenType.Integer, Float, and String —
-    /// JTokenType.Boolean is not handled, so boolean values are silently excluded.
+    /// Companion test verifying MIN/MAX on boolean fields works correctly.
+    /// Both MIN and MAX should handle booleans with false &lt; true ordering.
     /// </summary>
     [Fact]
-    public async Task MinMax_Boolean_DivergentBehavior_BooleansAreSilentlyDropped()
+    public async Task MinMax_Boolean_ReturnsCorrectValues_MixedWithNumeric()
     {
         await _container.CreateItemStreamAsync(
-            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","active":true}""")),
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","active":true,"val":10}""")),
             new PartitionKey("pk1"));
         await _container.CreateItemStreamAsync(
-            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk1","active":false}""")),
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk1","active":false,"val":20}""")),
             new PartitionKey("pk1"));
 
+        // MIN/MAX on boolean field
         var results = await RunQuery<JObject>("SELECT MIN(c.active) AS mn, MAX(c.active) AS mx FROM c");
-
-        // Emulator: boolean values are silently dropped by MIN/MAX,
-        // so the fields are omitted from the result (no numeric or string values to aggregate).
         results.Should().ContainSingle();
-        results[0]["mn"].Should().BeNull("emulator drops boolean values in MIN");
-        results[0]["mx"].Should().BeNull("emulator drops boolean values in MAX");
+        results[0]["mn"]!.Value<bool>().Should().BeFalse();
+        results[0]["mx"]!.Value<bool>().Should().BeTrue();
+
+        // MIN/MAX on numeric field still works
+        var numResults = await RunQuery<JObject>("SELECT MIN(c.val) AS mn, MAX(c.val) AS mx FROM c");
+        numResults.Should().ContainSingle();
+        numResults[0]["mn"]!.Value<int>().Should().Be(10);
+        numResults[0]["mx"]!.Value<int>().Should().Be(20);
     }
 
     // ── Bug 7: EXISTS silently catches all exceptions ──
 
     /// <summary>
-    /// Sister test documenting that EXISTS with malformed SQL returns false rather than throwing.
-    /// In Cosmos DB, a syntax error in an EXISTS subquery produces a 400 Bad Request.
-    /// The emulator's EvaluateExists uses catch { return false; } which swallows all errors.
-    /// This is defensive behavior — it prevents crashes but hides query bugs.
+    /// EXISTS with malformed SQL now throws CosmosException(400) like real Cosmos DB.
+    /// Previously the emulator swallowed the parse error and returned false.
     /// </summary>
     [Fact]
-    public async Task Exists_MalformedSubquery_ReturnsFalse_InsteadOfError()
+    public async Task Exists_MalformedSubquery_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Tags = ["a"] },
             new PartitionKey("pk1"));
 
-        // Malformed subquery — should throw in Cosmos DB but emulator returns false
-        var results = await RunQuery<TestDocument>(
+        // Malformed subquery — should throw 400 Bad Request
+        var act = () => RunQuery<TestDocument>(
             """SELECT * FROM c WHERE EXISTS(SELECT BAD SYNTAX HERE)""");
 
-        // Emulator: EXISTS swallows the parse error and returns false
-        results.Should().BeEmpty("EXISTS with malformed SQL returns false in the emulator");
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
     }
 
     // ── Bug 8: DISTINCT uses raw string equality ──
@@ -6205,9 +6204,7 @@ public class QueryDeepDiveV2_Phase1_BugTests
 
     // ── Bug 15: Subquery scalar in WHERE comparison ──
 
-    [Fact(Skip = "Known limitation: Subquery expressions in WHERE comparisons are not supported. " +
-                  "The WHERE evaluator passes subquery results through ResolveValue as string paths, " +
-                  "which crashes with JsonPath parsing errors. Subqueries work in EXISTS and SELECT but not in comparisons.")]
+    [Fact]
     public async Task Where_SubqueryComparison_ScalarInWhere()
     {
         // WHERE (SELECT VALUE COUNT(1) FROM t IN c.tags) > 1
@@ -6301,10 +6298,7 @@ public class QueryDeepDiveV2_Phase1_BugTests
 
     // ── Bug 10: Non-boolean WHERE truthiness ──
 
-    [Fact(Skip = "Divergent: The emulator's IsTruthy coerces non-boolean values (long 10 != 0 → true). " +
-                  "Cosmos DB requires WHERE to evaluate to a strict boolean, so WHERE c.value (where c.value is 10) " +
-                  "would return false. The emulator intentionally uses truthy coercion for compatibility with " +
-                  "SDK-generated queries that may evaluate to non-boolean values in edge cases.")]
+    [Fact]
     public async Task Where_NonBooleanTruthiness_NumberInWhere_ShouldNotMatch()
     {
         // WHERE c.value (where c.value=10) — Cosmos DB: only boolean true is truthy
@@ -6319,23 +6313,22 @@ public class QueryDeepDiveV2_Phase1_BugTests
     }
 
     /// <summary>
-    /// Sister test: documents that the emulator uses truthy coercion for non-boolean WHERE values.
-    /// In Cosmos DB, WHERE requires a boolean. The emulator's IsTruthy treats non-zero numbers
-    /// and non-empty strings as true, similar to JavaScript semantics.
-    /// This affects queries like WHERE c.value where c.value is a number — the emulator matches,
-    /// Cosmos DB does not. This is intentional for handling SDK-generated edge cases.
+    /// Verifies that WHERE with a boolean field works correctly (true matches, false doesn't).
     /// </summary>
     [Fact]
-    public async Task Where_NonBooleanTruthiness_DivergentBehavior_NumberIsTreatedAsTruthy()
+    public async Task Where_BooleanTruthiness_BooleanFieldWorks()
     {
         await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Value = 10, IsActive = true },
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Active", Value = 10, IsActive = true },
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Inactive", Value = 20, IsActive = false },
             new PartitionKey("pk1"));
 
-        var results = await RunQuery<TestDocument>("SELECT * FROM c WHERE c.value");
+        var results = await RunQuery<TestDocument>("SELECT * FROM c WHERE c.isActive");
 
-        // Emulator: IsTruthy(10L) → true, so the item matches
-        results.Should().ContainSingle("emulator treats non-zero numbers as truthy");
+        // Only boolean true matches
+        results.Should().ContainSingle().Which.Name.Should().Be("Active");
     }
 
     // ── Bug 14: String concat (||) in SELECT ──
@@ -6395,10 +6388,7 @@ public class QueryDeepDiveV2_Phase1_BugTests
 
     // ── Bug 18: HAVING COUNT(c.field) should count defined only ──
 
-    [Fact(Skip = "Divergent: HAVING COUNT(c.field) always returns the group size instead of counting " +
-                  "only items where c.field is defined. In Cosmos DB, COUNT(c.optional) in HAVING " +
-                  "counts non-undefined occurrences. The emulator's EvaluateHavingAggregate treats all " +
-                  "COUNT() calls identically as group size. Low priority — HAVING COUNT(field) is rare.")]
+    [Fact]
     public async Task Having_CountField_CountsDefinedOnly()
     {
         // In Cosmos DB: HAVING COUNT(c.optional) only counts items where c.optional is defined
@@ -6426,14 +6416,11 @@ public class QueryDeepDiveV2_Phase1_BugTests
     }
 
     /// <summary>
-    /// Sister test: documents that HAVING COUNT(c.field) counts all items in the group,
-    /// not just those where c.field is defined.
-    /// In Cosmos DB, COUNT(c.optional_field) in a HAVING clause counts only items where
-    /// the field exists (is not undefined). The emulator always returns groupItems.Count
-    /// for any COUNT() in HAVING, regardless of the argument.
+    /// Companion test: verifies HAVING COUNT(c.field) correctly counts only defined fields.
+    /// Also verifies COUNT(1) still counts all items.
     /// </summary>
     [Fact]
-    public async Task Having_CountField_DivergentBehavior_CountsAllItemsInGroup()
+    public async Task Having_CountField_CountsDefinedOnly_Companion()
     {
         await _container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","cat":"A","opt":"yes"}""")),
@@ -6448,12 +6435,16 @@ public class QueryDeepDiveV2_Phase1_BugTests
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"4","partitionKey":"pk1","cat":"B","opt":"yes"}""")),
             new PartitionKey("pk1"));
 
-        // Emulator: HAVING COUNT(c.opt) >= 2 → both groups have 2 items → both match
-        var results = await RunQuery<JObject>(
-            "SELECT c.cat, COUNT(c.opt) AS cnt FROM c GROUP BY c.cat HAVING COUNT(c.opt) >= 2");
+        // COUNT(1) counts all items — both groups have 2
+        var allResults = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt FROM c GROUP BY c.cat HAVING COUNT(1) >= 2");
+        allResults.Should().HaveCount(2, "COUNT(1) counts all items in each group");
 
-        // Emulator returns both groups because COUNT always returns group size
-        results.Should().HaveCount(2, "emulator HAVING COUNT(field) counts all group items");
+        // COUNT(c.opt) counts defined only — group A has 1, group B has 2
+        var definedResults = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(c.opt) AS cnt FROM c GROUP BY c.cat HAVING COUNT(c.opt) >= 2");
+        definedResults.Should().ContainSingle();
+        definedResults[0]["cat"]!.ToString().Should().Be("B");
     }
 }
 
@@ -6580,9 +6571,7 @@ public class QueryDeepDiveV2_Phase2_FeatureInteractionTests
 
     // ── B7: Ternary in WHERE ──
 
-    [Fact(Skip = "Known limitation: Ternary (? :) expressions in WHERE comparisons are not supported. " +
-                  "The WHERE evaluator does not handle ternary expressions as comparison operands. " +
-                  "Ternary works in SELECT projections but not in WHERE clauses.")]
+    [Fact]
     public async Task Where_TernaryInWhere_EvaluatesCorrectly()
     {
         await SeedItems();
@@ -6598,9 +6587,7 @@ public class QueryDeepDiveV2_Phase2_FeatureInteractionTests
 
     // ── B8: Coalesce in WHERE ──
 
-    [Fact(Skip = "Known limitation: Coalesce (??) expressions in WHERE comparisons are not supported. " +
-                  "The WHERE evaluator passes coalesce results through ResolveValue as string paths, " +
-                  "which crashes with JsonPath parsing errors. Coalesce works in SELECT projections.")]
+    [Fact]
     public async Task Where_CoalesceInWhere_Works()
     {
         await _container.CreateItemStreamAsync(
@@ -6747,30 +6734,25 @@ public class QueryDeepDiveV2_Phase2_FeatureInteractionTests
 
     // ── C5: SELECT VALUE SUM on empty container ──
 
-    [Fact(Skip = "Divergent: SELECT VALUE SUM on empty set returns 0 in the emulator instead of undefined (empty result). " +
-                  "In Cosmos DB, SUM of an empty set is undefined, so SELECT VALUE returns no rows. " +
-                  "The emulator always returns 0 for SUM of empty set.")]
+    [Fact]
     public async Task SelectValue_AggregateSum_EmptyContainer_ReturnsUndefined()
     {
         // Empty container — SUM of nothing should return undefined (empty results)
         var results = await RunQuery<JToken>("SELECT VALUE SUM(c.val) FROM c");
 
         // Cosmos DB: SELECT VALUE SUM on empty set → no result rows
-        // The emulator should return empty or a single undefined value
         results.Should().BeEmpty("SUM of empty set is undefined, SELECT VALUE skips undefined");
     }
 
     /// <summary>
-    /// Sister test: documents that SUM of empty set returns 0 in the emulator.
-    /// In Cosmos DB, SUM of an empty set is undefined. SELECT VALUE would skip it, returning empty.
-    /// The emulator returns 0 instead.
+    /// Companion test: verifies AVG also returns undefined on empty set.
     /// </summary>
     [Fact]
-    public async Task SelectValue_AggregateSum_EmptyContainer_DivergentBehavior_ReturnsZero()
+    public async Task SelectValue_AggregateAvg_EmptyContainer_ReturnsUndefined()
     {
-        var results = await RunQuery<JToken>("SELECT VALUE SUM(c.val) FROM c");
+        var results = await RunQuery<JToken>("SELECT VALUE AVG(c.val) FROM c");
 
-        results.Should().ContainSingle("emulator returns 0 for SUM of empty set");
+        results.Should().BeEmpty("AVG of empty set is undefined, SELECT VALUE skips undefined");
     }
 
     // ── C6: SELECT VALUE COUNT on empty container ──
@@ -7067,9 +7049,7 @@ public class QueryDeepDiveV2_Phase3_AggregateEdgeCases
         return results;
     }
 
-    [Fact(Skip = "Divergent: SUM of empty set returns 0 in the emulator instead of undefined. " +
-                  "In Cosmos DB, SUM of an empty set is undefined, so the 's' field is absent. " +
-                  "The emulator returns 0.")]
+    [Fact]
     public async Task Sum_EmptyContainer_ReturnsUndefined()
     {
         var results = await RunQuery<JObject>("SELECT SUM(c.val) AS s FROM c");
@@ -7080,17 +7060,15 @@ public class QueryDeepDiveV2_Phase3_AggregateEdgeCases
     }
 
     /// <summary>
-    /// Sister test: documents that SUM of empty set returns 0 in the emulator.
-    /// In Cosmos DB, SUM of an empty set is undefined. SELECT SUM(c.val) AS s would produce {"s": undefined} → absent.
-    /// The emulator returns {"s": 0}.
+    /// Companion: AVG of empty set is also undefined.
     /// </summary>
     [Fact]
-    public async Task Sum_EmptyContainer_DivergentBehavior_ReturnsZero()
+    public async Task Avg_EmptyContainer_ReturnsUndefined()
     {
-        var results = await RunQuery<JObject>("SELECT SUM(c.val) AS s FROM c");
+        var results = await RunQuery<JObject>("SELECT AVG(c.val) AS a FROM c");
 
         results.Should().ContainSingle();
-        results[0]["s"]!.Value<double>().Should().Be(0, "emulator returns 0 for SUM of empty set");
+        results[0]["a"].Should().BeNull("AVG of empty set is undefined");
     }
 
     [Fact]
@@ -8136,9 +8114,7 @@ public class QueryDeepDiveV3_EdgeCaseTests
 
     // ── E12: SELECT VALUE with object literal containing aggregate ──
 
-    [Fact(Skip = "Divergent: SELECT VALUE {aggregates} without GROUP BY evaluates per-document instead of " +
-                  "as a single aggregate. Cosmos DB treats aggregates in object literals as global aggregates, " +
-                  "returning one row. The emulator evaluates the object literal per document.")]
+    [Fact]
     public async Task SelectValue_ObjectWithAggregate_NoGroupBy()
     {
         await SeedItems();
@@ -8150,20 +8126,15 @@ public class QueryDeepDiveV3_EdgeCaseTests
     }
 
     /// <summary>
-    /// Sister test: documents that SELECT VALUE {aggregates} without GROUP BY
-    /// evaluates per-document in the emulator. In Cosmos DB, aggregates in a
-    /// SELECT VALUE object literal are computed globally and return a single row.
-    /// The emulator treats the object literal as a per-document projection where
-    /// each aggregate evaluates in the context of the current document only.
+    /// Companion: SELECT VALUE with array literal containing aggregates.
     /// </summary>
     [Fact]
-    public async Task SelectValue_ObjectWithAggregate_NoGroupBy_DivergentBehavior()
+    public async Task SelectValue_ArrayWithAggregate_NoGroupBy()
     {
         await SeedItems();
-        var results = await RunQuery<JObject>(
-            """SELECT VALUE {"total": SUM(c.value), "cnt": COUNT(1)} FROM c""");
-        // Emulator: returns one row per document (5 total), not a single aggregate row
-        results.Should().HaveCount(5,
-            "emulator evaluates aggregate object literals per-document instead of globally");
+        var results = await RunQuery<JArray>(
+            """SELECT VALUE [COUNT(1), SUM(c.value)] FROM c""");
+        results.Should().ContainSingle();
+        results[0][0]!.Value<int>().Should().Be(5);
     }
 }
