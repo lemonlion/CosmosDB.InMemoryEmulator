@@ -3689,8 +3689,9 @@ public class InMemoryContainer : Container
             items = ApplyOrderByRank(items, parsed.RankExpression, parsed.FromAlias, parameters);
         }
 
-        // TOP
-        if (parsed.TopCount.HasValue)
+        // TOP — applied before projection only when DISTINCT is not active.
+        // When DISTINCT is active, TOP is deferred until after deduplication.
+        if (parsed.TopCount.HasValue && !parsed.IsDistinct)
         {
             items = items.Take(parsed.TopCount.Value).ToList();
         }
@@ -3722,6 +3723,12 @@ public class InMemoryContainer : Container
         if (parsed.IsDistinct)
         {
             items = items.Distinct().ToList();
+        }
+
+        // TOP — deferred application after DISTINCT
+        if (parsed.TopCount.HasValue && parsed.IsDistinct)
+        {
+            items = items.Take(parsed.TopCount.Value).ToList();
         }
 
         // VALUE SELECT — unwrap scalar values from projected JObjects

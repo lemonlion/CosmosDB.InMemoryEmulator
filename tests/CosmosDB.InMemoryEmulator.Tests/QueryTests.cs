@@ -10762,3 +10762,355 @@ public class QueryDeepDiveV4_DivergentBehaviorTests
         results.Should().HaveCount(3);
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Deep Dive V5 — Final Coverage Tests
+// ════════════════════════════════════════════════════════════════════════════════
+
+public class QueryDeepDiveV5_FinalCoverageTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task SeedOne()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","val":10}""")),
+            new PartitionKey("pk1"));
+    }
+
+    private async Task SeedDocs()
+    {
+        var docs = new[]
+        {
+            """{"id":"1","partitionKey":"pk1","name":"Alice","val":10,"cat":"A","isActive":true,"tags":["x","y"],"text":"The quick brown fox jumps over the lazy dog","nested":{"items":[1,2,3]}}""",
+            """{"id":"2","partitionKey":"pk1","name":"Bob","val":20,"cat":"B","isActive":false,"tags":["y","z"],"text":"A fox and a dog","nested":{"items":[4,5]}}""",
+            """{"id":"3","partitionKey":"pk1","name":"Charlie","val":30,"cat":"A","isActive":true,"tags":["x"],"text":"No animals here","nested":{"items":[6]}}""",
+            """{"id":"4","partitionKey":"pk1","name":"Diana","val":9.7,"cat":"B","isActive":true,"tags":["z"],"text":"The fox","nested":{"items":[]}}""",
+            """{"id":"5","partitionKey":"pk1","name":"Eve","val":10.3,"cat":"C","isActive":false,"tags":[],"text":"Dogs and cats","nested":{"items":[7,8,9]}}""",
+        };
+        foreach (var doc in docs)
+            await _container.CreateItemStreamAsync(
+                new MemoryStream(Encoding.UTF8.GetBytes(doc)),
+                new PartitionKey("pk1"));
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Category 1: Untested Built-in Functions
+    // ════════════════════════════════════════════════════════════════════
+
+    // ── F1: FULLTEXTSCORE ──
+
+    [Fact]
+    public async Task FullTextScore_ReturnsPositiveScore_ForMatchingDocument()
+    {
+        await SeedDocs();
+        // FULLTEXTSCORE should return a positive numeric score for docs containing "fox"
+        var results = await RunQuery<JObject>(
+            "SELECT c.id, FULLTEXTSCORE(c.text, ['fox']) AS score FROM c WHERE FULLTEXTCONTAINS(c.text, 'fox')");
+        results.Should().HaveCountGreaterThanOrEqualTo(1);
+        foreach (var r in results)
+        {
+            r["score"]!.Value<double>().Should().BeGreaterThan(0.0);
+        }
+    }
+
+    [Fact]
+    public async Task FullTextScore_ReturnsZero_ForNonMatchingTerm()
+    {
+        await SeedDocs();
+        // Score for a term that doesn't appear should be 0
+        var results = await RunQuery<JObject>(
+            "SELECT FULLTEXTSCORE(c.text, ['elephant']) AS score FROM c");
+        results.Should().HaveCountGreaterThanOrEqualTo(1);
+        foreach (var r in results)
+        {
+            r["score"]!.Value<double>().Should().Be(0.0);
+        }
+    }
+
+    // ── F2: ROUND with precision ──
+
+    [Fact]
+    public async Task Round_WithPrecision_RoundsToNDecimalPlaces()
+    {
+        await SeedOne();
+        var results = await RunQuery<double>("SELECT VALUE ROUND(3.14159, 2) FROM c");
+        results.Should().ContainSingle().Which.Should().Be(3.14);
+    }
+
+    [Fact]
+    public async Task Round_WithPrecisionZero_RoundsToInteger()
+    {
+        await SeedOne();
+        var results = await RunQuery<double>("SELECT VALUE ROUND(3.7, 0) FROM c");
+        results.Should().ContainSingle().Which.Should().Be(4.0);
+    }
+
+    // ── F3: LOG with base ──
+
+    [Fact]
+    public async Task Log_WithBase_ReturnsLogInGivenBase()
+    {
+        await SeedOne();
+        var results = await RunQuery<double>("SELECT VALUE LOG(8, 2) FROM c");
+        results.Should().ContainSingle().Which.Should().BeApproximately(3.0, 0.0001);
+    }
+
+    [Fact]
+    public async Task Log_WithBase10_MatchesLog10()
+    {
+        await SeedOne();
+        var results = await RunQuery<double>("SELECT VALUE LOG(1000, 10) FROM c");
+        results.Should().ContainSingle().Which.Should().BeApproximately(3.0, 0.0001);
+    }
+
+    // ── F4: COALESCE with 3+ args ──
+
+    [Fact]
+    public async Task Coalesce_MultipleArgs_ReturnsFirstNonNullNonUndefined()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","a":null}""")),
+            new PartitionKey("pk1"));
+        var results = await RunQuery<string>(
+            "SELECT VALUE COALESCE(c.missing, c.a, 'fallback') FROM c");
+        results.Should().ContainSingle().Which.Should().Be("fallback");
+    }
+
+    [Fact]
+    public async Task Coalesce_FirstArgDefined_ReturnsFirst()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","a":"hello"}""")),
+            new PartitionKey("pk1"));
+        var results = await RunQuery<string>(
+            "SELECT VALUE COALESCE(c.a, 'fallback1', 'fallback2') FROM c");
+        results.Should().ContainSingle().Which.Should().Be("hello");
+    }
+
+    // ── F5: IIF with non-boolean condition ──
+
+    [Fact]
+    public async Task IIF_NonBooleanCondition_ReturnsFalseBranch()
+    {
+        await SeedOne();
+        // 42 is not boolean true → false branch
+        var results = await RunQuery<string>("SELECT VALUE IIF(42, 'yes', 'no') FROM c");
+        results.Should().ContainSingle().Which.Should().Be("no");
+    }
+
+    [Fact]
+    public async Task IIF_StringCondition_ReturnsFalseBranch()
+    {
+        await SeedOne();
+        // 'truthy' is a string, not boolean → false branch
+        var results = await RunQuery<string>("SELECT VALUE IIF('truthy', 'yes', 'no') FROM c");
+        results.Should().ContainSingle().Which.Should().Be("no");
+    }
+
+    [Fact]
+    public async Task IIF_NullCondition_ReturnsFalseBranch()
+    {
+        await SeedOne();
+        var results = await RunQuery<string>("SELECT VALUE IIF(null, 'yes', 'no') FROM c");
+        results.Should().ContainSingle().Which.Should().Be("no");
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Category 2: Untested Syntax Combinations
+    // ════════════════════════════════════════════════════════════════════
+
+    // ── S1: TOP with GROUP BY ──
+
+    [Fact]
+    public async Task Top_WithGroupBy_LimitsGroupResults()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT TOP 1 c.cat, COUNT(1) AS cnt FROM c GROUP BY c.cat ORDER BY cnt DESC");
+        results.Should().ContainSingle();
+        // A has 2 docs, B has 2 docs, C has 1 — TOP 1 DESC gives one of the groups with count 2
+        results[0]["cnt"]!.Value<int>().Should().Be(2);
+    }
+
+    // ── S2: TOP with DISTINCT ──
+
+    [Fact]
+    public async Task Top_WithDistinct_LimitsDistinctResults()
+    {
+        await SeedDocs();
+        var results = await RunQuery<string>(
+            "SELECT DISTINCT TOP 2 VALUE c.cat FROM c");
+        results.Should().HaveCount(2);
+        results.Distinct().Should().HaveCount(2); // all unique
+    }
+
+    // ── S3: DISTINCT VALUE with function ──
+
+    [Fact]
+    public async Task DistinctValue_WithFunction_ReturnsUniqueResults()
+    {
+        await SeedDocs();
+        var results = await RunQuery<string>(
+            "SELECT DISTINCT VALUE LOWER(c.name) FROM c");
+        results.Should().HaveCount(5); // alice, bob, charlie, diana, eve
+        results.Should().OnlyHaveUniqueItems();
+    }
+
+    // ── S4: Nested object literal in SELECT ──
+
+    [Fact]
+    public async Task Select_NestedObjectLiteral_Works()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            """SELECT VALUE {"outer": {"inner": c.val}} FROM c WHERE c.id = '1'""");
+        results.Should().ContainSingle();
+        results[0]["outer"]!["inner"]!.Value<int>().Should().Be(10);
+    }
+
+    // ── S5: Array literal with mixed types ──
+
+    [Fact]
+    public async Task Select_MixedTypeArrayLiteral_Works()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JArray>(
+            """SELECT VALUE [c.name, c.val, c.isActive] FROM c WHERE c.id = '1'""");
+        results.Should().ContainSingle();
+        var arr = results[0];
+        arr[0]!.Value<string>().Should().Be("Alice");
+        arr[1]!.Value<int>().Should().Be(10);
+        arr[2]!.Value<bool>().Should().BeTrue();
+    }
+
+    // ── S6: Chained string concat || ──
+
+    [Fact]
+    public async Task StringConcat_Chained_Works()
+    {
+        await SeedDocs();
+        var results = await RunQuery<string>(
+            """SELECT VALUE c.name || '-' || c.cat FROM c WHERE c.id = '1'""");
+        results.Should().ContainSingle().Which.Should().Be("Alice-A");
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Category 3: Edge Cases
+    // ════════════════════════════════════════════════════════════════════
+
+    // ── E1: BETWEEN with floating-point values ──
+
+    [Fact]
+    public async Task Between_FloatingPoint_Works()
+    {
+        await SeedDocs();
+        // id=4 has val=9.7, id=5 has val=10.3, id=1 has val=10
+        var results = await RunQuery<JObject>(
+            "SELECT * FROM c WHERE c.val BETWEEN 9.5 AND 10.5");
+        results.Select(r => r["id"]!.Value<string>()).Should().BeEquivalentTo("1", "4", "5");
+    }
+
+    // ── E2: IN with empty list ──
+
+    [Fact]
+    public async Task In_EmptyList_ReturnsNoResults()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>("SELECT * FROM c WHERE c.name IN ()");
+        results.Should().BeEmpty();
+    }
+
+    // ── E3: LIKE with consecutive wildcards ──
+
+    [Fact]
+    public async Task Like_ConsecutiveWildcards_MatchesCorrectly()
+    {
+        await SeedDocs();
+        // %l%c% should match "Alice" (has 'l' then 'c' then anything)
+        var results = await RunQuery<JObject>("SELECT * FROM c WHERE c.name LIKE '%l%c%'");
+        results.Should().ContainSingle();
+        results[0]["id"]!.Value<string>().Should().Be("1"); // Alice
+    }
+
+    // ── E4: ORDER BY with string concat expression ──
+
+    [Fact]
+    public async Task OrderBy_StringConcatExpression_Sorts()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT * FROM c ORDER BY c.cat || c.name ASC");
+        // A-Alice, A-Charlie, B-Bob, B-Diana, C-Eve
+        results[0]["name"]!.Value<string>().Should().Be("Alice");
+        results[1]["name"]!.Value<string>().Should().Be("Charlie");
+        results[2]["name"]!.Value<string>().Should().Be("Bob");
+        results[3]["name"]!.Value<string>().Should().Be("Diana");
+        results[4]["name"]!.Value<string>().Should().Be("Eve");
+    }
+
+    // ── E5: GROUP BY VALUE ──
+
+    [Fact]
+    public async Task GroupBy_WithValueSelect_ReturnsUniqueKeys()
+    {
+        await SeedDocs();
+        var results = await RunQuery<string>(
+            "SELECT VALUE c.cat FROM c GROUP BY c.cat ORDER BY c.cat ASC");
+        results.Should().BeEquivalentTo("A", "B", "C");
+    }
+
+    // ── E6: JOIN on nested array ──
+
+    [Fact]
+    public async Task Join_NestedArrayPath_Works()
+    {
+        await SeedDocs();
+        // id=1 has nested.items=[1,2,3], id=2 has [4,5], id=3 has [6], id=4 has [], id=5 has [7,8,9]
+        var results = await RunQuery<JToken>(
+            "SELECT VALUE t FROM c JOIN t IN c.nested.items");
+        // Total: 3+2+1+0+3 = 9 elements
+        results.Should().HaveCount(9);
+    }
+
+    // ── E7: Subquery aggregation in SELECT ──
+
+    [Fact]
+    public async Task Subquery_AggregationInSelect_Works()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","name":"Alice","scores":[10,20,30]}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk1","name":"Bob","scores":[5,15]}""")),
+            new PartitionKey("pk1"));
+
+        var results = await RunQuery<JObject>(
+            "SELECT c.name, (SELECT VALUE SUM(s) FROM s IN c.scores) AS total FROM c ORDER BY c.name ASC");
+        results.Should().HaveCount(2);
+        results[0]["name"]!.Value<string>().Should().Be("Alice");
+        results[0]["total"]!.Value<int>().Should().Be(60);
+        results[1]["name"]!.Value<string>().Should().Be("Bob");
+        results[1]["total"]!.Value<int>().Should().Be(20);
+    }
+
+    // ── E8: DateTimeFromParts with fractional seconds (7th arg = ticks) ──
+
+    [Fact]
+    public async Task DateTimeFromParts_WithFractionalSeconds_Works()
+    {
+        await SeedOne();
+        // 7th arg is ticks (100-nanosecond intervals). 5000000 ticks = 0.5 seconds = 500ms
+        var results = await RunQuery<string>(
+            "SELECT VALUE DateTimeFromParts(2026, 1, 15, 10, 30, 45, 5000000) FROM c");
+        results.Should().ContainSingle().Which.Should().Be("2026-01-15T10:30:45.5000000Z");
+    }
+}
