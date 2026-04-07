@@ -55,7 +55,7 @@ See the **[Feature Comparison With Alternatives](https://github.com/lemonlion/Co
 ## Features
 
 - **Full CRUD** — typed and stream variants with proper status codes and ETags
-- **Feature Complete SQL query engine** — 100+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries, full-text search, vector search
+- **Feature Complete SQL query engine** — 120+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries, full-text search, vector search
 - **Full LINQ support** — `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` interception
 - **Triggers** — pre-trigger and post-trigger execution via C# handlers, with optional JavaScript body interpretation via the `CosmosDB.InMemoryEmulator.JsTriggers` package
 - **Bulk operations** — `AllowBulkExecution = true` with concurrent `Task.WhenAll` patterns
@@ -77,7 +77,7 @@ See the **[Feature Comparison With Alternatives](https://github.com/lemonlion/Co
 - **Vector search** — `VECTORDISTANCE` with cosine, dot product, and Euclidean distance; works in `SELECT`, `WHERE`, and `ORDER BY`
 - **Users & permissions** — stub user/permission CRUD with synthetic tokens (no authorization enforced)
 - **Computed properties** — virtual container-level properties evaluated at query time; usable in `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `DISTINCT`, `HAVING`, with aliases, aggregates, and all expression types
-- **4000+ tests** covering all features and performance, ensuring feature consistency and parity with real CosmosDB
+- **4400+ tests** covering all features and performance, ensuring feature consistency and parity with real CosmosDB
 
 For the full feature list see [Features](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Features). For a side-by-side comparison with the official Microsoft emulator see [Feature Comparison With Alternatives](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feature-Comparison-With-Alternatives). For behavioural differences from a real CosmosDB see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)
 

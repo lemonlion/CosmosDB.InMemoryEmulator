@@ -3775,7 +3775,11 @@ public class InMemoryContainer : Container
                         long l => (object)(double)l,
                         int i => (object)(double)i,
                         decimal dec => (object)(double)dec,
-                        _ => null
+                        bool b => (object)b,
+                        string s => (object)s,
+                        UndefinedValue => UndefinedSortSentinel,
+                        null => null,
+                        _ => (object)value.ToString()
                     };
                 }
 
@@ -3845,7 +3849,7 @@ public class InMemoryContainer : Container
                     keyParts.Add(token?.ToString() ?? "null");
                 }
             }
-            return string.Join("|", keyParts);
+            return string.Join("\x1F", keyParts.Select(k => k.Replace("\x1F", "\x1F\x1F")));
         });
 
         var hasAggregate = parsed.SelectFields.Any(f =>
@@ -4184,9 +4188,9 @@ public class InMemoryContainer : Container
                     return func.FunctionName switch
                     {
                         "SUM" => values.Sum(),
-                        "AVG" => values.Count > 0 ? values.Average() : 0.0,
-                        "MIN" => values.Count > 0 ? values.Min() : 0.0,
-                        "MAX" => values.Count > 0 ? values.Max() : 0.0,
+                        "AVG" => values.Count > 0 ? (object)values.Average() : UndefinedValue.Instance,
+                        "MIN" => values.Count > 0 ? (object)values.Min() : UndefinedValue.Instance,
+                        "MAX" => values.Count > 0 ? (object)values.Max() : UndefinedValue.Instance,
                         _ => 0.0
                     };
                 }
@@ -4730,7 +4734,7 @@ public class InMemoryContainer : Container
             if (double.TryParse(left.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var l) &&
                 double.TryParse(right.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var r))
             {
-                return Math.Abs(l - r) < 0.0001;
+                return l == r;
             }
         }
         return string.Equals(left.ToString(), right.ToString(), StringComparison.Ordinal);
@@ -4743,6 +4747,7 @@ public class InMemoryContainer : Container
     private static int GetTypeRank(object value)
     {
         if (ReferenceEquals(value, UndefinedSortSentinel)) return 0;
+        if (value is UndefinedValue) return 0;
         if (value is null) return 1;
         if (value is bool) return 2;
         if (value is int or long or double or float or decimal) return 3;
