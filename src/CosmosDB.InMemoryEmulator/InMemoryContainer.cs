@@ -4004,6 +4004,14 @@ public class InMemoryContainer : Container
     private static List<double> ExtractNumericValues(List<string> items, string innerArg, string fromAlias)
     {
         var values = new List<double>();
+
+        // Handle numeric literals (e.g., SUM(1), AVG(2.5))
+        if (double.TryParse(innerArg, NumberStyles.Any, CultureInfo.InvariantCulture, out var literalValue))
+        {
+            values.AddRange(Enumerable.Repeat(literalValue, items.Count));
+            return values;
+        }
+
         var isFunctionCall = innerArg.Contains('(');
         SqlExpression parsedInnerExpr = null;
         if (isFunctionCall)
@@ -4048,6 +4056,15 @@ public class InMemoryContainer : Container
     private static List<JToken> ExtractTokenValues(List<string> items, string innerArg, string fromAlias)
     {
         var tokens = new List<JToken>();
+
+        // Handle numeric literals (e.g., MIN(1), MAX(2.5))
+        if (double.TryParse(innerArg, NumberStyles.Any, CultureInfo.InvariantCulture, out var literalValue))
+        {
+            var token = new JValue(literalValue);
+            tokens.AddRange(Enumerable.Repeat((JToken)token, items.Count));
+            return tokens;
+        }
+
         var isFunctionCall = innerArg.Contains('(');
         SqlExpression parsedInnerExpr = null;
         if (isFunctionCall)
