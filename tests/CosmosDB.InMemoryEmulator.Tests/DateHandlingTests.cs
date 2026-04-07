@@ -629,12 +629,13 @@ public class DateTimeAddTests
     }
 
     [Fact]
-    public async Task DateTimeAdd_NullDate_ReturnsNull()
+    public async Task DateTimeAdd_NullDate_ReturnsUndefined()
     {
         await _container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"n1","pk":"a","dt":null}""")),
             new PartitionKey("a"));
 
+        // DateTimeAdd with null input returns undefined which is omitted from SELECT VALUE
         var iterator = _container.GetItemQueryIterator<JToken>(
             "SELECT VALUE DateTimeAdd('dd', 1, c.dt) FROM c WHERE c.id = 'n1'",
             requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
@@ -642,7 +643,8 @@ public class DateTimeAddTests
         while (iterator.HasMoreResults)
             results.AddRange(await iterator.ReadNextAsync());
 
-        results.Should().HaveCount(1);
+        // Undefined is omitted from SELECT VALUE projection
+        results.Should().BeEmpty();
     }
 
     [Fact]

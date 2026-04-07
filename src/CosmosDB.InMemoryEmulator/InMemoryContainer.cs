@@ -3627,9 +3627,10 @@ public class InMemoryContainer : Container
             parameters[UdfEngineKey] = udfEngine;
 
         // Snapshot static datetime values so they remain constant for the entire query
-        parameters["__staticDateTime"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
-        parameters["__staticTicks"] = DateTime.UtcNow.Ticks;
-        parameters["__staticTimestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var now = DateTime.UtcNow;
+        parameters["__staticDateTime"] = now.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+        parameters["__staticTicks"] = now.Ticks;
+        parameters["__staticTimestamp"] = new DateTimeOffset(now).ToUnixTimeMilliseconds();
 
         var parsed = CosmosSqlParser.Parse(queryText);
 
@@ -3863,13 +3864,19 @@ public class InMemoryContainer : Container
                 {
                     var val = EvaluateSqlExpression(groupByExprs[i], jObj, fromAlias,
                         parameters ?? new Dictionary<string, object>());
-                    keyParts.Add(val?.ToString() ?? "null");
+                    keyParts.Add(val is UndefinedValue ? "\x00undefined" : val?.ToString() ?? "null");
                 }
                 else
                 {
                     var path = StripAliasPrefix(parsed.GroupByFields[i], fromAlias);
                     var token = jObj.SelectToken(path);
-                    keyParts.Add(token?.ToString() ?? "null");
+                    // Distinguish null (JTokenType.Null) from undefined (missing property)
+                    if (token is null)
+                        keyParts.Add("\x00undefined");
+                    else if (token.Type == JTokenType.Null)
+                        keyParts.Add("\x00null");
+                    else
+                        keyParts.Add(token.ToString());
                 }
             }
             return string.Join("\x1F", keyParts.Select(k => k.Replace("\x1F", "\x1F\x1F")));
@@ -4341,7 +4348,11 @@ public class InMemoryContainer : Container
             foreach (var json in current)
             {
                 var jObj = JsonParseHelpers.ParseJson(json);
-                var arrayToken = jObj.SelectToken(join.ArrayField);
+                // Resolve the array from the correct source alias (e.g. "g.tags" for JOIN t IN g.tags)
+                var sourcePath = join.SourceAlias == parsed.FromAlias
+                    ? join.ArrayField
+                    : $"{join.SourceAlias}.{join.ArrayField}";
+                var arrayToken = jObj.SelectToken(sourcePath);
                 if (arrayToken is JArray jArray)
                 {
                     foreach (var element in jArray)
@@ -5219,14 +5230,30 @@ public class InMemoryContainer : Container
                         return false;
                     }
 
-                    var arrayPath = func.Arguments[0].Trim();
-                    if (arrayPath.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                    JArray jArray;
+                    var firstArg = func.Arguments[0].Trim();
+                    if (firstArg.StartsWith("@") && parameters.TryGetValue(firstArg, out var paramVal))
                     {
-                        arrayPath = arrayPath[(fromAlias.Length + 1)..];
+                        // First argument is a parameter (e.g. ARRAY_CONTAINS(@names, c.name))
+                        jArray = paramVal switch
+                        {
+                            JArray ja => ja,
+                            System.Collections.IEnumerable enumerable when paramVal is not string =>
+                                new JArray(enumerable.Cast<object>().Select(JToken.FromObject)),
+                            _ => null
+                        };
+                    }
+                    else
+                    {
+                        var arrayPath = firstArg;
+                        if (arrayPath.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                        {
+                            arrayPath = arrayPath[(fromAlias.Length + 1)..];
+                        }
+                        jArray = item.SelectToken(arrayPath) as JArray;
                     }
 
-                    var arrayToken = item.SelectToken(arrayPath);
-                    if (arrayToken is not JArray jArray)
+                    if (jArray is null)
                     {
                         return false;
                     }
@@ -5706,13 +5733,18 @@ public class InMemoryContainer : Container
                 {
                     if (args.Length < 3)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
+                    }
+
+                    if (args[0] is UndefinedValue || args[1] is UndefinedValue || args[2] is UndefinedValue)
+                    {
+                        return UndefinedValue.Instance;
                     }
 
                     var s = args[0]?.ToString(); var start = ToLong(args[1]); var len = ToLong(args[2]);
                     if (s is null || !start.HasValue || !len.HasValue)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     var si = (int)Math.Min(start.Value, s.Length);
@@ -6566,20 +6598,20 @@ public class InMemoryContainer : Container
                 {
                     if (args.Length < 3)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     var part = args[0]?.ToString()?.ToLowerInvariant();
                     var number = ToLong(args[1]);
-                    var dateTime = args[2]?.ToString();
+                    var dateTime = args[2] is not null and not UndefinedValue ? args[2].ToString() : null;
                     if (part is null || !number.HasValue || dateTime is null)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     if (!DateTime.TryParse(dateTime, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     var n = (int)number.Value;
@@ -6602,19 +6634,19 @@ public class InMemoryContainer : Container
                 {
                     if (args.Length < 2)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     var part = args[0]?.ToString()?.ToLowerInvariant();
-                    var dateTime = args[1]?.ToString();
+                    var dateTime = args[1] is not null and not UndefinedValue ? args[1].ToString() : null;
                     if (part is null || dateTime is null)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     if (!DateTime.TryParse(dateTime, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     return part switch
@@ -6658,7 +6690,7 @@ public class InMemoryContainer : Container
                 }
             case "DATETIMEFROMPARTS":
                 {
-                    if (args.Length < 3) return null;
+                    if (args.Length < 3) return UndefinedValue.Instance;
                     var y = ToLong(args[0]);
                     var mo = ToLong(args[1]);
                     var d = ToLong(args[2]);
@@ -6666,7 +6698,7 @@ public class InMemoryContainer : Container
                     var mi = args.Length > 4 ? ToLong(args[4]) : 0;
                     var s = args.Length > 5 ? ToLong(args[5]) : 0;
                     var fraction = args.Length > 6 ? ToLong(args[6]) : 0;
-                    if (!y.HasValue || !mo.HasValue || !d.HasValue || !h.HasValue || !mi.HasValue || !s.HasValue || !fraction.HasValue) return null;
+                    if (!y.HasValue || !mo.HasValue || !d.HasValue || !h.HasValue || !mi.HasValue || !s.HasValue || !fraction.HasValue) return UndefinedValue.Instance;
                     try
                     {
                         var dt = new DateTime((int)y.Value, (int)mo.Value, (int)d.Value,
@@ -6675,17 +6707,17 @@ public class InMemoryContainer : Container
                     }
                     catch (ArgumentOutOfRangeException)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
                 }
             case "DATETIMEBIN":
                 {
-                    if (args.Length < 2) return null;
-                    var dtStr = args[0]?.ToString();
+                    if (args.Length < 2) return UndefinedValue.Instance;
+                    var dtStr = args[0] is not null and not UndefinedValue ? args[0].ToString() : null;
                     var part = args[1]?.ToString()?.ToLowerInvariant();
                     var binSize = args.Length >= 3 ? ToLong(args[2]) : 1;
-                    if (dtStr is null || part is null || !binSize.HasValue) return null;
-                    if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return null;
+                    if (dtStr is null || part is null || !binSize.HasValue) return UndefinedValue.Instance;
+                    if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return UndefinedValue.Instance;
 
                     var bs = (int)binSize.Value;
                     if (bs <= 0) return null;
@@ -7192,7 +7224,10 @@ public class InMemoryContainer : Container
             double.TryParse(right.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var r))
         {
             var result = op(l, r);
-            if (left is long or int && right is long or int && result == Math.Floor(result) && !double.IsInfinity(result))
+            // Cosmos DB treats NaN and Infinity as undefined
+            if (double.IsNaN(result) || double.IsInfinity(result))
+                return UndefinedValue.Instance;
+            if (left is long or int && right is long or int && result == Math.Floor(result))
             {
                 return (long)result;
             }
@@ -7227,7 +7262,11 @@ public class InMemoryContainer : Container
 
         if (double.TryParse(value.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var n))
         {
-            return op(n);
+            var result = op(n);
+            // Cosmos DB treats NaN and Infinity as undefined
+            if (double.IsNaN(result) || double.IsInfinity(result))
+                return UndefinedValue.Instance;
+            return result;
         }
 
         return null;
