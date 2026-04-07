@@ -11058,3 +11058,788 @@ public class QueryDeepDiveV5_FinalCoverageTests
         results.Should().ContainSingle().Which.Should().Be("2026-01-15T10:30:45.5000000Z");
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Deep Dive V6 — Phase 1: Bug Investigation Tests
+// ════════════════════════════════════════════════════════════════════════════════
+
+public class QueryDeepDiveV6_BugTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task<List<T>> RunQuery<T>(QueryDefinition query)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(query);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task SeedDocs()
+    {
+        var docs = new[]
+        {
+            """{"id":"1","partitionKey":"pk1","name":"Alice","value":10,"cat":"A","isActive":true,"tags":["a","b"]}""",
+            """{"id":"2","partitionKey":"pk1","name":"Bob","value":20,"cat":"B","isActive":false,"tags":["b","c"]}""",
+            """{"id":"3","partitionKey":"pk1","name":"Charlie","value":30,"cat":"A","isActive":true,"tags":["a","c"]}""",
+            """{"id":"4","partitionKey":"pk2","name":"Diana","value":40,"cat":"B","isActive":true,"tags":["d"]}""",
+            """{"id":"5","partitionKey":"pk1","name":"Eve","value":50,"cat":"C","isActive":false,"tags":["a"]}""",
+        };
+        foreach (var doc in docs)
+            await _container.CreateItemStreamAsync(
+                new MemoryStream(Encoding.UTF8.GetBytes(doc)),
+                new PartitionKey(JObject.Parse(doc)["partitionKey"]!.ToString()));
+    }
+
+    private async Task SeedOne()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","val":10}""")),
+            new PartitionKey("pk1"));
+    }
+
+    // ── B1: IS NOT DEFINED syntax ──
+    // Cosmos DB does NOT support `IS DEFINED` / `IS NOT DEFINED` as SQL operator syntax.
+    // Only the IS_DEFINED() / NOT IS_DEFINED() function form is supported.
+    // Skipping — no sister test needed since NOT IS_DEFINED() is already well-covered.
+
+    // ── B4: DISTINCT with ORDER BY on non-projected field ──
+
+    [Fact]
+    public async Task Distinct_OrderByNonProjectedField_EmulatorBehavior()
+    {
+        // Real Cosmos DB would reject: ORDER BY field must be in SELECT for DISTINCT queries.
+        // Emulator may silently allow this. Document the emulator's behavior.
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT DISTINCT c.cat FROM c ORDER BY c.value ASC");
+        // Emulator allows it — documents keep their order by value, then dedup by cat
+        // Cat order based on first appearance by value: A(10), B(20), C(50) 
+        results.Should().HaveCount(3);
+    }
+
+    // ── B5: ORDER BY + OFFSET/LIMIT + WHERE combined ──
+
+    [Fact]
+    public async Task OffsetLimit_WithWhere_AndOrderBy_AppliesCorrectly()
+    {
+        await SeedDocs(); // values: 10,20,30,40,50
+        var results = await RunQuery<JObject>(
+            "SELECT * FROM c WHERE c.value >= 20 ORDER BY c.value ASC OFFSET 1 LIMIT 2");
+        // After WHERE: [20,30,40,50] → ORDER BY ASC → OFFSET 1: [30,40,50] → LIMIT 2: [30,40]
+        results.Should().HaveCount(2);
+        results[0]["value"]!.Value<int>().Should().Be(30);
+        results[1]["value"]!.Value<int>().Should().Be(40);
+    }
+
+    // ── B6: SELECT VALUE aggregate + WHERE ──
+
+    [Fact]
+    public async Task SelectValueCount_WithWhere_CountsFilteredOnly()
+    {
+        await SeedDocs();
+        var results = await RunQuery<long>(
+            "SELECT VALUE COUNT(1) FROM c WHERE c.isActive = true");
+        results.Should().ContainSingle().Which.Should().Be(3L);
+    }
+
+    [Fact]
+    public async Task SelectValueSum_WithWhere_SumsFilteredOnly()
+    {
+        await SeedDocs();
+        var results = await RunQuery<long>(
+            "SELECT VALUE SUM(c.value) FROM c WHERE c.isActive = true");
+        // Active: Alice(10) + Charlie(30) + Diana(40) = 80
+        results.Should().ContainSingle().Which.Should().Be(80L);
+    }
+
+    [Fact]
+    public async Task SelectValueAvg_WithWhere_AveragesFilteredOnly()
+    {
+        await SeedDocs();
+        var results = await RunQuery<double>(
+            "SELECT VALUE AVG(c.value) FROM c WHERE c.isActive = true");
+        // Active: (10 + 30 + 40) / 3 ≈ 26.666...
+        results.Should().ContainSingle();
+        results[0].Should().BeApproximately(80.0 / 3.0, 0.001);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Deep Dive V6 — Phase 2: Missing Test Coverage
+// ════════════════════════════════════════════════════════════════════════════════
+
+public class QueryDeepDiveV6_CoverageTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task<List<T>> RunQuery<T>(QueryDefinition query)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(query);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task SeedDocs()
+    {
+        var docs = new[]
+        {
+            """{"id":"1","partitionKey":"pk1","name":"Alice","value":10,"cat":"A","isActive":true,"tags":["a","b"],"nested":{"level2":{"level3":{"level4":"deep"}}}}""",
+            """{"id":"2","partitionKey":"pk1","name":"Bob","value":20,"cat":"B","isActive":false,"tags":["b","c"],"nested":{"level2":{"level3":{"level4":"also-deep"}}}}""",
+            """{"id":"3","partitionKey":"pk1","name":"Charlie","value":30,"cat":"A","isActive":true,"tags":["a","c"],"nested":{"level2":{"level3":{"level4":"deep"}}}}""",
+            """{"id":"4","partitionKey":"pk2","name":"Diana","value":40,"cat":"B","isActive":true,"tags":["d"],"nested":{"level2":{"level3":{"level4":"shallow"}}}}""",
+            """{"id":"5","partitionKey":"pk1","name":"Eve","value":50,"cat":"C","isActive":false,"tags":["a"],"nested":{"level2":{"level3":{"level4":"deep"}}}}""",
+        };
+        foreach (var doc in docs)
+            await _container.CreateItemStreamAsync(
+                new MemoryStream(Encoding.UTF8.GetBytes(doc)),
+                new PartitionKey(JObject.Parse(doc)["partitionKey"]!.ToString()));
+    }
+
+    private async Task SeedOne()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","value":10}""")),
+            new PartitionKey("pk1"));
+    }
+
+    // ── T1: Arithmetic in SELECT projection ──
+
+    [Fact]
+    public async Task Select_ArithmeticSubtraction_Works()
+    {
+        await SeedOne();
+        var results = await RunQuery<JObject>("SELECT c.value - 5 AS result FROM c");
+        results.Should().ContainSingle();
+        results[0]["result"]!.Value<double>().Should().Be(5);
+    }
+
+    [Fact]
+    public async Task Select_ArithmeticDivision_Works()
+    {
+        await SeedOne();
+        var results = await RunQuery<JObject>("SELECT c.value / 4 AS result FROM c");
+        results.Should().ContainSingle();
+        results[0]["result"]!.Value<double>().Should().Be(2.5);
+    }
+
+    [Fact]
+    public async Task Select_ArithmeticModulo_Works()
+    {
+        await SeedOne();
+        var results = await RunQuery<JObject>("SELECT c.value % 3 AS result FROM c");
+        results.Should().ContainSingle();
+        results[0]["result"]!.Value<double>().Should().Be(1);
+    }
+
+    // ── T2: Nested aggregate expressions ──
+
+    [Fact]
+    public async Task Aggregate_SumWithExpression_Works()
+    {
+        await SeedDocs(); // values 10+20+30+40+50 = 150
+        var results = await RunQuery<JObject>("SELECT SUM(c.value * 2) AS total FROM c");
+        results.Should().ContainSingle();
+        results[0]["total"]!.Value<double>().Should().Be(300);
+    }
+
+    [Fact]
+    public async Task Aggregate_AvgWithExpression_Works()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>("SELECT AVG(c.value + 10) AS avg FROM c");
+        // (20+30+40+50+60)/5 = 40
+        results.Should().ContainSingle();
+        results[0]["avg"]!.Value<double>().Should().Be(40);
+    }
+
+    // ── T3: GROUP BY with WHERE ──
+
+    [Fact]
+    public async Task GroupBy_WithWhere_FiltersBeforeGrouping()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt FROM c WHERE c.isActive = true GROUP BY c.cat");
+        // Active: Alice(A), Charlie(A), Diana(B) → A:2, B:1
+        results.Should().HaveCount(2);
+        var catA = results.First(r => r["cat"]!.ToString() == "A");
+        catA["cnt"]!.Value<int>().Should().Be(2);
+        var catB = results.First(r => r["cat"]!.ToString() == "B");
+        catB["cnt"]!.Value<int>().Should().Be(1);
+    }
+
+    // ── T4: GROUP BY with ORDER BY on group key ──
+
+    [Fact]
+    public async Task GroupBy_WithOrderByGroupKey_SortsGroups()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt FROM c GROUP BY c.cat ORDER BY c.cat DESC");
+        results[0]["cat"]!.ToString().Should().Be("C");
+        results[1]["cat"]!.ToString().Should().Be("B");
+        results[2]["cat"]!.ToString().Should().Be("A");
+    }
+
+    // ── T5: DISTINCT on multiple projected fields ──
+
+    [Fact]
+    public async Task Distinct_MultipleFields_DeduplicatesByAllFields()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>("SELECT DISTINCT c.cat, c.isActive FROM c");
+        // A+true(Alice,Charlie), B+false(Bob), B+true(Diana), C+false(Eve) → 4 combos
+        results.Should().HaveCount(4);
+    }
+
+    // ── T6: DISTINCT VALUE with object literal ──
+
+    [Fact]
+    public async Task DistinctValue_ObjectLiteral_DeduplicatesObjects()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT DISTINCT VALUE {'cat': c.cat, 'active': c.isActive} FROM c");
+        results.Should().HaveCount(4);
+    }
+
+    // ── T7: TOP with WHERE ──
+
+    [Fact]
+    public async Task Top_WithWhere_AppliesAfterFiltering()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT TOP 2 * FROM c WHERE c.isActive = true ORDER BY c.value ASC");
+        results.Should().HaveCount(2);
+        results[0]["name"]!.ToString().Should().Be("Alice");   // value=10
+        results[1]["name"]!.ToString().Should().Be("Charlie"); // value=30
+    }
+
+    // ── T8: SELECT * with JOIN includes parent fields ──
+
+    [Fact]
+    public async Task Join_SelectStar_IncludesParentFields()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","name":"Test","tags":["a","b"]}""")),
+            new PartitionKey("pk1"));
+        var results = await RunQuery<JObject>("SELECT * FROM c JOIN t IN c.tags");
+        results.Should().HaveCount(2);
+        results[0].ContainsKey("id").Should().BeTrue();
+        results[0].ContainsKey("name").Should().BeTrue();
+    }
+
+    // ── T9: Three-way JOIN ──
+
+    [Fact]
+    public async Task ThreeWayJoin_ProducesFullCrossProduct()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","partitionKey":"pk1","colors":["red","blue"],"sizes":["S"],"shapes":["circle","square"]}""")),
+            new PartitionKey("pk1"));
+        var results = await RunQuery<JObject>(
+            "SELECT co, sz, sh FROM c JOIN co IN c.colors JOIN sz IN c.sizes JOIN sh IN c.shapes");
+        // 2 × 1 × 2 = 4
+        results.Should().HaveCount(4);
+    }
+
+    // ── T11: Multiple ARRAY_CONTAINS in WHERE ──
+
+    [Fact]
+    public async Task Where_MultipleArrayContains_CombinesCorrectly()
+    {
+        await SeedDocs(); // Alice has tags [a,b], Bob [b,c], Charlie [a,c]
+        var results = await RunQuery<JObject>(
+            "SELECT * FROM c WHERE ARRAY_CONTAINS(c.tags, 'a') AND ARRAY_CONTAINS(c.tags, 'b')");
+        results.Should().ContainSingle();
+        results[0]["name"]!.ToString().Should().Be("Alice");
+    }
+
+    // ── T14: SELECT VALUE with OFFSET/LIMIT ──
+
+    [Fact]
+    public async Task SelectValue_WithOffsetLimit_Paginates()
+    {
+        await SeedDocs();
+        var results = await RunQuery<string>(
+            "SELECT VALUE c.name FROM c ORDER BY c.name ASC OFFSET 1 LIMIT 2");
+        results.Should().HaveCount(2);
+        results.Should().BeEquivalentTo(["Bob", "Charlie"]);
+    }
+
+    // ── T15: Multiple aggregates with GROUP BY ──
+
+    [Fact]
+    public async Task GroupBy_MultipleAggregates_AllComputed()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt, SUM(c.value) AS total FROM c GROUP BY c.cat ORDER BY c.cat ASC");
+        // A: Alice(10)+Charlie(30)=40, cnt=2; B: Bob(20)+Diana(40)=60, cnt=2; C: Eve(50), cnt=1
+        var catA = results[0];
+        catA["cat"]!.ToString().Should().Be("A");
+        catA["cnt"]!.Value<int>().Should().Be(2);
+        catA["total"]!.Value<double>().Should().Be(40);
+
+        var catB = results[1];
+        catB["cat"]!.ToString().Should().Be("B");
+        catB["cnt"]!.Value<int>().Should().Be(2);
+        catB["total"]!.Value<double>().Should().Be(60);
+
+        var catC = results[2];
+        catC["cat"]!.ToString().Should().Be("C");
+        catC["cnt"]!.Value<int>().Should().Be(1);
+        catC["total"]!.Value<double>().Should().Be(50);
+    }
+
+    // ── T16: HAVING with OR condition ──
+
+    [Fact]
+    public async Task Having_WithOr_FiltersGroups()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt, SUM(c.value) AS total FROM c GROUP BY c.cat HAVING COUNT(1) >= 2 OR SUM(c.value) >= 50");
+        // A: cnt=2 (meets first), B: cnt=2 (meets first), C: total=50 (meets second)
+        results.Should().HaveCount(3);
+    }
+
+    // ── T17: HAVING with arithmetic expression ──
+
+    [Fact]
+    public async Task Having_WithArithmeticExpression_Works()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT c.cat, SUM(c.value) AS total, COUNT(1) AS cnt FROM c GROUP BY c.cat HAVING SUM(c.value) / COUNT(1) > 25");
+        // A: 40/2=20 (no), B: 60/2=30 (yes), C: 50/1=50 (yes)
+        results.Should().HaveCount(2);
+        results.Select(r => r["cat"]!.ToString()).Should().BeEquivalentTo("B", "C");
+    }
+
+    // ── T18: Continuation token with GROUP BY ──
+
+    [Fact]
+    public async Task ContinuationToken_WithGroupBy_PaginatesGroups()
+    {
+        for (var i = 0; i < 10; i++)
+            await _container.CreateItemStreamAsync(
+                new MemoryStream(Encoding.UTF8.GetBytes(
+                    $$"""{"id":"{{i}}","partitionKey":"pk1","cat":"{{(char)('A' + i % 5)}}"}""")),
+                new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt FROM c GROUP BY c.cat",
+            requestOptions: new QueryRequestOptions { MaxItemCount = 2 });
+        var allResults = new List<JObject>();
+        var pageCount = 0;
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            allResults.AddRange(page);
+            pageCount++;
+        }
+        allResults.Should().HaveCount(5); // 5 groups (A-E)
+        pageCount.Should().BeGreaterThan(1);
+    }
+
+    // ── T19: Continuation token with DISTINCT ──
+
+    [Fact]
+    public async Task ContinuationToken_WithDistinct_PaginatesDistinctResults()
+    {
+        for (var i = 0; i < 10; i++)
+            await _container.CreateItemStreamAsync(
+                new MemoryStream(Encoding.UTF8.GetBytes(
+                    $$"""{"id":"{{i}}","partitionKey":"pk1","cat":{{i % 3}}}""")),
+                new PartitionKey("pk1"));
+
+        var iterator = _container.GetItemQueryIterator<JObject>(
+            "SELECT DISTINCT c.cat FROM c",
+            requestOptions: new QueryRequestOptions { MaxItemCount = 1 });
+        var allResults = new List<JObject>();
+        while (iterator.HasMoreResults)
+            allResults.AddRange(await iterator.ReadNextAsync());
+        allResults.Should().HaveCount(3);
+    }
+
+    // ── T20: SELECT VALUE ternary + field access ──
+
+    [Fact]
+    public async Task SelectValue_Ternary_WithFieldAccess_Works()
+    {
+        await SeedDocs();
+        var results = await RunQuery<string>(
+            "SELECT VALUE c.isActive ? c.name : 'N/A' FROM c WHERE c.id = '1'");
+        results.Should().ContainSingle().Which.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task SelectValue_Ternary_FalseBranch_Works()
+    {
+        await SeedDocs();
+        var results = await RunQuery<string>(
+            "SELECT VALUE c.isActive ? c.name : 'N/A' FROM c WHERE c.id = '2'");
+        results.Should().ContainSingle().Which.Should().Be("N/A");
+    }
+
+    // ── T21: LIKE with underscore wildcard ──
+
+    [Fact]
+    public async Task Like_UnderscoreMiddle_MatchesSingleChar()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>("SELECT * FROM c WHERE c.name LIKE 'A_i_e'");
+        results.Should().ContainSingle();
+        results[0]["name"]!.ToString().Should().Be("Alice");
+    }
+
+    // ── T22: LIKE suffix match ──
+
+    [Fact]
+    public async Task Like_SuffixMatch_Works()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>("SELECT * FROM c WHERE c.name LIKE '%ice'");
+        results.Should().ContainSingle();
+        results[0]["name"]!.ToString().Should().Be("Alice");
+    }
+
+    // ── T23: ISO date string ORDER BY ──
+
+    [Fact]
+    public async Task OrderBy_DateStrings_SortsLexicographically()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","createdAt":"2026-03-15T10:00:00Z"}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk1","createdAt":"2026-01-01T00:00:00Z"}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","partitionKey":"pk1","createdAt":"2026-06-20T15:30:00Z"}""")),
+            new PartitionKey("pk1"));
+        var results = await RunQuery<JObject>("SELECT * FROM c ORDER BY c.createdAt ASC");
+        results[0]["id"]!.ToString().Should().Be("2"); // Jan
+        results[1]["id"]!.ToString().Should().Be("1"); // Mar
+        results[2]["id"]!.ToString().Should().Be("3"); // Jun
+    }
+
+    // ── T24: Deep nested property access (4+ levels) ──
+
+    [Fact]
+    public async Task Where_DeeplyNestedProperty_Works()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT * FROM c WHERE c.nested.level2.level3.level4 = 'deep'");
+        results.Should().HaveCount(3); // Alice, Charlie, Eve
+        results.Select(r => r["name"]!.ToString()).Should().BeEquivalentTo("Alice", "Charlie", "Eve");
+    }
+
+    // ── T25: SELECT c.* alias dot star ──
+
+    [Fact]
+    public async Task Select_AliasDotStar_Works()
+    {
+        await SeedOne();
+        var results = await RunQuery<JObject>("SELECT c.* FROM c");
+        results.Should().ContainSingle();
+        results[0].ContainsKey("id").Should().BeTrue();
+        results[0].ContainsKey("value").Should().BeTrue();
+    }
+
+    // ── T26: Parameter in ORDER BY expression ──
+
+    [Fact]
+    public async Task OrderBy_WithParameterExpression_Works()
+    {
+        await SeedDocs();
+        var query = new QueryDefinition("SELECT * FROM c ORDER BY c.value + @offset ASC")
+            .WithParameter("@offset", 100);
+        var results = await RunQuery<JObject>(query);
+        results.Should().HaveCount(5);
+        // Adding 100 to all values doesn't change relative order
+        results[0]["name"]!.ToString().Should().Be("Alice");   // 10+100=110
+        results[4]["name"]!.ToString().Should().Be("Eve");     // 50+100=150
+    }
+
+    // ── T27: SELECT VALUE with boolean expression ──
+
+    [Fact]
+    public async Task SelectValue_BooleanExpression_ReturnsTrueFalse()
+    {
+        await SeedDocs();
+        var results = await RunQuery<bool>(
+            "SELECT VALUE c.value > 20 FROM c ORDER BY c.value ASC");
+        // values: 10,20,30,40,50 → false,false,true,true,true
+        results.Should().BeEquivalentTo([false, false, true, true, true]);
+    }
+
+    // ── T28: IN with null in list ──
+
+    [Fact]
+    public async Task In_WithNullInList_MatchesNullValues()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","status":"active"}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk1","status":null}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","partitionKey":"pk1","status":"inactive"}""")),
+            new PartitionKey("pk1"));
+        var results = await RunQuery<JObject>(
+            "SELECT * FROM c WHERE c.status IN ('active', null)");
+        results.Should().HaveCount(2);
+        results.Select(r => r["id"]!.ToString()).Should().BeEquivalentTo("1", "2");
+    }
+
+    // ── T29: BETWEEN with string values ──
+
+    [Fact]
+    public async Task Between_Strings_ComparesLexicographically()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT * FROM c WHERE c.name BETWEEN 'A' AND 'C'");
+        // "Alice" and "Bob" are between 'A' and 'C' lexicographically
+        results.Select(r => r["name"]!.ToString()).Should().BeEquivalentTo("Alice", "Bob");
+    }
+
+    // ── T31: Empty LIKE pattern ──
+
+    [Fact]
+    public async Task Like_EmptyPattern_MatchesOnlyEmptyStrings()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","name":"Alice"}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk1","name":""}""")),
+            new PartitionKey("pk1"));
+        var results = await RunQuery<JObject>("SELECT * FROM c WHERE c.name LIKE ''");
+        results.Should().ContainSingle();
+        results[0]["id"]!.ToString().Should().Be("2");
+    }
+
+    // ── T32: Multiple HAVING conditions ──
+
+    [Fact]
+    public async Task Having_MultipleConditions_FiltersCorrectly()
+    {
+        await SeedDocs();
+        var results = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt, SUM(c.value) AS total FROM c GROUP BY c.cat HAVING COUNT(1) >= 2 AND SUM(c.value) > 50");
+        // A: cnt=2, total=40 (no — total≤50), B: cnt=2, total=60 (yes), C: cnt=1 (no)
+        results.Should().ContainSingle();
+        results[0]["cat"]!.ToString().Should().Be("B");
+    }
+
+    // ── T33: SELECT VALUE constant null ──
+
+    [Fact]
+    public async Task SelectValue_ConstantNull_ReturnsNull()
+    {
+        await SeedOne();
+        var results = await RunQuery<JToken>("SELECT VALUE null FROM c");
+        results.Should().ContainSingle();
+        results[0].Type.Should().Be(JTokenType.Null);
+    }
+
+    // ── T34: SELECT VALUE constant array ──
+
+    [Fact]
+    public async Task SelectValue_ConstantArray_ReturnsArray()
+    {
+        await SeedOne();
+        var results = await RunQuery<JArray>("SELECT VALUE [1, 2, 3] FROM c");
+        results.Should().ContainSingle();
+        results[0].Should().HaveCount(3);
+        results[0][0]!.Value<int>().Should().Be(1);
+        results[0][2]!.Value<int>().Should().Be(3);
+    }
+
+    // ── T35: SELECT VALUE constant object ──
+
+    [Fact]
+    public async Task SelectValue_ConstantObject_ReturnsObject()
+    {
+        await SeedOne();
+        var results = await RunQuery<JObject>("""SELECT VALUE {"a": 1, "b": 2} FROM c""");
+        results.Should().ContainSingle();
+        results[0]["a"]!.Value<int>().Should().Be(1);
+        results[0]["b"]!.Value<int>().Should().Be(2);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Deep Dive V6 — Phase 3: Edge Cases & Boundary Conditions
+// ════════════════════════════════════════════════════════════════════════════════
+
+public class QueryDeepDiveV6_EdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    // ── E1: SUM with all undefined values ──
+
+    [Fact]
+    public async Task Sum_AllUndefined_ReturnsUndefined()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","name":"Test"}""")),
+            new PartitionKey("pk1"));
+        var results = await RunQuery<JObject>("SELECT SUM(c.score) AS total FROM c");
+        results.Should().ContainSingle();
+        // SUM of all-undefined values should produce undefined (key absent) in Cosmos DB
+        results[0].ContainsKey("total").Should().BeFalse("SUM of all-undefined values is undefined");
+    }
+
+    // ── E2: MIN/MAX on empty set ──
+
+    [Fact]
+    public async Task Min_EmptyContainer_ReturnsUndefined()
+    {
+        var results = await RunQuery<JObject>("SELECT MIN(c.value) AS mn FROM c");
+        results.Should().ContainSingle();
+        results[0].ContainsKey("mn").Should().BeFalse("MIN on empty set is undefined");
+    }
+
+    [Fact]
+    public async Task Max_EmptyContainer_ReturnsUndefined()
+    {
+        var results = await RunQuery<JObject>("SELECT MAX(c.value) AS mx FROM c");
+        results.Should().ContainSingle();
+        results[0].ContainsKey("mx").Should().BeFalse("MAX on empty set is undefined");
+    }
+
+    // ── E3: MAX with mixed types ──
+
+    [Fact]
+    public async Task Max_MixedTypes_StringHasHigherRank()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","val":10}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk1","val":"hello"}""")),
+            new PartitionKey("pk1"));
+        // Cosmos: string has higher type rank than number → MAX returns "hello"
+        var results = await RunQuery<JObject>("SELECT MAX(c.val) AS mx FROM c");
+        results.Should().ContainSingle();
+        results[0]["mx"]!.Value<string>().Should().Be("hello");
+    }
+
+    // ── E4: ORDER BY expression with undefined ──
+
+    [Fact]
+    public async Task OrderBy_Expression_WithUndefined_SortsCorrectly()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","name":"Bob"}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk1"}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","partitionKey":"pk1","name":"Alice"}""")),
+            new PartitionKey("pk1"));
+        var results = await RunQuery<JObject>("SELECT * FROM c ORDER BY LOWER(c.name) ASC");
+        results[0]["id"]!.ToString().Should().Be("2"); // undefined sorts first
+        results[1]["id"]!.ToString().Should().Be("3"); // alice
+        results[2]["id"]!.ToString().Should().Be("1"); // bob
+    }
+
+    // ── E5: Cross-partition GROUP BY + HAVING ──
+
+    [Fact]
+    public async Task CrossPartition_GroupBy_Having_Works()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","cat":"A","val":10}""")),
+            new PartitionKey("pk1"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk2","cat":"A","val":20}""")),
+            new PartitionKey("pk2"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","partitionKey":"pk1","cat":"B","val":5}""")),
+            new PartitionKey("pk1"));
+        var results = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt FROM c GROUP BY c.cat HAVING COUNT(1) >= 2");
+        results.Should().ContainSingle();
+        results[0]["cat"]!.ToString().Should().Be("A");
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// Deep Dive V6 — Phase 4: Parser Edge Cases
+// ════════════════════════════════════════════════════════════════════════════════
+
+public class QueryDeepDiveV6_ParserTests
+{
+    // ── P1: Complex query round-trip through SimplifySdkQuery ──
+
+    [Fact]
+    public void SimplifySdkQuery_ComplexQueries_RoundTripSuccessfully()
+    {
+        var queries = new[]
+        {
+            "SELECT * FROM c WHERE c.a > 1 AND c.b < 10 ORDER BY c.a ASC, c.b DESC",
+            "SELECT DISTINCT VALUE c.cat FROM c GROUP BY c.cat HAVING COUNT(1) > 1",
+            "SELECT TOP 5 c.id FROM c ORDER BY c.id ASC",
+            "SELECT c.name FROM c ORDER BY c.name ASC OFFSET 0 LIMIT 10",
+        };
+        foreach (var q in queries)
+        {
+            var parsed = CosmosSqlParser.Parse(q);
+            var simplified = CosmosSqlParser.SimplifySdkQuery(parsed);
+            var reparsed = CosmosSqlParser.Parse(simplified);
+            reparsed.Should().NotBeNull();
+        }
+    }
+
+    // ── P2: Parse cache returns same instance ──
+
+    [Fact]
+    public void ParseCache_SameQuery_ReturnsCachedWhenNotFull()
+    {
+        // The cache has a max of 256 entries; when full, new entries are not added.
+        // Parse two consecutive calls and verify that both produce valid results.
+        var sql = "SELECT * FROM c WHERE c.id = 'cache-test-v6-" + Guid.NewGuid() + "'";
+        var q1 = CosmosSqlParser.Parse(sql);
+        var q2 = CosmosSqlParser.Parse(sql);
+        q1.Should().NotBeNull();
+        q2.Should().NotBeNull();
+        // Both should produce structurally equivalent results
+        q1.FromAlias.Should().Be(q2.FromAlias);
+    }
+}

@@ -4014,6 +4014,11 @@ public class InMemoryContainer : Container
         return result;
     }
 
+    private static bool IsComplexExpression(string arg)
+        => arg.Contains('(') || arg.Contains('*') || arg.Contains('+') ||
+           arg.Contains('/') || arg.Contains('%') ||
+           (arg.Contains('-') && !arg.StartsWith("-") && arg.IndexOf('-') != arg.IndexOf(".") + 1);
+
     private static List<double> ExtractNumericValues(List<string> items, string innerArg, string fromAlias)
     {
         var values = new List<double>();
@@ -4025,9 +4030,9 @@ public class InMemoryContainer : Container
             return values;
         }
 
-        var isFunctionCall = innerArg.Contains('(');
+        var isExpr = IsComplexExpression(innerArg);
         SqlExpression parsedInnerExpr = null;
-        if (isFunctionCall)
+        if (isExpr)
         {
             CosmosSqlParser.TryParse($"SELECT VALUE {innerArg} FROM {fromAlias}", out var innerParsed);
             if (innerParsed?.SelectFields.Length > 0)
@@ -4078,9 +4083,9 @@ public class InMemoryContainer : Container
             return tokens;
         }
 
-        var isFunctionCall = innerArg.Contains('(');
+        var isExpr = IsComplexExpression(innerArg);
         SqlExpression parsedInnerExpr = null;
-        if (isFunctionCall)
+        if (isExpr)
         {
             CosmosSqlParser.TryParse($"SELECT VALUE {innerArg} FROM {fromAlias}", out var innerParsed);
             if (innerParsed?.SelectFields.Length > 0)
@@ -4236,6 +4241,11 @@ public class InMemoryContainer : Container
             BinaryOp.NotEqual => !ValuesEqual(left, right),
             BinaryOp.And => IsTruthy(left) && IsTruthy(right),
             BinaryOp.Or => IsTruthy(left) || IsTruthy(right),
+            BinaryOp.Add => ArithmeticOp(left, right, (a, b) => a + b),
+            BinaryOp.Subtract => ArithmeticOp(left, right, (a, b) => a - b),
+            BinaryOp.Multiply => ArithmeticOp(left, right, (a, b) => a * b),
+            BinaryOp.Divide => ArithmeticOp(left, right, (a, b) => b != 0 ? a / b : double.NaN),
+            BinaryOp.Modulo => ArithmeticOp(left, right, (a, b) => b != 0 ? a % b : double.NaN),
             _ => null
         };
     }
