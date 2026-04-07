@@ -5717,7 +5717,9 @@ public class InMemoryContainer : Container
                     }
 
                     var s = args[0]?.ToString(); var c = ToLong(args[1]);
-                    return s != null && c.HasValue ? s[..(int)Math.Min(c.Value, s.Length)] : null;
+                    if (s is null || !c.HasValue) return null;
+                    if (c.Value < 0) return null;
+                    return s[..(int)Math.Min(c.Value, s.Length)];
                 }
             case "RIGHT":
                 {
@@ -5727,7 +5729,9 @@ public class InMemoryContainer : Container
                     }
 
                     var s = args[0]?.ToString(); var c = ToLong(args[1]);
-                    return s != null && c.HasValue ? s[Math.Max(0, s.Length - (int)c.Value)..] : null;
+                    if (s is null || !c.HasValue) return null;
+                    if (c.Value < 0) return null;
+                    return s[Math.Max(0, s.Length - (int)c.Value)..];
                 }
             case "SUBSTRING":
                 {
@@ -5747,8 +5751,8 @@ public class InMemoryContainer : Container
                         return UndefinedValue.Instance;
                     }
 
-                    var si = (int)Math.Min(start.Value, s.Length);
-                    var li = (int)Math.Min(len.Value, s.Length - si);
+                    var si = (int)Math.Max(0, Math.Min(start.Value, s.Length));
+                    var li = (int)Math.Max(0, Math.Min(len.Value, s.Length - si));
                     return s.Substring(si, li);
                 }
             case "REPLACE":
