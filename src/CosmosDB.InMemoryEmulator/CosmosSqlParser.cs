@@ -664,17 +664,18 @@ public static class CosmosSqlParser
                  from pattern in StringConcatExpr
                  select (Func<SqlExpression, SqlExpression>)(l => new UnaryExpression(UnaryOp.Not, new BinaryExpression(l, BinaryOp.Like, pattern))))
                 .Try())
+            // IS NOT NULL (must come before IS NULL to avoid consuming IS and failing on NOT)
+            .Or(
+                (from is_ in Token.EqualTo(CosmosSqlToken.Is)
+                from not_ in Token.EqualTo(CosmosSqlToken.Not)
+                from null_ in Token.EqualTo(CosmosSqlToken.Null)
+                select (Func<SqlExpression, SqlExpression>)(l => new BinaryExpression(l, BinaryOp.NotEqual, new LiteralExpression(null))))
+                .Try())
             // IS NULL
             .Or(
                 from is_ in Token.EqualTo(CosmosSqlToken.Is)
                 from null_ in Token.EqualTo(CosmosSqlToken.Null)
                 select (Func<SqlExpression, SqlExpression>)(l => new BinaryExpression(l, BinaryOp.Equal, new LiteralExpression(null))))
-            // IS NOT NULL
-            .Or(
-                from is_ in Token.EqualTo(CosmosSqlToken.Is)
-                from not_ in Token.EqualTo(CosmosSqlToken.Not)
-                from null_ in Token.EqualTo(CosmosSqlToken.Null)
-                select (Func<SqlExpression, SqlExpression>)(l => new BinaryExpression(l, BinaryOp.NotEqual, new LiteralExpression(null))))
             // op right
             .Or(
                 from op in CompOp
