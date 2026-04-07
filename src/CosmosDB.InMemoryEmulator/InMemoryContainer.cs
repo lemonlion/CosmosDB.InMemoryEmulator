@@ -3944,7 +3944,7 @@ public class InMemoryContainer : Container
                         resultObj[outputName] = groupItems.Count(json =>
                         {
                             var jObj = JsonParseHelpers.ParseJson(json);
-                            return jObj.SelectToken(countPath) != null;
+                            return jObj.SelectToken(countPath) is JToken t && t.Type != JTokenType.Null;
                         });
                     }
                 }
@@ -4524,7 +4524,7 @@ public class InMemoryContainer : Container
                     resultObj[outputName] = items.Count(json =>
                     {
                         var jObj = JsonParseHelpers.ParseJson(json);
-                        return jObj.SelectToken(countPath) != null;
+                        return jObj.SelectToken(countPath) is JToken t && t.Type != JTokenType.Null;
                     });
                 }
             }
@@ -4596,7 +4596,7 @@ public class InMemoryContainer : Container
                     {
                         var jObj = JsonParseHelpers.ParseJson(json);
                         var path = StripAliasPrefix(innerArg, fromAlias);
-                        return jObj.SelectToken(path) != null;
+                        return jObj.SelectToken(path) is JToken t && t.Type != JTokenType.Null;
                     }),
                     "SUM" => ExtractNumericValues(items, innerArg, fromAlias) is var sv && sv.Count > 0 ? sv.Sum() : UndefinedValue.Instance,
                     "AVG" => ExtractNumericValues(items, innerArg, fromAlias) is var av && av.Count > 0 ? av.Average() : UndefinedValue.Instance,
@@ -4879,6 +4879,14 @@ public class InMemoryContainer : Container
                 return l == r;
             }
         }
+
+        // Cosmos DB uses strict type comparison: different type ranks are never equal
+        // (except numeric types which are handled above)
+        if (GetTypeRank(left) != GetTypeRank(right))
+        {
+            return false;
+        }
+
         return string.Equals(left.ToString(), right.ToString(), StringComparison.Ordinal);
     }
 
@@ -4934,7 +4942,7 @@ public class InMemoryContainer : Container
 
     private static bool EvaluateLike(object left, object right, string escapeChar = null)
     {
-        if (left is null || right is null)
+        if (left is null or UndefinedValue || right is null or UndefinedValue)
         {
             return false;
         }
@@ -5318,7 +5326,7 @@ public class InMemoryContainer : Container
             BinaryOp.Multiply => ArithmeticOp(left, right, (a, b) => a * b),
             BinaryOp.Divide => ArithmeticOp(left, right, (a, b) => b != 0 ? a / b : double.NaN),
             BinaryOp.Modulo => ArithmeticOp(left, right, (a, b) => b != 0 ? a % b : double.NaN),
-            BinaryOp.StringConcat => left is null || right is null ? null : left.ToString() + right.ToString(),
+            BinaryOp.StringConcat => left is UndefinedValue || right is UndefinedValue ? UndefinedValue.Instance : left is null || right is null ? null : left.ToString() + right.ToString(),
             BinaryOp.BitwiseAnd => BitwiseOp(left, right, (a, b) => a & b),
             BinaryOp.BitwiseOr => BitwiseOp(left, right, (a, b) => a | b),
             BinaryOp.BitwiseXor => BitwiseOp(left, right, (a, b) => a ^ b),
@@ -6935,13 +6943,7 @@ public class InMemoryContainer : Container
             results = results.Distinct().ToList();
         }
 
-        // Apply TOP
-        if (subquery.TopCount.HasValue)
-        {
-            results = results.Take(subquery.TopCount.Value).ToList();
-        }
-
-        // Apply ORDER BY
+        // Apply ORDER BY (must happen before TOP so TOP takes from sorted results)
         if (subquery.OrderByFields is { Length: > 0 })
         {
             IOrderedEnumerable<string> ordered = null;
@@ -6984,6 +6986,12 @@ public class InMemoryContainer : Container
                 ordered = ordered == null ? results.OrderBy(KeySelector, comparer) : ordered.ThenBy(KeySelector, comparer);
             }
             results = ordered?.ToList() ?? results;
+        }
+
+        // Apply TOP (after ORDER BY so we take from sorted results)
+        if (subquery.TopCount.HasValue)
+        {
+            results = results.Take(subquery.TopCount.Value).ToList();
         }
 
         // Apply OFFSET
