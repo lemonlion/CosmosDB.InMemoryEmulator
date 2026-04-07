@@ -60,6 +60,7 @@ public class InMemoryContainer : Container
         ArrayLiteralExpression arr => arr.Elements.Any(ContainsAggregateCall),
         BinaryExpression bin => ContainsAggregateCall(bin.Left) || ContainsAggregateCall(bin.Right),
         UnaryExpression unary => ContainsAggregateCall(unary.Operand),
+        TernaryExpression tern => ContainsAggregateCall(tern.Condition) || ContainsAggregateCall(tern.IfTrue) || ContainsAggregateCall(tern.IfFalse),
         _ => false
     };
 
@@ -3800,6 +3801,7 @@ public class InMemoryContainer : Container
                         string s => (object)s,
                         UndefinedValue => UndefinedSortSentinel,
                         null => null,
+                        JToken jt => jt,
                         _ => (object)value.ToString()
                     };
                 }
@@ -3823,7 +3825,7 @@ public class InMemoryContainer : Container
                     JTokenType.Integer => (object)token.Value<long>(),
                     JTokenType.Float => (object)token.Value<double>(),
                     JTokenType.String => (object)token.Value<string>(),
-                    _ => (object)token.ToString()
+                    _ => (object)token // Return JArray/JObject for element-by-element comparison
                 };
             }
 
@@ -4496,6 +4498,20 @@ public class InMemoryContainer : Container
         foreach (var field in parsed.SelectFields)
         {
             var expr = field.Expression.TrimStart();
+            var outputName = field.Alias ?? field.Expression;
+
+            // Prefer SqlExpr-based evaluation when the expression contains aggregates
+            // but is NOT a direct aggregate call (e.g., ternary/binary wrapping an aggregate).
+            // This prevents string-based matching from incorrectly extracting a partial aggregate.
+            if (field.SqlExpr is not null && ContainsAggregateCall(field.SqlExpr)
+                && field.SqlExpr is not FunctionCallExpression directAgg)
+            {
+                var val = EvaluateAggregateExpression(field.SqlExpr, items, parsed.FromAlias, parameters ?? new Dictionary<string, object>());
+                if (val is not null and not UndefinedValue)
+                    resultObj[outputName] = val is JToken jt ? jt.DeepClone() : JToken.FromObject(val);
+                continue;
+            }
+
             string funcName = null;
             string innerArg = null;
 
@@ -4514,8 +4530,6 @@ public class InMemoryContainer : Container
                     break;
                 }
             }
-
-            var outputName = field.Alias ?? field.Expression;
 
             if (funcName == "COUNT")
             {
@@ -4633,6 +4647,35 @@ public class InMemoryContainer : Container
                 }
                 return result;
             }
+            case BinaryExpression bin:
+            {
+                var left = EvaluateAggregateExpression(bin.Left, items, fromAlias, parameters);
+                var right = EvaluateAggregateExpression(bin.Right, items, fromAlias, parameters);
+                return bin.Operator switch
+                {
+                    BinaryOp.GreaterThan => (object)(CompareValues(left, right) > 0),
+                    BinaryOp.GreaterThanOrEqual => CompareValues(left, right) >= 0,
+                    BinaryOp.LessThan => CompareValues(left, right) < 0,
+                    BinaryOp.LessThanOrEqual => CompareValues(left, right) <= 0,
+                    BinaryOp.Equal => ValuesEqual(left, right),
+                    BinaryOp.NotEqual => !ValuesEqual(left, right),
+                    BinaryOp.And => IsTruthy(left) && IsTruthy(right),
+                    BinaryOp.Or => IsTruthy(left) || IsTruthy(right),
+                    BinaryOp.Add => ArithmeticOp(left, right, (a, b) => a + b),
+                    BinaryOp.Subtract => ArithmeticOp(left, right, (a, b) => a - b),
+                    BinaryOp.Multiply => ArithmeticOp(left, right, (a, b) => a * b),
+                    BinaryOp.Divide => ArithmeticOp(left, right, (a, b) => b != 0 ? a / b : double.NaN),
+                    BinaryOp.Modulo => ArithmeticOp(left, right, (a, b) => b != 0 ? a % b : double.NaN),
+                    _ => null
+                };
+            }
+            case TernaryExpression tern:
+            {
+                var condition = EvaluateAggregateExpression(tern.Condition, items, fromAlias, parameters);
+                return condition is bool b && b
+                    ? EvaluateAggregateExpression(tern.IfTrue, items, fromAlias, parameters)
+                    : EvaluateAggregateExpression(tern.IfFalse, items, fromAlias, parameters);
+            }
             default:
                 // Non-aggregate expression — evaluate against first item (for non-aggregate fields in mixed projection)
                 if (items.Count > 0)
@@ -4722,7 +4765,8 @@ public class InMemoryContainer : Container
                               && EvaluateWhereExpression(a.Right, item, fromAlias, parameters, join),
             OrCondition o => EvaluateWhereExpression(o.Left, item, fromAlias, parameters, join)
                              || EvaluateWhereExpression(o.Right, item, fromAlias, parameters, join),
-            NotCondition n => !EvaluateWhereExpression(n.Inner, item, fromAlias, parameters, join),
+            NotCondition n => !EvaluateWhereExpressionIncludesUndefined(n.Inner, item, fromAlias, parameters, join)
+                              && !EvaluateWhereExpression(n.Inner, item, fromAlias, parameters, join),
             FunctionCondition f => EvaluateFunction(f, item, fromAlias, parameters),
             ExistsCondition e => EvaluateExists(e, item, fromAlias, parameters, join),
             SqlExpressionCondition s => IsTruthy(EvaluateSqlExpression(s.Expression, item, fromAlias, parameters)),
@@ -4745,8 +4789,33 @@ public class InMemoryContainer : Container
             ComparisonOp.GreaterThan => CompareValues(leftValue, rightValue) > 0,
             ComparisonOp.LessThanOrEqual => CompareValues(leftValue, rightValue) <= 0,
             ComparisonOp.GreaterThanOrEqual => CompareValues(leftValue, rightValue) >= 0,
-            ComparisonOp.Like => EvaluateLike(leftValue, rightValue),
+            ComparisonOp.Like => IsTruthy(EvaluateLike(leftValue, rightValue)),
             _ => false
+        };
+    }
+
+    /// <summary>
+    /// Returns true if the inner expression involves undefined operands (three-value logic).
+    /// Used by NOT to propagate undefined — NOT undefined = undefined (excluded).
+    /// </summary>
+    private static bool EvaluateWhereExpressionIncludesUndefined(
+        WhereExpression expression, JObject item, string fromAlias,
+        IDictionary<string, object> parameters, JoinClause join)
+    {
+        return expression switch
+        {
+            ComparisonCondition c =>
+                ResolveValue(c.Left, item, fromAlias, parameters) is UndefinedValue ||
+                ResolveValue(c.Right, item, fromAlias, parameters) is UndefinedValue,
+            AndCondition a =>
+                EvaluateWhereExpressionIncludesUndefined(a.Left, item, fromAlias, parameters, join) ||
+                EvaluateWhereExpressionIncludesUndefined(a.Right, item, fromAlias, parameters, join),
+            OrCondition o =>
+                EvaluateWhereExpressionIncludesUndefined(o.Left, item, fromAlias, parameters, join) ||
+                EvaluateWhereExpressionIncludesUndefined(o.Right, item, fromAlias, parameters, join),
+            SqlExpressionCondition s =>
+                EvaluateSqlExpression(s.Expression, item, fromAlias, parameters) is UndefinedValue,
+            _ => false,
         };
     }
 
@@ -4932,8 +5001,8 @@ public class InMemoryContainer : Container
         var rightRank = GetTypeRank(right);
         if (leftRank != rightRank) return leftRank.CompareTo(rightRank);
 
-        // Same type rank
-        if (leftRank <= 1) return 0; // both undefined or both null
+        // Both undefined or both null
+        if (leftRank <= 1) return 0;
 
         if (left is bool lb && right is bool rb)
             return lb.CompareTo(rb); // false < true
@@ -4944,12 +5013,71 @@ public class InMemoryContainer : Container
             return l.CompareTo(r);
         }
 
+        // Element-by-element array comparison (Cosmos DB behavior)
+        if (leftRank == 5)
+        {
+            var leftArr = left is JArray la ? la : (left is JToken lt ? new JArray(lt) : null);
+            var rightArr = right is JArray ra ? ra : (right is JToken rt ? new JArray(rt) : null);
+            if (leftArr is not null && rightArr is not null)
+            {
+                for (var i = 0; i < Math.Min(leftArr.Count, rightArr.Count); i++)
+                {
+                    var cmp = CompareValues(
+                        JTokenToObject(leftArr[i]),
+                        JTokenToObject(rightArr[i]));
+                    if (cmp != 0) return cmp;
+                }
+                return leftArr.Count.CompareTo(rightArr.Count);
+            }
+        }
+
+        // Property-by-property object comparison (sorted by property name)
+        if (leftRank == 6)
+        {
+            var leftObj = left as JObject ?? (left is JToken lk ? lk as JObject : null);
+            var rightObj = right as JObject ?? (right is JToken rk ? rk as JObject : null);
+            if (leftObj is not null && rightObj is not null)
+            {
+                var leftProps = leftObj.Properties().OrderBy(p => p.Name, StringComparer.Ordinal).ToList();
+                var rightProps = rightObj.Properties().OrderBy(p => p.Name, StringComparer.Ordinal).ToList();
+                for (var i = 0; i < Math.Min(leftProps.Count, rightProps.Count); i++)
+                {
+                    var nameCmp = string.Compare(leftProps[i].Name, rightProps[i].Name, StringComparison.Ordinal);
+                    if (nameCmp != 0) return nameCmp;
+                    var valCmp = CompareValues(
+                        JTokenToObject(leftProps[i].Value),
+                        JTokenToObject(rightProps[i].Value));
+                    if (valCmp != 0) return valCmp;
+                }
+                return leftProps.Count.CompareTo(rightProps.Count);
+            }
+        }
+
         return string.Compare(left?.ToString(), right?.ToString(), StringComparison.Ordinal);
     }
 
-    private static bool EvaluateLike(object left, object right, string escapeChar = null)
+    private static object JTokenToObject(JToken token)
     {
-        if (left is null or UndefinedValue || right is null or UndefinedValue)
+        return token.Type switch
+        {
+            JTokenType.Integer => (object)token.Value<long>(),
+            JTokenType.Float => token.Value<double>(),
+            JTokenType.Boolean => token.Value<bool>(),
+            JTokenType.String => token.Value<string>(),
+            JTokenType.Null => null,
+            JTokenType.Undefined => UndefinedValue.Instance,
+            _ => token // Return JArray/JObject as-is for recursive comparison
+        };
+    }
+
+    private static object EvaluateLike(object left, object right, string escapeChar = null)
+    {
+        if (left is UndefinedValue || right is UndefinedValue)
+        {
+            return UndefinedValue.Instance;
+        }
+
+        if (left is null || right is null)
         {
             return false;
         }
@@ -5297,6 +5425,8 @@ public class InMemoryContainer : Container
         var value = EvaluateSqlExpression(b.Value, item, fromAlias, parameters);
         var low = EvaluateSqlExpression(b.Low, item, fromAlias, parameters);
         var high = EvaluateSqlExpression(b.High, item, fromAlias, parameters);
+        if (value is UndefinedValue || low is UndefinedValue || high is UndefinedValue)
+            return UndefinedValue.Instance;
         return CompareValues(value, low) >= 0 && CompareValues(value, high) <= 0;
     }
 
@@ -5309,6 +5439,8 @@ public class InMemoryContainer : Container
     private static object EvalIn(InExpression inExpr, JObject item, string fromAlias, IDictionary<string, object> parameters)
     {
         var value = EvaluateSqlExpression(inExpr.Value, item, fromAlias, parameters);
+        if (value is UndefinedValue)
+            return UndefinedValue.Instance;
         return inExpr.List.Any(li => ValuesEqual(value, EvaluateSqlExpression(li, item, fromAlias, parameters)));
     }
 
@@ -5317,6 +5449,15 @@ public class InMemoryContainer : Container
     {
         var left = EvaluateSqlExpression(bin.Left, item, fromAlias, parameters);
         var right = EvaluateSqlExpression(bin.Right, item, fromAlias, parameters);
+
+        // Three-value logic: comparisons with undefined operand(s) produce undefined
+        if (bin.Operator is BinaryOp.Equal or BinaryOp.NotEqual or BinaryOp.LessThan or BinaryOp.GreaterThan
+            or BinaryOp.LessThanOrEqual or BinaryOp.GreaterThanOrEqual or BinaryOp.Like)
+        {
+            if (left is UndefinedValue || right is UndefinedValue)
+                return UndefinedValue.Instance;
+        }
+
         return bin.Operator switch
         {
             BinaryOp.Equal => (object)ValuesEqual(left, right),
@@ -5325,8 +5466,18 @@ public class InMemoryContainer : Container
             BinaryOp.GreaterThan => CompareValues(left, right) > 0,
             BinaryOp.LessThanOrEqual => CompareValues(left, right) <= 0,
             BinaryOp.GreaterThanOrEqual => CompareValues(left, right) >= 0,
-            BinaryOp.And => IsTruthy(left) && IsTruthy(right),
-            BinaryOp.Or => IsTruthy(left) || IsTruthy(right),
+            // Three-value AND: false AND undefined = false; true AND undefined = undefined
+            BinaryOp.And => left is UndefinedValue
+                ? (IsTruthy(right) ? UndefinedValue.Instance : (object)false)
+                : right is UndefinedValue
+                    ? (IsTruthy(left) ? UndefinedValue.Instance : (object)false)
+                    : IsTruthy(left) && IsTruthy(right),
+            // Three-value OR: true OR undefined = true; false OR undefined = undefined
+            BinaryOp.Or => left is UndefinedValue
+                ? (IsTruthy(right) ? (object)true : UndefinedValue.Instance)
+                : right is UndefinedValue
+                    ? (IsTruthy(left) ? (object)true : UndefinedValue.Instance)
+                    : IsTruthy(left) || IsTruthy(right),
             BinaryOp.Like => EvaluateLike(left, right),
             BinaryOp.Add => ArithmeticOp(left, right, (a, b) => a + b),
             BinaryOp.Subtract => ArithmeticOp(left, right, (a, b) => a - b),
@@ -5347,7 +5498,7 @@ public class InMemoryContainer : Container
         var operand = EvaluateSqlExpression(unary.Operand, item, fromAlias, parameters);
         return unary.Operator switch
         {
-            UnaryOp.Not => !IsTruthy(operand),
+            UnaryOp.Not => operand is UndefinedValue ? UndefinedValue.Instance : (object)!IsTruthy(operand),
             UnaryOp.Negate => operand is double d ? (object)(-d) : operand is long l ? (object)(-l) : null,
             UnaryOp.BitwiseNot => operand is long lng ? (object)(~lng) : null,
             _ => null
@@ -5748,7 +5899,10 @@ public class InMemoryContainer : Container
                         return UndefinedValue.Instance;
                     }
                 }
-            case "TOSTRING" or "ToString": return args.Length > 0 ? args[0]?.ToString() : null;
+            case "TOSTRING" or "ToString":
+                if (args.Length == 0) return null;
+                if (args[0] is bool boolVal) return boolVal ? "true" : "false";
+                return args[0]?.ToString();
             case "TONUMBER" or "ToNumber":
                 {
                     if (args.Length == 0)
@@ -6464,6 +6618,7 @@ public class InMemoryContainer : Container
                         "millisecond" or "ms" => (long)dt.Millisecond,
                         "microsecond" or "mcs" => (long)(dt.Ticks % TimeSpan.TicksPerSecond / 10),
                         "nanosecond" or "ns" => (long)(dt.Ticks % TimeSpan.TicksPerSecond * 100),
+                        "weekday" or "dw" or "w" => (long)(dt.DayOfWeek + 1), // Sunday=1..Saturday=7
                         _ => null,
                     };
                 }

@@ -8508,14 +8508,11 @@ public class QueryLikeUndefinedTests
     }
 
     /// <summary>
-    /// Bug 22: NOT LIKE with undefined field — known behavioral difference.
+    /// Fixed: NOT LIKE with undefined field — was known behavioral difference.
     /// In Cosmos DB, undefined LIKE 'x' = undefined, NOT undefined = undefined → row excluded.
-    /// In our emulator, LIKE returns false for undefined, NOT false = true → row included.
-    /// This is a known limitation documented but difficult to fix without adding ternary logic.
+    /// Fixed by implementing three-value logic for comparisons and NOT.
     /// </summary>
-    [Fact(Skip = "Known limitation: NOT LIKE with undefined field includes row instead of excluding. " +
-                 "Cosmos DB uses 3-value logic (true/false/undefined) for LIKE; our emulator uses boolean. " +
-                 "Would require pervasive ternary logic changes to fix.")]
+    [Fact]
     public async Task NotLike_WithUndefinedField_ExcludesRow()
     {
         await _container.CreateItemStreamAsync(
@@ -8527,27 +8524,6 @@ public class QueryLikeUndefinedTests
 
         var results = await RunQuery<JObject>("SELECT * FROM c WHERE NOT (c.name LIKE 'A%')");
         results.Should().BeEmpty("Alice matches the pattern, and doc 2 has undefined name");
-    }
-
-    /// <summary>
-    /// Sister test for NotLike_WithUndefinedField_ExcludesRow — documents actual behavior.
-    /// In our emulator, NOT LIKE with undefined field includes the row (NOT false = true).
-    /// </summary>
-    [Fact]
-    public async Task NotLike_WithUndefinedField_ActualBehavior_IncludesRow()
-    {
-        await _container.CreateItemStreamAsync(
-            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","name":"Alice"}""")),
-            new PartitionKey("pk1"));
-        await _container.CreateItemStreamAsync(
-            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk1"}""")),
-            new PartitionKey("pk1"));
-
-        var results = await RunQuery<JObject>("SELECT * FROM c WHERE NOT (c.name LIKE 'A%')");
-        // Our emulator: LIKE returns false for undefined, NOT false = true → doc 2 included
-        // This differs from Cosmos DB (see skipped sister test)
-        results.Should().ContainSingle();
-        results[0]["id"]!.Value<string>().Should().Be("2");
     }
 }
 
@@ -8900,9 +8876,7 @@ public class QueryDeepDiveV3_FunctionCoverageTests
     {
         await SeedOne();
         var results = await RunQuery<string>("SELECT VALUE ToString(true) FROM c");
-        // C# ToString for bool is "True"/"False" — Cosmos DB returns "true"/"false"
-        // Accept either casing as the emulator may use C# default
-        results.Should().ContainSingle().Which.Should().BeOneOf("true", "True");
+        results.Should().ContainSingle().Which.Should().Be("true");
     }
 
     // ── F21: NumberBin with negative ──
@@ -9192,8 +9166,7 @@ public class QueryDeepDiveV3_InteractionTests
 
     // ── G6: HAVING with multiple aggregate conditions ──
 
-    [Fact(Skip = "Known limitation: HAVING with compound AND conditions (multiple aggregate checks) " +
-                 "is not yet supported by the parser/evaluator.")]
+    [Fact]
     public async Task Having_MultipleAggregateConditions()
     {
         await SeedInteractionDocs();
@@ -9218,8 +9191,7 @@ public class QueryDeepDiveV3_InteractionTests
 
     // ── G7: SELECT VALUE with ternary + aggregate ──
 
-    [Fact(Skip = "Known limitation: SELECT VALUE with ternary operator containing aggregate functions " +
-                 "is not yet supported by the parser/evaluator.")]
+    [Fact]
     public async Task SelectValue_TernaryWithAggregate()
     {
         await SeedInteractionDocs();
@@ -10532,15 +10504,13 @@ public class QueryDeepDiveV4_DateTimeEdgeCases
     }
 
     [Fact]
-    public async Task DateTimePart_DayOfWeek_ReturnsNull_PartNotSupported()
+    public async Task DateTimePart_DayOfWeek_ReturnsWeekdayNumber()
     {
         await SeedOne();
-        // 'weekday' part name is not supported by the emulator — returns null
-        var results = await RunQuery<JToken>(
+        // 2026-04-07 is a Tuesday → Cosmos DB weekday: Sunday=1..Saturday=7 → Tuesday=3
+        var results = await RunQuery<long>(
             "SELECT VALUE DateTimePart('weekday', '2026-04-07T00:00:00Z') FROM c");
-        // The emulator does not recognise 'weekday' and returns null
-        results.Should().HaveCount(1);
-        results[0].Type.Should().Be(JTokenType.Null);
+        results.Should().ContainSingle().Which.Should().Be(3);
     }
 
     [Fact]
@@ -10675,10 +10645,7 @@ public class QueryDeepDiveV4_DivergentBehaviorTests
 
     // ── D1: NOT comparison on undefined field ──
 
-    [Fact(Skip = "Known limitation: Three-value logic — NOT (undefined comparison) should remain " +
-                 "undefined (falsy, row excluded), but emulator evaluates undefined comparison as false, " +
-                 "then NOT false = true, incorrectly including the row. Fixing requires pervasive " +
-                 "tri-state refactor across all expression evaluation. See limitation #63.")]
+    [Fact]
     public async Task NotComparison_UndefinedField_ExcludesRow()
     {
         // Real Cosmos DB: NOT (c.missing > 5) → NOT undefined → undefined → row excluded
@@ -10695,33 +10662,9 @@ public class QueryDeepDiveV4_DivergentBehaviorTests
         results.Should().BeEmpty();
     }
 
-    [Fact]
-    public async Task NotComparison_UndefinedField_ActualBehavior_IncludesRow()
-    {
-        // Emulator behavior (divergent from real Cosmos):
-        // NOT (c.val > 5) where c.val is undefined:
-        //   c.val > 5 → undefined field → comparison returns false
-        //   NOT false → true → row is INCLUDED
-        // This differs from Cosmos DB where NOT undefined = undefined (row excluded)
-        await _container.CreateItemStreamAsync(
-            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","val":10}""")),
-            new PartitionKey("pk1"));
-        await _container.CreateItemStreamAsync(
-            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk1"}""")),
-            new PartitionKey("pk1"));
-
-        var results = await RunQuery<JObject>("SELECT * FROM c WHERE NOT (c.val > 5)");
-        // Emulator: id=1 (10>5 = true, NOT true = false → excluded)
-        //           id=2 (undefined>5 = false, NOT false = true → INCLUDED — divergent!)
-        results.Should().ContainSingle();
-        results[0]["id"]!.Value<string>().Should().Be("2");
-    }
-
     // ── D4: ORDER BY with array values ──
 
-    [Fact(Skip = "Known limitation: Cosmos DB compares arrays element-by-element for ORDER BY. " +
-                 "The emulator uses ToString() string comparison for array/object values, which may " +
-                 "produce different ordering. Implementing element-by-element comparison is complex.")]
+    [Fact]
     public async Task OrderBy_ArrayValues_CosmosComparison()
     {
         await _container.CreateItemStreamAsync(
@@ -10735,18 +10678,16 @@ public class QueryDeepDiveV4_DivergentBehaviorTests
             new PartitionKey("pk1"));
 
         var results = await RunQuery<JObject>("SELECT * FROM c ORDER BY c.arr ASC");
-        // Real Cosmos: element-by-element → [1,1] < [1,2,3] < [1,2,4]
+        // Element-by-element comparison: [1,1] < [1,2,3] < [1,2,4]
         results[0]["id"]!.Value<string>().Should().Be("3");
         results[1]["id"]!.Value<string>().Should().Be("1");
         results[2]["id"]!.Value<string>().Should().Be("2");
     }
 
     [Fact]
-    public async Task OrderBy_ArrayValues_EmulatorBehavior_UsesStringComparison()
+    public async Task OrderBy_ArrayValues_ElementByElement_MatchesCosmos()
     {
-        // Emulator behavior: arrays are compared via ToString() string comparison.
-        // This may produce correct results for many cases but is not guaranteed
-        // to match Cosmos DB's element-by-element comparison.
+        // Now uses element-by-element comparison matching Cosmos DB behavior.
         await _container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk1","arr":[1,2,3]}""")),
             new PartitionKey("pk1"));
@@ -10758,8 +10699,11 @@ public class QueryDeepDiveV4_DivergentBehaviorTests
             new PartitionKey("pk1"));
 
         var results = await RunQuery<JObject>("SELECT * FROM c ORDER BY c.arr ASC");
-        // Just verify all 3 docs are returned (ordering may differ from Cosmos)
         results.Should().HaveCount(3);
+        // Element-by-element: [1,1] < [1,2,3] < [1,2,4]
+        results[0]["id"]!.Value<string>().Should().Be("3");
+        results[1]["id"]!.Value<string>().Should().Be("1");
+        results[2]["id"]!.Value<string>().Should().Be("2");
     }
 }
 

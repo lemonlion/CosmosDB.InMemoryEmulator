@@ -1369,7 +1369,10 @@ public static class CosmosSqlParser
     {
         var isSelectAll = fields.Length == 1 && fields[0].Expression == "*";
         var where = whereExpr != null ? ToWhereExpression(whereExpr) : null;
-        var having = havingExpr != null ? ToWhereExpression(havingExpr) : null;
+        // HAVING always uses SqlExpressionCondition to preserve aggregate function expressions
+        // (ToWhereExpression would decompose AND/OR into AndCondition/OrCondition with string-based
+        // comparison operands, losing the ability to evaluate aggregate functions like COUNT/SUM).
+        var having = havingExpr != null ? new SqlExpressionCondition(havingExpr) : null;
         var rawHavingExpr = havingExpr;
 
         // Backward compat: first join, first order by
