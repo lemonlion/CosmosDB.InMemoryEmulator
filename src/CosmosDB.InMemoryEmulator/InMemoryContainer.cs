@@ -3680,7 +3680,17 @@ public class InMemoryContainer : Container
         // ORDER BY
         if (parsed.OrderByFields is { Length: > 0 })
         {
-            items = ApplyOrderByFields(items, parsed.OrderByFields, parsed.FromAlias, parameters);
+            var effectiveOrderBy = parsed.OrderByFields;
+            // After GROUP BY, aggregate ORDER BY expressions (e.g. ORDER BY COUNT(1))
+            // must resolve to the alias of the matching SELECT field because the items
+            // are already projected group results (e.g. {"cat":"A","cnt":2}).
+            // EvaluateSqlExpression returns pass-through values for aggregates (COUNT→1),
+            // which makes sorting non-deterministic when groups share the same count.
+            if (groupByApplied)
+            {
+                effectiveOrderBy = ResolveOrderByAliasesAfterGroupBy(parsed.OrderByFields, parsed.SelectFields);
+            }
+            items = ApplyOrderByFields(items, effectiveOrderBy, parsed.FromAlias, parameters);
         }
         else if (parsed.OrderBy is not null)
         {
@@ -3839,6 +3849,45 @@ public class InMemoryContainer : Container
             ordered = ordered == null ? items.OrderBy(KeySelector, comparer) : ordered.ThenBy(KeySelector, comparer);
         }
         return ordered?.ToList() ?? items;
+    }
+
+    /// <summary>
+    /// After GROUP BY projection, ORDER BY aggregate expressions (e.g. COUNT(1), SUM(c.val))
+    /// must be resolved to their SELECT alias so sorting works on the projected field value
+    /// instead of the aggregate passthrough (which would be 1 for COUNT, etc.).
+    /// </summary>
+    private static OrderByField[] ResolveOrderByAliasesAfterGroupBy(
+        OrderByField[] orderByFields, SelectField[] selectFields)
+    {
+        var resolved = new OrderByField[orderByFields.Length];
+        for (var i = 0; i < orderByFields.Length; i++)
+        {
+            var obf = orderByFields[i];
+            if (obf.Expression is FunctionCallExpression func
+                && AggregateFunctions.Contains(func.FunctionName))
+            {
+                // Convert both to text form using ExprToString for consistent comparison
+                var orderByText = CosmosSqlParser.ExprToString(obf.Expression);
+                foreach (var sf in selectFields)
+                {
+                    if (sf.Alias is not null && sf.Expression.Trim().Equals(
+                            orderByText, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Replace with a simple field lookup on the alias
+                        resolved[i] = new OrderByField(sf.Alias, obf.Ascending);
+                        break;
+                    }
+                }
+
+                resolved[i] ??= obf; // no matching alias found — keep original
+            }
+            else
+            {
+                resolved[i] = obf;
+            }
+        }
+
+        return resolved;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
