@@ -91,8 +91,6 @@ For the full feature list see [Features](https://github.com/lemonlion/CosmosDB.I
 
 * Native `.ToFeedIterator()` method works without any problems, there are just occasionally some advantages to using `.ToFeedIteratorOverridable()`, hence why this optional package is supplied.  See [Feed Iterator Usage](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feed-Iterator-Usage-Guide).
 
-All packages support .NET 8.0+.  .NET 10 specific packages will be created before .NET 8.0 support ends, but it is being deliberately held off to avoid having to fully maintain multiple packages targeting different .NET frameworks, as until then there is little benefit having both.
-
 ## Documentation
 
 Full documentation is available on the **[Wiki](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki)**.
