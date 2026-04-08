@@ -34,8 +34,18 @@ jobs:
           elapsed=0
           while [ $elapsed -lt $timeout ]; do
             if curl -sk https://localhost:8081/_explorer/emulator.pem > /dev/null 2>&1; then
-              echo "Emulator is ready after ${elapsed}s"
-              break
+              echo "Certificate endpoint responded after ${elapsed}s, verifying database readiness..."
+              # Wait for the actual database endpoint to be ready (not just the TLS listener)
+              while [ $elapsed -lt $timeout ]; do
+                status=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8081/ 2>/dev/null || echo "000")
+                if [ "$status" = "200" ] || [ "$status" = "401" ]; then
+                  echo "Emulator database endpoint is ready after ${elapsed}s (HTTP $status)"
+                  break 2
+                fi
+                sleep 2
+                elapsed=$((elapsed + 2))
+                echo "Database endpoint not ready yet... (${elapsed}s, HTTP $status)"
+              done
             fi
             sleep 5
             elapsed=$((elapsed + 5))
@@ -45,6 +55,9 @@ jobs:
             echo "::error::Cosmos DB Emulator did not start within ${timeout}s"
             exit 1
           fi
+          # Extra buffer for internal initialization
+          echo "Waiting 15s for emulator internal initialization..."
+          sleep 15
 
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
