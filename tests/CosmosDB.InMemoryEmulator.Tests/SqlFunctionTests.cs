@@ -2117,11 +2117,12 @@ public class SqlFunctionMissingCoverageTests
     }
 
     [Fact]
-    public async Task Choose_OutOfRange_ReturnsNull()
+    public async Task Choose_OutOfRange_ReturnsUndefined()
     {
         await Seed();
+        // CHOOSE out-of-bounds returns undefined; the field is omitted from the projection
         var results = await Query("SELECT CHOOSE(5, 'a', 'b') AS val FROM c WHERE c.id = '1'");
-        results[0]["val"]!.Type.Should().Be(JTokenType.Null);
+        results[0]["val"].Should().BeNull();
     }
 
     // OBJECTTOARRAY / ARRAYTOOBJECT

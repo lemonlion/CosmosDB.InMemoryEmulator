@@ -6564,9 +6564,9 @@ public class InMemoryContainer : Container
             // ── Array/Object utility functions ──
             case "CHOOSE":
                 {
-                    if (args.Length < 2) return null;
+                    if (args.Length < 2) return UndefinedValue.Instance;
                     var idx = ToLong(args[0]);
-                    if (!idx.HasValue || idx.Value < 1 || idx.Value >= args.Length) return null;
+                    if (!idx.HasValue || idx.Value < 1 || idx.Value >= args.Length) return UndefinedValue.Instance;
                     return args[(int)idx.Value];
                 }
             case "OBJECTTOARRAY":
@@ -6749,20 +6749,27 @@ public class InMemoryContainer : Container
                     }
 
                     var n = (int)number.Value;
-                    DateTime? result = part switch
+                    try
                     {
-                        "year" or "yyyy" or "yy" => dt.AddYears(n),
-                        "month" or "mm" or "m" => dt.AddMonths(n),
-                        "day" or "dd" or "d" => dt.AddDays(n),
-                        "hour" or "hh" => dt.AddHours(n),
-                        "minute" or "mi" or "n" => dt.AddMinutes(n),
-                        "second" or "ss" or "s" => dt.AddSeconds(n),
-                        "millisecond" or "ms" => dt.AddMilliseconds(n),
-                        "microsecond" or "mcs" => dt.AddTicks(n * 10L),
-                        "nanosecond" or "ns" => dt.AddTicks(n / 100L),
-                        _ => null,
-                    };
-                    return result?.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+                        DateTime? result = part switch
+                        {
+                            "year" or "yyyy" or "yy" => dt.AddYears(n),
+                            "month" or "mm" or "m" => dt.AddMonths(n),
+                            "day" or "dd" or "d" => dt.AddDays(n),
+                            "hour" or "hh" => dt.AddHours(n),
+                            "minute" or "mi" or "n" => dt.AddMinutes(n),
+                            "second" or "ss" or "s" => dt.AddSeconds(n),
+                            "millisecond" or "ms" => dt.AddMilliseconds(n),
+                            "microsecond" or "mcs" => dt.AddTicks(n * 10L),
+                            "nanosecond" or "ns" => dt.AddTicks(n / 100L),
+                            _ => null,
+                        };
+                        return result?.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+                    }
+                    catch (ArgumentOutOfRangeException)
+                    {
+                        return UndefinedValue.Instance;
+                    }
                 }
             case "DATETIMEPART":
                 {
@@ -7361,7 +7368,11 @@ public class InMemoryContainer : Container
             // Cosmos DB treats NaN and Infinity as undefined
             if (double.IsNaN(result) || double.IsInfinity(result))
                 return UndefinedValue.Instance;
-            if (left is long or int && right is long or int && result == Math.Floor(result))
+            // Only convert back to long when both operands were integers and the result
+            // fits within long range. We use strict < for MaxValue because (double)long.MaxValue
+            // rounds up beyond the actual max, causing (long) cast to overflow.
+            if (left is long or int && right is long or int && result == Math.Floor(result)
+                && result >= long.MinValue && result < 9.2233720368547758E+18)
             {
                 return (long)result;
             }
