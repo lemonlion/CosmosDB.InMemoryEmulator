@@ -1785,8 +1785,8 @@ public class SqlFunctionGapTests2
             results.AddRange(page);
         }
 
-        // null input should return null/undefined
-        results.Should().HaveCount(1);
+        // Cosmos DB: UPPER(null) → undefined → excluded from SELECT VALUE results
+        results.Should().BeEmpty();
     }
 }
 

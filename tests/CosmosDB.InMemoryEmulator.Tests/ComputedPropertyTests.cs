@@ -1474,8 +1474,8 @@ public class ComputedPropertyExpressionTests
         var iterator = container.GetItemQueryIterator<JObject>(query);
         var response = await iterator.ReadNextAsync();
 
-        // LOWER(null) should return null
-        response.First()["cp_lowerName"]!.Type.Should().Be(JTokenType.Null);
+        // Cosmos DB: LOWER(null) → undefined → computed property not set
+        response.First()["cp_lowerName"].Should().BeNull();
     }
 
     [Fact]

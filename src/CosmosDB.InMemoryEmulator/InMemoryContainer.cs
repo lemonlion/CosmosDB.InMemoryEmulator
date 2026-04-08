@@ -5618,7 +5618,7 @@ public class InMemoryContainer : Container
                 and not "ARRAY_CONTAINS" and not "ARRAY_CONTAINS_ANY" and not "ARRAY_CONTAINS_ALL"
                 and not "DOCUMENTID" and not "VECTORDISTANCE"
                 and not "FULLTEXTSCORE" and not "FULLTEXTCONTAINS" and not "FULLTEXTCONTAINSALL"
-                and not "INDEX_OF")
+                and not "INDEX_OF" and not "TYPE")
             {
                 return UndefinedValue.Instance;
             }
@@ -5700,6 +5700,40 @@ public class InMemoryContainer : Container
 
                     return args[0] is long or int;
                 }
+            case "IS_NAN":
+                {
+                    if (args.Length == 0)
+                    {
+                        return false;
+                    }
+
+                    return args[0] is double d && double.IsNaN(d);
+                }
+            case "TYPE":
+                {
+                    if (args.Length == 0)
+                    {
+                        return UndefinedValue.Instance;
+                    }
+
+                    if (args[0] is UndefinedValue)
+                    {
+                        return UndefinedValue.Instance;
+                    }
+
+                    var tokenForType = ResolveTokenType(func.Arguments, item, fromAlias);
+                    if (tokenForType is JArray) return "array";
+                    if (tokenForType is JObject) return "object";
+
+                    return args[0] switch
+                    {
+                        null => "null",
+                        bool => "boolean",
+                        long or int or double or float or decimal => "number",
+                        string => "string",
+                        _ => "Undefined"
+                    };
+                }
 
             // ── String functions ──
             case "STARTSWITH":
@@ -5712,7 +5746,7 @@ public class InMemoryContainer : Container
                     var s = args[0]?.ToString(); var p = args[1]?.ToString();
                     if (s is null || p is null)
                     {
-                        return false;
+                        return UndefinedValue.Instance;
                     }
 
                     var ic = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
@@ -5728,7 +5762,7 @@ public class InMemoryContainer : Container
                     var s = args[0]?.ToString(); var p = args[1]?.ToString();
                     if (s is null || p is null)
                     {
-                        return false;
+                        return UndefinedValue.Instance;
                     }
 
                     var ic = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
@@ -5744,20 +5778,25 @@ public class InMemoryContainer : Container
                     var s = args[0]?.ToString(); var p = args[1]?.ToString();
                     if (s is null || p is null)
                     {
-                        return false;
+                        return UndefinedValue.Instance;
                     }
 
                     var ic = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                     return s.Contains(p, ic ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
                 }
             case "CONCAT": return string.Concat(args.Select(a => a?.ToString() ?? ""));
-            case "LENGTH": return args.Length > 0 ? (object)(long)(args[0]?.ToString()?.Length ?? 0) : null;
-            case "LOWER": return args.Length > 0 ? args[0]?.ToString()?.ToLowerInvariant() : null;
-            case "UPPER": return args.Length > 0 ? args[0]?.ToString()?.ToUpperInvariant() : null;
-            case "TRIM": return args.Length > 0 ? args[0]?.ToString()?.Trim() : null;
-            case "LTRIM": return args.Length > 0 ? args[0]?.ToString()?.TrimStart() : null;
-            case "RTRIM": return args.Length > 0 ? args[0]?.ToString()?.TrimEnd() : null;
-            case "REVERSE": return args.Length > 0 && args[0] is string rs ? new string(rs.Reverse().ToArray()) : null;
+            case "LENGTH":
+                {
+                    if (args.Length == 0) return null;
+                    if (args[0] is null) return UndefinedValue.Instance;
+                    return (object)(long)(args[0].ToString()!.Length);
+                }
+            case "LOWER": return args.Length > 0 ? (args[0] is null ? UndefinedValue.Instance : (object)args[0].ToString()!.ToLowerInvariant()) : null;
+            case "UPPER": return args.Length > 0 ? (args[0] is null ? UndefinedValue.Instance : (object)args[0].ToString()!.ToUpperInvariant()) : null;
+            case "TRIM": return args.Length > 0 ? (args[0] is null ? UndefinedValue.Instance : (object)args[0].ToString()!.Trim()) : null;
+            case "LTRIM": return args.Length > 0 ? (args[0] is null ? UndefinedValue.Instance : (object)args[0].ToString()!.TrimStart()) : null;
+            case "RTRIM": return args.Length > 0 ? (args[0] is null ? UndefinedValue.Instance : (object)args[0].ToString()!.TrimEnd()) : null;
+            case "REVERSE": return args.Length > 0 ? (args[0] is null ? UndefinedValue.Instance : args[0] is string rs ? (object)new string(rs.Reverse().ToArray()) : null) : null;
             case "LEFT":
                 {
                     if (args.Length < 2)
@@ -5765,8 +5804,9 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    var s = args[0]?.ToString(); var c = ToLong(args[1]);
-                    if (s is null || !c.HasValue) return null;
+                    if (args[0] is null) return UndefinedValue.Instance;
+                    var s = args[0].ToString(); var c = ToLong(args[1]);
+                    if (s is null || !c.HasValue) return UndefinedValue.Instance;
                     if (c.Value < 0) return null;
                     return s[..(int)Math.Min(c.Value, s.Length)];
                 }
@@ -5777,8 +5817,9 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    var s = args[0]?.ToString(); var c = ToLong(args[1]);
-                    if (s is null || !c.HasValue) return null;
+                    if (args[0] is null) return UndefinedValue.Instance;
+                    var s = args[0].ToString(); var c = ToLong(args[1]);
+                    if (s is null || !c.HasValue) return UndefinedValue.Instance;
                     if (c.Value < 0) return null;
                     return s[Math.Max(0, s.Length - (int)c.Value)..];
                 }
@@ -5812,7 +5853,9 @@ public class InMemoryContainer : Container
                     }
 
                     var s = args[0]?.ToString(); var find = args[1]?.ToString(); var rep = args[2]?.ToString();
-                    return s != null && find != null ? s.Replace(find, rep ?? "") : null;
+                    if (s is null || find is null) return UndefinedValue.Instance;
+                    if (find.Length == 0) return s;
+                    return s.Replace(find, rep ?? "");
                 }
             case "INDEX_OF":
                 {
@@ -6211,7 +6254,10 @@ public class InMemoryContainer : Container
                 if (args.Length >= 2 && double.TryParse(args[0]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var logVal)
                     && double.TryParse(args[1]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var logBase))
                 {
-                    return Math.Log(logVal, logBase);
+                    var logResult = Math.Log(logVal, logBase);
+                    if (double.IsNaN(logResult) || double.IsInfinity(logResult))
+                        return UndefinedValue.Instance;
+                    return logResult;
                 }
                 return args.Length > 0 ? MathOp(args[0], Math.Log) : null;
             case "LOG10": return args.Length > 0 ? MathOp(args[0], Math.Log10) : null;
@@ -6822,8 +6868,8 @@ public class InMemoryContainer : Container
                 {
                     if (args.Length < 1) return null;
                     var dtStr = args[0]?.ToString();
-                    if (dtStr is null) return null;
-                    if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return null;
+                    if (dtStr is null) return UndefinedValue.Instance;
+                    if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return UndefinedValue.Instance;
                     if (dt.Kind == DateTimeKind.Unspecified) dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
                     return (object)dt.ToUniversalTime().Ticks;
                 }
