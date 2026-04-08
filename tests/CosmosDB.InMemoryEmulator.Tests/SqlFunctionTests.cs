@@ -2310,11 +2310,13 @@ public class SqlFunctionStringEdgeCaseTests
     }
 
     [Fact]
-    public async Task ToString_NullInput_ReturnsNull()
+    public async Task ToString_NullInput_ReturnsUndefined()
     {
         await Seed();
+        // Cosmos DB: TOSTRING(null) → undefined (property omitted from result)
         var results = await Query("SELECT ToString(null) AS val FROM c WHERE c.id = '1'");
-        results[0]["val"]!.Type.Should().Be(JTokenType.Null);
+        results.Should().ContainSingle();
+        results[0]["val"].Should().BeNull(); // property omitted = null in JObject access
     }
 }
 
