@@ -8924,9 +8924,9 @@ public class QueryDeepDiveV3_FunctionCoverageTests
     public async Task Replicate_NegativeCount_ReturnsEmptyOrNull()
     {
         await SeedOne();
-        // REPLICATE with negative count returns undefined/null in our emulator
+        // REPLICATE with negative count returns undefined in Cosmos DB
         var results = await RunQuery<JToken>("SELECT VALUE REPLICATE('x', -1) FROM c");
-        results.Should().ContainSingle();
+        results.Should().BeEmpty(); // undefined excluded by SELECT VALUE
     }
 
     // ── F27: SUBSTRING edge cases ──
@@ -9291,13 +9291,14 @@ public class QueryDeepDiveV4_UntestedFunctionTests
     }
 
     [Fact]
-    public async Task Replicate_NegativeCount_ReturnsNull()
+    public async Task Replicate_NegativeCount_ReturnsUndefined()
     {
         await SeedOne();
-        // REPLICATE with negative count returns null (not undefined)
+        // REPLICATE with negative count returns undefined in Cosmos DB
         var results = await RunQuery<JObject>("SELECT REPLICATE('x', -1) AS r FROM c");
         results.Should().ContainSingle();
-        results[0]["r"]!.Type.Should().Be(JTokenType.Null);
+        // undefined field is omitted from the result object
+        results[0]["r"].Should().BeNull();
     }
 
     // ── STRING_EQUALS ──
@@ -13794,11 +13795,11 @@ public class QueryDeepDiveV8_NegativeIndexTests
     }
 
     [Fact]
-    public async Task Replicate_NegativeCount_ReturnsNull()
+    public async Task Replicate_NegativeCount_ReturnsUndefined()
     {
         var results = await RunQuery<JToken>("SELECT VALUE REPLICATE('x', -1) FROM c");
-        results.Should().ContainSingle();
-        results[0].Type.Should().Be(JTokenType.Null);
+        // undefined excluded by SELECT VALUE
+        results.Should().BeEmpty();
     }
 }
 
@@ -16678,5 +16679,603 @@ public class QueryDeepDiveV10_CrossFeatureTests
         var tagA = results.FirstOrDefault(r => r["tag"]!.ToString() == "a");
         tagA.Should().NotBeNull();
         tagA!["cnt"]!.Value<int>().Should().Be(2);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── Deep Dive V11: Coverage Gap Tests (TDD - Phase 1) ──
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Category A: Function/Operator Edge Cases ──
+public class QueryDeepDiveV11_FunctionEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","name":"Alice","value":10,"isActive":true,"tags":["a","b"],"nullField":null}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","pk":"a","name":"Bob","value":20,"isActive":false,"tags":["c"],"nullField":null}""")),
+            new PartitionKey("a"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    private async Task<List<T>> RunQuery<T>(QueryDefinition query)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(query);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    // ── A1: CONCAT with non-string args ──
+    [Fact]
+    public async Task Concat_WithNonStringArgs_CoercesToString()
+    {
+        await Seed();
+        // Cosmos DB CONCAT converts all args to their string representation
+        var results = await RunQuery<string>("SELECT VALUE CONCAT('val:', c.value) FROM c ORDER BY c.value ASC");
+        results.Should().HaveCount(2);
+        results[0].Should().Be("val:10");
+        results[1].Should().Be("val:20");
+    }
+
+    // ── A2: CONCAT with null arg ──
+    [Fact]
+    public async Task Concat_WithNullArg_ReturnsUndefined()
+    {
+        await Seed();
+        // In Cosmos DB, CONCAT returns undefined if any argument is null or undefined
+        var results = await RunQuery<JToken>("SELECT VALUE CONCAT('hi', null, 'there') FROM c");
+        // If CONCAT propagates undefined for null args, SELECT VALUE excludes them
+        // If it returns "hinullthere", we get 2 results
+        // Real Cosmos DB: CONCAT with null → undefined
+        results.Should().BeEmpty();
+    }
+
+    // ── A3: REPLICATE negative count ──
+    [Fact]
+    public async Task Replicate_NegativeCount_ReturnsUndefined()
+    {
+        await Seed();
+        // REPLICATE('x', -1) → undefined in Cosmos DB
+        var results = await RunQuery<JToken>("SELECT VALUE REPLICATE('x', -1) FROM c");
+        results.Should().BeEmpty();
+    }
+
+    // ── A4: REPLICATE large count (>10000) ──
+    [Fact]
+    public async Task Replicate_LargeCount_ReturnsUndefined()
+    {
+        await Seed();
+        // Cosmos DB caps REPLICATE at 10000 repetitions, returning undefined above that
+        var results = await RunQuery<JToken>("SELECT VALUE REPLICATE('a', 10001) FROM c");
+        results.Should().BeEmpty();
+    }
+
+    // ── A5: ROUND with negative precision ──
+    [Fact]
+    public async Task Round_NegativePrecision_RoundsToNearestPowerOfTen()
+    {
+        await Seed();
+        // ROUND(1234.5, -2) should round to nearest 100 → 1200
+        var results = await RunQuery<double>("SELECT VALUE ROUND(1234.5, -2) FROM c");
+        results.Should().HaveCount(2);
+        results[0].Should().Be(1200);
+    }
+
+    // ── A6: NumberBin with zero binSize ──
+    [Fact]
+    public async Task NumberBin_ZeroBinSize_ReturnsUndefined()
+    {
+        await Seed();
+        // NumberBin(42, 0) → division by zero → undefined
+        var results = await RunQuery<JToken>("SELECT VALUE NumberBin(42, 0) FROM c");
+        results.Should().BeEmpty();
+    }
+
+    // ── A7: NumberBin with negative binSize ──
+    [Fact]
+    public async Task NumberBin_NegativeBinSize_Works()
+    {
+        await Seed();
+        // NumberBin(42, -5) - Cosmos DB behavior with negative bin sizes
+        // This should either work (returning a valid bin) or return undefined
+        var results = await RunQuery<JToken>("SELECT VALUE NumberBin(42, -5) FROM c");
+        // Real Cosmos: NumberBin with negative bin returns undefined
+        results.Should().BeEmpty();
+    }
+
+    // ── A8: ARRAY_SLICE with zero length ──
+    [Fact]
+    public async Task ArraySlice_ZeroLength_ReturnsEmpty()
+    {
+        await Seed();
+        var results = await RunQuery<JArray>("SELECT VALUE ARRAY_SLICE(c.tags, 0, 0) FROM c");
+        results.Should().HaveCount(2);
+        results[0].Should().BeEmpty();
+    }
+
+    // ── A9: SET_INTERSECT with empty array ──
+    [Fact]
+    public async Task SetIntersect_EmptyWithNonEmpty_ReturnsEmpty()
+    {
+        await Seed();
+        var results = await RunQuery<JArray>("SELECT VALUE SetIntersect([], c.tags) FROM c");
+        results.Should().HaveCount(2);
+        results[0].Should().BeEmpty();
+    }
+
+    // ── A10: SET_INTERSECT both non-empty ──
+    [Fact]
+    public async Task SetIntersect_BothNonEmpty_ReturnsCommon()
+    {
+        await Seed();
+        // First doc has tags ["a","b"], intersect with ["b","c"] → ["b"]
+        var results = await RunQuery<JArray>(
+            "SELECT VALUE SetIntersect(c.tags, ['b', 'c']) FROM c ORDER BY c.id ASC");
+        results.Should().HaveCount(2);
+        results[0].Should().ContainSingle().Which.Value<string>().Should().Be("b"); // ["a","b"] ∩ ["b","c"] = ["b"]
+        results[1].Should().ContainSingle().Which.Value<string>().Should().Be("c"); // ["c"] ∩ ["b","c"] = ["c"]
+    }
+
+    // ── A11: SET_UNION with duplicates ──
+    [Fact]
+    public async Task SetUnion_WithDuplicates_Deduplicates()
+    {
+        await Seed();
+        var results = await RunQuery<JArray>(
+            "SELECT VALUE SetUnion(c.tags, ['b', 'z']) FROM c ORDER BY c.id ASC");
+        results.Should().HaveCount(2);
+        // First doc ["a","b"] ∪ ["b","z"] → ["a","b","z"]
+        results[0].Count.Should().Be(3);
+        results[0].Select(t => t.Value<string>()).Should().Contain("a").And.Contain("b").And.Contain("z");
+    }
+
+    // ── A12: SET_DIFFERENCE ──
+    [Fact]
+    public async Task SetDifference_RemovesMatched()
+    {
+        await Seed();
+        var results = await RunQuery<JArray>(
+            "SELECT VALUE SetDifference(c.tags, ['b']) FROM c ORDER BY c.id ASC");
+        results.Should().HaveCount(2);
+        // First doc ["a","b"] - ["b"] → ["a"]
+        results[0].Should().ContainSingle().Which.Value<string>().Should().Be("a");
+        // Second doc ["c"] - ["b"] → ["c"]
+        results[1].Should().ContainSingle().Which.Value<string>().Should().Be("c");
+    }
+
+    // ── A13: StringSplit with empty delimiter ──
+    [Fact]
+    public async Task StringSplit_EmptyDelimiter_ReturnsSingleElement()
+    {
+        await Seed();
+        // StringSplit('abc', '') - when delimiter is empty, Cosmos returns undefined
+        var results = await RunQuery<JToken>("SELECT VALUE StringSplit('abc', '') FROM c");
+        // Real Cosmos: empty delimiter → undefined
+        results.Should().BeEmpty();
+    }
+
+    // ── A14: StringSplit empty string ──
+    [Fact]
+    public async Task StringSplit_EmptyString_ReturnsArrayWithEmpty()
+    {
+        await Seed();
+        var results = await RunQuery<JArray>("SELECT VALUE StringSplit('', ',') FROM c");
+        results.Should().HaveCount(2);
+        results[0].Should().ContainSingle().Which.Value<string>().Should().Be("");
+    }
+}
+
+// ── Category B: Clause/Operator Edge Cases ──
+public class QueryDeepDiveV11_ClauseEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","name":"Alice","value":10,"isActive":true,"date":"2024-06-15"}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","pk":"a","name":"Bob","value":20,"isActive":false,"date":"2024-03-01"}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"3","pk":"a","name":"Charlie","value":30,"isActive":true,"date":"2025-01-20"}""")),
+            new PartitionKey("a"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    // ── B1–B4: Arithmetic on null ──
+    [Fact]
+    public async Task ArithmeticOnNull_Addition_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery<JToken>("SELECT VALUE null + 1 FROM c");
+        results.Should().BeEmpty(); // undefined excluded by SELECT VALUE
+    }
+
+    [Fact]
+    public async Task ArithmeticOnNull_Multiplication_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery<JToken>("SELECT VALUE null * 2 FROM c");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ArithmeticOnNull_Subtraction_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery<JToken>("SELECT VALUE null - 3 FROM c");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ArithmeticOnNull_Modulo_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery<JToken>("SELECT VALUE null % 2 FROM c");
+        results.Should().BeEmpty();
+    }
+
+    // ── B5–B6: Mixed type comparisons ──
+    [Fact]
+    public async Task MixedTypeComparison_NumberVsString_NoMatch()
+    {
+        await Seed();
+        // value=10 (number) should NOT match '10' (string)
+        var results = await RunQuery<JObject>("SELECT * FROM c WHERE c.value = '10'");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task MixedTypeComparison_BoolVsString_NoMatch()
+    {
+        await Seed();
+        // isActive=true (bool) should NOT match 'true' (string)
+        var results = await RunQuery<JObject>("SELECT * FROM c WHERE c.isActive = 'true'");
+        results.Should().BeEmpty();
+    }
+
+    // ── B7: DISTINCT multiple fields ──
+    [Fact]
+    public async Task DistinctMultipleFields_ReturnsUniqueCombinations()
+    {
+        await Seed();
+        var results = await RunQuery<JObject>(
+            "SELECT DISTINCT c.pk, c.isActive FROM c");
+        // pk="a" + isActive=true (2 docs), pk="a" + isActive=false (1 doc) → 2 combos
+        results.Should().HaveCount(2);
+    }
+
+    // ── B8: BETWEEN with date strings ──
+    [Fact]
+    public async Task Between_WithDateStrings_LexicographicRange()
+    {
+        await Seed();
+        var results = await RunQuery<JObject>(
+            "SELECT * FROM c WHERE c.date BETWEEN '2024-01-01' AND '2024-12-31'");
+        // "2024-06-15" and "2024-03-01" are in range, "2025-01-20" is not
+        results.Should().HaveCount(2);
+    }
+
+    // ── B9–B10: IIF non-boolean conditions ──
+    [Fact]
+    public async Task IIF_NumberCondition_TreatedAsFalse()
+    {
+        await Seed();
+        // IIF(1, 'yes', 'no') → 'no' because only boolean true is truthy
+        var results = await RunQuery<string>("SELECT VALUE IIF(1, 'yes', 'no') FROM c");
+        results.Should().HaveCount(3);
+        results.Should().AllBeEquivalentTo("no");
+    }
+
+    [Fact]
+    public async Task IIF_StringCondition_TreatedAsFalse()
+    {
+        await Seed();
+        var results = await RunQuery<string>("SELECT VALUE IIF('true', 'yes', 'no') FROM c");
+        results.Should().HaveCount(3);
+        results.Should().AllBeEquivalentTo("no");
+    }
+
+    // ── B11: LIKE with OR ──
+    [Fact]
+    public async Task LikeMultiplePatterns_WithOr_Works()
+    {
+        await Seed();
+        var results = await RunQuery<JObject>(
+            "SELECT * FROM c WHERE c.name LIKE 'A%' OR c.name LIKE 'B%' ORDER BY c.name");
+        results.Should().HaveCount(2);
+        results[0]["name"]!.Value<string>().Should().Be("Alice");
+        results[1]["name"]!.Value<string>().Should().Be("Bob");
+    }
+
+    // ── B12: NOT on null ──
+    [Fact]
+    public async Task NotOperator_OnNull_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery<JToken>("SELECT VALUE NOT null FROM c");
+        // NOT null → undefined (3-value logic), excluded by SELECT VALUE
+        results.Should().BeEmpty();
+    }
+
+    // ── B13: Coalesce three args ──
+    [Fact]
+    public async Task Coalesce_ThreeArgs_ChainsCorrectly()
+    {
+        await Seed();
+        // Test chaining ?? with multiple nullish values
+        // c.nonExistent is undefined, c.alsoMissing undefined → 'fallback'
+        var results = await RunQuery<string>(
+            "SELECT VALUE c.nonExistent ?? c.alsoMissing ?? 'fallback' FROM c");
+        results.Should().HaveCount(3);
+        results.Should().AllBeEquivalentTo("fallback");
+    }
+}
+
+// ── Category C: Cross-Feature Interactions ──
+public class QueryDeepDiveV11_CrossFeatureTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","name":"Alice","value":10,"tags":["x","y"],"nested":{"deep":{"value":42}}}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","pk":"b","name":"Bob","value":20,"tags":["z"],"nested":{"deep":{}}}""")),
+            new PartitionKey("b"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"3","pk":"a","name":"Charlie","value":30,"tags":[],"nested":{}}""")),
+            new PartitionKey("a"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    // ── C1: JOIN on non-array (string) field ──
+    [Fact]
+    public async Task JoinOnNonArrayField_ProducesNoRows()
+    {
+        await Seed();
+        // c.name is a string, not an array – JOIN should produce 0 expansion rows
+        var results = await RunQuery<JObject>(
+            "SELECT c.id, t AS letter FROM c JOIN t IN c.name");
+        results.Should().BeEmpty();
+    }
+
+    // ── C2: JOIN on null field ──
+    [Fact]
+    public async Task JoinOnNullField_ProducesNoRows()
+    {
+        var container = new InMemoryContainer("join-null-test", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","items":null}""")),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, t AS item FROM c JOIN t IN c.items");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+
+    // ── C3: JOIN on undefined (missing) field ──
+    [Fact]
+    public async Task JoinOnUndefinedField_ProducesNoRows()
+    {
+        var container = new InMemoryContainer("join-undef-test", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a"}""")),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, t AS item FROM c JOIN t IN c.nonExistent");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+
+    // ── C4: IS_DEFINED on deeply nested path ──
+    [Fact]
+    public async Task IsDefined_DeeplyNested_Works()
+    {
+        await Seed();
+        var results = await RunQuery<JObject>(
+            "SELECT * FROM c WHERE IS_DEFINED(c.nested.deep.value)");
+        // Only doc 1 has nested.deep.value=42
+        results.Should().ContainSingle();
+        results[0]["id"]!.Value<string>().Should().Be("1");
+    }
+
+    // ── C5: DISTINCT with computed ORDER BY ──
+    [Fact]
+    public async Task DistinctWithComputedOrderBy_Works()
+    {
+        await Seed();
+        var results = await RunQuery<string>(
+            "SELECT DISTINCT VALUE c.pk FROM c ORDER BY c.pk ASC");
+        results.Should().HaveCount(2);
+        results[0].Should().Be("a");
+        results[1].Should().Be("b");
+    }
+
+    // ── C6: Cross-partition pagination with continuation tokens ──
+    [Fact]
+    public async Task CrossPartition_ContinuationToken_PaginatesAllResults()
+    {
+        await Seed();
+        var allResults = new List<JObject>();
+        string? continuationToken = null;
+
+        do
+        {
+            var iterator = _container.GetItemQueryIterator<JObject>(
+                "SELECT * FROM c ORDER BY c.id ASC",
+                continuationToken: continuationToken,
+                requestOptions: new QueryRequestOptions { MaxItemCount = 1 });
+
+            var response = await iterator.ReadNextAsync();
+            allResults.AddRange(response);
+            continuationToken = response.ContinuationToken;
+        } while (continuationToken != null);
+
+        allResults.Should().HaveCount(3);
+        allResults[0]["id"]!.Value<string>().Should().Be("1");
+        allResults[1]["id"]!.Value<string>().Should().Be("2");
+        allResults[2]["id"]!.Value<string>().Should().Be("3");
+    }
+}
+
+// ── Category D: DateTime Function Gap Coverage ──
+public class QueryDeepDiveV11_DateTimeFunctionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","dt":"2024-06-15T14:30:45.1234567Z"}""")),
+            new PartitionKey("a"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    // ── D1: DateTimeDiff same datetime → 0 ──
+    [Fact]
+    public async Task DateTimeDiff_SameDateTime_ReturnsZero()
+    {
+        await Seed();
+        var results = await RunQuery<long>(
+            "SELECT VALUE DateTimeDiff('hh', c.dt, c.dt) FROM c");
+        results.Should().ContainSingle().Which.Should().Be(0);
+    }
+
+    // ── D2: DateTimeDiff reversed args → negative ──
+    [Fact]
+    public async Task DateTimeDiff_ReversedArgs_ReturnsNegative()
+    {
+        await Seed();
+        var results = await RunQuery<long>(
+            "SELECT VALUE DateTimeDiff('dd', '2024-06-20T00:00:00Z', '2024-06-15T00:00:00Z') FROM c");
+        results.Should().ContainSingle().Which.Should().Be(-5);
+    }
+
+    // ── D3: DateTimeBin truncation ──
+    [Fact]
+    public async Task DateTimeBin_ToHour_TruncatesMinutesAndSeconds()
+    {
+        await Seed();
+        var results = await RunQuery<string>(
+            "SELECT VALUE DateTimeBin(c.dt, 'hh', 1) FROM c");
+        results.Should().ContainSingle();
+        // 14:30:45 binned to hour → 14:00:00
+        results[0].Should().Contain("14:00:00");
+    }
+
+    // ── D4: GetCurrentDateTime consistency in same query ──
+    [Fact]
+    public async Task GetCurrentDateTime_TwoCallsSameQuery_ReturnSameValue()
+    {
+        await Seed();
+        var results = await RunQuery<JObject>(
+            "SELECT GetCurrentDateTime() AS dt1, GetCurrentDateTime() AS dt2 FROM c");
+        results.Should().ContainSingle();
+        results[0]["dt1"]!.Value<string>().Should().Be(results[0]["dt2"]!.Value<string>());
+    }
+}
+
+// ── Category E: Parameter Edge Cases ──
+public class QueryDeepDiveV11_ParameterTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","name":"Alice","nested":{"x":1}}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","pk":"a","name":"Bob","nested":{"x":2}}""")),
+            new PartitionKey("a"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(QueryDefinition query)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(query);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    // ── E1: Array parameter in ARRAY_CONTAINS ──
+    [Fact]
+    public async Task Parameter_ArrayValue_InArrayContains()
+    {
+        await Seed();
+        var query = new QueryDefinition("SELECT * FROM c WHERE ARRAY_CONTAINS(@names, c.name)")
+            .WithParameter("@names", new[] { "Alice", "Charlie" });
+        var results = await RunQuery<JObject>(query);
+        results.Should().ContainSingle();
+        results[0]["name"]!.Value<string>().Should().Be("Alice");
+    }
+
+    // ── E2: Object parameter in equality ──
+    [Fact]
+    public async Task Parameter_ObjectValue_InEquality()
+    {
+        await Seed();
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.nested = @obj")
+            .WithParameter("@obj", new { x = 1 });
+        var results = await RunQuery<JObject>(query);
+        results.Should().ContainSingle();
+        results[0]["id"]!.Value<string>().Should().Be("1");
     }
 }

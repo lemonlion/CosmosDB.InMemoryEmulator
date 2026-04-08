@@ -5026,14 +5026,32 @@ public class InMemoryContainer : Container
             }
         }
 
+        // Normalize non-primitive / non-JToken values (e.g. anonymous objects from parameters) to JToken
+        var leftJ = left is JToken ? left : NormalizeToJTokenIfComplex(left);
+        var rightJ = right is JToken ? right : NormalizeToJTokenIfComplex(right);
+
         // Cosmos DB uses strict type comparison: different type ranks are never equal
         // (except numeric types which are handled above)
-        if (GetTypeRank(left) != GetTypeRank(right))
+        if (GetTypeRank(leftJ) != GetTypeRank(rightJ))
         {
             return false;
         }
 
-        return string.Equals(left.ToString(), right.ToString(), StringComparison.Ordinal);
+        // Deep-compare JTokens
+        if (leftJ is JToken jtLeft && rightJ is JToken jtRight)
+        {
+            return JToken.DeepEquals(jtLeft, jtRight);
+        }
+
+        return string.Equals(leftJ.ToString(), rightJ.ToString(), StringComparison.Ordinal);
+    }
+
+    private static object NormalizeToJTokenIfComplex(object value)
+    {
+        if (value is null or string or bool or int or long or double or float or decimal or UndefinedValue)
+            return value;
+        try { return JToken.FromObject(value); }
+        catch { return value; }
     }
 
     /// <summary>
@@ -5584,7 +5602,7 @@ public class InMemoryContainer : Container
         var operand = EvaluateSqlExpression(unary.Operand, item, fromAlias, parameters);
         return unary.Operator switch
         {
-            UnaryOp.Not => operand is UndefinedValue ? UndefinedValue.Instance : (object)!IsTruthy(operand),
+            UnaryOp.Not => operand is UndefinedValue or null ? UndefinedValue.Instance : (object)!IsTruthy(operand),
             UnaryOp.Negate => operand is double d ? (object)(-d) : operand is long l ? (object)(-l) : null,
             UnaryOp.BitwiseNot => operand is long lng ? (object)(~lng) : null,
             _ => null
@@ -5784,7 +5802,12 @@ public class InMemoryContainer : Container
                     var ic = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                     return s.Contains(p, ic ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
                 }
-            case "CONCAT": return string.Concat(args.Select(a => a?.ToString() ?? ""));
+            case "CONCAT":
+                {
+                    // Cosmos DB: if any arg is null or undefined, CONCAT returns undefined
+                    if (args.Any(a => a is null or UndefinedValue)) return UndefinedValue.Instance;
+                    return string.Concat(args.Select(a => a.ToString()));
+                }
             case "LENGTH":
                 {
                     if (args.Length == 0) return null;
@@ -5915,12 +5938,12 @@ public class InMemoryContainer : Container
 
                     var s = args[0]?.ToString();
                     var count = ToLong(args[1]);
-                    if (s is null || !count.HasValue || count.Value < 0)
+                    if (s is null || !count.HasValue || count.Value < 0 || count.Value > 10000)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
-                    return count.Value == 0 ? "" : string.Concat(Enumerable.Repeat(s, (int)Math.Min(count.Value, 10000)));
+                    return count.Value == 0 ? "" : string.Concat(Enumerable.Repeat(s, (int)count.Value));
                 }
             case "STRING_EQUALS":
             case "STRINGEQUALS":
@@ -6243,7 +6266,13 @@ public class InMemoryContainer : Container
                 if (args.Length >= 2 && double.TryParse(args[0]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var roundVal)
                     && double.TryParse(args[1]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var roundPrec))
                 {
-                    return Math.Round(roundVal, (int)roundPrec, MidpointRounding.AwayFromZero);
+                    var prec = (int)roundPrec;
+                    if (prec < 0)
+                    {
+                        var factor = Math.Pow(10, -prec);
+                        return Math.Round(roundVal / factor, MidpointRounding.AwayFromZero) * factor;
+                    }
+                    return Math.Round(roundVal, prec, MidpointRounding.AwayFromZero);
                 }
                 return args.Length > 0 ? MathOp(args[0], v => Math.Round(v, MidpointRounding.AwayFromZero)) : null;
             case "SQRT": return args.Length > 0 ? MathOp(args[0], Math.Sqrt) : null;
@@ -6286,12 +6315,12 @@ public class InMemoryContainer : Container
 
                     if (double.TryParse(args[0]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var val) &&
                         double.TryParse(args[1]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var binSize) &&
-                        binSize != 0)
+                        binSize > 0)
                     {
                         return Math.Floor(val / binSize) * binSize;
                     }
 
-                    return null;
+                    return UndefinedValue.Instance;
                 }
             case "INTADD": return args.Length >= 2 ? BitwiseOp(args[0], args[1], (a, b) => a + b) : null;
             case "INTSUB": return args.Length >= 2 ? BitwiseOp(args[0], args[1], (a, b) => a - b) : null;
@@ -6593,7 +6622,8 @@ public class InMemoryContainer : Container
                     if (args.Length < 2) return null;
                     var input = args[0]?.ToString();
                     var delimiter = args[1]?.ToString();
-                    if (input is null || delimiter is null) return null;
+                    if (input is null || delimiter is null) return UndefinedValue.Instance;
+                    if (delimiter.Length == 0) return UndefinedValue.Instance;
                     var parts = input.Split(delimiter);
                     return new JArray(parts.Select(p => (JToken)p));
                 }
@@ -7319,9 +7349,9 @@ public class InMemoryContainer : Container
 
     private static object ArithmeticOp(object left, object right, Func<double, double, double> op)
     {
-        if (left is null || right is null)
+        if (left is null or UndefinedValue || right is null or UndefinedValue)
         {
-            return null;
+            return UndefinedValue.Instance;
         }
 
         if (double.TryParse(left.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var l) &&

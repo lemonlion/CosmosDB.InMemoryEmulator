@@ -1070,7 +1070,7 @@ public class StringArrayConcatTests
     }
 
     [Fact]
-    public async Task Query_ConcatFunction_NullArg_TreatsAsEmpty()
+    public async Task Query_ConcatFunction_NullArg_ReturnsUndefined()
     {
         var c = new InMemoryContainer("concat-fn", "/pk");
         await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
@@ -1078,7 +1078,8 @@ public class StringArrayConcatTests
         var iter = c.GetItemQueryIterator<JToken>(
             "SELECT VALUE CONCAT('a', null, 'b') FROM c");
         var page = await iter.ReadNextAsync();
-        page.First().Value<string>().Should().Be("ab");
+        // Cosmos DB: CONCAT with null arg returns undefined
+        page.Should().BeEmpty();
     }
 
     [Fact]

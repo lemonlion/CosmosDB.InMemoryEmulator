@@ -49,8 +49,9 @@ $filterArg = if ($Filter) { "--filter '$Filter'" } else { "" }
 
 $testCmd = @(
     "dotnet nuget add source /root/.nuget/packages --name local-cache 2>/dev/null;"
-    "dotnet restore --source /root/.nuget/packages tests/CosmosDB.InMemoryEmulator.Tests 2>/dev/null;"
-    "dotnet test tests/CosmosDB.InMemoryEmulator.Tests --nologo -c Release --no-restore -p:TreatWarningsAsErrors=false $filterArg"
+    "find /src -name 'project.assets.json' -delete 2>/dev/null;"
+    "dotnet restore tests/CosmosDB.InMemoryEmulator.Tests -p:TargetFrameworks=net8.0 --source /root/.nuget/packages -p:TreatWarningsAsErrors=false 2>/dev/null;"
+    "dotnet test tests/CosmosDB.InMemoryEmulator.Tests --nologo -c Release -f net8.0 --no-restore -p:TreatWarningsAsErrors=false $filterArg"
 ) -join ' '
 
 Write-Host "Running tests on Linux (mcr.microsoft.com/dotnet/sdk:8.0)..." -ForegroundColor Cyan
