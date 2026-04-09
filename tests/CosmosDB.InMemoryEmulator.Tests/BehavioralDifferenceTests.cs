@@ -103,23 +103,22 @@ public class BehavioralDifferenceTests
     // ── ETag format ──────────────────────────────────────────────────────────
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos DB ETags are opaque strings derived
-    /// from the document's internal timestamp. InMemoryContainer generates
-    /// ETags as quoted GUIDs (e.g. "\"guid-here\""). The format differs but
-    /// the concurrency semantics (If-Match / If-None-Match) work correctly.
+    /// ETags are quoted monotonically increasing hex counters.
+    /// The format differs from real Cosmos (opaque timestamp-based) but
+    /// the concurrency semantics (If-Match / If-None-Match) work correctly,
+    /// and monotonic ordering is preserved.
     /// </summary>
     [Fact]
-    public async Task ETag_IsQuotedGuid_NotOpaqueTimestamp()
+    public async Task ETag_IsQuotedMonotonicHex()
     {
         var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" };
         var response = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
         var etag = response.ETag;
         etag.Should().NotBeNullOrEmpty();
-        // InMemoryContainer uses quoted GUID format
+        // InMemoryContainer uses quoted hex counter format
         etag.Should().StartWith("\"").And.EndWith("\"");
-        var inner = etag.Trim('"');
-        Guid.TryParse(inner, out _).Should().BeTrue();
+        etag.Should().MatchRegex("^\"[0-9a-f]{16}\"$");
     }
 
     // ── LINQ query ──────────────────────────────────────────────────────────

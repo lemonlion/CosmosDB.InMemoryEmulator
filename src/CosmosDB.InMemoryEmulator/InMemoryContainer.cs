@@ -71,6 +71,9 @@ public class InMemoryContainer : Container
     private const double SyntheticRequestCharge = 1.0;
     private const double EarthRadiusMeters = 6_371_000.0;
 
+    private static long _etagCounter;
+    private static int _docRidCounter;
+
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), string> _items = new();
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), string> _etags = new();
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), DateTimeOffset> _timestamps = new();
@@ -376,7 +379,7 @@ public class InMemoryContainer : Container
 
                 ValidateUniqueKeys(jObj, pk);
 
-                var importEtag = $"\"{ Guid.NewGuid()}\"";
+                var importEtag = GenerateETag();
                 _etags[key] = importEtag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
                 _items[key] = EnrichWithSystemProperties(itemJson, importEtag, _timestamps[key]);
@@ -2185,7 +2188,7 @@ public class InMemoryContainer : Container
         return raw;
     }
 
-    private static string GenerateETag() => $"\"{Guid.NewGuid()}\"";
+    private static string GenerateETag() => $"\"{Interlocked.Increment(ref _etagCounter):x16}\"";
 
     private void ValidatePartitionKeyConsistency(PartitionKey? explicitKey, JObject jObj)
     {
@@ -2365,10 +2368,15 @@ public class InMemoryContainer : Container
         }
     }
 
-    private static string EnrichWithSystemProperties(string json, string etag, DateTimeOffset timestamp)
+    private string EnrichWithSystemProperties(string json, string etag, DateTimeOffset timestamp)
     {
         var jObj = JsonParseHelpers.ParseJson(json);
-        jObj["_rid"] = Convert.ToBase64String(Guid.NewGuid().ToByteArray()).TrimEnd('=');
+        var containerHash = PartitionKeyHash.MurmurHash3(Id);
+        var docId = (uint)Interlocked.Increment(ref _docRidCounter);
+        var ridBytes = new byte[8];
+        Buffer.BlockCopy(BitConverter.GetBytes(containerHash), 0, ridBytes, 0, 4);
+        Buffer.BlockCopy(BitConverter.GetBytes(docId), 0, ridBytes, 4, 4);
+        jObj["_rid"] = Convert.ToBase64String(ridBytes);
         jObj["_self"] = $"dbs/db/colls/col/docs/{jObj["id"]}";
         jObj["_etag"] = etag;
         jObj["_ts"] = timestamp.ToUnixTimeSeconds();

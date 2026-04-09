@@ -1675,14 +1675,10 @@ public class TypedIfNoneMatchTests
 
 public class ResponseMetadataDivergentBehaviorDeepDiveTests
 {
-    [Fact(Skip = "Real Cosmos: ETags encode version numbers or timestamps for monotonic ordering. Emulator: random GUID per write, no ordering.")]
-    public void ETag_ShouldBeSequentialVersion_NotRandomGuid() { }
-
     [Fact]
-    public async Task ETag_EmulatorBehavior_IsRandomGuidPerWrite()
+    public async Task ETag_IsMonotonicallyIncreasingHexCounter()
     {
-        // DIVERGENT BEHAVIOUR: Each write generates a new random GUID ETag.
-        // Real Cosmos ETags encode version info; emulator ETags are random GUIDs.
+        // ETags are monotonically increasing hex counters, providing ordering.
         var container = new InMemoryContainer("test", "/partitionKey");
         var r1 = await container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
@@ -1690,7 +1686,13 @@ public class ResponseMetadataDivergentBehaviorDeepDiveTests
             new TestDocument { Id = "1", PartitionKey = "pk", Name = "B" }, new PartitionKey("pk"));
 
         r1.ETag.Should().NotBe(r2.ETag);
-        Guid.TryParse(r1.ETag?.Trim('"'), out _).Should().BeTrue();
+        r1.ETag.Should().MatchRegex("^\"[0-9a-f]{16}\"$");
+        r2.ETag.Should().MatchRegex("^\"[0-9a-f]{16}\"$");
+
+        // Verify monotonic ordering
+        var v1 = long.Parse(r1.ETag!.Trim('"'), System.Globalization.NumberStyles.HexNumber);
+        var v2 = long.Parse(r2.ETag!.Trim('"'), System.Globalization.NumberStyles.HexNumber);
+        v2.Should().BeGreaterThan(v1);
     }
 
     [Fact(Skip = "Real Cosmos: continuation tokens are opaque base64-encoded JSON with partition info. Emulator: plain integer offset.")]

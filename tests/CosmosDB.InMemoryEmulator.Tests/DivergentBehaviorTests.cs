@@ -397,11 +397,20 @@ public class ContinuationTokenDivergenceTests
 
 public class SystemPropertiesDivergenceTests
 {
-    [Fact(Skip = "D4: System properties (_rid, _self, _attachments) don't match real Cosmos format. " +
-                 "Real _rid is a base64-encoded resource ID, _self is a URI path like " +
-                 "'dbs/db-rid/colls/coll-rid/docs/doc-rid', _attachments is a URI path. " +
-                 "The emulator uses synthetic GUID-like values or empty strings.")]
-    public void SystemProperties_ShouldMatchCosmosFormat() { }
+    [Fact]
+    public async Task SystemProperties_RidIsHierarchicalBase64()
+    {
+        var container = new InMemoryContainer("test-d4", "/pk");
+        var created = await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var doc = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        var rid = doc["_rid"]!.ToString();
+
+        // _rid should be base64 of exactly 8 bytes (hierarchical: 4-byte container + 4-byte doc counter)
+        var ridBytes = Convert.FromBase64String(rid);
+        ridBytes.Length.Should().Be(8);
+    }
 
     [Fact]
     public async Task SystemProperties_EmulatorBehavior_HasTsAndEtag()

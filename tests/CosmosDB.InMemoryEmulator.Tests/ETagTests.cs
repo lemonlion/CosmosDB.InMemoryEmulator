@@ -191,29 +191,29 @@ public class ETagResponseTests
     }
 
     [Fact]
-    public async Task ETag_Format_IsQuotedGuid_OnAllWriteOperations()
+    public async Task ETag_Format_IsQuotedHex_OnAllWriteOperations()
     {
-        var guidPattern = "^\"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\"$";
+        var hexPattern = "^\"[0-9a-f]{16}\"$";
 
         var create = await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Value = 1 },
             new PartitionKey("pk1"));
-        create.ETag.Should().MatchRegex(guidPattern);
+        create.ETag.Should().MatchRegex(hexPattern);
 
         var upsert = await _container.UpsertItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Upserted" },
             new PartitionKey("pk1"));
-        upsert.ETag.Should().MatchRegex(guidPattern);
+        upsert.ETag.Should().MatchRegex(hexPattern);
 
         var replace = await _container.ReplaceItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" },
             "1", new PartitionKey("pk1"));
-        replace.ETag.Should().MatchRegex(guidPattern);
+        replace.ETag.Should().MatchRegex(hexPattern);
 
         var patch = await _container.PatchItemAsync<TestDocument>(
             "1", new PartitionKey("pk1"),
             [PatchOperation.Set("/name", "Patched")]);
-        patch.ETag.Should().MatchRegex(guidPattern);
+        patch.ETag.Should().MatchRegex(hexPattern);
     }
 
     [Fact]

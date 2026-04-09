@@ -1904,12 +1904,12 @@ public class CrudETagFormatTests
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
 
     [Fact]
-    public async Task Create_ETagHasQuotedGuidFormat()
+    public async Task Create_ETagHasQuotedHexFormat()
     {
         var response = await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
 
-        response.ETag.Should().MatchRegex("^\"[0-9a-f-]+\"$");
+        response.ETag.Should().MatchRegex("^\"[0-9a-f]{16}\"$");
     }
 
     [Fact]
