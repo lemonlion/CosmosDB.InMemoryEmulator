@@ -7015,20 +7015,16 @@ public class InMemoryContainer : Container
             // otherwise returns undefined (omitted from results).
             case "COALESCE":
                 {
-                    object fallback = UndefinedValue.Instance;
+                    // COALESCE returns the first expression that is NOT undefined.
+                    // null is a defined value and should be returned (unlike ?? which skips both null and undefined).
                     foreach (var arg in args)
                     {
-                        if (arg is null)
-                        {
-                            fallback = null;
-                            continue;
-                        }
                         if (arg is UndefinedValue)
                             continue;
-                        return arg;
+                        return arg; // returns first non-undefined value (including null)
                     }
 
-                    return fallback;
+                    return UndefinedValue.Instance;
                 }
 
             default:

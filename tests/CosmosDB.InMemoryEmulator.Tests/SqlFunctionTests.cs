@@ -1928,6 +1928,7 @@ public class SqlFunctionGapTests4
                 """{"id":"1","partitionKey":"pk1","a":null,"b":"value"}""")),
             new PartitionKey("pk1"));
 
+        // COALESCE returns the first non-undefined value. c.a is null (defined) → returned as null.
         var iterator = _container.GetItemQueryIterator<JToken>(
             """SELECT VALUE COALESCE(c.a, c.b) FROM c""");
         var results = new List<JToken>();
@@ -1938,7 +1939,7 @@ public class SqlFunctionGapTests4
         }
 
         results.Should().ContainSingle();
-        results[0].ToString().Should().Be("value");
+        results[0].Type.Should().Be(JTokenType.Null);
     }
 
     [Fact]

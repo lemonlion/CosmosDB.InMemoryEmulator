@@ -773,12 +773,13 @@ public class IifFunctionTests
     public async Task Iif_WithCoalesce_ComposesCorrectly()
     {
         await SeedItems();
+        // IIF(false, null, null) → null. COALESCE(null, 'default') → null (null is defined)
         var query = new QueryDefinition("SELECT COALESCE(IIF(false, null, null), 'default') AS r FROM c WHERE c.id = '1'");
 
         var results = await QueryAll<JObject>(query);
 
         results.Should().ContainSingle();
-        results[0]["r"]!.ToString().Should().Be("default");
+        results[0]["r"]!.Type.Should().Be(JTokenType.Null);
     }
 
     [Fact]
