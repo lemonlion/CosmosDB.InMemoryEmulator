@@ -19163,3 +19163,804 @@ public class QueryDeepDiveV12_ErrorHandling
             .Where(e => e.StatusCode == System.Net.HttpStatusCode.BadRequest);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Deep Dive V13 — Comprehensive Edge Case Coverage
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class QueryDeepDiveV13_StringEdgeCases
+{
+    private readonly InMemoryContainer _container = new("v13-str", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","name":"hello","empty":"","spaces":"   "}""")),
+            new PartitionKey("a"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task StartsWith_EmptyPrefix_ReturnsTrue()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE STARTSWITH(c.name, '') FROM c");
+        r.Should().ContainSingle().Which.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EndsWith_EmptySuffix_ReturnsTrue()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE ENDSWITH(c.name, '') FROM c");
+        r.Should().ContainSingle().Which.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task IndexOf_EmptySearchString_ReturnsZero()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE INDEX_OF('hello', '') FROM c");
+        r.Should().ContainSingle().Which.Value<long>().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Replace_EmptyFind_ReturnsOriginal()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE REPLACE('hello', '', 'x') FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("hello");
+    }
+
+    [Fact]
+    public async Task Replace_EmptyReplacement_RemovesFind()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE REPLACE('hello', 'l', '') FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("heo");
+    }
+
+    [Fact]
+    public async Task Contains_EmptySubstring_ReturnsTrue()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE CONTAINS('hello', '') FROM c");
+        r.Should().ContainSingle().Which.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RegexMatch_InvalidPattern_ReturnsUndefined()
+    {
+        await Seed();
+        // Real Cosmos DB returns undefined for invalid regex
+        var r = await RunQuery<JToken>("SELECT VALUE REGEXMATCH('test', '[invalid') FROM c");
+        // Invalid regex — undefined → omitted by SELECT VALUE
+        r.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Trim_WhitespaceOnlyString_ReturnsEmpty()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE TRIM(c.spaces) FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("");
+    }
+
+    [Fact]
+    public async Task StringSplit_ConsecutiveDelimiters_IncludesEmpties()
+    {
+        await Seed();
+        var r = await RunQuery<JArray>("SELECT VALUE STRINGSPLIT('a,,b', ',') FROM c");
+        r.Should().ContainSingle();
+        var arr = r[0];
+        arr.Should().HaveCount(3);
+        arr[0]!.Value<string>().Should().Be("a");
+        arr[1]!.Value<string>().Should().Be("");
+        arr[2]!.Value<string>().Should().Be("b");
+    }
+
+    [Fact]
+    public async Task Concat_ManyArgs_WorksCorrectly()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE CONCAT('a','b','c','d','e') FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("abcde");
+    }
+}
+
+public class QueryDeepDiveV13_MathEdgeCases
+{
+    private readonly InMemoryContainer _container = new("v13-math", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a"}""")),
+            new PartitionKey("a"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Power_ZeroToZero_ReturnsOne()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE POWER(0, 0) FROM c");
+        r.Should().ContainSingle().Which.Value<double>().Should().Be(1.0);
+    }
+
+    [Fact]
+    public async Task Power_NegativeBaseFractionalExp_ReturnsUndefined()
+    {
+        await Seed();
+        // POWER(-1, 0.5) → NaN → undefined
+        var r = await RunQuery<JToken>("SELECT VALUE POWER(-1, 0.5) FROM c");
+        r.Should().BeEmpty(); // undefined → omitted by SELECT VALUE
+    }
+
+    [Fact]
+    public async Task Log_BaseOne_ReturnsUndefined()
+    {
+        await Seed();
+        // LOG(10, 1) → division by zero in change of base → Infinity → undefined
+        var r = await RunQuery<JToken>("SELECT VALUE LOG(10, 1) FROM c");
+        r.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Log_OneAnyBase_ReturnsZero()
+    {
+        await Seed();
+        // LOG(1) = ln(1) = 0
+        var r = await RunQuery<JToken>("SELECT VALUE LOG(1) FROM c");
+        r.Should().ContainSingle().Which.Value<double>().Should().Be(0.0);
+    }
+
+    [Fact]
+    public async Task Trunc_NegativeNumber_TruncatesTowardZero()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE TRUNC(-3.7) FROM c");
+        r.Should().ContainSingle().Which.Value<double>().Should().Be(-3.0);
+    }
+
+    [Fact]
+    public async Task Sign_NegativeZero_ReturnsZero()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE SIGN(-0.0) FROM c");
+        r.Should().ContainSingle().Which.Value<double>().Should().Be(0.0);
+    }
+
+    [Fact]
+    public async Task Asin_ExactBoundary_ReturnsHalfPi()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE ASIN(1.0) FROM c");
+        r.Should().ContainSingle().Which.Value<double>().Should().BeApproximately(Math.PI / 2, 1e-10);
+    }
+
+    [Fact]
+    public async Task Acos_ExactNegBoundary_ReturnsPi()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE ACOS(-1.0) FROM c");
+        r.Should().ContainSingle().Which.Value<double>().Should().BeApproximately(Math.PI, 1e-10);
+    }
+}
+
+public class QueryDeepDiveV13_ArrayEdgeCases
+{
+    private readonly InMemoryContainer _container = new("v13-arr", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","arr":[1,2,3],"empty":[],"obj":{"x":1,"y":2}}""")),
+            new PartitionKey("a"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task ArraySlice_NegativeLength_ReturnsEmpty()
+    {
+        await Seed();
+        var r = await RunQuery<JArray>("SELECT VALUE ARRAY_SLICE([1,2,3], 0, -1) FROM c");
+        r.Should().ContainSingle().Which.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ArrayConcat_WithNull_ReturnsUndefined()
+    {
+        await Seed();
+        // ARRAY_CONCAT with null arg → undefined
+        var r = await RunQuery<JToken>("SELECT VALUE ARRAY_CONCAT([1], null) FROM c");
+        r.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SetIntersect_WithDuplicates_Deduplicates()
+    {
+        await Seed();
+        var r = await RunQuery<JArray>("SELECT VALUE SetIntersect([1,1,2], [1,2,2]) FROM c");
+        r.Should().ContainSingle();
+        var arr = r[0];
+        arr.Select(t => t.Value<int>()).Order().Should().BeEquivalentTo([1, 2]);
+    }
+
+    [Fact]
+    public async Task SetUnion_WithDuplicates_Deduplicates()
+    {
+        await Seed();
+        var r = await RunQuery<JArray>("SELECT VALUE SetUnion([1,1], [2,2]) FROM c");
+        r.Should().ContainSingle();
+        var arr = r[0];
+        arr.Select(t => t.Value<int>()).Order().Should().BeEquivalentTo([1, 2]);
+    }
+
+    [Fact]
+    public async Task SetDifference_EmptyFirst_ReturnsEmpty()
+    {
+        await Seed();
+        var r = await RunQuery<JArray>("SELECT VALUE SetDifference([], [1]) FROM c");
+        r.Should().ContainSingle().Which.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ObjectToArray_EmptyObject_ReturnsEmpty()
+    {
+        await Seed();
+        var r = await RunQuery<JArray>("SELECT VALUE ObjectToArray({}) FROM c");
+        r.Should().ContainSingle().Which.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ArrayToObject_EmptyArray_ReturnsEmpty()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>("SELECT VALUE ArrayToObject([]) FROM c");
+        r.Should().ContainSingle().Which.Properties().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Choose_FractionalIndex_TruncatesToInt()
+    {
+        await Seed();
+        // CHOOSE(1.9, ...) → truncated to 1 → returns first element
+        var r = await RunQuery<JToken>("SELECT VALUE CHOOSE(1.9, 'a', 'b', 'c') FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("a");
+    }
+}
+
+public class QueryDeepDiveV13_DateTimeEdgeCases
+{
+    private readonly InMemoryContainer _container = new("v13-dt", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a"}""")),
+            new PartitionKey("a"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task DateTimeAdd_NegativeMagnitude_Subtracts()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE DATETIMEADD('dd', -1, '2024-01-01T00:00:00Z') FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().StartWith("2023-12-31");
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_EndBeforeStart_ReturnsNegative()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE DATETIMEDIFF('dd', '2024-01-02T00:00:00Z', '2024-01-01T00:00:00Z') FROM c");
+        r.Should().ContainSingle().Which.Value<long>().Should().Be(-1);
+    }
+
+    [Fact]
+    public async Task DateTimeDiff_EqualDates_ReturnsZero()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE DATETIMEDIFF('dd', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z') FROM c");
+        r.Should().ContainSingle().Which.Value<long>().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task DateTimeFromParts_InvalidMonth_ReturnsUndefined()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE DATETIMEFROMPARTS(2024, 13, 1, 0, 0, 0, 0) FROM c");
+        r.Should().BeEmpty(); // undefined → omitted
+    }
+
+    [Fact]
+    public async Task DateTimePart_Millisecond_ReturnsCorrect()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE DATETIMEPART('ms', '2024-06-15T12:30:45.123Z') FROM c");
+        r.Should().ContainSingle().Which.Value<long>().Should().Be(123);
+    }
+
+    [Fact]
+    public async Task DateTimePart_Nanosecond_ReturnsCorrect()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE DATETIMEPART('ns', '2024-06-15T12:30:45.1234567Z') FROM c");
+        r.Should().ContainSingle().Which.Value<long>().Should().Be(123456700);
+    }
+}
+
+public class QueryDeepDiveV13_OperatorEdgeCases
+{
+    private readonly InMemoryContainer _container = new("v13-ops", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","val":5,"name":"banana","nullVal":null}""")),
+            new PartitionKey("a"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Between_WithStrings_ComparesLexically()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE ('banana' BETWEEN 'apple' AND 'cherry') FROM c");
+        r.Should().ContainSingle().Which.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Between_NotBetween_ExcludesCorrectly()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE NOT (5 BETWEEN 1 AND 10) FROM c");
+        r.Should().ContainSingle().Which.Value<bool>().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task In_WithNull_MatchesNull()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>(
+            "SELECT * FROM c WHERE c.nullVal IN (null, 1, 'a')");
+        r.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task In_MixedTypes_StrictTypeMatch()
+    {
+        await Seed();
+        // c.val = 5 (number), should match 5 but not "5" or true
+        var r = await RunQuery<JObject>(
+            "SELECT * FROM c WHERE c.val IN (5, '5', true)");
+        r.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task NestedTernary_EvaluatesCorrectly()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE (true ? (false ? 'a' : 'b') : 'c') FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("b");
+    }
+
+    [Fact]
+    public async Task Ternary_NonBoolCondition_ReturnsFalseBranch()
+    {
+        await Seed();
+        // 1 is not boolean → false branch
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE (1 ? 'yes' : 'no') FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("no");
+    }
+
+    [Fact]
+    public async Task Like_MultipleWildcards_MatchesCorrectly()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE ('abcabc' LIKE 'a%c%c') FROM c");
+        r.Should().ContainSingle().Which.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Like_EscapedUnderscore_MatchesLiteral()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            @"SELECT VALUE ('a_b' LIKE 'a\_b' ESCAPE '\') FROM c");
+        r.Should().ContainSingle().Which.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task NullCoalesce_NestedChain_FirstNonNull()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE (null ?? null ?? 'found') FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("found");
+    }
+
+    [Fact]
+    public async Task StringConcat_Operator_Works()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE ('hello' || ' ' || 'world') FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("hello world");
+    }
+}
+
+public class QueryDeepDiveV13_CrossFeature
+{
+    private readonly InMemoryContainer _container = new("v13-cross", "/pk");
+
+    private async Task Seed()
+    {
+        foreach (var (id, pk, val, cat) in new[]
+        {
+            ("1", "a", 10, "X"), ("2", "a", 20, "X"), ("3", "a", 30, "Y"),
+            ("4", "b", 40, "Y"), ("5", "b", 50, "Z"),
+        })
+        {
+            await _container.CreateItemStreamAsync(
+                new MemoryStream(Encoding.UTF8.GetBytes(
+                    $$"""{"id":"{{id}}","pk":"{{pk}}","val":{{val}},"cat":"{{cat}}","tags":["t1","t2"]}""")),
+                new PartitionKey(pk));
+        }
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Distinct_Top_OrderBy_ExecutionOrder()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>(
+            "SELECT DISTINCT TOP 2 c.cat FROM c ORDER BY c.cat");
+        r.Should().HaveCount(2);
+        r[0]["cat"]!.Value<string>().Should().Be("X");
+        r[1]["cat"]!.Value<string>().Should().Be("Y");
+    }
+
+    [Fact]
+    public async Task Offset_BeyondResultCount_ReturnsEmpty()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>(
+            "SELECT * FROM c ORDER BY c.val OFFSET 100 LIMIT 10");
+        r.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Limit_Zero_ReturnsEmpty()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>(
+            "SELECT * FROM c ORDER BY c.val OFFSET 0 LIMIT 0");
+        r.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GroupBy_OrderBy_Top_Combined()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt FROM c GROUP BY c.cat ORDER BY cnt DESC");
+        r.Should().HaveCount(3);
+        // X=2, Y=2, Z=1 — X and Y tied at 2, Z is last with 1
+        r[2]["cnt"]!.Value<int>().Should().Be(1);
+        r[2]["cat"]!.Value<string>().Should().Be("Z");
+        r[0]["cnt"]!.Value<int>().Should().Be(2);
+        r[1]["cnt"]!.Value<int>().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Join_WithDistinct_Deduplicates()
+    {
+        await Seed();
+        // All 5 docs have tags ["t1","t2"], so JOIN gives 10 rows; DISTINCT → 2
+        var r = await RunQuery<JToken>(
+            "SELECT DISTINCT VALUE t FROM c JOIN t IN c.tags");
+        r.Should().HaveCount(2);
+        r.Select(t => t.Value<string>()).Order().Should().BeEquivalentTo(["t1", "t2"]);
+    }
+
+    [Fact]
+    public async Task GroupBy_WithMultipleAggregates()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt, SUM(c.val) AS total FROM c GROUP BY c.cat ORDER BY c.cat");
+        r.Should().HaveCount(3);
+        r[0]["cat"]!.Value<string>().Should().Be("X");
+        r[0]["cnt"]!.Value<int>().Should().Be(2);
+        r[0]["total"]!.Value<int>().Should().Be(30); // 10+20
+    }
+
+    [Fact]
+    public async Task Exists_WithComplex_Where()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>(
+            "SELECT * FROM c WHERE EXISTS(SELECT VALUE t FROM t IN c.tags WHERE t = 't1') AND c.val > 20");
+        r.Should().HaveCount(3); // docs 3,4,5 have val>20 and all have t1
+    }
+
+    [Fact]
+    public async Task Between_WithParameters_Works()
+    {
+        await Seed();
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.val BETWEEN @lo AND @hi")
+            .WithParameter("@lo", 15)
+            .WithParameter("@hi", 35);
+        var iterator = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        results.Should().HaveCount(2); // val=20, val=30
+    }
+
+    [Fact]
+    public async Task MultipleAggregates_SingleQuery()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>(
+            "SELECT COUNT(1) AS cnt, SUM(c.val) AS total, AVG(c.val) AS avg FROM c");
+        r.Should().ContainSingle();
+        r[0]["cnt"]!.Value<int>().Should().Be(5);
+        r[0]["total"]!.Value<int>().Should().Be(150);
+        r[0]["avg"]!.Value<double>().Should().Be(30.0);
+    }
+
+    [Fact]
+    public async Task Join_GroupBy_Aggregate()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>(
+            "SELECT t AS tag, COUNT(1) AS cnt FROM c JOIN t IN c.tags GROUP BY t ORDER BY t");
+        r.Should().HaveCount(2);
+        r[0]["tag"]!.Value<string>().Should().Be("t1");
+        r[0]["cnt"]!.Value<int>().Should().Be(5); // every doc has t1
+    }
+}
+
+public class QueryDeepDiveV13_ParameterEdgeCases
+{
+    private readonly InMemoryContainer _container = new("v13-param", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","val":10,"nullVal":null}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","pk":"a","val":20}""")),
+            new PartitionKey("a"));
+    }
+
+    [Fact]
+    public async Task ParameterReuse_SameParamMultipleTimes()
+    {
+        await Seed();
+        var query = new QueryDefinition(
+            "SELECT * FROM c WHERE c.val > @x AND c.val < @x * 3 + @x")
+            .WithParameter("@x", 5);
+        var iterator = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        // val > 5 AND val < 20 → only val=10
+        results.Should().ContainSingle();
+        results[0]["val"]!.Value<int>().Should().Be(10);
+    }
+
+    [Fact]
+    public async Task ParameterEmptyArray_InQuery()
+    {
+        await Seed();
+        var query = new QueryDefinition(
+            "SELECT VALUE ARRAY_LENGTH(@arr) FROM c")
+            .WithParameter("@arr", new JArray());
+        var iterator = _container.GetItemQueryIterator<JToken>(query);
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        results.Should().HaveCount(2); // one per doc
+        results[0].Value<int>().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ParameterEmptyObject_InQuery()
+    {
+        await Seed();
+        var query = new QueryDefinition(
+            "SELECT VALUE IS_OBJECT(@obj) FROM c")
+            .WithParameter("@obj", new JObject());
+        var iterator = _container.GetItemQueryIterator<JToken>(query);
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        results[0].Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ParameterNull_IsNull_ReturnsTrue()
+    {
+        await Seed();
+        var query = new QueryDefinition(
+            "SELECT VALUE IS_NULL(@val) FROM c")
+            .WithParameter("@val", null);
+        var iterator = _container.GetItemQueryIterator<JToken>(query);
+        var results = new List<JToken>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        results[0].Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DuplicateParameter_LastWins()
+    {
+        await Seed();
+        var query = new QueryDefinition(
+            "SELECT * FROM c WHERE c.val = @x")
+            .WithParameter("@x", 999)
+            .WithParameter("@x", 10);
+        var iterator = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        results.Should().ContainSingle();
+        results[0]["val"]!.Value<int>().Should().Be(10);
+    }
+
+    [Fact]
+    public async Task ParameterInBetween_Works()
+    {
+        await Seed();
+        var query = new QueryDefinition(
+            "SELECT * FROM c WHERE c.val BETWEEN @lo AND @hi")
+            .WithParameter("@lo", 5)
+            .WithParameter("@hi", 15);
+        var iterator = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        results.Should().ContainSingle();
+        results[0]["val"]!.Value<int>().Should().Be(10);
+    }
+}
+
+public class QueryDeepDiveV13_ProjectionEdgeCases
+{
+    private readonly InMemoryContainer _container = new("v13-proj", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","val":10,"nested":{"deep":{"deeper":{"leaf":"found"}}}}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"2","pk":"a","val":20}""")),
+            new PartitionKey("a"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task SelectValue_Null_ReturnsNullRow()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE null FROM c");
+        r.Should().HaveCount(2);
+        r[0].Type.Should().Be(JTokenType.Null);
+    }
+
+    [Fact]
+    public async Task SelectValue_UndefinedPath_OmitsRow()
+    {
+        await Seed();
+        // doc 2 has no "nested" → undefined → omitted by SELECT VALUE
+        var r = await RunQuery<JToken>("SELECT VALUE c.nested.deep.deeper.leaf FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("found");
+    }
+
+    [Fact]
+    public async Task DeeplyNestedPath_FourLevels()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>(
+            "SELECT c.nested.deep.deeper.leaf AS leaf FROM c WHERE c.id = '1'");
+        r.Should().ContainSingle();
+        r[0]["leaf"]!.Value<string>().Should().Be("found");
+    }
+
+    [Fact]
+    public async Task Select_SystemProperties_HasCorrectTypes()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>(
+            "SELECT c._ts, c._etag, c.id FROM c WHERE c.id = '1'");
+        r.Should().ContainSingle();
+        r[0]["_ts"]!.Type.Should().Be(JTokenType.Integer);
+        r[0]["_etag"]!.Type.Should().Be(JTokenType.String);
+    }
+
+    [Fact]
+    public async Task Select_SameFieldMultipleAliases()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>(
+            "SELECT c.id AS id1, c.id AS id2 FROM c WHERE c.id = '1'");
+        r.Should().ContainSingle();
+        r[0]["id1"]!.Value<string>().Should().Be("1");
+        r[0]["id2"]!.Value<string>().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task SelectValue_WithAggregate_DirectlyWorks()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE COUNT(1) FROM c");
+        r.Should().ContainSingle().Which.Value<int>().Should().Be(2);
+    }
+}

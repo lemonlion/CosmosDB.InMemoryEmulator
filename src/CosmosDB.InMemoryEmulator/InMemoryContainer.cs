@@ -5666,12 +5666,12 @@ public class InMemoryContainer : Container
                 }
             case "IS_NULL": return args.Length > 0 && args[0] is null;
             case "IS_ARRAY":
-                return args.Length > 0 && ResolveTokenType(func.Arguments, item, fromAlias) is JArray;
+                return args.Length > 0 && (ResolveTokenType(func.Arguments, item, fromAlias) is JArray || args[0] is JArray);
             case "IS_BOOL": return args.Length > 0 && args[0] is bool;
             case "IS_NUMBER": return args.Length > 0 && args[0] is long or double or int or float or decimal;
             case "IS_STRING": return args.Length > 0 && args[0] is string;
             case "IS_OBJECT":
-                return args.Length > 0 && ResolveTokenType(func.Arguments, item, fromAlias) is JObject;
+                return args.Length > 0 && (ResolveTokenType(func.Arguments, item, fromAlias) is JObject || args[0] is JObject);
             case "IS_PRIMITIVE":
                 {
                     if (args.Length == 0)
@@ -5927,7 +5927,14 @@ public class InMemoryContainer : Container
                             };
                         }
                     }
-                    return GetOrCreateRegex(pattern, options).IsMatch(input);
+                    try
+                    {
+                        return GetOrCreateRegex(pattern, options).IsMatch(input);
+                    }
+                    catch (ArgumentException)
+                    {
+                        return UndefinedValue.Instance;
+                    }
                 }
             case "REPLICATE":
                 {
@@ -6247,12 +6254,14 @@ public class InMemoryContainer : Container
                             ja = evaluated as JArray;
                         }
 
-                        if (ja is not null)
+                        if (ja is null)
                         {
-                            foreach (var el in ja)
-                            {
-                                result.Add(el.DeepClone());
-                            }
+                            return UndefinedValue.Instance;
+                        }
+
+                        foreach (var el in ja)
+                        {
+                            result.Add(el.DeepClone());
                         }
                     }
                     return result;

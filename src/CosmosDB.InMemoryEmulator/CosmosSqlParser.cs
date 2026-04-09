@@ -1337,6 +1337,9 @@ public static class CosmosSqlParser
         BinaryOp.Modulo => "%",
         BinaryOp.Like => "LIKE",
         BinaryOp.StringConcat => "||",
+        BinaryOp.BitwiseAnd => "&",
+        BinaryOp.BitwiseOr => "|",
+        BinaryOp.BitwiseXor => "^",
         _ => op.ToString(),
     };
 
