@@ -6136,8 +6136,7 @@ public class InMemoryContainer : Container
                 if (args[0] is null or UndefinedValue) return UndefinedValue.Instance;
                 if (args[0] is bool boolVal) return boolVal ? "true" : "false";
                 if (args[0] is string or long or int or double or float or decimal) return args[0].ToString();
-                // Arrays, objects, and other complex types → undefined in Cosmos DB
-                if (args[0] is JArray or JObject) return UndefinedValue.Instance;
+                if (args[0] is JArray or JObject) return ((JToken)args[0]).ToString(Newtonsoft.Json.Formatting.None);
                 if (args[0] is JValue jv && jv.Type == JTokenType.Null) return UndefinedValue.Instance;
                 return args[0].ToString();
             case "TONUMBER" or "ToNumber":
@@ -6149,7 +6148,7 @@ public class InMemoryContainer : Container
 
                     if (args[0] is null)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     if (args[0] is long or double)

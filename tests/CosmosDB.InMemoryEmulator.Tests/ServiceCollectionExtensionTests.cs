@@ -1321,6 +1321,7 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
 /// without explicit <c>AddContainer()</c> calls, existing <c>Container</c> factory
 /// registrations are preserved. They naturally resolve against the in-memory client.
 /// </summary>
+[Collection("FeedIteratorSetup")]
 public class AutoDetectContainerTests
 {
 

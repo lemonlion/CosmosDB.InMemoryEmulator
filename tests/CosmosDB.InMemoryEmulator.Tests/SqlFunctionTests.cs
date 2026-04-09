@@ -2598,11 +2598,12 @@ public class SqlFunctionConversionEdgeCaseTests
     }
 
     [Fact]
-    public async Task ToNumber_NullInput_ReturnsNull()
+    public async Task ToNumber_NullInput_ReturnsUndefined()
     {
         await Seed();
+        // TONUMBER(null) → undefined per Cosmos semantics — field is omitted
         var results = await Query("SELECT ToNumber(null) AS val FROM c WHERE c.id = '1'");
-        results[0]["val"]!.Type.Should().Be(JTokenType.Null);
+        results[0]["val"].Should().BeNull("undefined values are omitted from projection");
     }
 
     [Fact]
