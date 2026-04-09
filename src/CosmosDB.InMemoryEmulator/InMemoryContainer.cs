@@ -4921,9 +4921,7 @@ public class InMemoryContainer : Container
     {
         return expression switch
         {
-            ComparisonCondition c =>
-                ResolveValue(c.Left, item, fromAlias, parameters) is UndefinedValue ||
-                ResolveValue(c.Right, item, fromAlias, parameters) is UndefinedValue,
+            ComparisonCondition c => ComparisonIncludesUndefined(c, item, fromAlias, parameters),
             AndCondition a =>
                 EvaluateWhereExpressionIncludesUndefined(a.Left, item, fromAlias, parameters, join) ||
                 EvaluateWhereExpressionIncludesUndefined(a.Right, item, fromAlias, parameters, join),
@@ -4936,6 +4934,23 @@ public class InMemoryContainer : Container
                 EvaluateSqlExpression(s.Expression, item, fromAlias, parameters) is UndefinedValue,
             _ => false,
         };
+    }
+
+    /// <summary>
+    /// Checks if a comparison involves undefined semantics. For most operators, only
+    /// UndefinedValue counts. For LIKE, null also produces undefined (three-value logic).
+    /// </summary>
+    private static bool ComparisonIncludesUndefined(
+        ComparisonCondition c, JObject item, string fromAlias, IDictionary<string, object> parameters)
+    {
+        var left = ResolveValue(c.Left, item, fromAlias, parameters);
+        var right = ResolveValue(c.Right, item, fromAlias, parameters);
+        if (left is UndefinedValue || right is UndefinedValue)
+            return true;
+        // LIKE with null operand(s) produces undefined per three-value logic
+        if (c.Operator == ComparisonOp.Like && (left is null || right is null))
+            return true;
+        return false;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -5216,7 +5231,7 @@ public class InMemoryContainer : Container
 
         if (left is null || right is null)
         {
-            return false;
+            return UndefinedValue.Instance;
         }
 
         var patternStr = right.ToString();
@@ -5652,9 +5667,9 @@ public class InMemoryContainer : Container
         return unary.Operator switch
         {
             UnaryOp.Not => operand is UndefinedValue or null ? UndefinedValue.Instance : (object)!IsTruthy(operand),
-            UnaryOp.Negate => operand is double d ? (object)(-d) : operand is long l ? (object)(-l) : null,
-            UnaryOp.BitwiseNot => operand is long lng ? (object)(~lng) : null,
-            _ => null
+            UnaryOp.Negate => operand is double d ? (object)(-d) : operand is long l ? (object)(-l) : UndefinedValue.Instance,
+            UnaryOp.BitwiseNot => operand is long lng ? (object)(~lng) : UndefinedValue.Instance,
+            _ => UndefinedValue.Instance
         };
     }
 
@@ -6996,17 +7011,25 @@ public class InMemoryContainer : Container
             case "GETCURRENTTICKS": return (object)DateTime.UtcNow.Ticks;
 
             // ── COALESCE function ──
+            // COALESCE skips null and undefined, returning the first concrete value.
+            // When all args are exhausted: returns null if any arg was null,
+            // otherwise returns undefined (omitted from results).
             case "COALESCE":
                 {
+                    object fallback = UndefinedValue.Instance;
                     foreach (var arg in args)
                     {
-                        if (arg is not null and not UndefinedValue)
+                        if (arg is null)
                         {
-                            return arg;
+                            fallback = null;
+                            continue;
                         }
+                        if (arg is UndefinedValue)
+                            continue;
+                        return arg;
                     }
 
-                    return null;
+                    return fallback;
                 }
 
             default:

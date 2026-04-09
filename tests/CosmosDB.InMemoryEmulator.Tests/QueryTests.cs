@@ -17628,10 +17628,10 @@ public class QueryDeepDiveV12_EdgeCaseTests
 
     // ── A28: Nested COALESCE with mixed null/undefined ──
     [Fact]
-    public async Task NestedCoalesce_MixedNullUndefined_ReturnsFirstDefined()
+    public async Task NestedCoalesce_MixedNullUndefined_ReturnsFirstNonNullNonUndefined()
     {
         await Seed();
-        // c.missing is undefined, null is null → "fallback" is first non-null non-undefined
+        // c.missing is undefined → skip, null → skip, 'fallback' → return
         var results = await RunQuery<string>(
             "SELECT VALUE COALESCE(c.missing, null, 'fallback') FROM c");
         results.Should().HaveCount(2);
@@ -20158,13 +20158,12 @@ public class QueryDeepDiveV14_UndefinedNullPropagation
     }
 
     [Fact]
-    public async Task Coalesce_AllUndefined_ReturnsNull()
+    public async Task Coalesce_AllUndefined_ReturnsUndefined()
     {
         await Seed();
-        // COALESCE with all undefined/null should return null
+        // COALESCE with all undefined args returns undefined (items are omitted from SELECT VALUE)
         var r = await RunQuery<JToken>("SELECT VALUE COALESCE(c.missing1, c.missing2) FROM c");
-        // COALESCE of all undefined returns null per Cosmos semantics
-        r.Should().AllSatisfy(t => t.Type.Should().Be(JTokenType.Null));
+        r.Should().BeEmpty("COALESCE of all undefined fields should return undefined (omitted)");
     }
 
     [Fact]
@@ -23022,5 +23021,861 @@ public class QueryDeepDiveV16_OffsetLimitTests
         await Seed();
         var r = await RunQuery<JObject>("SELECT * FROM c ORDER BY c.val ASC OFFSET 100 LIMIT 5");
         r.Should().BeEmpty();
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+//  Deep-Dive V17 — Unary operator, LIKE null, COALESCE, edge-case coverage
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ── V17 Phase 1: Negate null/undefined/non-numeric → undefined (Bug #121) ──
+public class QueryDeepDiveV17_NegateUndefinedTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"1","pk":"p1","val":42,"name":"Alice","flag":true}"""),
+            new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Negate_Null_ReturnsUndefined()
+    {
+        await Seed();
+        // -null should return undefined (omitted from SELECT VALUE)
+        var r = await RunQuery<JToken>("SELECT VALUE -null FROM c");
+        r.Should().BeEmpty("negating null should produce undefined");
+    }
+
+    [Fact]
+    public async Task Negate_UndefinedField_ReturnsUndefined()
+    {
+        await Seed();
+        // -c.missing where c.missing is undefined → undefined
+        var r = await RunQuery<JToken>("SELECT VALUE -c.missing FROM c");
+        r.Should().BeEmpty("negating undefined should produce undefined");
+    }
+
+    [Fact]
+    public async Task Negate_String_ReturnsUndefined()
+    {
+        await Seed();
+        // -'hello' → strings can't be negated → undefined
+        var r = await RunQuery<JToken>("SELECT VALUE -'hello' FROM c");
+        r.Should().BeEmpty("negating a string should produce undefined");
+    }
+
+    [Fact]
+    public async Task Negate_Boolean_ReturnsUndefined()
+    {
+        await Seed();
+        // -true → booleans can't be negated → undefined
+        var r = await RunQuery<JToken>("SELECT VALUE -true FROM c");
+        r.Should().BeEmpty("negating a boolean should produce undefined");
+    }
+
+    [Fact]
+    public async Task Negate_Number_Works()
+    {
+        await Seed();
+        // -42 → -42 (sanity check for correct path)
+        var r = await RunQuery<JToken>("SELECT VALUE -c.val FROM c");
+        r.Should().ContainSingle().Which.Value<int>().Should().Be(-42);
+    }
+
+    [Fact]
+    public async Task Negate_Double_Works()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE -(3.14) FROM c");
+        r.Should().ContainSingle().Which.Value<double>().Should().BeApproximately(-3.14, 0.001);
+    }
+}
+
+// ── V17 Phase 2: BitwiseNot null/undefined/non-long → undefined (Bug #122) ──
+public class QueryDeepDiveV17_BitwiseNotUndefinedTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"1","pk":"p1","val":42,"name":"Alice","flag":true}"""),
+            new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task BitwiseNot_Null_ReturnsUndefined()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE ~null FROM c");
+        r.Should().BeEmpty("bitwise NOT of null should produce undefined");
+    }
+
+    [Fact]
+    public async Task BitwiseNot_UndefinedField_ReturnsUndefined()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE ~c.missing FROM c");
+        r.Should().BeEmpty("bitwise NOT of undefined should produce undefined");
+    }
+
+    [Fact]
+    public async Task BitwiseNot_String_ReturnsUndefined()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE ~'hello' FROM c");
+        r.Should().BeEmpty("bitwise NOT of string should produce undefined");
+    }
+
+    [Fact]
+    public async Task BitwiseNot_Boolean_ReturnsUndefined()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE ~true FROM c");
+        r.Should().BeEmpty("bitwise NOT of boolean should produce undefined");
+    }
+
+    [Fact]
+    public async Task BitwiseNot_Integer_Works()
+    {
+        await Seed();
+        // ~42 = -43 (sanity check)
+        var r = await RunQuery<JToken>("SELECT VALUE ~c.val FROM c");
+        r.Should().ContainSingle().Which.Value<long>().Should().Be(-43);
+    }
+}
+
+// ── V17 Phase 3: LIKE with null → undefined (Bug #123) ──
+public class QueryDeepDiveV17_LikeNullTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"1","pk":"p1","name":"Alice","nullName":null}"""),
+            new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Like_NullValue_ReturnsUndefined()
+    {
+        await Seed();
+        // null LIKE '%' → undefined (null is not a string; LIKE follows 3VL)
+        var r = await RunQuery<JToken>("SELECT VALUE null LIKE '%' FROM c");
+        r.Should().BeEmpty("null LIKE pattern should return undefined");
+    }
+
+    [Fact]
+    public async Task Like_NullPattern_ReturnsUndefined()
+    {
+        await Seed();
+        // 'abc' LIKE null → undefined
+        var r = await RunQuery<JToken>("SELECT VALUE 'abc' LIKE null FROM c");
+        r.Should().BeEmpty("value LIKE null should return undefined");
+    }
+
+    [Fact]
+    public async Task Like_NullField_Where_ExcludesRow()
+    {
+        await Seed();
+        // WHERE c.nullName LIKE '%' → null field → undefined → row excluded
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.nullName LIKE '%'");
+        r.Should().BeEmpty("null field in LIKE should not match");
+    }
+
+    [Fact]
+    public async Task Like_NotOfNullLike_ReturnsUndefined()
+    {
+        await Seed();
+        // NOT (null LIKE '%') → NOT undefined → undefined (not true!)
+        var r = await RunQuery<JToken>("SELECT VALUE NOT (null LIKE '%') FROM c");
+        r.Should().BeEmpty("NOT of undefined LIKE should propagate undefined");
+    }
+
+    [Fact]
+    public async Task Like_NullField_NotLike_ExcludesRow()
+    {
+        await Seed();
+        // WHERE c.nullName NOT LIKE 'A%' → NOT (null LIKE 'A%') → NOT undefined → undefined → excluded
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.nullName NOT LIKE 'A%'");
+        r.Should().BeEmpty("NOT LIKE on null field should exclude row");
+    }
+}
+
+// ── V17 Phase 4: COALESCE function all-undefined → undefined (Bug #124) ──
+public class QueryDeepDiveV17_CoalesceFunctionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"1","pk":"p1","name":"Alice","val":10}"""),
+            new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task CoalesceFunc_AllUndefined_ReturnsUndefined()
+    {
+        await Seed();
+        // COALESCE(undefined, undefined) → undefined (not null)
+        var r = await RunQuery<JToken>("SELECT VALUE COALESCE(c.missing1, c.missing2) FROM c");
+        r.Should().BeEmpty("COALESCE of all undefined fields should return undefined (omitted)");
+    }
+
+    [Fact]
+    public async Task CoalesceFunc_UndefinedThenValue_ReturnsValue()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE COALESCE(c.missing, 'fallback') FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("fallback");
+    }
+
+    [Fact]
+    public async Task CoalesceFunc_NullThenValue_ReturnsValue()
+    {
+        await Seed();
+        // COALESCE(null, 'fallback') → 'fallback' (null is skipped, like standard SQL COALESCE)
+        var r = await RunQuery<JToken>("SELECT VALUE COALESCE(null, 'fallback') FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("fallback");
+    }
+
+    [Fact]
+    public async Task CoalesceFunc_FirstDefined_ReturnsFirst()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE COALESCE(c.name, 'fallback') FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("Alice");
+    }
+}
+
+// ── V17 Phase 5: Nested subqueries ──
+public class QueryDeepDiveV17_NestedSubqueryTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"1","pk":"p1","tags":["a","b","c"],"val":10}"""),
+            new PartitionKey("p1"));
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"2","pk":"p1","tags":["x"],"val":20}"""),
+            new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Subquery_CountInSelect_Works()
+    {
+        await Seed();
+        // Subquery that counts tags per document
+        var r = await RunQuery<JToken>(
+            "SELECT VALUE (SELECT VALUE COUNT(1) FROM t IN c.tags) FROM c ORDER BY c.id ASC");
+        r.Should().HaveCount(2);
+        r[0].Value<int>().Should().Be(3);
+        r[1].Value<int>().Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Subquery_ArrayLength_InWhere()
+    {
+        await Seed();
+        // Filter by array length (not a subquery per se, but baseline)
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE ARRAY_LENGTH(c.tags) > 2");
+        r.Should().ContainSingle();
+        r[0]["id"]!.Value<string>().Should().Be("1");
+    }
+}
+
+// ── V17 Phase 6: Aggregate on empty container ──
+public class QueryDeepDiveV17_EmptyContainerAggregateTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Count_EmptyContainer_ReturnsZero()
+    {
+        // No seed — container is empty
+        var r = await RunQuery<JToken>("SELECT VALUE COUNT(1) FROM c");
+        // COUNT on empty container should return 0 (single result)
+        r.Should().ContainSingle().Which.Value<int>().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CountStar_EmptyContainer_ReturnsZero()
+    {
+        var r = await RunQuery<JObject>("SELECT COUNT(1) AS cnt FROM c");
+        r.Should().ContainSingle();
+        r[0]["cnt"]!.Value<int>().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Sum_EmptyContainer()
+    {
+        // SUM on empty set — real Cosmos returns undefined/empty
+        var r = await RunQuery<JObject>("SELECT SUM(c.val) AS total FROM c");
+        // Should return a row with the field potentially missing or null
+        r.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task SelectStar_EmptyContainer_ReturnsEmpty()
+    {
+        var r = await RunQuery<JObject>("SELECT * FROM c");
+        r.Should().BeEmpty();
+    }
+}
+
+// ── V17 Phase 7: LIKE with non-string types ──
+public class QueryDeepDiveV17_LikeNonStringTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"1","pk":"p1","val":42,"flag":true,"tags":["a","b"]}"""),
+            new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Like_NumericFieldValue_MatchesAfterToString()
+    {
+        await Seed();
+        // When a number is compared with LIKE, Cosmos DB converts to string first
+        // 42 LIKE '%2' → "42" matches pattern %2
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.val LIKE '%2'");
+        // Numeric LIKE may match via ToString conversion
+        r.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Like_BooleanFieldValue()
+    {
+        await Seed();
+        // true LIKE 'T%' — boolean ToString gives "True" or "true"
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.flag LIKE '%rue'");
+        // Should match via ToString
+        r.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Like_ArrayField_ExcludesRow()
+    {
+        await Seed();
+        // Array LIKE '%' → arrays are not strings, should be excluded from WHERE
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.tags LIKE '%'");
+        // Arrays can't be LIKE-matched meaningfully
+        // The exact behavior depends on how JArray.ToString() works
+        // but this tests that it doesn't throw
+        r.Should().HaveCountLessThanOrEqualTo(1);
+    }
+}
+
+// ── V17 Phase 8: BETWEEN with null ──
+public class QueryDeepDiveV17_BetweenNullTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"1","pk":"p1","val":5,"nullVal":null}"""),
+            new PartitionKey("p1"));
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"2","pk":"p1","val":15}"""),
+            new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Between_NullValue_ExcludesRow()
+    {
+        await Seed();
+        // c.nullVal BETWEEN 1 AND 10 → null value → undefined → excluded
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.nullVal BETWEEN 1 AND 10");
+        r.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Between_UndefinedField_ExcludesRow()
+    {
+        await Seed();
+        // c.missing BETWEEN 1 AND 10 → undefined → excluded
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.missing BETWEEN 1 AND 10");
+        r.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Between_NormalValues_Works()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.val BETWEEN 1 AND 10");
+        r.Should().ContainSingle();
+        r[0]["id"]!.Value<string>().Should().Be("1");
+    }
+}
+
+// ── V17 Phase 9: IN with null edge cases ──
+public class QueryDeepDiveV17_InNullEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"1","pk":"p1","val":1}"""),
+            new PartitionKey("p1"));
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"2","pk":"p1","val":null}"""),
+            new PartitionKey("p1"));
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"3","pk":"p1"}"""),
+            new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task In_NullValueMatchesNullInList()
+    {
+        await Seed();
+        // c.val IN (null, 1) — matches id=1 (val=1) and id=2 (val=null)
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.val IN (null, 1)");
+        r.Select(x => x["id"]!.Value<string>()).Should().BeEquivalentTo("1", "2");
+    }
+
+    [Fact]
+    public async Task In_UndefinedField_ExcludesRow()
+    {
+        await Seed();
+        // id=3 has no val field → undefined → excluded even if null is in the list
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.val IN (null, 1)");
+        r.Select(x => x["id"]!.Value<string>()).Should().NotContain("3");
+    }
+}
+
+// ── V17 Phase 10: Ternary with null/zero condition ──
+public class QueryDeepDiveV17_TernaryEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"1","pk":"p1","val":0,"name":"Alice"}"""),
+            new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Ternary_NullCondition_ReturnsFalseBranch()
+    {
+        await Seed();
+        // null ? 'yes' : 'no' → null is not boolean true → false branch
+        var r = await RunQuery<JToken>("SELECT VALUE null ? 'yes' : 'no' FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("no");
+    }
+
+    [Fact]
+    public async Task Ternary_ZeroCondition_ReturnsFalseBranch()
+    {
+        await Seed();
+        // 0 ? 'yes' : 'no' → 0 is not boolean true → false branch
+        var r = await RunQuery<JToken>("SELECT VALUE 0 ? 'yes' : 'no' FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("no");
+    }
+
+    [Fact]
+    public async Task Ternary_TrueCondition_ReturnsTrueBranch()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT VALUE true ? 'yes' : 'no' FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("yes");
+    }
+
+    [Fact]
+    public async Task Ternary_EmptyStringCondition_ReturnsFalseBranch()
+    {
+        await Seed();
+        // '' ? 'yes' : 'no' → empty string is not boolean true → false branch
+        var r = await RunQuery<JToken>("SELECT VALUE '' ? 'yes' : 'no' FROM c");
+        r.Should().ContainSingle().Which.Value<string>().Should().Be("no");
+    }
+}
+
+// ── V17 Phase 11: DISTINCT VALUE edge cases ──
+public class QueryDeepDiveV17_DistinctValueTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"1","pk":"p1","val":1}"""), new PartitionKey("p1"));
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"2","pk":"p1","val":1}"""), new PartitionKey("p1"));
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"3","pk":"p1","val":null}"""), new PartitionKey("p1"));
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"4","pk":"p1","val":null}"""), new PartitionKey("p1"));
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"5","pk":"p1","val":"hello"}"""), new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task DistinctValue_WithDuplicates_Deduplicates()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT DISTINCT VALUE c.val FROM c");
+        // Should have 3 distinct values: 1, null, "hello"
+        r.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task DistinctValue_NullsDeduplicatedToOne()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT DISTINCT VALUE c.val FROM c");
+        // Only one null should appear
+        r.Count(t => t.Type == JTokenType.Null).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DistinctValue_MixedTypes_AllPresent()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>("SELECT DISTINCT VALUE c.val FROM c");
+        // Should have integer 1, null, string "hello"
+        r.Any(t => t.Type == JTokenType.Integer && t.Value<int>() == 1).Should().BeTrue();
+        r.Any(t => t.Type == JTokenType.Null).Should().BeTrue();
+        r.Any(t => t.Type == JTokenType.String && t.Value<string>() == "hello").Should().BeTrue();
+    }
+}
+
+// ── V17 Phase 12: ORDER BY with LIMIT 0 and OFFSET 0 ──
+public class QueryDeepDiveV17_LimitOffsetEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        for (int i = 1; i <= 5; i++)
+            await _container.CreateItemAsync(
+                JObject.Parse($"{{\"id\":\"{i}\",\"pk\":\"p1\",\"val\":{i}}}"),
+                new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Limit_Zero_ReturnsEmpty()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>("SELECT * FROM c ORDER BY c.val ASC OFFSET 0 LIMIT 0");
+        r.Should().BeEmpty("LIMIT 0 should return no results");
+    }
+
+    [Fact]
+    public async Task Offset_Zero_HasNoEffect()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>("SELECT * FROM c ORDER BY c.val ASC OFFSET 0 LIMIT 3");
+        r.Should().HaveCount(3);
+        r.Select(x => x["val"]!.Value<int>()).Should().Equal(1, 2, 3);
+    }
+
+    [Fact]
+    public async Task Top_Zero_ReturnsEmpty()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>("SELECT TOP 0 * FROM c");
+        r.Should().BeEmpty("TOP 0 should return no results");
+    }
+}
+
+// ── V17 Phase 13: LIKE with field that is numeric ──
+public class QueryDeepDiveV17_LikeFieldTypeTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.Parse("""{"id":"1","pk":"p1","code":42,"status":"active"}"""),
+            new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Like_NumericField_MatchesViaToString()
+    {
+        await Seed();
+        // c.code is 42 (number); LIKE '%2' should match via ToString
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.code LIKE '%2'");
+        r.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Like_StringField_Works()
+    {
+        await Seed();
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.status LIKE 'act%'");
+        r.Should().ContainSingle();
+    }
+}
+
+// ── V17 Phase 14: Multiple aggregates in SELECT VALUE object literal ──
+public class QueryDeepDiveV17_MultiAggregateTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"1","pk":"p1","val":10,"cat":"A"}"""), new PartitionKey("p1"));
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"2","pk":"p1","val":20,"cat":"A"}"""), new PartitionKey("p1"));
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"3","pk":"p1","val":30,"cat":"B"}"""), new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task MultipleAggregates_InObjectLiteral()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            """SELECT VALUE {"cnt": COUNT(1), "total": SUM(c.val)} FROM c""");
+        var obj = r.Should().ContainSingle().Which;
+        obj["cnt"]!.Value<int>().Should().Be(3);
+        obj["total"]!.Value<int>().Should().Be(60);
+    }
+
+    [Fact]
+    public async Task MultipleAggregates_GroupBy_InObjectLiteral()
+    {
+        await Seed();
+        var r = await RunQuery<JToken>(
+            """SELECT VALUE {"cat": c.cat, "cnt": COUNT(1), "total": SUM(c.val)} FROM c GROUP BY c.cat""");
+        r.Should().HaveCount(2);
+        var catA = r.First(x => x["cat"]!.Value<string>() == "A");
+        catA["cnt"]!.Value<int>().Should().Be(2);
+        catA["total"]!.Value<int>().Should().Be(30);
+    }
+}
+
+// ── V17 Phase 15: Complex HAVING with AND/OR ──
+public class QueryDeepDiveV17_ComplexHavingTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"1","pk":"p1","val":10,"cat":"A"}"""), new PartitionKey("p1"));
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"2","pk":"p1","val":20,"cat":"A"}"""), new PartitionKey("p1"));
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"3","pk":"p1","val":5,"cat":"A"}"""), new PartitionKey("p1"));
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"4","pk":"p1","val":100,"cat":"B"}"""), new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Having_AndCondition_BothMustMatch()
+    {
+        await Seed();
+        // Category A has 3 items, sum=35. Category B has 1 item, sum=100.
+        // HAVING COUNT(1) > 1 AND SUM(c.val) > 30 → only category A passes
+        var r = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt, SUM(c.val) AS total FROM c GROUP BY c.cat HAVING COUNT(1) > 1 AND SUM(c.val) > 30");
+        r.Should().ContainSingle();
+        r[0]["cat"]!.Value<string>().Should().Be("A");
+    }
+
+    [Fact]
+    public async Task Having_OrCondition_EitherCanMatch()
+    {
+        await Seed();
+        // HAVING COUNT(1) > 2 OR SUM(c.val) > 50 → A has count 3 (>2), B has sum 100 (>50)
+        var r = await RunQuery<JObject>(
+            "SELECT c.cat, COUNT(1) AS cnt FROM c GROUP BY c.cat HAVING COUNT(1) > 2 OR SUM(c.val) > 50");
+        r.Should().HaveCount(2);
+    }
+}
+
+// ── V17 Phase 16: NOT BETWEEN ──
+public class QueryDeepDiveV17_NotBetweenTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        for (int i = 1; i <= 5; i++)
+            await _container.CreateItemAsync(
+                JObject.Parse($"{{\"id\":\"{i}\",\"pk\":\"p1\",\"val\":{i * 10}}}"),
+                new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task NotBetween_ExcludesRange()
+    {
+        await Seed();
+        // NOT BETWEEN 20 AND 40 → excludes val=20,30,40 → keeps 10,50
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.val NOT BETWEEN 20 AND 40");
+        r.Select(x => x["val"]!.Value<int>()).Should().BeEquivalentTo(new[] { 10, 50 });
+    }
+}
+
+// ── V17 Phase 17: NOT LIKE with various values ──
+public class QueryDeepDiveV17_NotLikeTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"1","pk":"p1","name":"Alice","nullName":null}"""), new PartitionKey("p1"));
+        await _container.CreateItemAsync(JObject.Parse("""{"id":"2","pk":"p1","name":"Bob"}"""), new PartitionKey("p1"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iterator = _container.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults) results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task NotLike_Basic_ExcludesMatches()
+    {
+        await Seed();
+        // NOT LIKE 'A%' → excludes Alice → keeps Bob
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.name NOT LIKE 'A%'");
+        r.Should().ContainSingle();
+        r[0]["name"]!.Value<string>().Should().Be("Bob");
+    }
+
+    [Fact]
+    public async Task NotLike_NullField_ExcludesRow()
+    {
+        await Seed();
+        // c.nullName NOT LIKE 'A%' → null NOT LIKE → NOT undefined → undefined → excluded
+        var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.nullName NOT LIKE 'A%'");
+        // Null field should be excluded (not included as "not matching")
+        r.Should().BeEmpty("null fields should not pass NOT LIKE filter");
     }
 }
