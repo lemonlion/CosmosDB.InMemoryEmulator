@@ -2606,10 +2606,11 @@ public class SqlFunctionConversionEdgeCaseTests
     }
 
     [Fact]
-    public async Task ToBoolean_NullInput_ReturnsNull()
+    public async Task ToBoolean_NullInput_ReturnsUndefined()
     {
         await Seed();
+        // TOBOOLEAN(null) returns undefined — field is omitted from result
         var results = await Query("SELECT ToBoolean(null) AS val FROM c WHERE c.id = '1'");
-        results[0]["val"]!.Type.Should().Be(JTokenType.Null);
+        results[0]["val"].Should().BeNull("undefined values are omitted from projection");
     }
 }

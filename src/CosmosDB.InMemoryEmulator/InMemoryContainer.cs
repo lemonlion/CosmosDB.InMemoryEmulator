@@ -4930,6 +4930,8 @@ public class InMemoryContainer : Container
             OrCondition o =>
                 EvaluateWhereExpressionIncludesUndefined(o.Left, item, fromAlias, parameters, join) ||
                 EvaluateWhereExpressionIncludesUndefined(o.Right, item, fromAlias, parameters, join),
+            NotCondition n =>
+                EvaluateWhereExpressionIncludesUndefined(n.Inner, item, fromAlias, parameters, join),
             SqlExpressionCondition s =>
                 EvaluateSqlExpression(s.Expression, item, fromAlias, parameters) is UndefinedValue,
             _ => false,
@@ -5877,7 +5879,7 @@ public class InMemoryContainer : Container
                     if (args[0] is null) return UndefinedValue.Instance;
                     var s = args[0].ToString(); var c = ToLong(args[1]);
                     if (s is null || !c.HasValue) return UndefinedValue.Instance;
-                    if (c.Value < 0) return null;
+                    if (c.Value < 0) return UndefinedValue.Instance;
                     return s[..(int)Math.Min(c.Value, s.Length)];
                 }
             case "RIGHT":
@@ -5890,7 +5892,7 @@ public class InMemoryContainer : Container
                     if (args[0] is null) return UndefinedValue.Instance;
                     var s = args[0].ToString(); var c = ToLong(args[1]);
                     if (s is null || !c.HasValue) return UndefinedValue.Instance;
-                    if (c.Value < 0) return null;
+                    if (c.Value < 0) return UndefinedValue.Instance;
                     return s[Math.Max(0, s.Length - (int)c.Value)..];
                 }
             case "SUBSTRING":
@@ -6164,7 +6166,7 @@ public class InMemoryContainer : Container
                         return b;
                     }
 
-                    return null;
+                    return UndefinedValue.Instance;
                 }
 
             // ── Array functions ──
@@ -6426,8 +6428,8 @@ public class InMemoryContainer : Container
                     var value = ToLong(args[0]);
                     return value.HasValue ? ~value.Value : null;
                 }
-            case "INTBITLEFTSHIFT": return args.Length >= 2 ? BitwiseOp(args[0], args[1], (a, b) => a << (int)b) : null;
-            case "INTBITRIGHTSHIFT": return args.Length >= 2 ? BitwiseOp(args[0], args[1], (a, b) => a >> (int)b) : null;
+            case "INTBITLEFTSHIFT": return args.Length >= 2 ? BitwiseShiftOp(args[0], args[1], isLeft: true) : null;
+            case "INTBITRIGHTSHIFT": return args.Length >= 2 ? BitwiseShiftOp(args[0], args[1], isLeft: false) : null;
 
             // ── Aggregates (passthrough for non-GROUP-BY contexts) ──
             // When there is no GROUP BY, each document is emitted individually and the
@@ -7449,6 +7451,22 @@ public class InMemoryContainer : Container
         if (long.TryParse(left.ToString(), out var l) && long.TryParse(right.ToString(), out var r))
         {
             return op(l, r);
+        }
+
+        return UndefinedValue.Instance;
+    }
+
+    private static object BitwiseShiftOp(object left, object right, bool isLeft)
+    {
+        if (left is null or UndefinedValue || right is null or UndefinedValue)
+        {
+            return UndefinedValue.Instance;
+        }
+
+        if (long.TryParse(left.ToString(), out var l) && long.TryParse(right.ToString(), out var r))
+        {
+            if (r < 0 || r >= 64) return UndefinedValue.Instance;
+            return isLeft ? l << (int)r : l >> (int)r;
         }
 
         return UndefinedValue.Instance;
