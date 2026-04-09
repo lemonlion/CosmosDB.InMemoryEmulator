@@ -767,7 +767,7 @@ public class StringCaseEdgeCaseTests
 public class StringConcatNullTests
 {
     [Fact]
-    public async Task Query_StringConcat_WithNull_ReturnsNull()
+    public async Task Query_StringConcat_WithNull_ReturnsUndefined()
     {
         var container = new InMemoryContainer("concat-null", "/pk");
         await container.CreateItemAsync(
@@ -777,11 +777,12 @@ public class StringConcatNullTests
         var iter = container.GetItemQueryIterator<JToken>(
             "SELECT VALUE c.name || null FROM c");
         var page = await iter.ReadNextAsync();
-        page.First().Type.Should().Be(JTokenType.Null);
+        // null || string → undefined → omitted by SELECT VALUE
+        page.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task Query_StringConcat_NullOnLeft_ReturnsNull()
+    public async Task Query_StringConcat_NullOnLeft_ReturnsUndefined()
     {
         var container = new InMemoryContainer("concat-null", "/pk");
         await container.CreateItemAsync(
@@ -791,7 +792,8 @@ public class StringConcatNullTests
         var iter = container.GetItemQueryIterator<JToken>(
             "SELECT VALUE null || c.name FROM c");
         var page = await iter.ReadNextAsync();
-        page.First().Type.Should().Be(JTokenType.Null);
+        // null || string → undefined → omitted by SELECT VALUE
+        page.Should().BeEmpty();
     }
 
     [Fact]

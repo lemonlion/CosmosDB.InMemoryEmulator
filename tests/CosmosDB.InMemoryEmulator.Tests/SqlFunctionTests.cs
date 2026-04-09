@@ -1706,7 +1706,7 @@ public class SqlFunctionGapTests3
     }
 
     [Fact]
-    public async Task SqlFunc_MathFunctions_WithNull_ReturnNull()
+    public async Task SqlFunc_MathFunctions_WithNull_ReturnUndefined()
     {
         await _container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes(
@@ -1722,7 +1722,8 @@ public class SqlFunctionGapTests3
             results.AddRange(page);
         }
 
-        results.Should().HaveCount(1);
+        // ABS(null) → undefined → omitted by SELECT VALUE
+        results.Should().BeEmpty();
     }
 }
 

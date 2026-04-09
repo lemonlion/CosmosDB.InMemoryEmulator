@@ -3934,7 +3934,12 @@ public class InMemoryContainer : Container
         var hasAggregate = parsed.SelectFields.Any(f =>
         {
             var expr = f.Expression.TrimStart();
-            return AggregateFunctions.Any(fn => expr.StartsWith(fn + "(", StringComparison.OrdinalIgnoreCase));
+            if (AggregateFunctions.Any(fn => expr.StartsWith(fn + "(", StringComparison.OrdinalIgnoreCase)))
+                return true;
+            // Also detect aggregates nested inside object/array literals (e.g. SELECT VALUE {"cnt": COUNT(1)})
+            if (f.SqlExpr is not null)
+                return ContainsAggregateCall(f.SqlExpr);
+            return false;
         });
 
         if (!hasAggregate)
@@ -4044,8 +4049,12 @@ public class InMemoryContainer : Container
                     if (field.SqlExpr is not null and not IdentifierExpression && funcName is null)
                     {
                         var fieldOutputName = field.Alias ?? field.Expression;
-                        var val = EvaluateSqlExpression(field.SqlExpr, jObj, fromAlias,
-                            parameters ?? new Dictionary<string, object>());
+                        // Use aggregate-aware evaluation if the expression contains nested aggregates
+                        // (e.g. SELECT VALUE {"cnt": COUNT(1), "total": SUM(c.val)})
+                        var val = ContainsAggregateCall(field.SqlExpr)
+                            ? EvaluateGroupByProjectionExpression(field.SqlExpr, groupItems, jObj, fromAlias, parameters)
+                            : EvaluateSqlExpression(field.SqlExpr, jObj, fromAlias,
+                                parameters ?? new Dictionary<string, object>());
                         resultObj[fieldOutputName] = val is not null ? JToken.FromObject(val) : JValue.CreateNull();
                     }
                     else
@@ -4355,6 +4364,44 @@ public class InMemoryContainer : Container
                 }
             default: return null;
         }
+    }
+
+    /// <summary>
+    /// Evaluates a SELECT expression within GROUP BY context, resolving aggregate calls
+    /// (COUNT, SUM, AVG, MIN, MAX) against the group items rather than treating them as passthroughs.
+    /// Used for expressions like: SELECT VALUE {"cnt": COUNT(1), "total": SUM(c.val)}
+    /// </summary>
+    private static object EvaluateGroupByProjectionExpression(
+        SqlExpression expr, List<string> groupItems, JObject sampleItem,
+        string fromAlias, IDictionary<string, object> parameters)
+    {
+        return expr switch
+        {
+            FunctionCallExpression func when AggregateFunctions.Contains(func.FunctionName)
+                => EvaluateHavingAggregate(func, groupItems, fromAlias),
+            ObjectLiteralExpression obj => EvaluateGroupByObjectLiteral(obj, groupItems, sampleItem, fromAlias, parameters),
+            ArrayLiteralExpression arr => arr.Elements
+                .Select(e => EvaluateGroupByProjectionExpression(e, groupItems, sampleItem, fromAlias, parameters))
+                .Where(v => v is not UndefinedValue)
+                .Select(v => v is not null ? JToken.FromObject(v) : JValue.CreateNull())
+                .ToArray(),
+            _ => EvaluateSqlExpression(expr, sampleItem, fromAlias,
+                parameters ?? new Dictionary<string, object>())
+        };
+    }
+
+    private static JObject EvaluateGroupByObjectLiteral(
+        ObjectLiteralExpression obj, List<string> groupItems, JObject sampleItem,
+        string fromAlias, IDictionary<string, object> parameters)
+    {
+        var result = new JObject();
+        foreach (var prop in obj.Properties)
+        {
+            var val = EvaluateGroupByProjectionExpression(prop.Value, groupItems, sampleItem, fromAlias, parameters);
+            if (val is not UndefinedValue)
+                result[prop.Key] = val is not null ? JToken.FromObject(val) : JValue.CreateNull();
+        }
+        return result;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -5588,7 +5635,7 @@ public class InMemoryContainer : Container
             BinaryOp.Multiply => ArithmeticOp(left, right, (a, b) => a * b),
             BinaryOp.Divide => ArithmeticOp(left, right, (a, b) => b != 0 ? a / b : double.NaN),
             BinaryOp.Modulo => ArithmeticOp(left, right, (a, b) => b != 0 ? a % b : double.NaN),
-            BinaryOp.StringConcat => left is UndefinedValue || right is UndefinedValue ? UndefinedValue.Instance : left is null || right is null ? null : left.ToString() + right.ToString(),
+            BinaryOp.StringConcat => left is null or UndefinedValue || right is null or UndefinedValue ? UndefinedValue.Instance : left.ToString() + right.ToString(),
             BinaryOp.BitwiseAnd => BitwiseOp(left, right, (a, b) => a & b),
             BinaryOp.BitwiseOr => BitwiseOp(left, right, (a, b) => a | b),
             BinaryOp.BitwiseXor => BitwiseOp(left, right, (a, b) => a ^ b),
@@ -5957,14 +6004,14 @@ public class InMemoryContainer : Container
                 {
                     if (args.Length < 2)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     var s1 = args[0]?.ToString();
                     var s2 = args[1]?.ToString();
                     if (s1 is null || s2 is null)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     var ic = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
@@ -7394,9 +7441,9 @@ public class InMemoryContainer : Container
 
     private static object BitwiseOp(object left, object right, Func<long, long, long> op)
     {
-        if (left is null || right is null)
+        if (left is null or UndefinedValue || right is null or UndefinedValue)
         {
-            return null;
+            return UndefinedValue.Instance;
         }
 
         if (long.TryParse(left.ToString(), out var l) && long.TryParse(right.ToString(), out var r))
@@ -7404,14 +7451,14 @@ public class InMemoryContainer : Container
             return op(l, r);
         }
 
-        return null;
+        return UndefinedValue.Instance;
     }
 
     private static object MathOp(object value, Func<double, double> op)
     {
-        if (value is null)
+        if (value is null or UndefinedValue)
         {
-            return null;
+            return UndefinedValue.Instance;
         }
 
         if (double.TryParse(value.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var n))
@@ -7423,7 +7470,7 @@ public class InMemoryContainer : Container
             return result;
         }
 
-        return null;
+        return UndefinedValue.Instance;
     }
 
     private static long? ToLong(object value) => value switch
