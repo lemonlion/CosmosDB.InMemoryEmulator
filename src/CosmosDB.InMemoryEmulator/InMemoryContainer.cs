@@ -6303,7 +6303,7 @@ public class InMemoryContainer : Container
             case "ATN2": return args.Length >= 2 ? ArithmeticOp(args[0], args[1], Math.Atan2) : null;
             case "DEGREES": return args.Length > 0 ? MathOp(args[0], v => v * (180.0 / Math.PI)) : null;
             case "RADIANS": return args.Length > 0 ? MathOp(args[0], v => v * (Math.PI / 180.0)) : null;
-            case "RAND": return new Random().NextDouble();
+            case "RAND": return Random.Shared.NextDouble();
 
             // ── Integer math functions ──
             case "NUMBERBIN":
@@ -6807,13 +6807,13 @@ public class InMemoryContainer : Container
                 }
             case "DATETIMEDIFF":
                 {
-                    if (args.Length < 3) return null;
+                    if (args.Length < 3) return UndefinedValue.Instance;
                     var part = args[0]?.ToString()?.ToLowerInvariant();
                     var startStr = args[1]?.ToString();
                     var endStr = args[2]?.ToString();
-                    if (part is null || startStr is null || endStr is null) return null;
-                    if (!DateTime.TryParse(startStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dtStart)) return null;
-                    if (!DateTime.TryParse(endStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dtEnd)) return null;
+                    if (part is null || startStr is null || endStr is null) return UndefinedValue.Instance;
+                    if (!DateTime.TryParse(startStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dtStart)) return UndefinedValue.Instance;
+                    if (!DateTime.TryParse(endStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dtEnd)) return UndefinedValue.Instance;
 
                     return part switch
                     {
@@ -6861,13 +6861,13 @@ public class InMemoryContainer : Container
                     if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return UndefinedValue.Instance;
 
                     var bs = (int)binSize.Value;
-                    if (bs <= 0) return null;
+                    if (bs <= 0) return UndefinedValue.Instance;
 
                     var origin = args.Length >= 4 && args[3] is string originStr
                         && DateTime.TryParse(originStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var o)
                         ? o : new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
-                    if (origin.Year < 1601) return null;
+                    if (origin.Year < 1601) return UndefinedValue.Instance;
 
                     if (part is "year" or "yyyy" or "yy")
                     {
@@ -6912,26 +6912,26 @@ public class InMemoryContainer : Container
                 }
             case "TICKSTODATETIME":
                 {
-                    if (args.Length < 1) return null;
+                    if (args.Length < 1) return UndefinedValue.Instance;
                     var ticks = ToLong(args[0]);
-                    if (!ticks.HasValue) return null;
+                    if (!ticks.HasValue) return UndefinedValue.Instance;
                     var dt = new DateTime(ticks.Value, DateTimeKind.Utc);
                     return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
                 }
             case "DATETIMETOTIMESTAMP":
                 {
-                    if (args.Length < 1) return null;
+                    if (args.Length < 1) return UndefinedValue.Instance;
                     var dtStr = args[0]?.ToString();
-                    if (dtStr is null) return null;
-                    if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return null;
+                    if (dtStr is null) return UndefinedValue.Instance;
+                    if (!DateTime.TryParse(dtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt)) return UndefinedValue.Instance;
                     if (dt.Kind == DateTimeKind.Unspecified) dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
                     return (object)new DateTimeOffset(dt.ToUniversalTime()).ToUnixTimeMilliseconds();
                 }
             case "TIMESTAMPTODATETIME":
                 {
-                    if (args.Length < 1) return null;
+                    if (args.Length < 1) return UndefinedValue.Instance;
                     var ms = ToLong(args[0]);
-                    if (!ms.HasValue) return null;
+                    if (!ms.HasValue) return UndefinedValue.Instance;
                     var dt = DateTimeOffset.FromUnixTimeMilliseconds(ms.Value).UtcDateTime;
                     return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
                 }

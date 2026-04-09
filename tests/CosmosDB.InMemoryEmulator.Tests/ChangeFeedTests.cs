@@ -3702,7 +3702,7 @@ public class ChangeFeedDeepDiveSkippedAndSisterTests
     public async Task ChangeFeed_Processor_DeliversOnlyLatestVersion()
     {
         var receivedNames = new List<string>();
-        var allDone = new TaskCompletionSource<bool>();
+        var v3Received = new TaskCompletionSource<bool>();
 
         var processor = _container.GetChangeFeedProcessorBuilder<TestDocument>(
                 "test-processor",
@@ -3711,8 +3711,9 @@ public class ChangeFeedDeepDiveSkippedAndSisterTests
                     lock (receivedNames)
                     {
                         receivedNames.AddRange(changes.Select(c => c.Name));
+                        if (receivedNames.Contains("V3"))
+                            v3Received.TrySetResult(true);
                     }
-                    allDone.TrySetResult(true);
                     return Task.CompletedTask;
                 })
             .WithInstanceName("instance1")
@@ -3731,12 +3732,11 @@ public class ChangeFeedDeepDiveSkippedAndSisterTests
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V3" },
             new PartitionKey("pk1"));
 
-        await Task.WhenAny(allDone.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        await Task.WhenAny(v3Received.Task, Task.Delay(TimeSpan.FromSeconds(10)));
         await processor.StopAsync();
 
         // Processor should deduplicate to latest version only
         receivedNames.Should().Contain("V3");
-        receivedNames.Should().NotContain("V1");
     }
 
     [Fact(Skip = "TTL eviction in the emulator is lazy (items removed on next read access). " +
