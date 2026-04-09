@@ -962,7 +962,7 @@ public class SqlFunctionTests
     }
 
     [Fact]
-    public async Task IntDiv_DivisionByZero_ReturnsNull()
+    public async Task IntDiv_DivisionByZero_ReturnsUndefined()
     {
         await SeedItems();
         var query = new QueryDefinition("SELECT IntDiv(c.value, 0) AS result FROM c WHERE c.id = '1'");
@@ -970,7 +970,7 @@ public class SqlFunctionTests
         var results = await QueryAll<JObject>(query);
 
         results.Should().HaveCount(1);
-        results[0]["result"]!.Type.Should().Be(JTokenType.Null);
+        results[0]["result"].Should().BeNull();
     }
 
     [Fact]
@@ -2398,11 +2398,11 @@ public class SqlFunctionIntegerEdgeCaseTests
     }
 
     [Fact]
-    public async Task IntMod_ByZero_ReturnsNull()
+    public async Task IntMod_ByZero_ReturnsUndefined()
     {
         await Seed();
         var results = await Query("SELECT IntMod(10, 0) AS val FROM c");
-        results[0]["val"]!.Type.Should().Be(JTokenType.Null);
+        results[0]["val"].Should().BeNull();
     }
 }
 

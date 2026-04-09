@@ -6230,12 +6230,12 @@ public class InMemoryContainer : Container
                         }
 
                         var token = item.SelectToken(path);
-                        return token is JArray arr ? (object)(long)arr.Count : null;
+                        return token is JArray arr ? (object)(long)arr.Count : UndefinedValue.Instance;
                     }
 
                     // Support nested function calls like ARRAY_LENGTH(SetIntersect(...))
                     var evaluated = EvaluateSqlExpression(func.Arguments[0], item, fromAlias, parameters);
-                    return evaluated is JArray evalArr ? (object)(long)evalArr.Count : null;
+                    return evaluated is JArray evalArr ? (object)(long)evalArr.Count : UndefinedValue.Instance;
                 }
             case "ARRAY_SLICE":
                 {
@@ -6385,14 +6385,14 @@ public class InMemoryContainer : Container
                 {
                     if (args.Length < 2)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     var dividend = ToLong(args[0]);
                     var divisor = ToLong(args[1]);
                     if (!dividend.HasValue || !divisor.HasValue || divisor.Value == 0)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     return dividend.Value / divisor.Value;
@@ -6401,14 +6401,14 @@ public class InMemoryContainer : Container
                 {
                     if (args.Length < 2)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     var dividend = ToLong(args[0]);
                     var divisor = ToLong(args[1]);
                     if (!dividend.HasValue || !divisor.HasValue || divisor.Value == 0)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     return dividend.Value % divisor.Value;
