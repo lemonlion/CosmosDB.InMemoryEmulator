@@ -587,12 +587,36 @@ public static class CosmosSqlParser
             Multiplicative,
             (op, left, right) => new BinaryExpression(left, op, right));
 
+    // ── Bitwise AND: & ──
+
+    private static readonly TokenListParser<CosmosSqlToken, SqlExpression> BitwiseAndExpr =
+        Superpower.Parse.Chain(
+            Token.EqualTo(CosmosSqlToken.Ampersand).Select(_ => BinaryOp.BitwiseAnd),
+            Additive,
+            (op, left, right) => new BinaryExpression(left, op, right));
+
+    // ── Bitwise XOR: ^ ──
+
+    private static readonly TokenListParser<CosmosSqlToken, SqlExpression> BitwiseXorExpr =
+        Superpower.Parse.Chain(
+            Token.EqualTo(CosmosSqlToken.Caret).Select(_ => BinaryOp.BitwiseXor),
+            BitwiseAndExpr,
+            (op, left, right) => new BinaryExpression(left, op, right));
+
+    // ── Bitwise OR: | ──
+
+    private static readonly TokenListParser<CosmosSqlToken, SqlExpression> BitwiseOrExpr =
+        Superpower.Parse.Chain(
+            Token.EqualTo(CosmosSqlToken.Pipe).Select(_ => BinaryOp.BitwiseOr),
+            BitwiseXorExpr,
+            (op, left, right) => new BinaryExpression(left, op, right));
+
     // ── String concat: || ──
 
     private static readonly TokenListParser<CosmosSqlToken, SqlExpression> StringConcatExpr =
         Superpower.Parse.Chain(
             Token.EqualTo(CosmosSqlToken.DoublePipe).Select(_ => BinaryOp.StringConcat),
-            Additive,
+            BitwiseOrExpr,
             (op, left, right) => new BinaryExpression(left, op, right));
 
     // ── Comparison: =, !=, <, >, <=, >=, LIKE ──
