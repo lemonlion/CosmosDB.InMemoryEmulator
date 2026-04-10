@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Net;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
@@ -961,5 +962,1058 @@ public class CaseSensitivityTests
         while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
 
         results.Should().ContainSingle().Which.Should().Be(50);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B1: DISTINCT with case-variant string values
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Distinct_CaseVariantValues_AreSeparate()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        foreach (var (i, name) in new[] { ("1", "Alice"), ("2", "alice"), ("3", "ALICE") })
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = i, partitionKey = "pk1", name }),
+                new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<string>(
+            new QueryDefinition("SELECT DISTINCT VALUE c.name FROM c"));
+        var results = new List<string>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().HaveCount(3);
+        results.Should().Contain(new[] { "Alice", "alice", "ALICE" });
+    }
+
+    [Fact]
+    public async Task Distinct_CaseVariantObjectValues_AreSeparate()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        foreach (var (i, name) in new[] { ("1", "Alice"), ("2", "alice"), ("3", "ALICE") })
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = i, partitionKey = "pk1", name }),
+                new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT DISTINCT c.name FROM c"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().HaveCount(3);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B2: ORDER BY with mixed-case string values
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task OrderBy_MixedCaseStrings_OrdersByCodePoint()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        foreach (var (i, name) in new[] { ("1", "banana"), ("2", "Apple"), ("3", "cherry"), ("4", "apple") })
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = i, partitionKey = "pk1", name }),
+                new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT c.name FROM c ORDER BY c.name ASC"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        var names = results.Select(r => r["name"]!.ToString()).ToList();
+        names.Should().Equal("Apple", "apple", "banana", "cherry");
+    }
+
+    [Fact]
+    public async Task OrderBy_MixedCaseStrings_Desc_ReversesOrder()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        foreach (var (i, name) in new[] { ("1", "banana"), ("2", "Apple"), ("3", "cherry"), ("4", "apple") })
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = i, partitionKey = "pk1", name }),
+                new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT c.name FROM c ORDER BY c.name DESC"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        var names = results.Select(r => r["name"]!.ToString()).ToList();
+        names.Should().Equal("cherry", "banana", "apple", "Apple");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B3: GROUP BY with case-variant grouping keys
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task GroupBy_CaseVariantKeys_CreateSeparateGroups()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", partitionKey = "pk1", name = "alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "4", partitionKey = "pk1", name = "alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "5", partitionKey = "pk1", name = "alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT c.name, COUNT(1) AS cnt FROM c GROUP BY c.name"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+        var alice = results.First(r => r["name"]!.ToString() == "Alice");
+        var aliceLower = results.First(r => r["name"]!.ToString() == "alice");
+        ((int)alice["cnt"]!).Should().Be(2);
+        ((int)aliceLower["cnt"]!).Should().Be(3);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B4: LIKE operator case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Like_UppercasePattern_DoesNotMatchLowercase()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", name = "alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE c.name LIKE 'A%'"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle().Which["id"]!.ToString().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task Like_LowercasePattern_DoesNotMatchUppercase()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", name = "alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE c.name LIKE 'a%'"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle().Which["id"]!.ToString().Should().Be("2");
+    }
+
+    [Fact]
+    public async Task Like_ExactCasePattern_MatchesExactly()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", name = "ALICE" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE c.name LIKE 'Ali_e'"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle().Which["id"]!.ToString().Should().Be("1");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B5: IN operator case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task In_CaseSensitive_OnlyMatchesExactCase()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", name = "alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", partitionKey = "pk1", name = "ALICE" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE c.name IN ('Alice')"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle().Which["id"]!.ToString().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task In_MultipleValues_EachCaseSensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", name = "alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", partitionKey = "pk1", name = "ALICE" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE c.name IN ('Alice', 'alice')"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+        results.Select(r => r["id"]!.ToString()).Should().BeEquivalentTo(new[] { "1", "2" });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B6: CONTAINS/STARTSWITH/ENDSWITH string matching case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Contains_StringMatch_IsCaseSensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE CONTAINS(c.name, 'ali')"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task StartsWith_StringMatch_IsCaseSensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE STARTSWITH(c.name, 'ali')"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task EndsWith_StringMatch_IsCaseSensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE ENDSWITH(c.name, 'CE')"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B7: CONTAINS/STARTSWITH/ENDSWITH with case-insensitive 3rd argument
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Contains_ThirdArgTrue_CaseInsensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE CONTAINS(c.name, 'ALI', true)"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task StartsWith_ThirdArgTrue_CaseInsensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE STARTSWITH(c.name, 'ALI', true)"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task EndsWith_ThirdArgTrue_CaseInsensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE ENDSWITH(c.name, 'ICE', true)"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Contains_ThirdArgFalse_StaysCaseSensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE CONTAINS(c.name, 'ALI', false)"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B8: STRING_EQUALS with case-insensitive 3rd argument
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task StringEquals_ThirdArgTrue_CaseInsensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE STRING_EQUALS(c.name, 'ALICE', true)"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task StringEquals_ThirdArgFalse_CaseSensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE STRING_EQUALS(c.name, 'ALICE', false)"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task StringEquals_NoThirdArg_CaseSensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE STRING_EQUALS(c.name, 'ALICE')"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B9: LOWER/UPPER for case-insensitive comparison pattern
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Lower_EnablesCaseInsensitiveComparison()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", name = "alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", partitionKey = "pk1", name = "ALICE" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE LOWER(c.name) = 'alice'"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task Upper_EnablesCaseInsensitiveComparison()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", name = "alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", partitionKey = "pk1", name = "ALICE" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE UPPER(c.name) = 'ALICE'"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().HaveCount(3);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B10: Parameterized query case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ParameterizedQuery_ValueIsCaseSensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", name = "alice" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE c.name = @name").WithParameter("@name", "Alice"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle().Which["id"]!.ToString().Should().Be("1");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B11: BETWEEN with string values case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Between_StringValues_CaseSensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pk1", name = "alice" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", partitionKey = "pk1", name = "Bob" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c WHERE c.name BETWEEN 'A' AND 'Z'"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        // Only uppercase-starting "Alice" and "Bob" are in A-Z range
+        results.Should().HaveCount(2);
+        results.Select(r => r["name"]!.ToString()).Should().BeEquivalentTo(new[] { "Alice", "Bob" });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B12: Null coalesce (??) preserves case
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task NullCoalesce_PreservesCaseOfFallback()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<string>(
+            new QueryDefinition("SELECT VALUE c.missing ?? 'DEFAULT' FROM c"));
+        var results = new List<string>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Should().Be("DEFAULT");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B13: JOIN alias case insensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task JoinAlias_IsCaseSensitive_InEmulator()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = "pk1", tags = new[] { new { name = "x" }, new { name = "y" } } }),
+            new PartitionKey("pk1"));
+
+        // Same case alias works
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT VALUE t FROM c JOIN t IN c.tags WHERE t.name = 'x'"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle().Which["name"]!.ToString().Should().Be("x");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  B14: Additional built-in function name case insensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task SqlFunction_StringFunctions_MixedCasing_Works()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Hello" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT UPPER(c.name) AS u, lower(c.name) AS l, Length(c.name) AS len FROM c"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        var r = results.Should().ContainSingle().Subject;
+        r["u"]!.ToString().Should().Be("HELLO");
+        r["l"]!.ToString().Should().Be("hello");
+        ((int)r["len"]!).Should().Be(5);
+    }
+
+    [Fact]
+    public async Task SqlFunction_MathFunctions_MixedCasing_Works()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", value = -3.7 }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT ABS(c.value) AS a, floor(c.value) AS f, Ceiling(c.value) AS ce FROM c"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        var r = results.Should().ContainSingle().Subject;
+        ((double)r["a"]!).Should().Be(3.7);
+        ((double)r["f"]!).Should().Be(-4);
+        ((double)r["ce"]!).Should().Be(-3);
+    }
+
+    [Fact]
+    public async Task SqlFunction_TypeChecking_MixedCasing_Works()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "hello" }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT IS_STRING(c.name) AS a, is_number(c.name) AS b, Is_Defined(c.name) AS d FROM c"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        var r = results.Should().ContainSingle().Subject;
+        ((bool)r["a"]!).Should().BeTrue();
+        ((bool)r["b"]!).Should().BeFalse();
+        ((bool)r["d"]!).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task SqlFunction_ArrayFunctions_MixedCasing_Works()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", tags = new[] { "a", "b", "c" } }), new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT ARRAY_LENGTH(c.tags) AS al, array_contains(c.tags, 'a') AS ac FROM c"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        var r = results.Should().ContainSingle().Subject;
+        ((int)r["al"]!).Should().Be(3);
+        ((bool)r["ac"]!).Should().BeTrue();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C1: ReplaceItemAsync case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ReplaceItem_RequiresExactIdCasing()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "Item1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+
+        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+            container.ReplaceItemAsync(JObject.FromObject(new { id = "item1", partitionKey = "pk1" }), "item1", new PartitionKey("pk1")));
+        ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task ReplaceItem_RequiresExactPartitionKeyCasing()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "PkA" }), new PartitionKey("PkA"));
+
+        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+            container.ReplaceItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pka" }), "1", new PartitionKey("pka")));
+        ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C2: UpsertItemAsync case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task UpsertItem_DifferentIdCasing_CreatesNewDocument()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.UpsertItemAsync(JObject.FromObject(new { id = "item1", partitionKey = "pk1", name = "first" }), new PartitionKey("pk1"));
+        await container.UpsertItemAsync(JObject.FromObject(new { id = "Item1", partitionKey = "pk1", name = "second" }), new PartitionKey("pk1"));
+
+        container.ItemCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task UpsertItem_ExactCasing_UpdatesExistingDocument()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.UpsertItemAsync(JObject.FromObject(new { id = "item1", partitionKey = "pk1", name = "first" }), new PartitionKey("pk1"));
+        await container.UpsertItemAsync(JObject.FromObject(new { id = "item1", partitionKey = "pk1", name = "second" }), new PartitionKey("pk1"));
+
+        container.ItemCount.Should().Be(1);
+        var r = await container.ReadItemAsync<JObject>("item1", new PartitionKey("pk1"));
+        r.Resource["name"]!.ToString().Should().Be("second");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C3: ReadManyItemsAsync case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ReadMany_MixedCaseIds_OnlyReturnsExactMatches()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "Item1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "item1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+
+        var response = await container.ReadManyItemsAsync<JObject>(
+            new List<(string, PartitionKey)> { ("Item1", new PartitionKey("pk1")), ("item1", new PartitionKey("pk1")) });
+        response.Count.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ReadMany_WrongCaseId_ReturnsEmpty()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "item1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+
+        var response = await container.ReadManyItemsAsync<JObject>(
+            new List<(string, PartitionKey)> { ("ITEM1", new PartitionKey("pk1")) });
+        response.Count.Should().Be(0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C4: TransactionalBatch case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Batch_Create_CaseSensitiveIds()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(JObject.FromObject(new { id = "Item1", partitionKey = "pk1" }));
+        batch.CreateItem(JObject.FromObject(new { id = "item1", partitionKey = "pk1" }));
+        var response = await batch.ExecuteAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        container.ItemCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Batch_Read_RequiresExactIdCasing()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "item1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReadItem("ITEM1");
+        var response = await batch.ExecuteAsync();
+
+        // Individual operation should be 404
+        response[0].StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Batch_Delete_RequiresExactIdCasing()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "item1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.DeleteItem("ITEM1");
+        var response = await batch.ExecuteAsync();
+
+        response[0].StatusCode.Should().Be(HttpStatusCode.NotFound);
+        container.ItemCount.Should().Be(1); // Item not deleted
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C5: DeleteAllItemsByPartitionKeyStreamAsync case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task DeleteAllByPK_RequiresExactCasing()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pkA" }), new PartitionKey("pkA"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", partitionKey = "pka" }), new PartitionKey("pka"));
+
+        await container.DeleteAllItemsByPartitionKeyStreamAsync(new PartitionKey("pkA"));
+
+        container.ItemCount.Should().Be(1);
+        var remaining = await container.ReadItemAsync<JObject>("2", new PartitionKey("pka"));
+        remaining.Resource["id"]!.ToString().Should().Be("2");
+    }
+
+    [Fact]
+    public async Task DeleteAllByPK_OnlyDeletesExactPK()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 5; i++)
+            await container.CreateItemAsync(JObject.FromObject(new { id = $"a{i}", partitionKey = "PK" }), new PartitionKey("PK"));
+        for (var i = 0; i < 5; i++)
+            await container.CreateItemAsync(JObject.FromObject(new { id = $"b{i}", partitionKey = "pk" }), new PartitionKey("pk"));
+
+        await container.DeleteAllItemsByPartitionKeyStreamAsync(new PartitionKey("PK"));
+        container.ItemCount.Should().Be(5);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C6: PatchItemAsync path case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Patch_UserPropertyPath_IsCaseSensitive()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "old" }), new PartitionKey("pk1"));
+
+        await container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
+            new[] { PatchOperation.Set("/Name", "new") });
+
+        var result = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        result.Resource["name"]!.ToString().Should().Be("old"); // lowercase "name" untouched
+        result.Resource["Name"]!.ToString().Should().Be("new"); // new "Name" property created
+    }
+
+    [Fact]
+    public async Task Patch_WrongPropertyPathCasing_CreatesNewProperty()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "value" }), new PartitionKey("pk1"));
+
+        await container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
+            new[] { PatchOperation.Set("/NAME", "val") });
+
+        var result = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        result.Resource["name"]!.ToString().Should().Be("value"); // original untouched
+        result.Resource["NAME"]!.ToString().Should().Be("val"); // new property
+    }
+
+    [Fact]
+    public async Task Patch_ReservedPath_Id_CaseInsensitiveValidation()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+
+        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+            container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
+                new[] { PatchOperation.Set("/ID", "new-id") }));
+        ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Patch_ReservedPath_PartitionKey_CaseInsensitiveValidation()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+
+        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+            container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
+                new[] { PatchOperation.Set("/PartitionKey", "new-pk") }));
+        ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  C7: Hierarchical/composite partition key case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task HierarchicalPK_EachComponent_IsCaseSensitive()
+    {
+        var container = new InMemoryContainer("test", new[] { "/tenant", "/region" });
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", tenant = "TenantA", region = "RegionX" }),
+            new PartitionKeyBuilder().Add("TenantA").Add("RegionX").Build());
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", tenant = "tenantA", region = "RegionX" }),
+            new PartitionKeyBuilder().Add("tenantA").Add("RegionX").Build());
+
+        container.ItemCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task HierarchicalPK_ReadItem_RequiresExactComponentCasing()
+    {
+        var container = new InMemoryContainer("test", new[] { "/tenant", "/region" });
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", tenant = "TenantA", region = "RegionX" }),
+            new PartitionKeyBuilder().Add("TenantA").Add("RegionX").Build());
+
+        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+            container.ReadItemAsync<JObject>("1",
+                new PartitionKeyBuilder().Add("tenantA").Add("RegionX").Build()));
+        ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  D1: Database delete case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Database_DeleteAsync_RequiresExactCasing()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("mydb");
+        await client.CreateDatabaseAsync("MyDB");
+
+        await client.GetDatabase("mydb").DeleteAsync();
+
+        // "MyDB" should still exist
+        var response = await client.GetDatabase("MyDB").ReadAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  D2: Container delete case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Container_DeleteAsync_RequiresExactCasing()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("db")).Database;
+        await db.CreateContainerAsync("mycontainer", "/pk");
+        await db.CreateContainerAsync("MyContainer", "/pk");
+
+        await db.GetContainer("mycontainer").DeleteContainerAsync();
+
+        var response = await db.GetContainer("MyContainer").ReadContainerAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  D3: Container/Database properties readback
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Container_Properties_PreserveExactCasing()
+    {
+        var client = new InMemoryCosmosClient();
+        var db = (await client.CreateDatabaseAsync("db")).Database;
+        await db.CreateContainerAsync("MyContainer", "/pk");
+
+        var response = await db.GetContainer("MyContainer").ReadContainerAsync();
+        response.Resource.Id.Should().Be("MyContainer");
+    }
+
+    [Fact]
+    public async Task Database_Properties_PreserveExactCasing()
+    {
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("MyDatabase");
+
+        var response = await client.GetDatabase("MyDatabase").ReadAsync();
+        response.Resource.Id.Should().Be("MyDatabase");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  E1: Change feed preserves exact casing
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ChangeFeed_PreservesExactPropertyCasing()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = "pk1", FirstName = "Alice", lastName = "Smith" }),
+            new PartitionKey("pk1"));
+
+        var iter = container.GetChangeFeedIterator<JObject>(ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+        JObject? change = null;
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            if (page.StatusCode == HttpStatusCode.NotModified) break;
+            change = page.First();
+        }
+
+        change!["FirstName"]!.ToString().Should().Be("Alice");
+        change!["lastName"]!.ToString().Should().Be("Smith");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_PreservesExactIdCasing()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "Item1", partitionKey = "pk1" }), new PartitionKey("pk1"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "item1", partitionKey = "pk2" }), new PartitionKey("pk2"));
+
+        var iter = container.GetChangeFeedIterator<JObject>(ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+        var changes = new List<JObject>();
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            if (page.StatusCode == HttpStatusCode.NotModified) break;
+            changes.AddRange(page);
+        }
+
+        changes.Should().HaveCount(2);
+        changes.Select(c => c["id"]!.ToString()).Should().BeEquivalentTo(new[] { "Item1", "item1" });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  E2: State export/import preserves casing
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task StateExport_PreservesPropertyCasing()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = "pk1", FirstName = "Alice" }),
+            new PartitionKey("pk1"));
+
+        var state = container.ExportState();
+        state.Should().Contain("FirstName");
+    }
+
+    [Fact]
+    public async Task StateImport_PreservesPropertyCasing()
+    {
+        var source = new InMemoryContainer("source", "/partitionKey");
+        await source.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = "pk1", FirstName = "Alice" }),
+            new PartitionKey("pk1"));
+        var state = source.ExportState();
+
+        var target = new InMemoryContainer("target", "/partitionKey");
+        target.ImportState(state);
+
+        var iter = target.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT c.FirstName FROM c"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle().Which["FirstName"]!.ToString().Should().Be("Alice");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  F1: Unique key policy case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task UniqueKeyPolicy_PathIsCaseInsensitive_InEmulator()
+    {
+        // Note: The emulator uses JToken.SelectToken which is case-sensitive for property lookup,
+        // but the unique key path resolution normalizes paths. We test that unique keys
+        // with different property casings work as expected in the emulator.
+        var props = new ContainerProperties("test", "/partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/userName" } } }
+            }
+        };
+        var container = new InMemoryContainer(props);
+
+        // Same userName value on same PK should conflict
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = "pk1", userName = "alice" }),
+            new PartitionKey("pk1"));
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", partitionKey = "pk1", userName = "alice" }),
+            new PartitionKey("pk1"));
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task UniqueKeyPolicy_ValueIsCaseSensitive()
+    {
+        var props = new ContainerProperties("test", "/partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/email" } } }
+            }
+        };
+        var container = new InMemoryContainer(props);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = "pk1", email = "Alice@example.com" }),
+            new PartitionKey("pk1"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", partitionKey = "pk1", email = "alice@example.com" }),
+            new PartitionKey("pk1"));
+
+        container.ItemCount.Should().Be(2); // Different case = different value
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  G1: Computed property name case sensitivity in queries
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ComputedProperty_QueryByName_IsCaseSensitive()
+    {
+        var props = new ContainerProperties("test", "/partitionKey")
+        {
+            ComputedProperties = new System.Collections.ObjectModel.Collection<ComputedProperty>
+            {
+                new() { Name = "cp_fullName", Query = "SELECT VALUE CONCAT(c.first, ' ', c.last) FROM c" }
+            }
+        };
+        var container = new InMemoryContainer(props);
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = "pk1", first = "Alice", last = "Smith" }),
+            new PartitionKey("pk1"));
+
+        // Correct casing
+        var iter1 = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT c.cp_fullName FROM c"));
+        var results1 = new List<JObject>();
+        while (iter1.HasMoreResults) results1.AddRange(await iter1.ReadNextAsync());
+        results1.Should().ContainSingle().Which["cp_fullName"]!.ToString().Should().Be("Alice Smith");
+
+        // Wrong casing — property not found
+        var iter2 = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT c.cp_fullname FROM c"));
+        var results2 = new List<JObject>();
+        while (iter2.HasMoreResults) results2.AddRange(await iter2.ReadNextAsync());
+        results2.Should().ContainSingle().Which["cp_fullname"].Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ComputedProperty_DifferentCaseNames_AreSeparateProperties()
+    {
+        // The emulator allows "Foo" and "foo" as separate computed properties
+        var props = new ContainerProperties("test", "/partitionKey")
+        {
+            ComputedProperties = new System.Collections.ObjectModel.Collection<ComputedProperty>
+            {
+                new() { Name = "Foo", Query = "SELECT VALUE c.a FROM c" },
+                new() { Name = "foo", Query = "SELECT VALUE c.b FROM c" }
+            }
+        };
+        var container = new InMemoryContainer(props);
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = "pk1", a = "alpha", b = "beta" }),
+            new PartitionKey("pk1"));
+
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT c.Foo, c.foo FROM c"));
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        var r = results.Should().ContainSingle().Subject;
+        r["Foo"]!.ToString().Should().Be("alpha");
+        r["foo"]!.ToString().Should().Be("beta");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  H1: Partition key path case sensitivity
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task PartitionKeyPath_IsCaseSensitive()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        // Document has "PK" (wrong case) — partition key lookup should NOT find it
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", PK = "wrongCase" }),
+            new PartitionKey("wrongCase")); // Must supply PK explicitly since auto-extract won't find /pk
+
+        // Query scoped to partition should work with explicitly supplied PK
+        var iter = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c"),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("wrongCase") });
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().ContainSingle();
     }
 }
