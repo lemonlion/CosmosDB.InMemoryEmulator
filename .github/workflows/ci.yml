@@ -15,10 +15,27 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
 
-      - name: Test
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests --configuration Release --no-build --verbosity normal
+      - name: Test (net8.0)
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests --configuration Release --no-build --verbosity normal --framework net8.0
+
+      - name: Test (net10.0)
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests --configuration Release --no-build --verbosity normal --framework net10.0
+
+      - name: In-Memory Performance Tests (net8.0)
+        env:
+          LOAD_TEST_RPS: 50
+          LOAD_TEST_DURATION_SECONDS: 60
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Performance --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed" --filter "FullyQualifiedName~Performance.LoadTests." --framework net8.0
+
+      - name: In-Memory Performance Tests (net10.0)
+        env:
+          LOAD_TEST_RPS: 50
+          LOAD_TEST_DURATION_SECONDS: 60
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Performance --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed" --filter "FullyQualifiedName~Performance.LoadTests." --framework net10.0
