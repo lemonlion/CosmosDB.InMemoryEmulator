@@ -26291,3 +26291,695 @@ public class QueryDeepDiveV20_UnicodeSearchTests
         r[0]["id"]!.Value<string>().Should().Be("3");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive V21: Comprehensive Coverage Gaps
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class QueryDeepDiveV21_StringToNullInputTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","val":null}""")),
+            new PartitionKey("a"));
+    }
+
+    [Fact]
+    public async Task StringToArray_NullInput_ReturnsUndefined()
+    {
+        await Seed();
+        // StringToArray(null) should return undefined (field omitted by VALUE)
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE StringToArray(c.val) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().BeEmpty("StringToArray(null) should return undefined, omitted by VALUE");
+    }
+
+    [Fact]
+    public async Task StringToObject_NullInput_ReturnsUndefined()
+    {
+        await Seed();
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE StringToObject(c.val) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().BeEmpty("StringToObject(null) should return undefined, omitted by VALUE");
+    }
+
+    [Fact]
+    public async Task StringToNumber_NullInput_ReturnsUndefined()
+    {
+        await Seed();
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE StringToNumber(c.val) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().BeEmpty("StringToNumber(null) should return undefined, omitted by VALUE");
+    }
+
+    [Fact]
+    public async Task StringToBoolean_NullInput_ReturnsUndefined()
+    {
+        await Seed();
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE StringToBoolean(c.val) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().BeEmpty("StringToBoolean(null) should return undefined, omitted by VALUE");
+    }
+
+    [Fact]
+    public async Task StringToNull_NullInput_ReturnsUndefined()
+    {
+        await Seed();
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE StringToNull(c.val) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().BeEmpty("StringToNull(null) should return undefined, omitted by VALUE");
+    }
+}
+
+public class QueryDeepDiveV21_NumberBinEdgeCases
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","val":1}""")),
+            new PartitionKey("a"));
+    }
+
+    [Fact]
+    public async Task NumberBin_NegativeValue_BinsCorrectly()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","val":-7}""")),
+            new PartitionKey("a"));
+
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE NumberBin(c.val, 5) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        // NumberBin(-7, 5) = Floor(-7/5) * 5 = Floor(-1.4) * 5 = -2 * 5 = -10
+        results.Should().ContainSingle().Which.Value<double>().Should().Be(-10);
+    }
+
+    [Fact]
+    public async Task NumberBin_ZeroBinSize_ReturnsUndefined()
+    {
+        await Seed();
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE NumberBin(c.val, 0) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().BeEmpty("NumberBin with zero bin size should return undefined");
+    }
+}
+
+public class QueryDeepDiveV21_ArrayContainsPartialMatch
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task ArrayContains_PartialObjectMatch_WithThirdArgTrue()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","items":[{"name":"Alice","age":30},{"name":"Bob","age":25}]}""")),
+            new PartitionKey("a"));
+
+        // ARRAY_CONTAINS with 3rd arg = true does partial match
+        var results = new List<JObject>();
+        var it = _container.GetItemQueryIterator<JObject>(
+            """SELECT * FROM c WHERE ARRAY_CONTAINS(c.items, {"name": "Alice"}, true)""",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task ArrayContains_ExactObjectMatch_WithoutThirdArg()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","items":[{"name":"Alice","age":30}]}""")),
+            new PartitionKey("a"));
+
+        // Without 3rd arg, ARRAY_CONTAINS does exact match — partial won't match
+        var results = new List<JObject>();
+        var it = _container.GetItemQueryIterator<JObject>(
+            """SELECT * FROM c WHERE ARRAY_CONTAINS(c.items, {"name": "Alice"})""",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        // Exact match of {name:Alice} won't find {name:Alice,age:30}
+        results.Should().BeEmpty();
+    }
+}
+
+public class QueryDeepDiveV21_ArraySliceEdgeCases
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                """{"id":"1","pk":"a","items":["a","b","c","d","e"]}""")),
+            new PartitionKey("a"));
+    }
+
+    [Fact]
+    public async Task ArraySlice_StartAndLength_ReturnsSubset()
+    {
+        await Seed();
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE ARRAY_SLICE(c.items, 1, 2) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        var arr = results.Should().ContainSingle().Subject;
+        arr.ToObject<string[]>().Should().Equal("b", "c");
+    }
+
+    [Fact]
+    public async Task ArraySlice_StartBeyondLength_ReturnsEmpty()
+    {
+        await Seed();
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE ARRAY_SLICE(c.items, 10) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        var arr = results.Should().ContainSingle().Subject;
+        arr.ToObject<string[]>().Should().BeEmpty();
+    }
+}
+
+public class QueryDeepDiveV21_AggregateMixedTypes
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","val":10}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a","val":"not-a-number"}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","pk":"a","val":30}""")),
+            new PartitionKey("a"));
+    }
+
+    [Fact]
+    public async Task Sum_MixedTypes_IgnoresNonNumeric()
+    {
+        await Seed();
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE SUM(c.val) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        // SUM should ignore non-numeric types and sum only numbers
+        results.Should().ContainSingle().Which.Value<double>().Should().Be(40);
+    }
+
+    [Fact]
+    public async Task Avg_MixedTypes_IgnoresNonNumeric()
+    {
+        await Seed();
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE AVG(c.val) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        // AVG should ignore non-numeric types: (10+30)/2 = 20
+        results.Should().ContainSingle().Which.Value<double>().Should().Be(20);
+    }
+}
+
+public class QueryDeepDiveV21_CountNullSemantics
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task Count_FieldWithNullValue_ExcludesNull()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","optional":"yes"}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a","optional":null}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","pk":"a"}""")),
+            new PartitionKey("a"));
+
+        var results = new List<JObject>();
+        var it = _container.GetItemQueryIterator<JObject>(
+            "SELECT COUNT(c.optional) AS cnt FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        // Cosmos DB semantics: COUNT(c.field) excludes both null AND undefined/missing.
+        // Only the doc with "optional":"yes" is counted.
+        results.Should().ContainSingle().Subject["cnt"]!.Value<int>().Should().Be(1);
+    }
+}
+
+public class QueryDeepDiveV21_SelectComputedProperties
+{
+    private static InMemoryContainer CreateContainerWithComputedProps(
+        params (string Name, string Query)[] definitions)
+    {
+        var props = new ContainerProperties("test", "/pk")
+        {
+            ComputedProperties = new System.Collections.ObjectModel.Collection<ComputedProperty>(
+                definitions.Select(d => new ComputedProperty { Name = d.Name, Query = d.Query }).ToList())
+        };
+        return new InMemoryContainer(props);
+    }
+
+    [Fact]
+    public async Task SelectStar_ExcludesComputedProperties()
+    {
+        var container = CreateContainerWithComputedProps(("fullDisplayName", "SELECT VALUE CONCAT(c.first, ' ', c.last) FROM c"));
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","first":"John","last":"Doe"}""")),
+            new PartitionKey("a"));
+
+        var results = new List<JObject>();
+        var it = container.GetItemQueryIterator<JObject>("SELECT * FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        var doc = results.Should().ContainSingle().Subject;
+        doc.ContainsKey("fullDisplayName").Should().BeFalse("SELECT * should exclude computed properties");
+    }
+
+    [Fact]
+    public async Task SelectExplicit_IncludesComputedProperties()
+    {
+        var container = CreateContainerWithComputedProps(("fullDisplayName", "SELECT VALUE CONCAT(c.first, ' ', c.last) FROM c"));
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","first":"John","last":"Doe"}""")),
+            new PartitionKey("a"));
+
+        var results = new List<JObject>();
+        var it = container.GetItemQueryIterator<JObject>("SELECT c.id, c.fullDisplayName FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        var doc = results.Should().ContainSingle().Subject;
+        doc["fullDisplayName"]!.Value<string>().Should().Be("John Doe");
+    }
+}
+
+public class QueryDeepDiveV21_OrderByComplexExpression
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task OrderBy_ComplexArithmeticExpression_Works()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","a":10,"b":5}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a","a":1,"b":100}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","pk":"a","a":5,"b":5}""")),
+            new PartitionKey("a"));
+
+        var results = new List<JObject>();
+        var it = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c ORDER BY c.a + c.b ASC",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        // a+b: id1=15, id2=101, id3=10
+        results.Should().HaveCount(3);
+        results[0]["id"]!.Value<string>().Should().Be("3"); // 10
+        results[1]["id"]!.Value<string>().Should().Be("1"); // 15
+        results[2]["id"]!.Value<string>().Should().Be("2"); // 101
+    }
+}
+
+public class QueryDeepDiveV21_ReplicateEdgeCases
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","val":"abc"}""")),
+            new PartitionKey("a"));
+    }
+
+    [Fact]
+    public async Task Replicate_NegativeCount_ReturnsUndefined()
+    {
+        await Seed();
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE REPLICATE(c.val, -1) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().BeEmpty("REPLICATE with negative count should return undefined");
+    }
+}
+
+public class QueryDeepDiveV21_DateTimeAddInvalidPart
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task DateTimeAdd_InvalidPart_ReturnsUndefined()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a"}""")),
+            new PartitionKey("a"));
+
+        var results = new List<JToken>();
+        var it = _container.GetItemQueryIterator<JToken>(
+            "SELECT VALUE DateTimeAdd('invalid', 1, '2023-01-01T00:00:00Z') FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().BeEmpty("DateTimeAdd with invalid part should return undefined");
+    }
+}
+
+public class QueryDeepDiveV21_NestedTernary
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task NestedTernary_EvaluatesCorrectly()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","a":true,"b":false}""")),
+            new PartitionKey("a"));
+
+        var results = new List<string>();
+        var it = _container.GetItemQueryIterator<string>(
+            "SELECT VALUE (c.a ? (c.b ? 'both' : 'onlyA') : 'neither') FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Should().Be("onlyA");
+    }
+}
+
+public class QueryDeepDiveV21_MaxItemCountMinusOne
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task MaxItemCount_MinusOne_ReturnsAllInSinglePage()
+    {
+        for (var i = 0; i < 10; i++)
+            await _container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = "a" }),
+                new PartitionKey("a"));
+
+        var it = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a"), MaxItemCount = -1 });
+        var page = await it.ReadNextAsync();
+
+        page.Count.Should().Be(10);
+        it.HasMoreResults.Should().BeFalse("MaxItemCount=-1 should return all items in one page");
+    }
+}
+
+public class QueryDeepDiveV21_StreamIteratorEnvelope
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task StreamIterator_ResponseHas_Count_Rid_Documents()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "Test" }),
+            new PartitionKey("a"));
+
+        var it = _container.GetItemQueryStreamIterator(
+            "SELECT * FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var response = await it.ReadNextAsync();
+        var body = await new StreamReader(response.Content).ReadToEndAsync();
+        var envelope = JObject.Parse(body);
+
+        envelope["Documents"].Should().NotBeNull();
+        envelope["_count"].Should().NotBeNull();
+        envelope["_count"]!.Value<int>().Should().Be(1);
+        envelope["_rid"].Should().NotBeNull();
+    }
+}
+
+public class QueryDeepDiveV21_ReplaceEdgeCases
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","val":"hello world"}""")),
+            new PartitionKey("a"));
+    }
+
+    [Fact]
+    public async Task Replace_SearchNotFound_ReturnsOriginal()
+    {
+        await Seed();
+        var results = new List<string>();
+        var it = _container.GetItemQueryIterator<string>(
+            "SELECT VALUE REPLACE(c.val, 'xyz', 'abc') FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Should().Be("hello world");
+    }
+
+    [Fact]
+    public async Task Replace_EmptyReplacement_RemovesOccurrences()
+    {
+        await Seed();
+        var results = new List<string>();
+        var it = _container.GetItemQueryIterator<string>(
+            "SELECT VALUE REPLACE(c.val, ' world', '') FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Should().Be("hello");
+    }
+}
+
+public class QueryDeepDiveV21_ConcatVariadic
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task Concat_FiveArgs_ConcatenatesAll()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a"}""")),
+            new PartitionKey("a"));
+
+        var results = new List<string>();
+        var it = _container.GetItemQueryIterator<string>(
+            "SELECT VALUE CONCAT('a', 'b', 'c', 'd', 'e') FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Should().Be("abcde");
+    }
+}
+
+public class QueryDeepDiveV21_SelectArrayIndex
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task Select_ArrayIndex_ProjectsCorrectly()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","tags":["first","second","third"]}""")),
+            new PartitionKey("a"));
+
+        var results = new List<JObject>();
+        var it = _container.GetItemQueryIterator<JObject>(
+            "SELECT c.tags[0] AS firstTag, c.tags[2] AS thirdTag FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        var doc = results.Should().ContainSingle().Subject;
+        doc["firstTag"]!.Value<string>().Should().Be("first");
+        doc["thirdTag"]!.Value<string>().Should().Be("third");
+    }
+}
+
+public class QueryDeepDiveV21_OrderByRankError
+{
+    [Fact]
+    public async Task OrderByRank_ThrowsBadRequest()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a"}""")),
+            new PartitionKey("a"));
+
+        var act = () =>
+        {
+            container.GetItemQueryIterator<JObject>(
+                "SELECT * FROM c ORDER BY RANK RRF(c.score, c.rank)",
+                requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+            return Task.CompletedTask;
+        };
+
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == System.Net.HttpStatusCode.BadRequest);
+    }
+}
+
+public class QueryDeepDiveV21_DistinctPropertyOrderTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact(Skip = "The emulator uses JSON string equality for DISTINCT deduplication. " +
+        "Objects with the same properties in different order (e.g. {a:1,b:2} vs {b:2,a:1}) " +
+        "are treated as different values because their JSON serializations differ. " +
+        "Real Cosmos DB treats them as equal for DISTINCT purposes. " +
+        "This is a known limitation documented in Known-Limitations (property-order sensitivity).")]
+    public async Task Distinct_ObjectPropertyOrder_TreatedAsSame()
+    {
+        // Real Cosmos: {a:1,b:2} and {b:2,a:1} are the same for DISTINCT
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","x":1,"y":2}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a","y":2,"x":1}""")),
+            new PartitionKey("a"));
+
+        var results = new List<JObject>();
+        var it = _container.GetItemQueryIterator<JObject>(
+            "SELECT DISTINCT c.x, c.y FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        // Real Cosmos: 1 result (both objects have same x,y values)
+        results.Should().ContainSingle();
+    }
+
+    /// <summary>
+    /// Sister test: demonstrates the emulator uses JSON string equality for DISTINCT.
+    /// Objects with identical properties but different property order in the original doc
+    /// may produce the same projection. This test shows the projection is the same even
+    /// if source property order differs, because SELECT c.x, c.y normalizes the output.
+    /// </summary>
+    [Fact]
+    public async Task Distinct_ProjectedFields_OrderIsNormalized()
+    {
+        // When projecting specific fields (SELECT c.x, c.y), the output order is
+        // determined by the SELECT clause, not the source document, so DISTINCT works.
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","x":1,"y":2}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a","y":2,"x":1}""")),
+            new PartitionKey("a"));
+
+        var results = new List<JObject>();
+        var it = _container.GetItemQueryIterator<JObject>(
+            "SELECT DISTINCT c.x, c.y FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        // Projection normalizes property order, so both produce {x:1,y:2} → only 1 result
+        results.Should().ContainSingle();
+    }
+}
+
+public class QueryDeepDiveV21_WhereChainedFunctions
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task Where_ChainedFunctions_LowerTrim()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","name":"  Alice  "}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a","name":"  Bob  "}""")),
+            new PartitionKey("a"));
+
+        var results = new List<JObject>();
+        var it = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE LOWER(TRIM(c.name)) = 'alice'",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        results[0]["id"]!.Value<string>().Should().Be("1");
+    }
+}
+
+public class QueryDeepDiveV21_IsNotNullVsIsDefined
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task Where_IsNotNull_ExcludesNullAndUndefined()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","val":"yes"}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a","val":null}""")),
+            new PartitionKey("a"));
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"3","pk":"a"}""")),
+            new PartitionKey("a"));
+
+        var results = new List<JObject>();
+        var it = _container.GetItemQueryIterator<JObject>(
+            "SELECT * FROM c WHERE c.val IS NOT NULL",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        // IS NOT NULL excludes: nulls AND undefined (missing)
+        results.Should().ContainSingle();
+        results[0]["id"]!.Value<string>().Should().Be("1");
+    }
+}

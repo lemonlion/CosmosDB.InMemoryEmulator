@@ -6067,10 +6067,11 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    var s = args[0]?.ToString();
+                    if (args[0] is null or UndefinedValue) return UndefinedValue.Instance;
+                    var s = args[0].ToString();
                     if (s is null)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     try
@@ -6090,7 +6091,8 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    var s = args[0]?.ToString()?.Trim();
+                    if (args[0] is null or UndefinedValue) return UndefinedValue.Instance;
+                    var s = args[0].ToString()?.Trim();
                     return s switch
                     {
                         "true" => true,
@@ -6105,7 +6107,8 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    return args[0]?.ToString()?.Trim() == "null" ? null : UndefinedValue.Instance;
+                    if (args[0] is null or UndefinedValue) return UndefinedValue.Instance;
+                    return args[0].ToString()?.Trim() == "null" ? null : UndefinedValue.Instance;
                 }
             case "STRINGTONUMBER":
                 {
@@ -6114,10 +6117,11 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    var s = args[0]?.ToString()?.Trim();
+                    if (args[0] is null or UndefinedValue) return UndefinedValue.Instance;
+                    var s = args[0].ToString()?.Trim();
                     if (s is null)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     if (long.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var longVal))
@@ -6141,10 +6145,11 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    var s = args[0]?.ToString();
+                    if (args[0] is null or UndefinedValue) return UndefinedValue.Instance;
+                    var s = args[0].ToString();
                     if (s is null)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     try
@@ -6862,7 +6867,8 @@ public class InMemoryContainer : Container
                             "nanosecond" or "ns" => dt.AddTicks(n / 100L),
                             _ => null,
                         };
-                        return result?.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+                        if (result is null) return UndefinedValue.Instance;
+                        return result.Value.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
                     }
                     catch (ArgumentOutOfRangeException)
                     {
