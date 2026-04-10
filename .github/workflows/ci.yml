@@ -63,6 +63,7 @@ jobs:
         with:
           name: perf-${{ matrix.framework }}-${{ matrix.rps }}rps-${{ matrix.duration }}s-run${{ matrix.run }}
           path: test-output.txt
+          retention-days: 1
 
   performance-summary:
     runs-on: ubuntu-latest
