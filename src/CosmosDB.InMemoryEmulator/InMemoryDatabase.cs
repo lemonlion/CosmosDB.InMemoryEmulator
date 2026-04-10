@@ -273,6 +273,7 @@ public class InMemoryDatabase : Database
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         _containers.Clear();
+        _explicitlyCreatedContainers.Clear();
         _users.Clear();
         _client?.RemoveDatabase(Id);
         var response = Substitute.For<DatabaseResponse>();
@@ -284,6 +285,7 @@ public class InMemoryDatabase : Database
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         _containers.Clear();
+        _explicitlyCreatedContainers.Clear();
         _users.Clear();
         _client?.RemoveDatabase(Id);
         return Task.FromResult(CreateStreamResponse(HttpStatusCode.NoContent));
@@ -342,6 +344,8 @@ public class InMemoryDatabase : Database
 
     public override Task<ThroughputResponse> ReplaceThroughputAsync(ThroughputProperties throughputProperties, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        if (throughputProperties?.Throughput.HasValue == true)
+            _throughput = throughputProperties.Throughput.Value;
         var response = Substitute.For<ThroughputResponse>();
         response.StatusCode.Returns(HttpStatusCode.OK);
         response.Resource.Returns(throughputProperties);

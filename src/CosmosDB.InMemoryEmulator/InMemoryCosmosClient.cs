@@ -130,7 +130,13 @@ public class InMemoryCosmosClient : CosmosClient
         DatabaseProperties databaseProperties, int? throughput = null,
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        ThrowIfDisposed();
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(databaseProperties);
         var id = databaseProperties.Id;
+        ArgumentNullException.ThrowIfNull(id);
+        ArgumentException.ThrowIfNullOrEmpty(id);
+        ValidateResourceName(id, "Database");
         var database = new InMemoryDatabase(id, this);
         if (!_databases.TryAdd(id, database))
         {
