@@ -1731,6 +1731,482 @@ public class ExtendedArrayFunctionTests
         results[0]["diff"].Should().BeNull();
     }
 
+    // ════════════════════════════════════════════
+    // Deep Dive: Additional Edge Cases
+    // ════════════════════════════════════════════
+
+    #region ARRAY_CONTAINS_ANY — Additional Edge Cases
+
+    [Fact]
+    public async Task ArrayContainsAny_WhereSourceIsNull_ReturnsFalse()
+    {
+        await SeedTypeDiverseItems();
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "null1", partitionKey = "pk1", tags = (object?)null }),
+            new PartitionKey("pk1"));
+
+        var query = new QueryDefinition("SELECT VALUE c.id FROM c WHERE ARRAY_CONTAINS_ANY(c.tags, ['a'])");
+        var results = await QueryAll<string>(query);
+        results.Should().NotContain("null1");
+    }
+
+    [Fact]
+    public async Task ArrayContainsAny_CaseSensitive_NoMatch()
+    {
+        await SeedItems();
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "cs1", partitionKey = "pk1", tags = new[] { "ABC" } }),
+            new PartitionKey("pk1"));
+
+        var query = new QueryDefinition("SELECT VALUE c.id FROM c WHERE ARRAY_CONTAINS_ANY(c.tags, ['abc'])");
+        var results = await QueryAll<string>(query);
+        results.Should().NotContain("cs1");
+    }
+
+    [Fact]
+    public async Task ArrayContainsAny_WithNestedObjectInArray_MatchesDeepEqual()
+    {
+        await SeedTypeDiverseItems();
+        // Item 12 has tags = [{name:"x"},{name:"y"}]
+        var query = new QueryDefinition(
+            "SELECT VALUE c.id FROM c WHERE ARRAY_CONTAINS_ANY(c.tags, [{\"name\":\"x\"}])");
+        var results = await QueryAll<string>(query);
+        results.Should().Contain("12");
+    }
+
+    [Fact]
+    public async Task ArrayContainsAny_InSubquery_Works()
+    {
+        await SeedItems();
+        var query = new QueryDefinition(
+            "SELECT VALUE c.id FROM c WHERE EXISTS(SELECT VALUE 1 FROM t IN c.tags WHERE t = 'a') AND ARRAY_CONTAINS_ANY(c.tags, ['b'])");
+        var results = await QueryAll<string>(query);
+        results.Should().Contain("1"); // tags=["a","b","c"]
+    }
+
+    [Fact]
+    public async Task ArrayContainsAny_WithGroupBy_Works()
+    {
+        await SeedItems();
+        var query = new QueryDefinition(
+            "SELECT c.partitionKey AS pk, COUNT(1) AS cnt FROM c WHERE ARRAY_CONTAINS_ANY(c.tags, ['a']) GROUP BY c.partitionKey");
+        var results = await QueryAll<JObject>(query);
+        results.Should().ContainSingle();
+        results[0]["cnt"]!.Value<long>().Should().Be(1); // Only id=1 has tag "a"
+    }
+
+    [Fact]
+    public async Task ArrayContainsAny_WithSingleArgument_ReturnsFalse()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT VALUE ARRAY_CONTAINS_ANY(c.tags) FROM c WHERE c.id = '1'");
+        var results = await QueryAll<bool>(query);
+        results.Single().Should().BeFalse();
+    }
+
+    #endregion
+
+    #region ARRAY_CONTAINS_ALL — Additional Edge Cases
+
+    [Fact]
+    public async Task ArrayContainsAll_SingleElementSearch_Present_ReturnsTrue()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT VALUE ARRAY_CONTAINS_ALL(c.tags, ['a']) FROM c WHERE c.id = '1'");
+        var results = await QueryAll<bool>(query);
+        results.Single().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ArrayContainsAll_SingleElementSearch_Missing_ReturnsFalse()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT VALUE ARRAY_CONTAINS_ALL(c.tags, ['z']) FROM c WHERE c.id = '1'");
+        var results = await QueryAll<bool>(query);
+        results.Single().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ArrayContainsAll_WhereSourceIsNull_ReturnsFalse()
+    {
+        await SeedTypeDiverseItems();
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "null2", partitionKey = "pk1", tags = (object?)null }),
+            new PartitionKey("pk1"));
+
+        var query = new QueryDefinition("SELECT VALUE c.id FROM c WHERE ARRAY_CONTAINS_ALL(c.tags, ['a'])");
+        var results = await QueryAll<string>(query);
+        results.Should().NotContain("null2");
+    }
+
+    [Fact]
+    public async Task ArrayContainsAll_CaseSensitive_NoMatch()
+    {
+        await SeedItems();
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "cs2", partitionKey = "pk1", tags = new[] { "ABC" } }),
+            new PartitionKey("pk1"));
+
+        var query = new QueryDefinition("SELECT VALUE ARRAY_CONTAINS_ALL(c.tags, ['abc']) FROM c WHERE c.id = 'cs2'");
+        var results = await QueryAll<bool>(query);
+        results.Single().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ArrayContainsAll_WithNestedObjectInArray_MatchesDeepEqual()
+    {
+        await SeedTypeDiverseItems();
+        // Item 12 has tags = [{name:"x"},{name:"y"}]
+        var query = new QueryDefinition(
+            "SELECT VALUE ARRAY_CONTAINS_ALL(c.tags, [{\"name\":\"x\"}, {\"name\":\"y\"}]) FROM c WHERE c.id = '12'");
+        var results = await QueryAll<bool>(query);
+        results.Single().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ArrayContainsAll_CombinedWithArrayContainsAny_InWhere()
+    {
+        await SeedItems();
+        var query = new QueryDefinition(
+            "SELECT VALUE c.id FROM c WHERE ARRAY_CONTAINS_ALL(c.tags, ['b','c']) AND ARRAY_CONTAINS_ANY(c.tags, ['a'])");
+        var results = await QueryAll<string>(query);
+        results.Should().ContainSingle().Which.Should().Be("1");
+    }
+
+    [Fact]
+    public async Task ArrayContainsAll_WithSingleArgument_ReturnsFalse()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT VALUE ARRAY_CONTAINS_ALL(c.tags) FROM c WHERE c.id = '1'");
+        var results = await QueryAll<bool>(query);
+        results.Single().Should().BeFalse();
+    }
+
+    #endregion
+
+    #region SetIntersect — Additional Edge Cases
+
+    [Fact]
+    public async Task SetIntersect_DuplicatesInBothArrays_DedupedCorrectly()
+    {
+        await SeedTypeDiverseItems();
+        // Item 10 has tags=["a","a","b"]
+        var query = new QueryDefinition(
+            "SELECT VALUE SetIntersect(c.tags, ['a','a','b','b']) FROM c WHERE c.id = '10'");
+        var results = await QueryAll<JArray>(query);
+        var arr = results.Single();
+        arr.Select(t => t.Value<string>()).Should().BeEquivalentTo(new[] { "a", "b" });
+    }
+
+    [Fact]
+    public async Task SetIntersect_SingleElementArrays_Match()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT VALUE SetIntersect(['a'], ['a']) FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JArray>(query);
+        results.Single().Should().HaveCount(1);
+        results.Single()[0]!.Value<string>().Should().Be("a");
+    }
+
+    [Fact]
+    public async Task SetIntersect_SingleElementArrays_NoMatch()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT VALUE SetIntersect(['a'], ['b']) FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JArray>(query);
+        results.Single().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SetIntersect_WithNullProperty_ReturnsUndefined()
+    {
+        await SeedTypeDiverseItems();
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "nullsi", partitionKey = "pk1", tags = (object?)null }),
+            new PartitionKey("pk1"));
+
+        var query = new QueryDefinition("SELECT SetIntersect(c.tags, ['a']) AS result FROM c WHERE c.id = 'nullsi'");
+        var results = await QueryAll<JObject>(query);
+        results.Single()["result"].Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SetIntersect_ChainedThreeSets()
+    {
+        await SeedItems();
+        // Item 1: ["a","b","c"], Item 2: ["b","c","d"]
+        // SetIntersect(["a","b","c"], ["b","c","d"]) = ["b","c"]
+        // SetIntersect(["b","c"], ["c"]) = ["c"]
+        var query = new QueryDefinition(
+            "SELECT VALUE SetIntersect(SetIntersect(['a','b','c'], ['b','c','d']), ['c']) FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JArray>(query);
+        results.Single().Should().HaveCount(1);
+        results.Single()[0]!.Value<string>().Should().Be("c");
+    }
+
+    [Fact]
+    public async Task SetIntersect_WithParameterBothArgs_Works()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT VALUE SetIntersect(@a, @b) FROM c WHERE c.id = '1'")
+            .WithParameter("@a", new JArray("a", "b", "c"))
+            .WithParameter("@b", new JArray("b", "c", "d"));
+        var results = await QueryAll<JArray>(query);
+        results.Single().Select(t => t.Value<string>()).Should().BeEquivalentTo(new[] { "b", "c" });
+    }
+
+    #endregion
+
+    #region SetUnion — Additional Edge Cases
+
+    [Fact]
+    public async Task SetUnion_WithNullProperty_ReturnsUndefined()
+    {
+        await SeedTypeDiverseItems();
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "nullsu", partitionKey = "pk1", tags = (object?)null }),
+            new PartitionKey("pk1"));
+
+        var query = new QueryDefinition("SELECT SetUnion(c.tags, ['a']) AS result FROM c WHERE c.id = 'nullsu'");
+        var results = await QueryAll<JObject>(query);
+        results.Single()["result"].Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SetUnion_ChainedThreeSets()
+    {
+        await SeedItems();
+        var query = new QueryDefinition(
+            "SELECT VALUE SetUnion(SetUnion(['a'], ['b']), ['c']) FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JArray>(query);
+        results.Single().Select(t => t.Value<string>()).Should().BeEquivalentTo(new[] { "a", "b", "c" });
+    }
+
+    [Fact]
+    public async Task SetUnion_CaseSensitiveStrings()
+    {
+        await SeedItems();
+        var query = new QueryDefinition(
+            "SELECT VALUE SetUnion(['ABC'], ['abc']) FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JArray>(query);
+        results.Single().Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task SetUnion_ResultInWhere_FiltersByLength()
+    {
+        await SeedTypeDiverseItems();
+        // Item 11: tags=["a","b"], otherTags=["b","c"] → union=["a","b","c"] (3 elements)
+        var query = new QueryDefinition(
+            "SELECT VALUE c.id FROM c WHERE ARRAY_LENGTH(SetUnion(c.tags, c.otherTags)) >= 3");
+        var results = await QueryAll<string>(query);
+        results.Should().Contain("11");
+    }
+
+    [Fact]
+    public async Task SetUnion_WithParameterBothArgs_Works()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT VALUE SetUnion(@a, @b) FROM c WHERE c.id = '1'")
+            .WithParameter("@a", new JArray("a"))
+            .WithParameter("@b", new JArray("b"));
+        var results = await QueryAll<JArray>(query);
+        results.Single().Select(t => t.Value<string>()).Should().BeEquivalentTo(new[] { "a", "b" });
+    }
+
+    #endregion
+
+    #region SetDifference — Additional Edge Cases
+
+    [Fact]
+    public async Task SetDifference_WithNullProperty_ReturnsUndefined()
+    {
+        await SeedTypeDiverseItems();
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "nullsd", partitionKey = "pk1", tags = (object?)null }),
+            new PartitionKey("pk1"));
+
+        var query = new QueryDefinition("SELECT SetDifference(c.tags, ['a']) AS result FROM c WHERE c.id = 'nullsd'");
+        var results = await QueryAll<JObject>(query);
+        results.Single()["result"].Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SetDifference_ChainedThreeSets()
+    {
+        await SeedItems();
+        // ["a","b","c"] \ ["b"] = ["a","c"], then ["a","c"] \ ["c"] = ["a"]
+        var query = new QueryDefinition(
+            "SELECT VALUE SetDifference(SetDifference(['a','b','c'], ['b']), ['c']) FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JArray>(query);
+        results.Single().Should().HaveCount(1);
+        results.Single()[0]!.Value<string>().Should().Be("a");
+    }
+
+    [Fact]
+    public async Task SetDifference_CaseSensitiveStrings()
+    {
+        await SeedItems();
+        // ["ABC","abc"] \ ["abc"] → ["ABC"]
+        var query = new QueryDefinition(
+            "SELECT VALUE SetDifference(['ABC','abc'], ['abc']) FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JArray>(query);
+        results.Single().Should().HaveCount(1);
+        results.Single()[0]!.Value<string>().Should().Be("ABC");
+    }
+
+    [Fact]
+    public async Task SetDifference_WithParameterBothArgs_Works()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT VALUE SetDifference(@a, @b) FROM c WHERE c.id = '1'")
+            .WithParameter("@a", new JArray("a", "b", "c"))
+            .WithParameter("@b", new JArray("b"));
+        var results = await QueryAll<JArray>(query);
+        results.Single().Select(t => t.Value<string>()).Should().BeEquivalentTo(new[] { "a", "c" });
+    }
+
+    [Fact]
+    public async Task SetDifference_ResultInSelectProjection()
+    {
+        await SeedItems();
+        var query = new QueryDefinition(
+            "SELECT SetDifference(c.tags, ['a']) AS diff FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JObject>(query);
+        results.Single()["diff"]!.ToObject<string[]>().Should().BeEquivalentTo(new[] { "b", "c" });
+    }
+
+    #endregion
+
+    #region Cross-Cutting Composition
+
+    [Fact]
+    public async Task ArrayContainsAny_OnSetIntersectResult_Works()
+    {
+        await SeedTypeDiverseItems();
+        // Item 11: tags=["a","b"], otherTags=["b","c"] → intersect=["b"]
+        var query = new QueryDefinition(
+            "SELECT VALUE c.id FROM c WHERE ARRAY_CONTAINS_ANY(SetIntersect(c.tags, c.otherTags), ['b'])");
+        var results = await QueryAll<string>(query);
+        results.Should().Contain("11");
+    }
+
+    [Fact]
+    public async Task ArrayContainsAll_OnSetUnionResult_Works()
+    {
+        await SeedTypeDiverseItems();
+        // Item 11: tags=["a","b"], otherTags=["b","c"] → union=["a","b","c"]
+        var query = new QueryDefinition(
+            "SELECT VALUE c.id FROM c WHERE ARRAY_CONTAINS_ALL(SetUnion(c.tags, c.otherTags), ['a','b','c'])");
+        var results = await QueryAll<string>(query);
+        results.Should().Contain("11");
+    }
+
+    [Fact]
+    public async Task SetDifference_InArrayLength_InOrderBy()
+    {
+        await SeedItems();
+        // Item 1: ["a","b","c"]\["a"] = ["b","c"] (len=2), Item 2: ["b","c","d"]\["a"] = ["b","c","d"] (len=3)
+        var query = new QueryDefinition(
+            "SELECT c.id FROM c WHERE ARRAY_LENGTH(c.tags) > 0 ORDER BY ARRAY_LENGTH(SetDifference(c.tags, ['a']))");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCountGreaterThanOrEqualTo(2);
+    }
+
+    [Fact]
+    public async Task AllFiveFunctions_InSingleQuery_Works()
+    {
+        await SeedTypeDiverseItems();
+        var query = new QueryDefinition(@"
+            SELECT
+                ARRAY_CONTAINS_ANY(c.tags, ['a']) AS hasAny,
+                ARRAY_CONTAINS_ALL(c.tags, ['a','b']) AS hasAll,
+                SetIntersect(c.tags, ['a','b']) AS inter,
+                SetUnion(c.tags, ['z']) AS unioned,
+                SetDifference(c.tags, ['a']) AS diff
+            FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JObject>(query);
+        var r = results.Single();
+        r["hasAny"]!.Value<bool>().Should().BeTrue();
+        r["hasAll"]!.Value<bool>().Should().BeTrue();
+        r["inter"]!.ToObject<string[]>().Should().BeEquivalentTo(new[] { "a", "b" });
+        r["diff"]!.ToObject<string[]>().Should().BeEquivalentTo(new[] { "b", "c" });
+    }
+
+    [Fact]
+    public async Task ExtendedArrayFunctions_WithDistinct_Works()
+    {
+        await SeedItems();
+        var query = new QueryDefinition(
+            "SELECT DISTINCT VALUE ARRAY_CONTAINS_ANY(c.tags, ['a']) FROM c");
+        var results = await QueryAll<bool>(query);
+        results.Should().Contain(true);
+        results.Should().Contain(false);
+    }
+
+    [Fact]
+    public async Task ExtendedArrayFunctions_WithTop_Works()
+    {
+        await SeedItems();
+        var query = new QueryDefinition(
+            "SELECT TOP 2 VALUE c.id FROM c WHERE ARRAY_CONTAINS_ANY(c.tags, ['b'])");
+        var results = await QueryAll<string>(query);
+        results.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task ExtendedArrayFunctions_WithOffsetLimit_Works()
+    {
+        await SeedItems();
+        var query = new QueryDefinition(
+            "SELECT VALUE c.id FROM c WHERE ARRAY_CONTAINS_ANY(c.tags, ['b']) ORDER BY c.id OFFSET 0 LIMIT 1");
+        var results = await QueryAll<string>(query);
+        results.Should().HaveCount(1);
+    }
+
+    #endregion
+
+    #region Null vs Undefined Semantics
+
+    [Fact]
+    public async Task SetIntersect_ExplicitNullVsMissing_BothUndefined()
+    {
+        await SeedTypeDiverseItems();
+        // Item 8 has no tags property (missing), add item with explicit null
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "nullcheck", partitionKey = "pk1", tags = (object?)null }),
+            new PartitionKey("pk1"));
+
+        var queryMissing = new QueryDefinition("SELECT SetIntersect(c.tags, ['a']) AS r FROM c WHERE c.id = '8'");
+        var queryNull = new QueryDefinition("SELECT SetIntersect(c.tags, ['a']) AS r FROM c WHERE c.id = 'nullcheck'");
+
+        var resMissing = await QueryAll<JObject>(queryMissing);
+        var resNull = await QueryAll<JObject>(queryNull);
+
+        resMissing.Single()["r"].Should().BeNull(); // undefined → excluded from JSON
+        resNull.Single()["r"].Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SetUnion_ExplicitNullVsMissing_BothUndefined()
+    {
+        await SeedTypeDiverseItems();
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "nullcheck2", partitionKey = "pk1", tags = (object?)null }),
+            new PartitionKey("pk1"));
+
+        var queryMissing = new QueryDefinition("SELECT SetUnion(c.tags, ['a']) AS r FROM c WHERE c.id = '8'");
+        var queryNull = new QueryDefinition("SELECT SetUnion(c.tags, ['a']) AS r FROM c WHERE c.id = 'nullcheck2'");
+
+        var resMissing = await QueryAll<JObject>(queryMissing);
+        var resNull = await QueryAll<JObject>(queryNull);
+
+        resMissing.Single()["r"].Should().BeNull();
+        resNull.Single()["r"].Should().BeNull();
+    }
+
+    #endregion
+
     private async Task<List<T>> QueryAll<T>(QueryDefinition query)
     {
         var iterator = _container.GetItemQueryIterator<T>(query);

@@ -6716,24 +6716,18 @@ public class InMemoryContainer : Container
                     }
                     var result = new JArray();
                     var seen = new HashSet<JToken>(JTokenValueComparer.Instance);
-                    if (arr1 is not null)
+                    foreach (var element in arr1)
                     {
-                        foreach (var element in arr1)
+                        if (seen.Add(element))
                         {
-                            if (seen.Add(element))
-                            {
-                                result.Add(element.DeepClone());
-                            }
+                            result.Add(element.DeepClone());
                         }
                     }
-                    if (arr2 is not null)
+                    foreach (var element in arr2)
                     {
-                        foreach (var element in arr2)
+                        if (seen.Add(element))
                         {
-                            if (seen.Add(element))
-                            {
-                                result.Add(element.DeepClone());
-                            }
+                            result.Add(element.DeepClone());
                         }
                     }
                     return result;
