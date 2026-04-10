@@ -730,7 +730,14 @@ public class InMemoryContainer : Container
 
         try
         {
-            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(_items[key]), "Upsert");
+            var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
+            ExecutePostTriggers(requestOptions, committedDoc, "Upsert");
+            var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
+            if (postTriggerJson != _items[key])
+            {
+                ValidateDocumentSize(postTriggerJson);
+                _items[key] = postTriggerJson;
+            }
         }
         catch
         {
@@ -818,7 +825,14 @@ public class InMemoryContainer : Container
 
         try
         {
-            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(_items[key]), "Replace");
+            var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
+            ExecutePostTriggers(requestOptions, committedDoc, "Replace");
+            var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
+            if (postTriggerJson != _items[key])
+            {
+                ValidateDocumentSize(postTriggerJson);
+                _items[key] = postTriggerJson;
+            }
         }
         catch
         {

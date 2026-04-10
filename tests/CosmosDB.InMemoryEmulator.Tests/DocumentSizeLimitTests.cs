@@ -1284,23 +1284,43 @@ public class PostTriggerSizeDivergenceTests
     }
 
     [Fact]
-    public async Task PostTrigger_InflatesDocumentPast2MB_EmulatorAllowsIt_Divergence()
+    public async Task PostTrigger_InflatesDocumentPast2MB_TypedUpsert_CorrectlyRejected()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
         container.RegisterTrigger("inflatePost", Microsoft.Azure.Cosmos.Scripts.TriggerType.Post,
-            Microsoft.Azure.Cosmos.Scripts.TriggerOperation.Create,
-            doc =>
+            Microsoft.Azure.Cosmos.Scripts.TriggerOperation.All,
+            (Action<JObject>)(doc =>
             {
                 doc["hugeField"] = new string('z', 3 * 1024 * 1024);
-                return doc;
-            });
+            }));
 
         var smallDoc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "tiny" };
-        var response = await container.CreateItemAsync(smallDoc, new PartitionKey("pk1"),
+        var act = () => container.UpsertItemAsync(smallDoc, new PartitionKey("pk1"),
             new ItemRequestOptions { PostTriggers = ["inflatePost"] });
 
-        // Emulator: doesn't re-validate size after post-trigger
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.And.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+    }
+
+    [Fact]
+    public async Task PostTrigger_InflatesDocumentPast2MB_TypedReplace_CorrectlyRejected()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.RegisterTrigger("inflatePost", Microsoft.Azure.Cosmos.Scripts.TriggerType.Post,
+            Microsoft.Azure.Cosmos.Scripts.TriggerOperation.All,
+            (Action<JObject>)(doc =>
+            {
+                doc["hugeField"] = new string('z', 3 * 1024 * 1024);
+            }));
+
+        var smallDoc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "tiny" };
+        await container.CreateItemAsync(smallDoc, new PartitionKey("pk1"));
+
+        var act = () => container.ReplaceItemAsync(smallDoc, "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { PostTriggers = ["inflatePost"] });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.And.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
     }
 }
 
@@ -1345,6 +1365,222 @@ public class PatchOperationLimitTests
 
         var ex = await act.Should().ThrowAsync<CosmosException>();
         ex.And.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+}
+
+#endregion
+
+#region Batch Stream Operation Size Tests
+
+public class BatchStreamOperationSizeTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    private static string MakeLargeJson(string id) =>
+        $"{{\"id\":\"{id}\",\"partitionKey\":\"pk1\",\"data\":\"{new string('x', 300 * 1024)}\"}}";
+
+    [Fact]
+    public async Task Batch_StreamCreate_ContributesToBatchSize()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        for (var i = 0; i < 10; i++)
+            batch.CreateItemStream(ToStream(MakeLargeJson($"item{i}")));
+
+        var response = await batch.ExecuteAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+    }
+
+    [Fact]
+    public async Task Batch_StreamUpsert_ContributesToBatchSize()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        for (var i = 0; i < 10; i++)
+            batch.UpsertItemStream(ToStream(MakeLargeJson($"item{i}")));
+
+        var response = await batch.ExecuteAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+    }
+
+    [Fact]
+    public async Task Batch_StreamReplace_ContributesToBatchSize()
+    {
+        for (var i = 0; i < 10; i++)
+            await _container.CreateItemStreamAsync(
+                ToStream($"{{\"id\":\"item{i}\",\"partitionKey\":\"pk1\",\"data\":\"small\"}}"),
+                new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        for (var i = 0; i < 10; i++)
+            batch.ReplaceItemStream($"item{i}", ToStream(MakeLargeJson($"item{i}")));
+
+        var response = await batch.ExecuteAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+    }
+}
+
+#endregion
+
+#region Delete Large Document
+
+public class DeleteLargeDocumentTests
+{
+    [Fact]
+    public async Task Delete_LargeDocument_AlwaysSucceeds()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var largeValue = new string('x', 1_900_000);
+        var json = $"{{\"id\":\"1\",\"partitionKey\":\"pk1\",\"data\":\"{largeValue}\"}}";
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        var response = await container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+}
+
+#endregion
+
+#region Minimal and Empty Documents
+
+public class MinimalDocumentTests
+{
+    [Fact]
+    public async Task Create_MinimalDocument_JustIdAndPk_Succeeds()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var json = "{\"id\":\"1\",\"partitionKey\":\"pk1\"}";
+
+        var response = await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Create_EmptyStringFields_Succeeds()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var doc = JObject.FromObject(new
+        {
+            id = "1",
+            partitionKey = "pk1",
+            name = "",
+            description = "",
+            notes = "",
+            tags = Array.Empty<string>()
+        });
+
+        var response = await container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+}
+
+#endregion
+
+#region FakeCosmosHandler Document Size
+
+public class FakeCosmosHandlerDocumentSizeTests
+{
+    [Fact]
+    public async Task FakeCosmosHandler_Create_OversizedDocument_Returns413()
+    {
+        var backingContainer = new InMemoryContainer("testcontainer", "/partitionKey");
+        using var handler = new FakeCosmosHandler(backingContainer);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler)
+            });
+
+        var container = client.GetContainer("fakeDb", "testcontainer");
+        var oversizedValue = new string('x', 3 * 1024 * 1024);
+        var doc = new { id = "1", partitionKey = "pk1", data = oversizedValue };
+
+        var act = () => container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.And.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+    }
+}
+
+#endregion
+
+#region Hierarchical Partition Key + Document Size
+
+public class HierarchicalPartitionKeyDocumentSizeTests
+{
+    [Fact]
+    public async Task Create_HierarchicalPartitionKey_OversizedDocument_Returns413()
+    {
+        var container = new InMemoryContainer("test",
+            new[] { "/tenantId", "/categoryId" });
+        var oversizedValue = new string('x', 3 * 1024 * 1024);
+        var json = $"{{\"id\":\"1\",\"tenantId\":\"t1\",\"categoryId\":\"c1\",\"data\":\"{oversizedValue}\"}}";
+
+        var response = await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)),
+            new PartitionKeyBuilder().Add("t1").Add("c1").Build());
+
+        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+    }
+}
+
+#endregion
+
+#region Patch Input Size
+
+public class PatchInputSizeTests
+{
+    [Fact]
+    public async Task Patch_LargeInputButSmallResult_Succeeds()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var largeVal = new string('x', 1_500_000);
+        var doc = JObject.FromObject(new { id = "1", partitionKey = "pk1", data = largeVal });
+        await container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var response = await container.PatchItemAsync<JObject>(
+            "1", new PartitionKey("pk1"),
+            new[] { PatchOperation.Set("/data", "small") });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+#endregion
+
+#region Stored Procedure Creates Oversized Document
+
+public class StoredProcedureDocumentSizeTests
+{
+    [Fact]
+    public async Task StoredProcedure_CreatesOversizedDocument_Returns413()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.RegisterStoredProcedure("createOversized", (pk, args) =>
+        {
+            var oversizedValue = new string('x', 3 * 1024 * 1024);
+            var doc = JObject.FromObject(new { id = "sproc1", partitionKey = "pk1", data = oversizedValue });
+            container.CreateItemAsync(doc, new PartitionKey("pk1")).GetAwaiter().GetResult();
+            return "done";
+        });
+
+        var act = () => container.Scripts.ExecuteStoredProcedureAsync<string>(
+            "createOversized", new PartitionKey("pk1"), null);
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.And.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
     }
 }
 
