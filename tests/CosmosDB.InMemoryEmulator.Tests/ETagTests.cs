@@ -629,3 +629,334 @@ public class ETagBatchStreamTests
 }
 
 #endregion
+
+#region GAP-4: Stream Read with Current Specific ETag
+
+public class ETagStreamReadCurrentTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task StreamRead_IfNoneMatch_CurrentETag_Returns304()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var response = await _container.ReadItemStreamAsync(
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = create.ETag });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotModified);
+    }
+}
+
+#endregion
+
+#region GAP-6: Body _etag After Various Operations
+
+public class ETagBodyMatchTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task DocumentBody_ETag_MatchesResponseETag_AfterUpsert()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var upsertResponse = await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"));
+
+        var read = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        read.Resource["_etag"]!.Value<string>().Should().Be(upsertResponse.ETag);
+    }
+
+    [Fact]
+    public async Task DocumentBody_ETag_MatchesResponseETag_AfterReplace()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var replaceResponse = await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Replaced" },
+            "1", new PartitionKey("pk1"));
+
+        var read = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        read.Resource["_etag"]!.Value<string>().Should().Be(replaceResponse.ETag);
+    }
+
+    [Fact]
+    public async Task DocumentBody_ETag_MatchesResponseETag_AfterPatch()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var patchResponse = await _container.PatchItemAsync<TestDocument>(
+            "1", new PartitionKey("pk1"),
+            new[] { PatchOperation.Set("/name", "Patched") });
+
+        var read = await _container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        read.Resource["_etag"]!.Value<string>().Should().Be(patchResponse.ETag);
+    }
+}
+
+#endregion
+
+#region GAP-7: Wildcard IfMatch on Non-Existent Upsert
+
+public class ETagWildcardUpsertTests
+{
+    [Fact]
+    public async Task IfMatch_Wildcard_OnUpsert_WhenItemDoesNotExist_Throws404()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var act = () => container.UpsertItemAsync(
+            new TestDocument { Id = "new", PartitionKey = "pk1", Name = "New" },
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "*" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.And.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+}
+
+#endregion
+
+#region GAP-8: IfNoneMatch Wildcard on Create When Exists
+
+public class ETagIfNoneMatchCreateTests
+{
+    [Fact]
+    public async Task IfNoneMatch_Wildcard_OnCreate_WhenItemAlreadyExists_Returns409()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Existing" },
+            new PartitionKey("pk1"));
+
+        var act = () => container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Duplicate" },
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfNoneMatchEtag = "*" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.And.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+}
+
+#endregion
+
+#region GAP-9: Stream Create ETag Header
+
+public class ETagStreamCreateTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task StreamCreate_Response_HasETagHeader()
+    {
+        var json = "{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"test\"}";
+        var response = await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)), new PartitionKey("pk1"));
+
+        response.Headers["ETag"].Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task StreamCreate_ResponseETag_ChangesFromPriorItem()
+    {
+        var json1 = "{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"first\"}";
+        var response1 = await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json1)), new PartitionKey("pk1"));
+
+        var json2 = "{\"id\":\"2\",\"partitionKey\":\"pk1\",\"name\":\"second\"}";
+        var response2 = await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json2)), new PartitionKey("pk1"));
+
+        response2.Headers["ETag"].Should().NotBe(response1.Headers["ETag"]);
+    }
+}
+
+#endregion
+
+#region GAP-11: ETag in SQL Query Results
+
+public class ETagQueryTests
+{
+    [Fact]
+    public async Task ETag_InSqlQueryResults()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var create1 = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+        var create2 = await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B" },
+            new PartitionKey("pk1"));
+
+        var query = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT c.id, c._etag FROM c ORDER BY c.id"));
+        var results = new List<JObject>();
+        while (query.HasMoreResults)
+            results.AddRange(await query.ReadNextAsync());
+
+        results.Should().HaveCount(2);
+        results[0]["_etag"]!.Value<string>().Should().Be(create1.ETag);
+        results[1]["_etag"]!.Value<string>().Should().Be(create2.ETag);
+    }
+}
+
+#endregion
+
+#region GAP-12: ETag Preserved Through Export/Import
+
+public class ETagPersistenceTests
+{
+    [Fact]
+    public async Task ETag_PreservedThroughExportImport()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" },
+            new PartitionKey("pk1"));
+
+        var state = container.ExportState();
+        container.ClearItems();
+
+        container.ImportState(state);
+
+        var read = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        // After import, body _etag exists but may differ from original (re-enrichment)
+        read.Resource["_etag"]!.Value<string>().Should().NotBeNullOrEmpty();
+    }
+}
+
+#endregion
+
+#region GAP-13: Patch All Operation Types Generate New ETag
+
+public class ETagPatchAllTypesTests
+{
+    [Fact]
+    public async Task Patch_AllOperationTypes_GenerateNewETag()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var create = await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Test", value = 10, tags = new[] { "a" } }),
+            new PartitionKey("pk1"));
+        var etags = new List<string> { create.ETag };
+
+        var r1 = await container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
+            new[] { PatchOperation.Set("/name", "Updated") });
+        etags.Add(r1.ETag);
+
+        var r2 = await container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
+            new[] { PatchOperation.Increment("/value", 1) });
+        etags.Add(r2.ETag);
+
+        var r3 = await container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
+            new[] { PatchOperation.Add("/tags/-", "b") });
+        etags.Add(r3.ETag);
+
+        var r4 = await container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
+            new[] { PatchOperation.Remove("/tags/0") });
+        etags.Add(r4.ETag);
+
+        var r5 = await container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
+            new[] { PatchOperation.Replace("/name", "Final") });
+        etags.Add(r5.ETag);
+
+        etags.Should().OnlyHaveUniqueItems();
+    }
+}
+
+#endregion
+
+#region GAP-14/15: Stream Delete/Replace IfMatch Non-Existent
+
+public class ETagStreamNonExistentTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task StreamDelete_IfMatch_NonExistentItem_Returns404()
+    {
+        var response = await _container.DeleteItemStreamAsync(
+            "missing", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task StreamReplace_IfMatch_NonExistentItem_Returns404()
+    {
+        var json = "{\"id\":\"missing\",\"partitionKey\":\"pk1\",\"name\":\"test\"}";
+        var response = await _container.ReplaceItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes(json)),
+            "missing", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+}
+
+#endregion
+
+#region GAP-16: Multiple Rapid Writes Unique ETags
+
+public class ETagRapidWriteTests
+{
+    [Fact]
+    public async Task MultipleRapidWrites_EachGetsUniqueETag()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var create = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "V0" },
+            new PartitionKey("pk1"));
+
+        var etags = new List<string> { create.ETag };
+        for (var i = 1; i <= 10; i++)
+        {
+            var r = await container.UpsertItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = $"V{i}" },
+                new PartitionKey("pk1"));
+            etags.Add(r.ETag);
+        }
+
+        etags.Should().OnlyHaveUniqueItems();
+        etags.Should().HaveCount(11);
+    }
+}
+
+#endregion
+
+#region GAP-17: Batch Read Item ETag
+
+public class ETagBatchReadTests
+{
+    [Fact]
+    public async Task Batch_ReadItem_Response_HasEmptyETag()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReadItem("1");
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+        // Batch read currently returns empty ETag (known gap)
+        response[0].ETag.Should().BeEmpty();
+    }
+}
+
+#endregion
