@@ -810,6 +810,311 @@ public class IifFunctionTests
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    //  Phase 1A: High-priority gap tests (G1–G4)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Iif_SelectedBranchUndefined_OmitsProperty()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(true, c.nonExistent, 'fallback') AS r FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(1);
+        results[0].Property("r").Should().BeNull("selected branch is undefined so property should be omitted");
+    }
+
+    [Fact]
+    public async Task Iif_FalseBranchSelected_UndefinedBranch_OmitsProperty()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(false, 'value', c.nonExistent) AS r FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(1);
+        results[0].Property("r").Should().BeNull("false branch is undefined so property should be omitted");
+    }
+
+    [Fact]
+    public async Task Iif_UndefinedComparisonCondition_ReturnsFalseBranch()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.nonExistent > 5, 'yes', 'no') AS result FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(1);
+        results[0]["result"]!.ToString().Should().Be("no");
+    }
+
+    [Fact]
+    public async Task Iif_BooleanFalseLiteralCondition_ReturnsFalseBranch()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(false, 'yes', 'no') AS result FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(1);
+        results[0]["result"]!.ToString().Should().Be("no");
+    }
+
+    [Fact]
+    public async Task Iif_AllArgsUndefined_OmitsProperty()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.missing1, c.missing2, c.missing3) AS r FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(1);
+        results[0].Property("r").Should().BeNull("condition is undefined → false branch → c.missing3 → undefined → omit");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Phase 1B: SQL feature composition tests (G5–G15)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Iif_WithGroupBy_GroupsCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.isActive, 'active', 'inactive') AS status, COUNT(1) AS cnt FROM c GROUP BY IIF(c.isActive, 'active', 'inactive')");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(2);
+        var active = results.First(r => r["status"]!.ToString() == "active");
+        var inactive = results.First(r => r["status"]!.ToString() == "inactive");
+        active["cnt"]!.Value<long>().Should().Be(2);
+        inactive["cnt"]!.Value<long>().Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Iif_WithDistinct_ReturnsDistinctValues()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT DISTINCT IIF(c.isActive, 'yes', 'no') AS status FROM c");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(2);
+        results.Select(r => r["status"]!.ToString()).Should().BeEquivalentTo(["yes", "no"]);
+    }
+
+    [Fact]
+    public async Task Iif_WithTop_LimitsResults()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT TOP 2 IIF(c.value > 10, 'high', 'low') AS level FROM c ORDER BY c.value DESC");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(2);
+        results[0]["level"]!.ToString().Should().Be("high");  // value=20
+        results[1]["level"]!.ToString().Should().Be("low");   // value=10
+    }
+
+    [Fact]
+    public async Task Iif_WithOffsetLimit_PaginatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.isActive, 'yes', 'no') AS status FROM c ORDER BY c.id OFFSET 1 LIMIT 1");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(1);
+        results[0]["status"]!.ToString().Should().Be("no"); // id='2' → inactive
+    }
+
+    [Fact(Skip = "Known limitation: SELECT *, <expr> AS alias causes 'Path returned multiple tokens' in ProjectFields")]
+    public async Task Iif_WithSelectStar_IncludesComputedField()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT *, IIF(c.isActive, 'yes', 'no') AS status FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(1);
+        results[0]["status"]!.ToString().Should().Be("yes");
+        results[0]["id"]!.ToString().Should().Be("1");
+        results[0]["name"]!.ToString().Should().Be("Alice");
+    }
+
+    [Fact(Skip = "Known limitation: scalar subquery (SELECT VALUE IIF(...)) AS alias not supported by parser")]
+    public async Task Iif_InScalarSubquery_Works()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT (SELECT VALUE IIF(c.isActive, 'yes', 'no')) AS status FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(1);
+        results[0]["status"]!.ToString().Should().Be("yes");
+    }
+
+    [Fact]
+    public async Task Iif_WithJoin_EvaluatesPerJoinedRow()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT t AS tag, IIF(t = 'dot', 'match', 'no') AS result FROM c JOIN t IN c.tags WHERE c.id = '1'");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(2);
+        var dotResult = results.First(r => r["tag"]!.ToString() == "dot");
+        var netResult = results.First(r => r["tag"]!.ToString() == "net");
+        dotResult["result"]!.ToString().Should().Be("match");
+        netResult["result"]!.ToString().Should().Be("no");
+    }
+
+    [Fact]
+    public async Task Iif_WithBetweenCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.value BETWEEN 5 AND 15, 'in range', 'out') AS range FROM c ORDER BY c.id");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(3);
+        results[0]["range"]!.ToString().Should().Be("in range");  // value=10
+        results[1]["range"]!.ToString().Should().Be("out");       // value=20
+        results[2]["range"]!.ToString().Should().Be("out");       // value=0
+    }
+
+    [Fact]
+    public async Task Iif_WithInCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.value IN (10, 20), 'match', 'no match') AS result FROM c ORDER BY c.id");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(3);
+        results[0]["result"]!.ToString().Should().Be("match");     // value=10
+        results[1]["result"]!.ToString().Should().Be("match");     // value=20
+        results[2]["result"]!.ToString().Should().Be("no match");  // value=0
+    }
+
+    [Fact]
+    public async Task Iif_WithLikeCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.name LIKE 'A%', 'A-name', 'other') AS result FROM c ORDER BY c.id");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(3);
+        results[0]["result"]!.ToString().Should().Be("A-name");  // Alice
+        results[1]["result"]!.ToString().Should().Be("other");   // Bob
+        results[2]["result"]!.ToString().Should().Be("other");   // Charlie
+    }
+
+    [Fact]
+    public async Task Iif_WithIsNullSyntaxCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.nested IS NULL, 'null', 'not null') AS result FROM c ORDER BY c.id");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(3);
+        results[0]["result"]!.ToString().Should().Be("not null");  // nested exists
+        results[1]["result"]!.ToString().Should().Be("null");      // nested = null
+        results[2]["result"]!.ToString().Should().Be("null");      // nested = null
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Phase 1C: Additional edge cases (G16–G27)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Iif_WithCoalesceInBranch_ComposesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.isActive, c.nested.score ?? 0, -1) AS result FROM c ORDER BY c.id");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(3);
+        results[0]["result"]!.Value<double>().Should().Be(9.5);  // id1: active, nested.score=9.5
+        results[1]["result"]!.Value<double>().Should().Be(-1);    // id2: inactive
+        results[2]["result"]!.Value<double>().Should().Be(0);     // id3: active, nested=null → coalesce to 0
+    }
+
+    [Fact]
+    public async Task Iif_WithTernaryInBranch_ComposesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.isActive, (c.value > 10 ? 'high' : 'low'), 'inactive') AS r FROM c ORDER BY c.id");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(3);
+        results[0]["r"]!.ToString().Should().Be("low");       // id1: active, 10 NOT > 10
+        results[1]["r"]!.ToString().Should().Be("inactive");  // id2: not active
+        results[2]["r"]!.ToString().Should().Be("low");       // id3: active, 0 NOT > 10
+    }
+
+    [Fact]
+    public async Task Iif_WithParameterizedBooleanCondition_UsesParam()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(@flag, 'yes', 'no') AS result FROM c WHERE c.id = '1'")
+            .WithParameter("@flag", true);
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(1);
+        results[0]["result"]!.ToString().Should().Be("yes");
+    }
+
+    [Fact]
+    public async Task Iif_WithParameterizedNonBooleanCondition_ReturnsFalseBranch()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(@val, 'yes', 'no') AS result FROM c WHERE c.id = '1'")
+            .WithParameter("@val", 42);
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(1);
+        results[0]["result"]!.ToString().Should().Be("no");
+    }
+
+    [Fact]
+    public async Task Iif_WithMathFunctionsInBranches_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.value > 0, SQRT(c.value), ABS(c.value)) AS result FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(1);
+        results[0]["result"]!.Value<double>().Should().BeApproximately(Math.Sqrt(10), 0.001);
+    }
+
+    [Fact]
+    public async Task Iif_WithArrayContainsCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(ARRAY_CONTAINS(c.tags, 'dot'), 'dotnet', 'other') AS result FROM c ORDER BY c.id");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(3);
+        results[0]["result"]!.ToString().Should().Be("dotnet");  // id1: tags=["dot","net"]
+        results[1]["result"]!.ToString().Should().Be("other");   // id2: tags=["java"]
+        results[2]["result"]!.ToString().Should().Be("other");   // id3: tags=[]
+    }
+
+    [Fact]
+    public async Task Iif_WithEndswithCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(ENDSWITH(c.name, 'e'), 'ends-e', 'no') AS result FROM c ORDER BY c.id");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(3);
+        results[0]["result"]!.ToString().Should().Be("ends-e");   // Alice
+        results[1]["result"]!.ToString().Should().Be("no");       // Bob
+        results[2]["result"]!.ToString().Should().Be("ends-e");   // Charlie
+    }
+
+    [Fact]
+    public async Task Iif_NestedIifInCondition_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(IIF(c.isActive, true, false), 'active', 'inactive') AS r FROM c ORDER BY c.id");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(3);
+        results[0]["r"]!.ToString().Should().Be("active");     // id1
+        results[1]["r"]!.ToString().Should().Be("inactive");   // id2
+        results[2]["r"]!.ToString().Should().Be("active");     // id3
+    }
+
+    [Fact]
+    public async Task Iif_WithUnaryMinusInReturn_EvaluatesCorrectly()
+    {
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(c.isActive, c.value, -c.value) AS r FROM c ORDER BY c.id");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(3);
+        results[0]["r"]!.Value<long>().Should().Be(10);   // id1: active
+        results[1]["r"]!.Value<long>().Should().Be(-20);  // id2: not active → -20
+        results[2]["r"]!.Value<long>().Should().Be(0);    // id3: active, value=0
+    }
+
+    [Fact]
+    public async Task Iif_EagerEvaluation_BothBranchesEvaluated_DivisionByZero()
+    {
+        // Emulator eagerly evaluates both branches. 1/0 in unselected branch should not crash
+        // because integer division by zero typically produces Infinity or is handled gracefully.
+        await SeedItems();
+        var query = new QueryDefinition("SELECT IIF(true, 'safe', 1/0) AS r FROM c WHERE c.id = '1'");
+        var results = await QueryAll<JObject>(query);
+        results.Should().HaveCount(1);
+        results[0]["r"]!.ToString().Should().Be("safe");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     //  Helper
     // ═══════════════════════════════════════════════════════════════════════════
 
