@@ -2372,7 +2372,18 @@ public class InMemoryContainer : Container
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
         }
 
-        var definedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Two-pass: collect all names first for cross-CP reference check (order-independent)
+        var allNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var cp in cps)
+        {
+            if (!allNames.Add(cp.Name))
+            {
+                throw new CosmosException(
+                    $"Duplicate computed property name '{cp.Name}'.",
+                    HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
+            }
+        }
+
         foreach (var cp in cps)
         {
             if (ReservedComputedPropertyNames.Contains(cp.Name))
@@ -2382,51 +2393,54 @@ public class InMemoryContainer : Container
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
             }
 
-            if (!string.IsNullOrWhiteSpace(cp.Query))
+            if (string.IsNullOrWhiteSpace(cp.Query))
             {
-                var trimmed = cp.Query.TrimStart();
-                if (!trimmed.StartsWith("SELECT VALUE", StringComparison.OrdinalIgnoreCase))
+                throw new CosmosException(
+                    $"Computed property '{cp.Name}' must have a non-empty query.",
+                    HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
+            }
+
+            // Normalize whitespace for robust checking
+            var normalized = System.Text.RegularExpressions.Regex.Replace(cp.Query.Trim(), @"\s+", " ");
+            if (!normalized.StartsWith("SELECT VALUE", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new CosmosException(
+                    "Computed property query must use 'SELECT VALUE' syntax.",
+                    HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
+            }
+
+            // Check entire query for prohibited clauses
+            foreach (var clause in ProhibitedCpClauses)
+            {
+                if (normalized.IndexOf(clause, StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     throw new CosmosException(
-                        "Computed property query must use 'SELECT VALUE' syntax.",
+                        $"Computed property query cannot contain '{clause.Trim()}' clause.",
                         HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
-                }
-
-                foreach (var clause in ProhibitedCpClauses)
-                {
-                    // Check after the FROM clause for prohibited keywords
-                    var fromIdx = trimmed.IndexOf(" FROM ", StringComparison.OrdinalIgnoreCase);
-                    if (fromIdx >= 0)
-                    {
-                        var afterFrom = trimmed[(fromIdx + 6)..];
-                        // Skip the alias part (e.g., "FROM c") — check after the alias
-                        var spaceIdx = afterFrom.IndexOf(' ');
-                        if (spaceIdx >= 0)
-                        {
-                            var afterAlias = afterFrom[spaceIdx..];
-                            if (afterAlias.IndexOf(clause, StringComparison.OrdinalIgnoreCase) >= 0)
-                            {
-                                throw new CosmosException(
-                                    $"Computed property query cannot contain '{clause.Trim()}' clause.",
-                                    HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
-                            }
-                        }
-                    }
-                }
-
-                // Check for cross-CP references
-                foreach (var existingName in definedNames)
-                {
-                    if (trimmed.Contains("." + existingName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new CosmosException(
-                            $"Computed property '{cp.Name}' cannot reference another computed property '{existingName}'.",
-                            HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
-                    }
                 }
             }
 
-            definedNames.Add(cp.Name);
+            // Check for self-referencing CP
+            var selfPattern = @"\." + System.Text.RegularExpressions.Regex.Escape(cp.Name) + @"(?![a-zA-Z0-9_])";
+            if (System.Text.RegularExpressions.Regex.IsMatch(normalized, selfPattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            {
+                throw new CosmosException(
+                    $"Computed property '{cp.Name}' cannot reference itself.",
+                    HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
+            }
+
+            // Check for cross-CP references (all other CP names, order-independent)
+            foreach (var otherName in allNames)
+            {
+                if (otherName.Equals(cp.Name, StringComparison.OrdinalIgnoreCase)) continue;
+                var crossPattern = @"\." + System.Text.RegularExpressions.Regex.Escape(otherName) + @"(?![a-zA-Z0-9_])";
+                if (System.Text.RegularExpressions.Regex.IsMatch(normalized, crossPattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                {
+                    throw new CosmosException(
+                        $"Computed property '{cp.Name}' cannot reference another computed property '{otherName}'.",
+                        HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
+                }
+            }
         }
     }
 
@@ -5945,15 +5959,15 @@ public class InMemoryContainer : Container
             case "LENGTH":
                 {
                     if (args.Length == 0) return null;
-                    if (args[0] is null) return UndefinedValue.Instance;
+                    if (args[0] is null or UndefinedValue) return UndefinedValue.Instance;
                     return (object)(long)(args[0].ToString()!.Length);
                 }
-            case "LOWER": return args.Length > 0 ? (args[0] is null ? UndefinedValue.Instance : (object)args[0].ToString()!.ToLowerInvariant()) : null;
-            case "UPPER": return args.Length > 0 ? (args[0] is null ? UndefinedValue.Instance : (object)args[0].ToString()!.ToUpperInvariant()) : null;
-            case "TRIM": return args.Length > 0 ? (args[0] is null ? UndefinedValue.Instance : (object)args[0].ToString()!.Trim()) : null;
-            case "LTRIM": return args.Length > 0 ? (args[0] is null ? UndefinedValue.Instance : (object)args[0].ToString()!.TrimStart()) : null;
-            case "RTRIM": return args.Length > 0 ? (args[0] is null ? UndefinedValue.Instance : (object)args[0].ToString()!.TrimEnd()) : null;
-            case "REVERSE": return args.Length > 0 ? (args[0] is null ? UndefinedValue.Instance : args[0] is string rs ? (object)new string(rs.Reverse().ToArray()) : null) : null;
+            case "LOWER": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.ToLowerInvariant()) : null;
+            case "UPPER": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.ToUpperInvariant()) : null;
+            case "TRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.Trim()) : null;
+            case "LTRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.TrimStart()) : null;
+            case "RTRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.TrimEnd()) : null;
+            case "REVERSE": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string rs ? (object)new string(rs.Reverse().ToArray()) : null) : null;
             case "LEFT":
                 {
                     if (args.Length < 2)
