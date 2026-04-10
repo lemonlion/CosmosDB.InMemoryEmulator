@@ -439,9 +439,8 @@ public class ConcurrentPatchTests
         await Task.WhenAll(tasks);
 
         var final = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
-        // Concurrent increments use read-then-write without per-item locks, so some increments
-        // may be lost. The value will be > 0 and ≤ 100. Real Cosmos serialises patches per-partition.
-        final.Resource.Value.Should().BeGreaterThan(0).And.BeLessThanOrEqualTo(100);
+        // Patches are serialized per-item via SemaphoreSlim, so all 100 increments are applied.
+        final.Resource.Value.Should().Be(100, "patches are serialized per-item via SemaphoreSlim");
     }
 }
 
@@ -1154,8 +1153,15 @@ public class ConcurrentETagExtendedTests
 
         var results = await Task.WhenAll(tasks);
 
-        // At least one should succeed (201 Created), some may get PreconditionFailed
-        results.Should().Contain(201);
+        // At least one should succeed (201 Created), rest should be expected status codes
+        var created = results.Count(r => r == 201);
+        var ok = results.Count(r => r == 200);
+        var preconditionFailed = results.Count(r => r == (int)HttpStatusCode.PreconditionFailed);
+        var notModified = results.Count(r => r == (int)HttpStatusCode.NotModified);
+
+        created.Should().BeGreaterThanOrEqualTo(1);
+        (created + ok + preconditionFailed + notModified).Should().Be(50,
+            "all results should be expected status codes, no unexpected errors");
     }
 }
 
