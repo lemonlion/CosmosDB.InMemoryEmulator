@@ -125,7 +125,18 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             IfMatchEtag = options.IfMatchEtag,
             IfNoneMatchEtag = options.IfNoneMatchEtag,
             EnableContentResponseOnWrite = options.EnableContentResponseOnWrite,
+            PreTriggers = ExtractTriggerHeader(options.Properties, "x-ms-pre-trigger-include"),
+            PostTriggers = ExtractTriggerHeader(options.Properties, "x-ms-post-trigger-include"),
         };
+    }
+
+    private static IEnumerable<string>? ExtractTriggerHeader(IReadOnlyDictionary<string, object>? properties, string headerName)
+    {
+        if (properties is not null
+            && properties.TryGetValue(headerName, out var value)
+            && value is IEnumerable<string> triggers)
+            return triggers;
+        return null;
     }
 
     public override async Task<TransactionalBatchResponse> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -279,6 +290,8 @@ public class InMemoryTransactionalBatch : TransactionalBatch
                     IfMatchEtag = requestOptions.IfMatchEtag,
                     IfNoneMatchEtag = requestOptions.IfNoneMatchEtag,
                     FilterPredicate = requestOptions.FilterPredicate,
+                    PreTriggers = ExtractTriggerHeader(requestOptions.Properties, "x-ms-pre-trigger-include"),
+                    PostTriggers = ExtractTriggerHeader(requestOptions.Properties, "x-ms-post-trigger-include"),
                 };
             }
             var result = await _container.PatchItemAsync<object>(id, _partitionKey, patchOperations, patchOptions);

@@ -1095,6 +1095,185 @@ public class TriggerUnsupportedOperationTests
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  Phase: PatchItemStreamAsync Trigger Support (Issue #22)
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class PatchItemStreamAsyncTriggerTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    [Fact]
+    public async Task PatchItemStreamAsync_PreTrigger_Fires()
+    {
+        _container.RegisterTrigger("add-field", TriggerType.Pre, TriggerOperation.All,
+            (Func<JObject, JObject>)(doc => { doc["injected"] = "by-trigger"; return doc; }));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "original" }),
+            new PartitionKey("a"));
+
+        await _container.PatchItemStreamAsync("1", new PartitionKey("a"),
+            [PatchOperation.Set("/name", "patched")],
+            new PatchItemRequestOptions { PreTriggers = new List<string> { "add-field" } });
+
+        var read = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        read["injected"]!.ToString().Should().Be("by-trigger");
+        read["name"]!.ToString().Should().Be("patched");
+    }
+
+    [Fact]
+    public async Task PatchItemStreamAsync_PostTrigger_Fires()
+    {
+        var called = false;
+        _container.RegisterTrigger("post-flag", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => called = true));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "original" }),
+            new PartitionKey("a"));
+
+        await _container.PatchItemStreamAsync("1", new PartitionKey("a"),
+            [PatchOperation.Set("/name", "patched")],
+            new PatchItemRequestOptions { PostTriggers = new List<string> { "post-flag" } });
+
+        called.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PatchItemStreamAsync_PostTrigger_RollbackOnError()
+    {
+        _container.RegisterTrigger("fail-post", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => throw new InvalidOperationException("boom")));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "original" }),
+            new PartitionKey("a"));
+
+        var act = () => _container.PatchItemStreamAsync("1", new PartitionKey("a"),
+            [PatchOperation.Set("/name", "patched")],
+            new PatchItemRequestOptions { PostTriggers = new List<string> { "fail-post" } });
+        await act.Should().ThrowAsync<CosmosException>();
+
+        var read = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        read["name"]!.ToString().Should().Be("original", "patch should be rolled back on post-trigger failure");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Phase: TransactionalBatch Trigger Support (Issue #23)
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class TransactionalBatchTriggerTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/pk");
+
+    private static TransactionalBatchItemRequestOptions WithPreTrigger(string triggerName) =>
+        new() { Properties = new Dictionary<string, object> { ["x-ms-pre-trigger-include"] = new[] { triggerName } } };
+
+    private static TransactionalBatchItemRequestOptions WithPostTrigger(string triggerName) =>
+        new() { Properties = new Dictionary<string, object> { ["x-ms-post-trigger-include"] = new[] { triggerName } } };
+
+    [Fact]
+    public async Task Batch_CreateItem_WithPreTrigger_FiresTrigger()
+    {
+        _container.RegisterTrigger("add-field", TriggerType.Pre, TriggerOperation.All,
+            (Func<JObject, JObject>)(doc => { doc["injected"] = "batch-pre"; return doc; }));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("a"));
+        batch.CreateItem(JObject.FromObject(new { id = "1", pk = "a" }), WithPreTrigger("add-field"));
+        var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var read = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        read["injected"]!.ToString().Should().Be("batch-pre");
+    }
+
+    [Fact]
+    public async Task Batch_CreateItem_WithPostTrigger_FiresTrigger()
+    {
+        var called = false;
+        _container.RegisterTrigger("post-flag", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => called = true));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("a"));
+        batch.CreateItem(JObject.FromObject(new { id = "1", pk = "a" }), WithPostTrigger("post-flag"));
+        await batch.ExecuteAsync();
+
+        called.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Batch_UpsertItem_WithPostTrigger_FiresTrigger()
+    {
+        var called = false;
+        _container.RegisterTrigger("post-flag", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => called = true));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "orig" }),
+            new PartitionKey("a"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("a"));
+        batch.UpsertItem(JObject.FromObject(new { id = "1", pk = "a", name = "updated" }), WithPostTrigger("post-flag"));
+        await batch.ExecuteAsync();
+
+        called.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Batch_PatchItem_WithPreTrigger_FiresTrigger()
+    {
+        _container.RegisterTrigger("add-field", TriggerType.Pre, TriggerOperation.All,
+            (Func<JObject, JObject>)(doc => { doc["injected"] = "batch-patch"; return doc; }));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "orig" }),
+            new PartitionKey("a"));
+
+        var patchOptions = new TransactionalBatchPatchItemRequestOptions
+        {
+            Properties = new Dictionary<string, object> { ["x-ms-pre-trigger-include"] = new[] { "add-field" } }
+        };
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("a"));
+        batch.PatchItem("1", [PatchOperation.Set("/name", "patched")], patchOptions);
+        var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var read = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        read["injected"]!.ToString().Should().Be("batch-patch");
+    }
+
+    [Fact]
+    public async Task Batch_TriggerFailure_CausesRollback()
+    {
+        _container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => throw new InvalidOperationException("trigger boom")));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("a"));
+        batch.CreateItem(JObject.FromObject(new { id = "1", pk = "a" }), WithPostTrigger("fail"));
+        var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+
+        var act = () => _container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+
+    [Fact]
+    public async Task Batch_WithoutTriggerProperties_DoesNotFireTriggers()
+    {
+        var called = false;
+        _container.RegisterTrigger("post-flag", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => called = true));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("a"));
+        batch.CreateItem(JObject.FromObject(new { id = "1", pk = "a" }));
+        await batch.ExecuteAsync();
+
+        called.Should().BeFalse("triggers should not fire unless explicitly specified via Properties");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  Phase: Divergent Behavior (Skip + Sister)
 // ═══════════════════════════════════════════════════════════════════════════
 

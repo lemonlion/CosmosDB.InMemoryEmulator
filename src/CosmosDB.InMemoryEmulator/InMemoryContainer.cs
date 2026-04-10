@@ -1301,10 +1301,15 @@ public class InMemoryContainer : Container
             }
         }
 
+        jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
+
         ApplyPatchOperations(jObj, patchOperations);
         var updatedJson = jObj.ToString(Formatting.None);
         var sizeError = ValidateDocumentSizeStream(updatedJson);
         if (sizeError is not null) return Task.FromResult(sizeError);
+
+        var previousEtag = _etags.GetValueOrDefault(key);
+        var previousTimestamp = _timestamps.GetValueOrDefault(key);
 
         string etag;
         if (HasUniqueKeys)
@@ -1330,6 +1335,19 @@ public class InMemoryContainer : Container
         }
         var enrichedJson = _items[key];
         RecordChangeFeed(id, pk, enrichedJson);
+
+        try
+        {
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Replace");
+        }
+        catch
+        {
+            _items[key] = existingJson;
+            if (previousEtag is not null) _etags[key] = previousEtag;
+            _timestamps[key] = previousTimestamp;
+            throw;
+        }
+
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
             requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag));
     }

@@ -2900,9 +2900,8 @@ public class TriggerPatchBatchDivergentTests
         results.Should().BeEmpty("failed transaction should not appear in change feed");
     }
 
-    [Fact(Skip = "Real Cosmos DB can fire triggers on TransactionalBatch operations. " +
-        "The emulator's TransactionalBatch does not support trigger options.")]
-    public async Task Trigger_Js_TransactionalBatch_NotSupported()
+    [Fact]
+    public async Task Trigger_Js_TransactionalBatch_WithPropertiesHeader()
     {
         var container = new InMemoryContainer("test", "/pk");
         container.UseJsTriggers();
@@ -2911,20 +2910,30 @@ public class TriggerPatchBatchDivergentTests
             Id = "batch-trigger",
             TriggerType = TriggerType.Pre,
             TriggerOperation = TriggerOperation.All,
-            Body = "function run() { }"
+            Body = "function run() { var ctx = getContext(); var doc = ctx.getRequest().getBody(); doc.triggered = true; ctx.getRequest().setBody(doc); }"
         });
 
-        // TransactionalBatch does not expose Pre/PostTriggers options
         var batch = container.CreateTransactionalBatch(new PartitionKey("a"));
-        batch.CreateItem(JObject.FromObject(new { id = "1", pk = "a" }));
-        await batch.ExecuteAsync();
+        batch.CreateItem(JObject.FromObject(new { id = "1", pk = "a" }),
+            new TransactionalBatchItemRequestOptions
+            {
+                Properties = new Dictionary<string, object>
+                {
+                    ["x-ms-pre-trigger-include"] = new[] { "batch-trigger" }
+                }
+            });
+        var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var read = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        ((bool)read["triggered"]!).Should().BeTrue();
     }
 
     [Fact]
-    public async Task DivergentBehavior_TransactionalBatch_IgnoresTriggers()
+    public async Task TransactionalBatch_WithoutTriggerProperties_DoesNotFireTriggers()
     {
-        // DIVERGENT BEHAVIOR: TransactionalBatch operations do not support
-        // Pre/PostTrigger options. Triggers cannot be specified for batch operations.
+        // Triggers should only fire when explicitly specified via Properties headers.
+        // Without Properties, registered triggers are NOT automatically invoked for batch ops.
         var container = new InMemoryContainer("test", "/pk");
         container.UseJsTriggers();
         var called = false;
@@ -2935,7 +2944,7 @@ public class TriggerPatchBatchDivergentTests
         batch.CreateItem(JObject.FromObject(new { id = "1", pk = "a" }));
         await batch.ExecuteAsync();
 
-        called.Should().BeFalse("batch operations do not invoke registered triggers");
+        called.Should().BeFalse("batch operations do not invoke registered triggers unless specified via Properties headers");
     }
 }
 
