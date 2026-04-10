@@ -487,6 +487,7 @@ public class InMemoryContainer : Container
     /// </summary>
     public void RegisterUdf(string name, Func<object[], object> implementation)
     {
+        ArgumentNullException.ThrowIfNull(name);
         _userDefinedFunctions["UDF." + name.TrimStart('.')] = implementation;
     }
 
@@ -525,6 +526,7 @@ public class InMemoryContainer : Container
     public void RegisterTrigger(string triggerId, TriggerType triggerType, TriggerOperation triggerOperation,
         Func<JObject, JObject> preHandler)
     {
+        ArgumentNullException.ThrowIfNull(triggerId);
         _triggers[triggerId] = new RegisteredTrigger(triggerType, triggerOperation, preHandler, null);
     }
 
@@ -536,6 +538,7 @@ public class InMemoryContainer : Container
     public void RegisterTrigger(string triggerId, TriggerType triggerType, TriggerOperation triggerOperation,
         Action<JObject> postHandler)
     {
+        ArgumentNullException.ThrowIfNull(triggerId);
         _triggers[triggerId] = new RegisteredTrigger(triggerType, triggerOperation, null, postHandler);
     }
 
@@ -544,6 +547,7 @@ public class InMemoryContainer : Container
     /// </summary>
     public void DeregisterTrigger(string triggerId)
     {
+        ArgumentNullException.ThrowIfNull(triggerId);
         _triggers.Remove(triggerId);
     }
 
@@ -1980,6 +1984,10 @@ public class InMemoryContainer : Container
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (!ExplicitlyCreated && _items.IsEmpty)
+        {
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
+        }
         _containerProperties.IndexingPolicy = IndexingPolicy;
         _containerProperties.DefaultTimeToLive = DefaultTimeToLive;
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, JsonConvert.SerializeObject(_containerProperties, JsonSettings)));
@@ -2019,6 +2027,21 @@ public class InMemoryContainer : Container
         cancellationToken.ThrowIfCancellationRequested();
         if (containerProperties.Id != Id)
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
+        try
+        {
+            ValidateContainerReplace(containerProperties);
+            ValidateComputedProperties(containerProperties);
+        }
+        catch (CosmosException)
+        {
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
+        }
+        // Preserve UniqueKeyPolicy from the existing properties if the replacement doesn't include it
+        if (_containerProperties.UniqueKeyPolicy?.UniqueKeys?.Count > 0 &&
+            (containerProperties.UniqueKeyPolicy is null || containerProperties.UniqueKeyPolicy.UniqueKeys.Count == 0))
+        {
+            containerProperties.UniqueKeyPolicy = _containerProperties.UniqueKeyPolicy;
+        }
         _containerProperties = containerProperties;
         _parsedComputedProperties = null;
         DefaultTimeToLive = containerProperties.DefaultTimeToLive;
@@ -2039,6 +2062,8 @@ public class InMemoryContainer : Container
         _userDefinedFunctions.Clear();
         _udfProperties.Clear();
         _triggers.Clear();
+        _storedProcedureProperties.Clear();
+        _triggerProperties.Clear();
         OnDeleted?.Invoke();
         var r = Substitute.For<ContainerResponse>();
         r.StatusCode.Returns(HttpStatusCode.NoContent);
@@ -2058,6 +2083,8 @@ public class InMemoryContainer : Container
         _userDefinedFunctions.Clear();
         _udfProperties.Clear();
         _triggers.Clear();
+        _storedProcedureProperties.Clear();
+        _triggerProperties.Clear();
         OnDeleted?.Invoke();
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
     }
@@ -2092,6 +2119,8 @@ public class InMemoryContainer : Container
         ThroughputProperties throughputProperties, RequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
+        if (throughputProperties.Throughput.HasValue)
+            _throughput = throughputProperties.Throughput.Value;
         var r = Substitute.For<ThroughputResponse>();
         r.StatusCode.Returns(HttpStatusCode.OK);
         r.Resource.Returns(throughputProperties);
