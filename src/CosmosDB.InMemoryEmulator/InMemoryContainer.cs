@@ -1898,8 +1898,11 @@ public class InMemoryContainer : Container
 
     private string ExtractPartitionKeyValueFromJson(string json)
     {
-        var jObj = JsonConvert.DeserializeObject<JObject>(json, JsonSettings);
-        if (jObj == null) return "";
+        JToken token;
+        try { token = JsonConvert.DeserializeObject<JToken>(json, JsonSettings); }
+        catch { return ""; }
+
+        if (token is not JObject jObj) return "";
 
         if (PartitionKeyPaths is { Count: > 0 })
         {
