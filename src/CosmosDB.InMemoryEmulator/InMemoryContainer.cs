@@ -176,6 +176,31 @@ public class InMemoryContainer : Container
         }
     }
 
+    /// <summary>
+    /// Compares JSON strings using structural equality (property-order-insensitive).
+    /// Used by DISTINCT to deduplicate projected results where objects may have
+    /// identical values but different property ordering (e.g. after Patch operations).
+    /// </summary>
+    private sealed class JsonStructuralStringComparer : IEqualityComparer<string>
+    {
+        public static readonly JsonStructuralStringComparer Instance = new();
+
+        public bool Equals(string x, string y)
+        {
+            if (x == y) return true;
+            if (x is null || y is null) return false;
+            try { return JToken.DeepEquals(JToken.Parse(x), JToken.Parse(y)); }
+            catch { return false; }
+        }
+
+        public int GetHashCode(string obj)
+        {
+            if (obj is null) return 0;
+            try { return JTokenValueComparer.Instance.GetHashCode(JToken.Parse(obj)); }
+            catch { return obj.GetHashCode(); }
+        }
+    }
+
     internal Action OnDeleted { get; set; }
 
     /// <summary>
@@ -3760,7 +3785,7 @@ public class InMemoryContainer : Container
         // DISTINCT — applied after projection so dedup works on projected shapes
         if (parsed.IsDistinct)
         {
-            items = items.Distinct().ToList();
+            items = items.Distinct(JsonStructuralStringComparer.Instance).ToList();
         }
 
         // TOP — deferred application after DISTINCT
@@ -7393,7 +7418,7 @@ public class InMemoryContainer : Container
         // Apply DISTINCT
         if (subquery.IsDistinct)
         {
-            results = results.Distinct().ToList();
+            results = results.Distinct(JsonStructuralStringComparer.Instance).ToList();
         }
 
         // Apply ORDER BY (must happen before TOP so TOP takes from sorted results)

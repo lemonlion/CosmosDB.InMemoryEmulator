@@ -26876,14 +26876,10 @@ public class QueryDeepDiveV21_DistinctPropertyOrderTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
 
-    [Fact(Skip = "The emulator uses JSON string equality for DISTINCT deduplication. " +
-        "Objects with the same properties in different order (e.g. {a:1,b:2} vs {b:2,a:1}) " +
-        "are treated as different values because their JSON serializations differ. " +
-        "Real Cosmos DB treats them as equal for DISTINCT purposes. " +
-        "This is a known limitation documented in Known-Limitations (property-order sensitivity).")]
-    public async Task Distinct_ObjectPropertyOrder_TreatedAsSame()
+    [Fact]
+    public async Task Distinct_ObjectPropertyOrder_TreatedAsSame_ViaStream()
     {
-        // Real Cosmos: {a:1,b:2} and {b:2,a:1} are the same for DISTINCT
+        // Documents inserted via stream with different property order
         await _container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","x":1,"y":2}""")),
             new PartitionKey("a"));
@@ -26897,21 +26893,39 @@ public class QueryDeepDiveV21_DistinctPropertyOrderTests
             requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
         while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
 
-        // Real Cosmos: 1 result (both objects have same x,y values)
         results.Should().ContainSingle();
     }
 
-    /// <summary>
-    /// Sister test: demonstrates the emulator uses JSON string equality for DISTINCT.
-    /// Objects with identical properties but different property order in the original doc
-    /// may produce the same projection. This test shows the projection is the same even
-    /// if source property order differs, because SELECT c.x, c.y normalizes the output.
-    /// </summary>
     [Fact]
-    public async Task Distinct_ProjectedFields_OrderIsNormalized()
+    public async Task Distinct_ObjectPropertyOrder_TreatedAsSame_ViaPatch()
     {
-        // When projecting specific fields (SELECT c.x, c.y), the output order is
-        // determined by the SELECT clause, not the source document, so DISTINCT works.
+        // Doc A: created with x and y → property order is id, pk, x, y
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","x":1,"y":2}""")),
+            new PartitionKey("a"));
+
+        // Doc B: created with only y, then x added via Patch → property order is id, pk, y, x
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","pk":"a","y":2}""")),
+            new PartitionKey("a"));
+        await _container.PatchItemAsync<JObject>("2",
+            new PartitionKey("a"),
+            [PatchOperation.Set("/x", 1)]);
+
+        var results = new List<JObject>();
+        var it = _container.GetItemQueryIterator<JObject>(
+            "SELECT DISTINCT c.x, c.y FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
+
+        // Both docs have x=1, y=2 — DISTINCT must deduplicate despite different internal property order
+        results.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Distinct_WholeDocument_DedupsDespiteDifferentPropertyOrder()
+    {
+        // SELECT DISTINCT VALUE c — whole-document dedup is the hardest case
         await _container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a","x":1,"y":2}""")),
             new PartitionKey("a"));
@@ -26925,7 +26939,6 @@ public class QueryDeepDiveV21_DistinctPropertyOrderTests
             requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
         while (it.HasMoreResults) results.AddRange(await it.ReadNextAsync());
 
-        // Projection normalizes property order, so both produce {x:1,y:2} → only 1 result
         results.Should().ContainSingle();
     }
 }
