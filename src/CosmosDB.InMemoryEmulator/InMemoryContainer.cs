@@ -77,6 +77,7 @@ public class InMemoryContainer : Container
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), string> _items = new();
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), string> _etags = new();
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), DateTimeOffset> _timestamps = new();
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> _pkIndex = new();
     private readonly List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> _changeFeed = new();
     private readonly object _changeFeedLock = new();
     private readonly object _uniqueKeyWriteLock = new();
@@ -336,6 +337,7 @@ public class InMemoryContainer : Container
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
+        PkIndexClear();
         lock (_changeFeedLock) { _changeFeed.Clear(); }
     }
 
@@ -408,6 +410,7 @@ public class InMemoryContainer : Container
                 _etags[key] = importEtag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
                 _items[key] = EnrichWithSystemProperties(itemJson, importEtag, _timestamps[key]);
+                PkIndexAdd(id, pk);
             }
         }
     }
@@ -456,6 +459,7 @@ public class InMemoryContainer : Container
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
+        PkIndexClear();
 
         foreach (var kvp in lastPerKey)
         {
@@ -466,6 +470,7 @@ public class InMemoryContainer : Container
             _items[key] = EnrichWithSystemProperties(kvp.Value.Json, etag, pointInTime);
             _etags[key] = etag;
             _timestamps[key] = pointInTime;
+            PkIndexAdd(key.Id, key.PartitionKey);
         }
     }
 
@@ -605,6 +610,7 @@ public class InMemoryContainer : Container
             }
         }
 
+        PkIndexAdd(itemId, pk);
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
@@ -638,6 +644,7 @@ public class InMemoryContainer : Container
             _items.TryRemove(key, out _);
             _etags.TryRemove(key, out _);
             _timestamps.TryRemove(key, out _);
+            PkIndexRemove(itemId, pk);
             throw;
         }
     }
@@ -722,6 +729,7 @@ public class InMemoryContainer : Container
             _timestamps[key] = DateTimeOffset.UtcNow;
             _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         }
+        if (!existed) PkIndexAdd(itemId, pk);
         RecordChangeFeed(itemId, pk, _items[key]);
 
         try
@@ -741,6 +749,7 @@ public class InMemoryContainer : Container
                 _items.TryRemove(key, out _);
                 _etags.TryRemove(key, out _);
                 _timestamps.TryRemove(key, out _);
+                PkIndexRemove(itemId, pk);
             }
             throw;
         }
@@ -864,6 +873,7 @@ public class InMemoryContainer : Container
             _items[key] = existingJson;
             if (previousEtag is not null) _etags[key] = previousEtag;
             if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
+            PkIndexAdd(id, pk);
             throw;
         }
 
@@ -1019,6 +1029,7 @@ public class InMemoryContainer : Container
                 return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
         }
 
+        PkIndexAdd(itemId, pk);
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
@@ -1035,6 +1046,7 @@ public class InMemoryContainer : Container
             _items.TryRemove(key, out _);
             _etags.TryRemove(key, out _);
             _timestamps.TryRemove(key, out _);
+            PkIndexRemove(itemId, pk);
             throw;
         }
 
@@ -1125,6 +1137,7 @@ public class InMemoryContainer : Container
             enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
             _items[key] = enrichedJson;
         }
+        if (!existed) PkIndexAdd(itemId, pk);
         RecordChangeFeed(itemId, pk, enrichedJson);
 
         try
@@ -1144,6 +1157,7 @@ public class InMemoryContainer : Container
                 _items.TryRemove(key, out _);
                 _etags.TryRemove(key, out _);
                 _timestamps.TryRemove(key, out _);
+                PkIndexRemove(itemId, pk);
             }
             throw;
         }
@@ -1262,6 +1276,7 @@ public class InMemoryContainer : Container
         _items.TryRemove(key, out _);
         _etags.TryRemove(key, out _);
         _timestamps.TryRemove(key, out _);
+        PkIndexRemove(id, pk);
         RecordDeleteTombstone(id, pk, partitionKey);
 
         try
@@ -1273,6 +1288,7 @@ public class InMemoryContainer : Container
             _items[key] = existingJson;
             if (previousEtag is not null) _etags[key] = previousEtag;
             if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
+            PkIndexAdd(id, pk);
             throw;
         }
 
@@ -2015,6 +2031,7 @@ public class InMemoryContainer : Container
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
+        PkIndexClear();
         lock (_changeFeedLock) { _changeFeed.Clear(); }
         _storedProcedures.Clear();
         _userDefinedFunctions.Clear();
@@ -2034,6 +2051,7 @@ public class InMemoryContainer : Container
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
+        PkIndexClear();
         lock (_changeFeedLock) { _changeFeed.Clear(); }
         _storedProcedures.Clear();
         _userDefinedFunctions.Clear();
@@ -2088,12 +2106,27 @@ public class InMemoryContainer : Container
         CancellationToken cancellationToken = default)
     {
         var pk = PartitionKeyToString(partitionKey);
-        foreach (var key in _items.Keys.Where(k => k.PartitionKey == pk).ToList())
+        if (_pkIndex.TryGetValue(pk, out var idSet))
         {
-            _items.TryRemove(key, out _);
-            _etags.TryRemove(key, out _);
-            _timestamps.TryRemove(key, out _);
-            RecordDeleteTombstone(key.Id, pk, partitionKey);
+            foreach (var id in idSet.Keys.ToList())
+            {
+                var key = ItemKey(id, pk);
+                _items.TryRemove(key, out _);
+                _etags.TryRemove(key, out _);
+                _timestamps.TryRemove(key, out _);
+                RecordDeleteTombstone(id, pk, partitionKey);
+            }
+            _pkIndex.TryRemove(pk, out _);
+        }
+        else
+        {
+            foreach (var key in _items.Keys.Where(k => k.PartitionKey == pk).ToList())
+            {
+                _items.TryRemove(key, out _);
+                _etags.TryRemove(key, out _);
+                _timestamps.TryRemove(key, out _);
+                RecordDeleteTombstone(key.Id, pk, partitionKey);
+            }
         }
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK));
     }
@@ -2103,6 +2136,20 @@ public class InMemoryContainer : Container
     // ═══════════════════════════════════════════════════════════════════════════
 
     private static (string Id, string PartitionKey) ItemKey(string id, string partitionKey) => (id, partitionKey);
+
+    private void PkIndexAdd(string id, string pk) =>
+        _pkIndex.GetOrAdd(pk, _ => new ConcurrentDictionary<string, byte>()).TryAdd(id, 0);
+
+    private void PkIndexRemove(string id, string pk)
+    {
+        if (_pkIndex.TryGetValue(pk, out var ids))
+        {
+            ids.TryRemove(id, out _);
+            if (ids.IsEmpty) _pkIndex.TryRemove(pk, out _);
+        }
+    }
+
+    private void PkIndexClear() => _pkIndex.Clear();
 
     private string ExtractPartitionKeyValue(PartitionKey? partitionKey, JObject jObj)
     {
@@ -2907,6 +2954,7 @@ public class InMemoryContainer : Container
         _items.TryRemove(key, out _);
         _etags.TryRemove(key, out _);
         _timestamps.TryRemove(key, out _);
+        PkIndexRemove(key.Id, key.PartitionKey);
     }
 
     internal Dictionary<(string Id, string PartitionKey), string> SnapshotItems()
@@ -2933,9 +2981,11 @@ public class InMemoryContainer : Container
         int changeFeedCount)
     {
         _items.Clear();
+        PkIndexClear();
         foreach (var kvp in itemsSnapshot)
         {
             _items[kvp.Key] = kvp.Value;
+            PkIndexAdd(kvp.Key.Id, kvp.Key.PartitionKey);
         }
 
         _etags.Clear();
@@ -3545,7 +3595,7 @@ public class InMemoryContainer : Container
     //  Private helpers — Query execution pipeline
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private List<string> GetAllItemsForPartition(QueryRequestOptions requestOptions)
+    private List<JObject> GetAllItemsForPartition(QueryRequestOptions requestOptions)
     {
         if (requestOptions?.PartitionKey is not null
             && requestOptions.PartitionKey != PartitionKey.None)
@@ -3560,15 +3610,39 @@ public class InMemoryContainer : Container
                 if (queryComponents > 0 && queryComponents < PartitionKeyPaths.Count)
                 {
                     var prefix = pk + "|";
-                    return _items
-                        .Where(kvp => (kvp.Key.PartitionKey?.StartsWith(prefix, StringComparison.Ordinal) ?? false) && !IsExpired(kvp.Key))
-                        .Select(kvp => kvp.Value).ToList();
+                    // Prefix queries: check all PK buckets that start with the prefix
+                    var results = new List<JObject>();
+                    foreach (var kvp in _pkIndex)
+                    {
+                        if (kvp.Key?.StartsWith(prefix, StringComparison.Ordinal) == true)
+                        {
+                            foreach (var id in kvp.Value.Keys)
+                            {
+                                var key = (id, kvp.Key);
+                                if (!IsExpired(key) && _items.TryGetValue(key, out var val))
+                                    results.Add(JsonParseHelpers.ParseJson(val));
+                            }
+                        }
+                    }
+                    return results;
                 }
             }
 
-            return _items.Where(kvp => kvp.Key.PartitionKey == pk && !IsExpired(kvp.Key)).Select(kvp => kvp.Value).ToList();
+            // Direct PK lookup via secondary index
+            if (_pkIndex.TryGetValue(pk, out var idSet))
+            {
+                var results = new List<JObject>(idSet.Count);
+                foreach (var id in idSet.Keys)
+                {
+                    var key = (id, pk);
+                    if (!IsExpired(key) && _items.TryGetValue(key, out var val))
+                        results.Add(JsonParseHelpers.ParseJson(val));
+                }
+                return results;
+            }
+            return [];
         }
-        return _items.Where(kvp => !IsExpired(kvp.Key)).Select(kvp => kvp.Value).ToList();
+        return _items.Where(kvp => !IsExpired(kvp.Key)).Select(kvp => JsonParseHelpers.ParseJson(kvp.Value)).ToList();
     }
 
     private static int CountPartitionKeyComponents(PartitionKey partitionKey)
