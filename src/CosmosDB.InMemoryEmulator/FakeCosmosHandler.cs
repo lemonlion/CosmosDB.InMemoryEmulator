@@ -418,7 +418,7 @@ public class FakeCosmosHandler : HttpMessageHandler
             operations.Add(opType switch
             {
                 "set" => PatchOperation.Set(opPath, value),
-                "replace" => PatchOperation.Set(opPath, value),
+                "replace" => PatchOperation.Replace(opPath, value),
                 "add" => PatchOperation.Add(opPath, value),
                 "remove" => PatchOperation.Remove(opPath),
                 "incr" => PatchOperation.Increment(opPath, value!.Value<double>()),

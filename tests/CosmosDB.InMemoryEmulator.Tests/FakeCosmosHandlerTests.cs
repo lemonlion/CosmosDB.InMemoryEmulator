@@ -1987,3 +1987,452 @@ public class FakeCosmosHandlerDeepDiveTests
     }
 
 }
+
+#region Deep Dive: Additional Coverage
+
+public class FakeCosmosHandlerCoverageTests
+{
+    private static CosmosClient CreateClient(HttpMessageHandler handler) =>
+        new("AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                RequestTimeout = TimeSpan.FromSeconds(10),
+                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+
+    private static async Task<(InMemoryContainer container, FakeCosmosHandler handler, CosmosClient client, Container cosmosContainer)>
+        SetupWithData(int count = 5)
+    {
+        var container = new InMemoryContainer("coverage-test", "/partitionKey");
+        for (var i = 0; i < count; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}", Value = i * 10 },
+                new PartitionKey("pk1"));
+        var handler = new FakeCosmosHandler(container);
+        var client = CreateClient(handler);
+        return (container, handler, client, client.GetContainer("db", "coverage-test"));
+    }
+
+    // ── Section A: CRUD via Handler ──
+
+    [Fact]
+    public async Task Handler_Upsert_ViaSDK_CreatesNewItem()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(0);
+        using (handler)
+        {
+            var response = await cosmosContainer.UpsertItemAsync(
+                new TestDocument { Id = "new", PartitionKey = "pk1", Name = "New" },
+                new PartitionKey("pk1"));
+            response.StatusCode.Should().BeOneOf(HttpStatusCode.OK, HttpStatusCode.Created);
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Upsert_ViaSDK_ReplacesExistingItem()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(1);
+        using (handler)
+        {
+            await cosmosContainer.UpsertItemAsync(
+                new TestDocument { Id = "0", PartitionKey = "pk1", Name = "Updated" },
+                new PartitionKey("pk1"));
+            var read = await cosmosContainer.ReadItemAsync<TestDocument>("0", new PartitionKey("pk1"));
+            read.Resource.Name.Should().Be("Updated");
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Create_DuplicateId_Returns409Conflict()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(1);
+        using (handler)
+        {
+            var act = () => cosmosContainer.CreateItemAsync(
+                new TestDocument { Id = "0", PartitionKey = "pk1", Name = "Dup" },
+                new PartitionKey("pk1"));
+            var ex = await act.Should().ThrowAsync<CosmosException>();
+            ex.And.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Read_NonExistentItem_Returns404()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(0);
+        using (handler)
+        {
+            var act = () => cosmosContainer.ReadItemAsync<TestDocument>("missing", new PartitionKey("pk1"));
+            var ex = await act.Should().ThrowAsync<CosmosException>();
+            ex.And.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Replace_NonExistentItem_Returns404()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(0);
+        using (handler)
+        {
+            var act = () => cosmosContainer.ReplaceItemAsync(
+                new TestDocument { Id = "missing", PartitionKey = "pk1", Name = "X" },
+                "missing", new PartitionKey("pk1"));
+            var ex = await act.Should().ThrowAsync<CosmosException>();
+            ex.And.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Delete_NonExistentItem_Returns404()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(0);
+        using (handler)
+        {
+            var act = () => cosmosContainer.DeleteItemAsync<TestDocument>("missing", new PartitionKey("pk1"));
+            var ex = await act.Should().ThrowAsync<CosmosException>();
+            ex.And.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Create_ResponseContainsETag()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(0);
+        using (handler)
+        {
+            var response = await cosmosContainer.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+                new PartitionKey("pk1"));
+            response.ETag.Should().NotBeNullOrEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Replace_WithIfMatchETag_Success()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(1);
+        using (handler)
+        {
+            var read = await cosmosContainer.ReadItemAsync<TestDocument>("0", new PartitionKey("pk1"));
+            var response = await cosmosContainer.ReplaceItemAsync(
+                new TestDocument { Id = "0", PartitionKey = "pk1", Name = "Replaced" },
+                "0", new PartitionKey("pk1"),
+                new ItemRequestOptions { IfMatchEtag = read.ETag });
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Replace_WithStaleIfMatchETag_Returns412()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(1);
+        using (handler)
+        {
+            var read = await cosmosContainer.ReadItemAsync<TestDocument>("0", new PartitionKey("pk1"));
+            var staleEtag = read.ETag;
+            await cosmosContainer.ReplaceItemAsync(
+                new TestDocument { Id = "0", PartitionKey = "pk1", Name = "V2" },
+                "0", new PartitionKey("pk1"));
+
+            var act = () => cosmosContainer.ReplaceItemAsync(
+                new TestDocument { Id = "0", PartitionKey = "pk1", Name = "V3" },
+                "0", new PartitionKey("pk1"),
+                new ItemRequestOptions { IfMatchEtag = staleEtag });
+            var ex = await act.Should().ThrowAsync<CosmosException>();
+            ex.And.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+        }
+    }
+
+    // ── Section B: Patch via Handler ──
+
+    [Fact]
+    public async Task Handler_Patch_SetOperation_CreatesNewProperty()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(1);
+        using (handler)
+        {
+            var response = await cosmosContainer.PatchItemAsync<JObject>(
+                "0", new PartitionKey("pk1"),
+                new[] { PatchOperation.Set("/newProp", "hello") });
+            response.Resource["newProp"]!.Value<string>().Should().Be("hello");
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Patch_ReplaceOperation_UpdatesExistingProperty()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(1);
+        using (handler)
+        {
+            var response = await cosmosContainer.PatchItemAsync<TestDocument>(
+                "0", new PartitionKey("pk1"),
+                new[] { PatchOperation.Replace("/name", "Replaced") });
+            response.Resource.Name.Should().Be("Replaced");
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Patch_RemoveOperation_RemovesProperty()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(1);
+        using (handler)
+        {
+            var response = await cosmosContainer.PatchItemAsync<JObject>(
+                "0", new PartitionKey("pk1"),
+                new[] { PatchOperation.Remove("/name") });
+            response.Resource["name"].Should().BeNull();
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Patch_IncrOperation_IncrementsNumericField()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(1);
+        using (handler)
+        {
+            var response = await cosmosContainer.PatchItemAsync<TestDocument>(
+                "0", new PartitionKey("pk1"),
+                new[] { PatchOperation.Increment("/value", 5) });
+            response.Resource.Value.Should().Be(5); // was 0 (i*10 for i=0)
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Patch_MultipleOperations_AppliedAtomically()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(1);
+        using (handler)
+        {
+            var response = await cosmosContainer.PatchItemAsync<JObject>(
+                "0", new PartitionKey("pk1"),
+                new[] { PatchOperation.Set("/name", "Multi"), PatchOperation.Increment("/value", 100) });
+            response.Resource["name"]!.Value<string>().Should().Be("Multi");
+            response.Resource["value"]!.Value<int>().Should().Be(100);
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Patch_NonExistentDocument_Returns404()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(0);
+        using (handler)
+        {
+            var act = () => cosmosContainer.PatchItemAsync<TestDocument>(
+                "missing", new PartitionKey("pk1"),
+                new[] { PatchOperation.Set("/name", "X") });
+            var ex = await act.Should().ThrowAsync<CosmosException>();
+            ex.And.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        }
+    }
+
+    // ── Section C: Query Pipeline ──
+
+    [Fact]
+    public async Task Handler_Query_WithINOperator_ReturnsMatchingItems()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(3);
+        using (handler)
+        {
+            var iter = cosmosContainer.GetItemQueryIterator<TestDocument>(
+                "SELECT * FROM c WHERE c.name IN ('Item0', 'Item2')");
+            var results = new List<TestDocument>();
+            while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+            results.Select(r => r.Name).Should().BeEquivalentTo(new[] { "Item0", "Item2" });
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Query_WithBETWEEN_ReturnsRange()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(5);
+        using (handler)
+        {
+            var iter = cosmosContainer.GetItemQueryIterator<TestDocument>(
+                "SELECT * FROM c WHERE c[\"value\"] BETWEEN 10 AND 30");
+            var results = new List<TestDocument>();
+            while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+            results.Should().HaveCount(3);
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Query_SelectSpecificFields_ReturnsProjection()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(2);
+        using (handler)
+        {
+            var iter = cosmosContainer.GetItemQueryIterator<JObject>(
+                "SELECT c.name FROM c ORDER BY c.id");
+            var results = new List<JObject>();
+            while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+            results.Should().HaveCount(2);
+            results[0]["name"]!.Value<string>().Should().Be("Item0");
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Query_EmptyResult_ReturnsEmptyArray()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(3);
+        using (handler)
+        {
+            var iter = cosmosContainer.GetItemQueryIterator<TestDocument>(
+                "SELECT * FROM c WHERE c.id = 'nonexistent'");
+            var results = new List<TestDocument>();
+            while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+            results.Should().BeEmpty();
+        }
+    }
+
+    // ── Section D: Pagination ──
+
+    [Fact]
+    public async Task Handler_Pagination_SingleItemPages_DrainsFully()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(3);
+        using (handler)
+        {
+            var iter = cosmosContainer.GetItemQueryIterator<TestDocument>(
+                "SELECT * FROM c ORDER BY c.id",
+                requestOptions: new QueryRequestOptions { MaxItemCount = 1 });
+            var results = new List<TestDocument>();
+            while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+            results.Should().HaveCount(3);
+        }
+    }
+
+    [Fact]
+    public async Task Handler_Pagination_MaxItemCountLargerThanData_SinglePage()
+    {
+        var (_, handler, _, cosmosContainer) = await SetupWithData(3);
+        using (handler)
+        {
+            var iter = cosmosContainer.GetItemQueryIterator<TestDocument>(
+                "SELECT * FROM c",
+                requestOptions: new QueryRequestOptions { MaxItemCount = 100 });
+            var pages = 0;
+            while (iter.HasMoreResults) { await iter.ReadNextAsync(); pages++; }
+            pages.Should().Be(1);
+        }
+    }
+
+    // ── Section E: Router ──
+
+    [Fact]
+    public async Task Handler_DifferentPartitionKeyPath_WorksCorrectly()
+    {
+        var container = new InMemoryContainer("c1", "/customPk");
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var c = client.GetContainer("db", "c1");
+
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", customPk = "a" }), new PartitionKey("a"));
+        var read = await c.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        read.Resource["id"]!.Value<string>().Should().Be("1");
+    }
+
+    // ── Section F: Fault Injection ──
+
+    [Fact]
+    public async Task Handler_FaultInjector_NullReturn_PassesThrough()
+    {
+        var container = new InMemoryContainer("fi-test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+        using var handler = new FakeCosmosHandler(container);
+        handler.FaultInjector = _ => null; // null means pass through
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "fi-test");
+
+        var read = await cosmosContainer.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Test");
+    }
+
+    [Fact]
+    public async Task Handler_FaultInjector_Toggle_MidTest()
+    {
+        var container = new InMemoryContainer("fi-toggle", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "fi-toggle");
+
+        // Enable fault injection
+        handler.FaultInjector = _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+        var act = () => cosmosContainer.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        await act.Should().ThrowAsync<CosmosException>();
+
+        // Disable fault injection
+        handler.FaultInjector = null;
+        var read = await cosmosContainer.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        read.Resource.Name.Should().Be("Test");
+    }
+
+    // ── Section G: Response Metadata ──
+
+    [Fact]
+    public async Task Handler_BackingContainer_Accessible()
+    {
+        var container = new InMemoryContainer("backing-test", "/partitionKey");
+        using var handler = new FakeCosmosHandler(container);
+        handler.BackingContainer.Should().BeSameAs(container);
+    }
+
+    [Fact]
+    public async Task Handler_DoubleDispose_DoesNotThrow()
+    {
+        var container = new InMemoryContainer("dd-test", "/partitionKey");
+        var handler = new FakeCosmosHandler(container);
+        handler.Dispose();
+        var act = () => handler.Dispose();
+        act.Should().NotThrow();
+    }
+
+    // ── Section I: Composite PK ──
+
+    [Fact]
+    public async Task Handler_CompositePartitionKey_CrudRoundTrip()
+    {
+        var container = new InMemoryContainer("composite-test", new[] { "/tenantId", "/region" });
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "composite-test");
+
+        var pk = new PartitionKeyBuilder().Add("t1").Add("us-east").Build();
+        var doc = JObject.FromObject(new { id = "1", tenantId = "t1", region = "us-east", name = "Test" });
+        await cosmosContainer.CreateItemAsync(doc, pk);
+
+        var read = await cosmosContainer.ReadItemAsync<JObject>("1", pk);
+        read.Resource["name"]!.Value<string>().Should().Be("Test");
+
+        await cosmosContainer.DeleteItemAsync<JObject>("1", pk);
+        var readAct = () => cosmosContainer.ReadItemAsync<JObject>("1", pk);
+        await readAct.Should().ThrowAsync<CosmosException>();
+    }
+
+    // ── Section J: Edge Cases ──
+
+    [Fact]
+    public async Task Handler_LargeDocumentThroughHandler_Succeeds()
+    {
+        var container = new InMemoryContainer("large-doc", "/partitionKey");
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+        var cosmosContainer = client.GetContainer("db", "large-doc");
+
+        var largeValue = new string('x', 1_500_000);
+        var doc = JObject.FromObject(new { id = "1", partitionKey = "pk1", data = largeValue });
+        await cosmosContainer.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        var read = await cosmosContainer.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        read.Resource["data"]!.Value<string>().Should().HaveLength(1_500_000);
+    }
+}
+
+#endregion
