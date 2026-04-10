@@ -2368,4 +2368,582 @@ public class BulkOperationTests
 
         bItems.Should().BeEmpty();
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Deep-Dive Phase A: ReadMany Bulk Operations
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task BulkReadMany_Typed_AllItemsFound()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 200; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        var tasks = Enumerable.Range(0, 10).Select(batch =>
+        {
+            var items = Enumerable.Range(batch * 20, 20)
+                .Select(i => ($"{i}", new PartitionKey("pk1")))
+                .ToList();
+            return container.ReadManyItemsAsync<TestDocument>(items);
+        });
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.Count == 20);
+        results.SelectMany(r => r).Select(d => d.Id).Distinct().Should().HaveCount(200);
+    }
+
+    [Fact]
+    public async Task BulkReadMany_Stream_AllItemsFound()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 200; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        var tasks = Enumerable.Range(0, 10).Select(batch =>
+        {
+            var items = Enumerable.Range(batch * 20, 20)
+                .Select(i => ($"{i}", new PartitionKey("pk1")))
+                .ToList();
+            return container.ReadManyItemsStreamAsync(items);
+        });
+
+        var results = await Task.WhenAll(tasks);
+        foreach (var r in results)
+        {
+            r.StatusCode.Should().Be(HttpStatusCode.OK);
+            using var reader = new StreamReader(r.Content);
+            var envelope = JObject.Parse(await reader.ReadToEndAsync());
+            ((int)envelope["_count"]!).Should().Be(20);
+        }
+    }
+
+    [Fact]
+    public async Task BulkReadMany_Typed_SomeItemsMissing_ReturnsFoundOnly()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        // Only create even IDs
+        for (var i = 0; i < 100; i += 2)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        var allIds = Enumerable.Range(0, 100)
+            .Select(i => ($"{i}", new PartitionKey("pk1")))
+            .ToList();
+
+        var response = await container.ReadManyItemsAsync<TestDocument>(allIds);
+        response.Count.Should().Be(50); // only the even ones
+    }
+
+    [Fact]
+    public async Task BulkReadMany_Typed_ConcurrentWithWrites_NoCrash()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 100; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        var readTasks = Enumerable.Range(0, 10).Select(_ =>
+        {
+            var items = Enumerable.Range(0, 100)
+                .Select(i => ($"{i}", new PartitionKey("pk1")))
+                .ToList();
+            return container.ReadManyItemsAsync<TestDocument>(items);
+        });
+
+        var createTasks = Enumerable.Range(100, 100).Select(i =>
+            container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"New{i}" },
+                new PartitionKey("pk1")));
+
+        var upsertTasks = Enumerable.Range(0, 50).Select(i =>
+            container.UpsertItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Updated{i}" },
+                new PartitionKey("pk1")));
+
+        var allTasks = new List<Task>();
+        allTasks.AddRange(readTasks);
+        allTasks.AddRange(createTasks);
+        allTasks.AddRange(upsertTasks);
+
+        await Task.WhenAll(allTasks);
+        container.ItemCount.Should().Be(200);
+    }
+
+    [Fact]
+    public async Task BulkReadMany_Typed_WithIfNoneMatchEtag_Returns304()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        var allIds = Enumerable.Range(0, 10)
+            .Select(i => ($"{i}", new PartitionKey("pk1")))
+            .ToList();
+
+        // First read to get composite ETag
+        var firstResponse = await container.ReadManyItemsAsync<TestDocument>(allIds);
+        firstResponse.Count.Should().Be(10);
+        var compositeEtag = firstResponse.ETag;
+        compositeEtag.Should().NotBeNullOrEmpty();
+
+        // Second read with IfNoneMatchEtag = composite -> 304
+        var secondResponse = await container.ReadManyItemsAsync<TestDocument>(allIds,
+            new ReadManyRequestOptions { IfNoneMatchEtag = compositeEtag });
+        secondResponse.StatusCode.Should().Be(HttpStatusCode.NotModified);
+        secondResponse.Count.Should().Be(0);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Deep-Dive Phase B: PatchItemStreamAsync Concurrency
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task BulkPatch_StreamVariant_ConcurrentIncrement_AllApplied()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "counter", PartitionKey = "pk1", Value = 0 },
+            new PartitionKey("pk1"));
+
+        var gate = new ManualResetEventSlim(false);
+        var tasks = Enumerable.Range(0, 50).Select(_ => Task.Run(async () =>
+        {
+            gate.Wait();
+            var patchOps = new[] { PatchOperation.Increment("/value", 1) };
+            var json = JsonConvert.SerializeObject(patchOps);
+            return await container.PatchItemStreamAsync(
+                "counter", new PartitionKey("pk1"), patchOps);
+        }));
+
+        var taskList = tasks.ToList();
+        gate.Set();
+        var results = await Task.WhenAll(taskList);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.OK);
+
+        var final = await container.ReadItemAsync<TestDocument>("counter", new PartitionKey("pk1"));
+        final.Resource.Value.Should().Be(50);
+    }
+
+    [Fact]
+    public async Task BulkPatch_StreamVariant_ConcurrentSet_LastWriterWins()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "target", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var tasks = Enumerable.Range(0, 50).Select(i => Task.Run(async () =>
+        {
+            var patchOps = new[] { PatchOperation.Set("/name", $"Version{i}") };
+            return await container.PatchItemStreamAsync(
+                "target", new PartitionKey("pk1"), patchOps);
+        }));
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.OK);
+
+        var final = await container.ReadItemAsync<TestDocument>("target", new PartitionKey("pk1"));
+        final.Resource.Name.Should().StartWith("Version");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Deep-Dive Phase C: CancellationToken Regression Guards
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task BulkReadMany_StreamVariant_CancelledToken_ThrowsOperationCancelled()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var allIds = Enumerable.Range(0, 10)
+            .Select(i => ($"{i}", new PartitionKey("pk1")))
+            .ToList();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            container.ReadManyItemsStreamAsync(allIds, cancellationToken: cts.Token));
+    }
+
+    [Fact]
+    public async Task BulkReadMany_Typed_CancelledToken_ThrowsOperationCancelled()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var allIds = Enumerable.Range(0, 10)
+            .Select(i => ($"{i}", new PartitionKey("pk1")))
+            .ToList();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            container.ReadManyItemsAsync<TestDocument>(allIds, cancellationToken: cts.Token));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Deep-Dive Phase D: ReadMany Concurrent with Deletes
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task BulkReadMany_ConcurrentWithDeletes_NoException()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 100; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        var readTasks = Enumerable.Range(0, 20).Select(_ =>
+        {
+            var items = Enumerable.Range(0, 100)
+                .Select(i => ($"{i}", new PartitionKey("pk1")))
+                .ToList();
+            return container.ReadManyItemsAsync<TestDocument>(items);
+        });
+
+        var deleteTasks = Enumerable.Range(0, 100).Select(i =>
+            container.DeleteItemAsync<TestDocument>($"{i}", new PartitionKey("pk1")));
+
+        var allTasks = new List<Task>();
+        allTasks.AddRange(readTasks);
+        allTasks.AddRange(deleteTasks);
+
+        await Task.WhenAll(allTasks);
+        container.ItemCount.Should().Be(0);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Deep-Dive Phase E: Stream Conditional ETag Operations
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task BulkReplace_StreamVariant_WithCorrectIfMatchEtag_AllSucceed()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var etags = new List<string>();
+        for (var i = 0; i < 100; i++)
+        {
+            var r = await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+            etags.Add(r.ETag);
+        }
+
+        var tasks = Enumerable.Range(0, 100).Select(i =>
+        {
+            var json = JsonConvert.SerializeObject(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Replaced{i}" });
+            return container.ReplaceItemStreamAsync(
+                new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)),
+                $"{i}", new PartitionKey("pk1"),
+                new ItemRequestOptions { IfMatchEtag = etags[i] });
+        });
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task BulkReplace_StreamVariant_WithStaleIfMatchEtag_AllFail412()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var etags = new List<string>();
+        for (var i = 0; i < 100; i++)
+        {
+            var r = await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+            etags.Add(r.ETag);
+        }
+
+        // Mutate all to make ETags stale
+        for (var i = 0; i < 100; i++)
+            await container.ReplaceItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Mutated{i}" },
+                $"{i}", new PartitionKey("pk1"));
+
+        var tasks = Enumerable.Range(0, 100).Select(i =>
+        {
+            var json = JsonConvert.SerializeObject(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Stale{i}" });
+            return container.ReplaceItemStreamAsync(
+                new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)),
+                $"{i}", new PartitionKey("pk1"),
+                new ItemRequestOptions { IfMatchEtag = etags[i] });
+        });
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task BulkRead_StreamVariant_WithIfNoneMatchEtag_Returns304()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var etags = new List<string>();
+        for (var i = 0; i < 100; i++)
+        {
+            var r = await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+            etags.Add(r.ETag);
+        }
+
+        var tasks = Enumerable.Range(0, 100).Select(i =>
+            container.ReadItemStreamAsync($"{i}", new PartitionKey("pk1"),
+                new ItemRequestOptions { IfNoneMatchEtag = etags[i] }));
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.NotModified);
+    }
+
+    [Fact]
+    public async Task BulkUpsert_StreamVariant_WithIfMatchEtag_Star_AllSucceed()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        for (var i = 0; i < 100; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        var tasks = Enumerable.Range(0, 100).Select(i =>
+        {
+            var json = JsonConvert.SerializeObject(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Upserted{i}" });
+            return container.UpsertItemStreamAsync(
+                new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)),
+                new PartitionKey("pk1"),
+                new ItemRequestOptions { IfMatchEtag = "*" });
+        });
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task BulkDelete_StreamVariant_WithCorrectIfMatchEtag_AllSucceed()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var etags = new List<string>();
+        for (var i = 0; i < 100; i++)
+        {
+            var r = await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+            etags.Add(r.ETag);
+        }
+
+        var tasks = Enumerable.Range(0, 100).Select(i =>
+            container.DeleteItemStreamAsync($"{i}", new PartitionKey("pk1"),
+                new ItemRequestOptions { IfMatchEtag = etags[i] }));
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.NoContent);
+        container.ItemCount.Should().Be(0);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Deep-Dive Phase F: State Export/Import During Bulk Operations
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ExportState_DuringBulkWrites_DoesNotThrow()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var cts = new CancellationTokenSource();
+
+        var createTask = Task.Run(async () =>
+        {
+            for (var i = 0; i < 200; i++)
+                await container.CreateItemAsync(
+                    new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                    new PartitionKey("pk1"));
+        });
+
+        var exportTask = Task.Run(() =>
+        {
+            var exports = new List<string>();
+            while (!createTask.IsCompleted)
+            {
+                var state = container.ExportState();
+                state.Should().NotBeNullOrEmpty();
+                exports.Add(state);
+            }
+            return exports;
+        });
+
+        await createTask;
+        var allExports = await exportTask;
+        allExports.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task ImportState_AfterBulkWrites_RestoresCorrectly()
+    {
+        var source = new InMemoryContainer("source", "/partitionKey");
+
+        var tasks = Enumerable.Range(0, 100).Select(i =>
+            source.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1")));
+        await Task.WhenAll(tasks);
+
+        var state = source.ExportState();
+
+        var target = new InMemoryContainer("target", "/partitionKey");
+        target.ImportState(state);
+
+        for (var i = 0; i < 100; i++)
+        {
+            var r = await target.ReadItemAsync<TestDocument>($"{i}", new PartitionKey("pk1"));
+            r.Resource.Name.Should().Be($"Item{i}");
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Deep-Dive Phase G: Stream EnableContentResponseOnWrite
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task BulkCreate_StreamVariant_EnableContentResponseOnWriteFalse_EmptyBody()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var tasks = Enumerable.Range(0, 50).Select(i =>
+        {
+            var json = JsonConvert.SerializeObject(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" });
+            return container.CreateItemStreamAsync(
+                new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)),
+                new PartitionKey("pk1"),
+                new ItemRequestOptions { EnableContentResponseOnWrite = false });
+        });
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.Created);
+        foreach (var r in results)
+        {
+            if (r.Content != null)
+            {
+                using var reader = new StreamReader(r.Content);
+                var body = await reader.ReadToEndAsync();
+                body.Should().BeNullOrEmpty();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task BulkUpsert_StreamVariant_EnableContentResponseOnWriteFalse_EmptyBody()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var tasks = Enumerable.Range(0, 50).Select(i =>
+        {
+            var json = JsonConvert.SerializeObject(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" });
+            return container.UpsertItemStreamAsync(
+                new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)),
+                new PartitionKey("pk1"),
+                new ItemRequestOptions { EnableContentResponseOnWrite = false });
+        });
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.Created);
+        foreach (var r in results)
+        {
+            if (r.Content != null)
+            {
+                using var reader = new StreamReader(r.Content);
+                var body = await reader.ReadToEndAsync();
+                body.Should().BeNullOrEmpty();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task BulkPatch_StreamVariant_EnableContentResponseOnWriteFalse_EmptyBody()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        for (var i = 0; i < 50; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        var tasks = Enumerable.Range(0, 50).Select(i =>
+            container.PatchItemStreamAsync(
+                $"{i}", new PartitionKey("pk1"),
+                new[] { PatchOperation.Set("/name", $"Patched{i}") },
+                new PatchItemRequestOptions { EnableContentResponseOnWrite = false }));
+
+        var results = await Task.WhenAll(tasks);
+        results.Should().OnlyContain(r => r.StatusCode == HttpStatusCode.OK);
+        foreach (var r in results)
+        {
+            if (r.Content != null)
+            {
+                using var reader = new StreamReader(r.Content);
+                var body = await reader.ReadToEndAsync();
+                body.Should().BeNullOrEmpty();
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Deep-Dive Phase H: ReadMany Composite ETag Mismatch
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ReadMany_CompositeEtag_MismatchReturnsData()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Item{i}" },
+                new PartitionKey("pk1"));
+
+        var allIds = Enumerable.Range(0, 10)
+            .Select(i => ($"{i}", new PartitionKey("pk1")))
+            .ToList();
+
+        // Get composite ETag
+        var firstResponse = await container.ReadManyItemsAsync<TestDocument>(allIds);
+        var compositeEtag = firstResponse.ETag;
+
+        // Mutate one item to change composite ETag
+        await container.UpsertItemAsync(
+            new TestDocument { Id = "0", PartitionKey = "pk1", Name = "Mutated" },
+            new PartitionKey("pk1"));
+
+        // ReadMany with old composite ETag -> should return data (200) since etag changed
+        var secondResponse = await container.ReadManyItemsAsync<TestDocument>(allIds,
+            new ReadManyRequestOptions { IfNoneMatchEtag = compositeEtag });
+        secondResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        secondResponse.Count.Should().Be(10);
+    }
 }

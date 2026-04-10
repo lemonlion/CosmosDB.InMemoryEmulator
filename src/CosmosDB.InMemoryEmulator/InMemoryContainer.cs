@@ -1279,7 +1279,7 @@ public class InMemoryContainer : Container
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
     }
 
-    public override Task<ResponseMessage> PatchItemStreamAsync(
+    public override async Task<ResponseMessage> PatchItemStreamAsync(
         string id, PartitionKey partitionKey,
         IReadOnlyList<PatchOperation> patchOperations,
         PatchItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -1288,25 +1288,43 @@ public class InMemoryContainer : Container
 
         if (patchOperations is null || patchOperations.Count == 0)
         {
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
+            return CreateResponseMessage(HttpStatusCode.BadRequest);
         }
 
         if (patchOperations.Count > 10)
         {
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
+            return CreateResponseMessage(HttpStatusCode.BadRequest);
         }
 
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
+
+        var itemLock = _patchLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await itemLock.WaitAsync(cancellationToken);
+        try
+        {
+            return PatchItemStreamCore(id, pk, key, patchOperations, requestOptions);
+        }
+        finally
+        {
+            itemLock.Release();
+        }
+    }
+
+    private ResponseMessage PatchItemStreamCore(
+        string id, string pk, (string Id, string PartitionKey) key,
+        IReadOnlyList<PatchOperation> patchOperations,
+        PatchItemRequestOptions requestOptions)
+    {
         if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
         {
             EvictIfExpired(key);
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
+            return CreateResponseMessage(HttpStatusCode.NotFound);
         }
 
         if (!CheckIfMatchStream(requestOptions, key))
         {
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
+            return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
         }
 
         var jObj = JsonParseHelpers.ParseJson(existingJson);
@@ -1321,7 +1339,7 @@ public class InMemoryContainer : Container
                     new Dictionary<string, object>(), null);
                 if (!matches)
                 {
-                    return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
+                    return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
                 }
             }
         }
@@ -1331,7 +1349,7 @@ public class InMemoryContainer : Container
         ApplyPatchOperations(jObj, patchOperations);
         var updatedJson = jObj.ToString(Formatting.None);
         var sizeError = ValidateDocumentSizeStream(updatedJson);
-        if (sizeError is not null) return Task.FromResult(sizeError);
+        if (sizeError is not null) return sizeError;
 
         var previousEtag = _etags.GetValueOrDefault(key);
         var previousTimestamp = _timestamps.GetValueOrDefault(key);
@@ -1342,7 +1360,7 @@ public class InMemoryContainer : Container
             lock (_uniqueKeyWriteLock)
             {
                 if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
-                    return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+                    return CreateResponseMessage(HttpStatusCode.Conflict);
                 etag = GenerateETag();
                 _etags[key] = etag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
@@ -1373,8 +1391,8 @@ public class InMemoryContainer : Container
             throw;
         }
 
-        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
-            requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag));
+        return CreateResponseMessage(HttpStatusCode.OK,
+            requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1418,6 +1436,7 @@ public class InMemoryContainer : Container
         IReadOnlyList<(string id, PartitionKey partitionKey)> items,
         ReadManyRequestOptions readManyRequestOptions = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(items);
         var results = new JArray();
         foreach (var (itemId, pk) in items)
