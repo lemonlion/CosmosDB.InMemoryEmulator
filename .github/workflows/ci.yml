@@ -28,14 +28,127 @@ jobs:
       - name: Test (net10.0)
         run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests --configuration Release --no-build --verbosity normal --framework net10.0
 
-      - name: In-Memory Performance Tests (net8.0)
-        env:
-          LOAD_TEST_RPS: 50
-          LOAD_TEST_DURATION_SECONDS: 60
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Performance --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed" --filter "FullyQualifiedName~Performance.LoadTests." --framework net8.0
+  performance-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+        rps: [50, 400]
+        duration: [60, 300]
+        run: [1, 2]
+    steps:
+      - uses: actions/checkout@v5
 
-      - name: In-Memory Performance Tests (net10.0)
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Build
+        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
+
+      - name: Performance Tests (${{ matrix.framework }}, ${{ matrix.rps }}rps, ${{ matrix.duration }}s, run ${{ matrix.run }})
         env:
-          LOAD_TEST_RPS: 50
-          LOAD_TEST_DURATION_SECONDS: 60
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Performance --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed" --filter "FullyQualifiedName~Performance.LoadTests." --framework net10.0
+          LOAD_TEST_RPS: ${{ matrix.rps }}
+          LOAD_TEST_DURATION_SECONDS: ${{ matrix.duration }}
+        run: |
+          dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Performance --configuration Release --no-build --verbosity normal --logger "console;verbosity=detailed" --filter "FullyQualifiedName~Performance.LoadTests." --framework ${{ matrix.framework }} 2>&1 | tee test-output.txt
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-${{ matrix.framework }}-${{ matrix.rps }}rps-${{ matrix.duration }}s-run${{ matrix.run }}
+          path: test-output.txt
+
+  performance-summary:
+    runs-on: ubuntu-latest
+    needs: performance-tests
+    if: always()
+    steps:
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: perf-*
+          path: results
+
+      - name: Summarize averaged results
+        run: |
+          cat << 'SCRIPT' > summarize.py
+          import os, re, sys
+          from collections import defaultdict
+
+          metrics_pattern = re.compile(
+              r'║\s+(Throughput|Mean latency|P50 latency|P95 latency|P99 latency|Max latency)\s*:\s*([\d.]+)'
+          )
+
+          # Collect metrics grouped by config (without run number)
+          configs = defaultdict(lambda: defaultdict(list))
+
+          results_dir = "results"
+          for artifact_dir in sorted(os.listdir(results_dir)):
+              # e.g. perf-net8.0-50rps-60s-run1
+              match = re.match(r'perf-(net[\d.]+)-(\d+)rps-(\d+)s-run(\d+)', artifact_dir)
+              if not match:
+                  continue
+              framework, rps, duration, run = match.groups()
+              config_key = f"{framework} | {rps}rps | {duration}s"
+
+              filepath = os.path.join(results_dir, artifact_dir, "test-output.txt")
+              if not os.path.exists(filepath):
+                  print(f"WARNING: Missing {filepath}", file=sys.stderr)
+                  continue
+
+              with open(filepath) as f:
+                  content = f.read()
+
+              for m in metrics_pattern.finditer(content):
+                  metric_name = m.group(1).strip()
+                  value = float(m.group(2))
+                  configs[config_key][metric_name].append(value)
+
+          # Output averaged results
+          print("# Performance Test Results (Averaged over 2 runs)")
+          print()
+          print("| Config | Throughput (ops/s) | Mean (ms) | P50 (ms) | P95 (ms) | P99 (ms) | Max (ms) |")
+          print("|--------|-------------------|-----------|----------|----------|----------|----------|")
+
+          metric_order = ["Throughput", "Mean latency", "P50 latency", "P95 latency", "P99 latency", "Max latency"]
+
+          for config_key in sorted(configs.keys()):
+              metrics = configs[config_key]
+              row = [config_key]
+              for metric in metric_order:
+                  values = metrics.get(metric, [])
+                  if values:
+                      avg = sum(values) / len(values)
+                      row.append(f"{avg:.3f}" if "latency" in metric.lower() else f"{avg:.1f}")
+                  else:
+                      row.append("N/A")
+              print("| " + " | ".join(row) + " |")
+
+          # Also print per-run details
+          print()
+          print("## Per-Run Details")
+          print()
+          for artifact_dir in sorted(os.listdir(results_dir)):
+              match = re.match(r'perf-(net[\d.]+)-(\d+)rps-(\d+)s-run(\d+)', artifact_dir)
+              if not match:
+                  continue
+              framework, rps, duration, run = match.groups()
+              filepath = os.path.join(results_dir, artifact_dir, "test-output.txt")
+              if not os.path.exists(filepath):
+                  continue
+              with open(filepath) as f:
+                  content = f.read()
+              values = {}
+              for m in metrics_pattern.finditer(content):
+                  values[m.group(1).strip()] = float(m.group(2))
+              if values:
+                  detail = ", ".join(f"{k}: {v}" for k, v in values.items())
+                  print(f"- **{framework} {rps}rps {duration}s run{run}**: {detail}")
+          SCRIPT
+          python3 summarize.py | tee "$GITHUB_STEP_SUMMARY"
