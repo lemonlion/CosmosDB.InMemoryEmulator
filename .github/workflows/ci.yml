@@ -82,16 +82,17 @@ jobs:
           import os, re, sys
           from collections import defaultdict
 
+          scenario_pattern = re.compile(r'║\s+(.+?(?:\(\d+/\d+\)))\s+║')
           metrics_pattern = re.compile(
               r'║\s+(Throughput|Mean latency|P50 latency|P95 latency|P99 latency|Max latency)\s*:\s*([\d.]+)'
           )
 
-          # Collect metrics grouped by config (without run number)
+          # Collect metrics grouped by (config, scenario)
+          # Key: (config_key, scenario_name) -> metric_name -> [values]
           configs = defaultdict(lambda: defaultdict(list))
 
           results_dir = "results"
           for artifact_dir in sorted(os.listdir(results_dir)):
-              # e.g. perf-net8.0-50rps-60s-run1
               match = re.match(r'perf-(net[\d.]+)-(\d+)rps-(\d+)s-run(\d+)', artifact_dir)
               if not match:
                   continue
@@ -104,35 +105,48 @@ jobs:
                   continue
 
               with open(filepath) as f:
-                  content = f.read()
+                  lines = f.readlines()
 
-              for m in metrics_pattern.finditer(content):
-                  metric_name = m.group(1).strip()
-                  value = float(m.group(2))
-                  configs[config_key][metric_name].append(value)
-
-          # Output averaged results
-          print("# Performance Test Results (Averaged over 2 runs)")
-          print()
-          print("| Config | Throughput (ops/s) | Mean (ms) | P50 (ms) | P95 (ms) | P99 (ms) | Max (ms) |")
-          print("|--------|-------------------|-----------|----------|----------|----------|----------|")
+              current_scenario = "Unknown"
+              for line in lines:
+                  sm = scenario_pattern.search(line)
+                  if sm:
+                      current_scenario = sm.group(1).strip()
+                  mm = metrics_pattern.search(line)
+                  if mm:
+                      metric_name = mm.group(1).strip()
+                      value = float(mm.group(2))
+                      key = (config_key, current_scenario)
+                      configs[key][metric_name].append(value)
 
           metric_order = ["Throughput", "Mean latency", "P50 latency", "P95 latency", "P99 latency", "Max latency"]
 
-          for config_key in sorted(configs.keys()):
-              metrics = configs[config_key]
-              row = [config_key]
-              for metric in metric_order:
-                  values = metrics.get(metric, [])
-                  if values:
-                      avg = sum(values) / len(values)
-                      row.append(f"{avg:.3f}" if "latency" in metric.lower() else f"{avg:.1f}")
-                  else:
-                      row.append("N/A")
-              print("| " + " | ".join(row) + " |")
+          # Group by scenario for separate tables
+          scenarios = sorted(set(s for _, s in configs.keys()))
 
-          # Also print per-run details
-          print()
+          for scenario in scenarios:
+              print(f"# {scenario} (Averaged over 2 runs)")
+              print()
+              print("| Config | Throughput (ops/s) | Mean (ms) | P50 (ms) | P95 (ms) | P99 (ms) | Max (ms) |")
+              print("|--------|-------------------|-----------|----------|----------|----------|----------|")
+
+              for key in sorted(configs.keys()):
+                  cfg, scn = key
+                  if scn != scenario:
+                      continue
+                  metrics = configs[key]
+                  row = [cfg]
+                  for metric in metric_order:
+                      values = metrics.get(metric, [])
+                      if values:
+                          avg = sum(values) / len(values)
+                          row.append(f"{avg:.3f}" if "latency" in metric.lower() else f"{avg:.1f}")
+                      else:
+                          row.append("N/A")
+                  print("| " + " | ".join(row) + " |")
+              print()
+
+          # Per-run details grouped by scenario
           print("## Per-Run Details")
           print()
           for artifact_dir in sorted(os.listdir(results_dir)):
@@ -144,12 +158,22 @@ jobs:
               if not os.path.exists(filepath):
                   continue
               with open(filepath) as f:
-                  content = f.read()
-              values = {}
-              for m in metrics_pattern.finditer(content):
-                  values[m.group(1).strip()] = float(m.group(2))
-              if values:
-                  detail = ", ".join(f"{k}: {v}" for k, v in values.items())
-                  print(f"- **{framework} {rps}rps {duration}s run{run}**: {detail}")
+                  lines = f.readlines()
+              current_scenario = "Unknown"
+              scenario_metrics = {}
+              for line in lines:
+                  sm = scenario_pattern.search(line)
+                  if sm:
+                      if scenario_metrics:
+                          detail = ", ".join(f"{k}: {v}" for k, v in scenario_metrics.items())
+                          print(f"- **{framework} {rps}rps {duration}s run{run} — {current_scenario}**: {detail}")
+                      current_scenario = sm.group(1).strip()
+                      scenario_metrics = {}
+                  mm = metrics_pattern.search(line)
+                  if mm:
+                      scenario_metrics[mm.group(1).strip()] = float(mm.group(2))
+              if scenario_metrics:
+                  detail = ", ".join(f"{k}: {v}" for k, v in scenario_metrics.items())
+                  print(f"- **{framework} {rps}rps {duration}s run{run} — {current_scenario}**: {detail}")
           SCRIPT
           python3 summarize.py | tee "$GITHUB_STEP_SUMMARY"
