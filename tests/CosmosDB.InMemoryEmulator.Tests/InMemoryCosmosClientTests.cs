@@ -645,3 +645,225 @@ public class InMemoryCosmosClientAutoCreationDivergentTests
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive — Dispose Guards on All APIs
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class InMemoryCosmosClientDisposeGuardDeepDiveTests
+{
+    [Fact]
+    public async Task Dispose_ThenCreateDatabaseStreamAsync_ThrowsObjectDisposedException()
+    {
+        var client = new InMemoryCosmosClient();
+        client.Dispose();
+
+        var act = () => client.CreateDatabaseStreamAsync(new DatabaseProperties("db"));
+        await act.Should().ThrowAsync<ObjectDisposedException>();
+    }
+
+    [Fact]
+    public void Dispose_ThenGetDatabase_ThrowsObjectDisposedException()
+    {
+        var client = new InMemoryCosmosClient();
+        client.Dispose();
+
+        var act = () => client.GetDatabase("db");
+        act.Should().Throw<ObjectDisposedException>();
+    }
+
+    [Fact]
+    public void Dispose_ThenGetContainer_ThrowsObjectDisposedException()
+    {
+        var client = new InMemoryCosmosClient();
+        client.Dispose();
+
+        var act = () => client.GetContainer("db", "container");
+        act.Should().Throw<ObjectDisposedException>();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive — Stream Response Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class InMemoryCosmosClientStreamResponseDeepDiveTests
+{
+    [Fact]
+    public async Task CreateDatabaseStreamAsync_ResponseBody_ContainsDatabaseJson()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseStreamAsync(new DatabaseProperties("stream-db"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.Content.Should().NotBeNull();
+        using var sr = new System.IO.StreamReader(response.Content);
+        var json = await sr.ReadToEndAsync();
+        var obj = JObject.Parse(json);
+        obj["id"]!.ToString().Should().Be("stream-db");
+    }
+
+    [Fact]
+    public async Task CreateDatabaseStreamAsync_ResponseHeaders_HaveActivityId()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseStreamAsync(new DatabaseProperties("hdr-act"));
+
+        response.Headers["x-ms-activity-id"].Should().NotBeNullOrEmpty();
+        Guid.TryParse(response.Headers["x-ms-activity-id"], out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CreateDatabaseStreamAsync_ResponseHeaders_HaveRequestCharge()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseStreamAsync(new DatabaseProperties("hdr-rc"));
+
+        response.Headers["x-ms-request-charge"].Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task CreateDatabaseStreamAsync_ResponseHeaders_HaveSessionToken()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseStreamAsync(new DatabaseProperties("hdr-st"));
+
+        response.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task CreateDatabaseStreamAsync_WithThroughputProperties_ReturnsCreated()
+    {
+        var client = new InMemoryCosmosClient();
+        var response = await client.CreateDatabaseStreamAsync(
+            new DatabaseProperties("tp-db"), ThroughputProperties.CreateManualThroughput(400));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive — CancellationToken Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class InMemoryCosmosClientCancellationTokenDeepDiveTests
+{
+    [Fact]
+    public async Task CreateDatabaseAsync_CancelledToken_ThrowsOperationCancelled()
+    {
+        var client = new InMemoryCosmosClient();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => client.CreateDatabaseAsync("db1", cancellationToken: cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task CreateDatabaseIfNotExistsAsync_CancelledToken_ThrowsOperationCancelled()
+    {
+        var client = new InMemoryCosmosClient();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => client.CreateDatabaseIfNotExistsAsync("db1", cancellationToken: cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task CreateDatabaseStreamAsync_CancelledToken_ThrowsOperationCancelled()
+    {
+        var client = new InMemoryCosmosClient();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => client.CreateDatabaseStreamAsync(new DatabaseProperties("db1"), cancellationToken: cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive — Resource Name Validation on Stream API
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class InMemoryCosmosClientResourceNameDeepDiveTests
+{
+    [Fact]
+    public async Task CreateDatabaseStreamAsync_NameWithForwardSlash_ThrowsBadRequest()
+    {
+        var client = new InMemoryCosmosClient();
+        var act = () => client.CreateDatabaseStreamAsync(new DatabaseProperties("db/name"));
+        (await act.Should().ThrowAsync<CosmosException>())
+            .Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task CreateDatabaseStreamAsync_NameWith256Chars_ThrowsBadRequest()
+    {
+        var client = new InMemoryCosmosClient();
+        var longName = new string('a', 256);
+        var act = () => client.CreateDatabaseStreamAsync(new DatabaseProperties(longName));
+        (await act.Should().ThrowAsync<CosmosException>())
+            .Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive — Auto-Created Database Visibility
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class InMemoryCosmosClientAutoCreationDeepDiveTests
+{
+    [Fact]
+    public async Task GetDatabaseQueryIterator_IncludesAutoCreatedDatabases()
+    {
+        var client = new InMemoryCosmosClient();
+        // Auto-create by using GetDatabase
+        var db = client.GetDatabase("auto-db");
+        // Use the database (lazy creation)
+        await db.CreateContainerIfNotExistsAsync(
+            new ContainerProperties("c1", "/pk"));
+
+        var iterator = client.GetDatabaseQueryIterator<DatabaseProperties>();
+        var allDbs = new List<string>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            foreach (var dbProps in page) allDbs.Add(dbProps.Id);
+        }
+        allDbs.Should().Contain("auto-db");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Deep Dive — Stream Iterator Divergent Behavior
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class InMemoryCosmosClientStreamIteratorDivergentDeepDiveTests
+{
+    [Fact]
+    public async Task DivergentBehavior_GetDatabaseQueryStreamIterator_IgnoresQueryText()
+    {
+        // DIVERGENT: Stream iterators ignore queryText/WHERE filtering — return all databases
+        var client = new InMemoryCosmosClient();
+        await client.CreateDatabaseAsync("db1");
+        await client.CreateDatabaseAsync("db2");
+
+        var iterator = client.GetDatabaseQueryStreamIterator("SELECT * FROM c WHERE c.id = 'db1'");
+        var allIds = new List<string>();
+        while (iterator.HasMoreResults)
+        {
+            var response = await iterator.ReadNextAsync();
+            if (response.Content == null) continue;
+            using var sr = new System.IO.StreamReader(response.Content);
+            var json = await sr.ReadToEndAsync();
+            var obj = JObject.Parse(json);
+            var databases = obj["Databases"]?.ToObject<List<JObject>>() ?? [];
+            foreach (var db in databases) allIds.Add(db["id"]!.ToString());
+        }
+
+        // Divergent: returns ALL databases, not just db1
+        allIds.Should().Contain("db1");
+        allIds.Should().Contain("db2", "stream iterator ignores WHERE clause");
+    }
+}
