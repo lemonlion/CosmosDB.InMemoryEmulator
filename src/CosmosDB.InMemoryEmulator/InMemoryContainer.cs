@@ -6917,6 +6917,7 @@ public class InMemoryContainer : Container
             case "GETCURRENTDATETIMESTATIC": return parameters.TryGetValue("__staticDateTime", out var sdt) ? sdt : DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
             case "GETCURRENTTIMESTAMP":
             case "GETCURRENTTIMESTAMPSTATIC": return parameters.TryGetValue("__staticTimestamp", out var sts) ? sts : (object)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            case "GETCURRENTTICKS":
             case "GETCURRENTTICKSSTATIC": return parameters.TryGetValue("__staticTicks", out var stk) ? stk : (object)DateTime.UtcNow.Ticks;
             case "DATETIMEADD":
                 {
@@ -7017,7 +7018,7 @@ public class InMemoryContainer : Container
                         "millisecond" or "ms" => (long)(FloorToUnit(dtEnd, TimeSpan.TicksPerMillisecond) - FloorToUnit(dtStart, TimeSpan.TicksPerMillisecond)),
                         "microsecond" or "mcs" => (long)((dtEnd - dtStart).Ticks / 10),
                         "nanosecond" or "ns" => (long)((dtEnd - dtStart).Ticks * 100),
-                        _ => null,
+                        _ => UndefinedValue.Instance,
                     };
                 }
             case "DATETIMEFROMPARTS":
@@ -7031,6 +7032,7 @@ public class InMemoryContainer : Container
                     var s = args.Length > 5 ? ToLong(args[5]) : 0;
                     var fraction = args.Length > 6 ? ToLong(args[6]) : 0;
                     if (!y.HasValue || !mo.HasValue || !d.HasValue || !h.HasValue || !mi.HasValue || !s.HasValue || !fraction.HasValue) return UndefinedValue.Instance;
+                    if (fraction.Value < 0 || fraction.Value > 9999999) return UndefinedValue.Instance;
                     try
                     {
                         var dt = new DateTime((int)y.Value, (int)mo.Value, (int)d.Value,
@@ -7054,9 +7056,16 @@ public class InMemoryContainer : Container
                     var bs = (int)binSize.Value;
                     if (bs <= 0) return UndefinedValue.Instance;
 
-                    var origin = args.Length >= 4 && args[3] is string originStr
-                        && DateTime.TryParse(originStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var o)
-                        ? o : new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                    DateTime origin;
+                    if (args.Length >= 4)
+                    {
+                        if (args[3] is not string originStr || !DateTime.TryParse(originStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out origin))
+                            return UndefinedValue.Instance;
+                    }
+                    else
+                    {
+                        origin = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                    }
 
                     if (origin.Year < 1601) return UndefinedValue.Instance;
 
@@ -7084,7 +7093,7 @@ public class InMemoryContainer : Container
                             "nanosecond" or "ns" => 1L,
                             _ => -1L,
                         };
-                        if (ticksPerUnit < 0) return null;
+                        if (ticksPerUnit < 0) return UndefinedValue.Instance;
                         var tickSpan = (dt - origin).Ticks;
                         var binTicks = ticksPerUnit * bs;
                         var binnedTicks = (long)Math.Floor((double)tickSpan / binTicks) * binTicks;
@@ -7106,8 +7115,15 @@ public class InMemoryContainer : Container
                     if (args.Length < 1) return UndefinedValue.Instance;
                     var ticks = ToLong(args[0]);
                     if (!ticks.HasValue) return UndefinedValue.Instance;
-                    var dt = new DateTime(ticks.Value, DateTimeKind.Utc);
-                    return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+                    try
+                    {
+                        var dt = new DateTime(ticks.Value, DateTimeKind.Utc);
+                        return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+                    }
+                    catch (ArgumentOutOfRangeException)
+                    {
+                        return UndefinedValue.Instance;
+                    }
                 }
             case "DATETIMETOTIMESTAMP":
                 {
@@ -7126,8 +7142,6 @@ public class InMemoryContainer : Container
                     var dt = DateTimeOffset.FromUnixTimeMilliseconds(ms.Value).UtcDateTime;
                     return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
                 }
-            case "GETCURRENTTICKS": return (object)DateTime.UtcNow.Ticks;
-
             // ── COALESCE function ──
             // COALESCE skips null and undefined, returning the first concrete value.
             // When all args are exhausted: returns null if any arg was null,
