@@ -1492,8 +1492,39 @@ public class FakeCosmosHandler : HttpMessageHandler
         var policy = _container.IndexingPolicy;
         var includedPaths = new JArray(policy.IncludedPaths.Select(p => new JObject { ["path"] = p.Path }));
         var excludedPaths = new JArray(policy.ExcludedPaths.Select(p => new JObject { ["path"] = p.Path }));
-        if (excludedPaths.Count == 0)
-            excludedPaths = new JArray(new JObject { ["path"] = "/\"_etag\"/?" });
+        if (!excludedPaths.Any(p => p["path"]?.ToString() == "/\"_etag\"/?"))
+            excludedPaths.Add(new JObject { ["path"] = "/\"_etag\"/?" });
+
+        var indexingPolicyObj = new JObject
+        {
+            ["indexingMode"] = policy.IndexingMode.ToString().ToLowerInvariant(),
+            ["automatic"] = policy.Automatic,
+            ["includedPaths"] = includedPaths,
+            ["excludedPaths"] = excludedPaths
+        };
+
+        if (policy.CompositeIndexes.Count > 0)
+        {
+            var compositeIndexes = new JArray(policy.CompositeIndexes.Select(indexSet =>
+                new JArray(indexSet.Select(idx => new JObject
+                {
+                    ["path"] = idx.Path,
+                    ["order"] = idx.Order.ToString().ToLowerInvariant()
+                }))));
+            indexingPolicyObj["compositeIndexes"] = compositeIndexes;
+        }
+
+        if (policy.SpatialIndexes.Count > 0)
+        {
+            var spatialIndexes = new JArray(policy.SpatialIndexes.Select(si => {
+                var obj = new JObject { ["path"] = si.Path };
+                if (si.SpatialTypes.Count > 0)
+                    obj["types"] = new JArray(si.SpatialTypes.Select(t => (JToken)t.ToString()));
+                return obj;
+            }));
+            indexingPolicyObj["spatialIndexes"] = spatialIndexes;
+        }
+
         var metadata = new JObject
         {
             ["id"] = _container.Id,
@@ -1507,13 +1538,7 @@ public class FakeCosmosHandler : HttpMessageHandler
                 ["kind"] = "Hash",
                 ["version"] = 2
             },
-            ["indexingPolicy"] = new JObject
-            {
-                ["indexingMode"] = policy.IndexingMode.ToString().ToLowerInvariant(),
-                ["automatic"] = policy.Automatic,
-                ["includedPaths"] = includedPaths,
-                ["excludedPaths"] = excludedPaths
-            },
+            ["indexingPolicy"] = indexingPolicyObj,
             ["geospatialConfig"] = new JObject { ["type"] = "Geography" }
         };
         return metadata.ToString(Formatting.None);
