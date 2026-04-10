@@ -97,7 +97,7 @@ jobs:
               if not match:
                   continue
               framework, rps, duration, run = match.groups()
-              config_key = f"{framework} | {rps}rps | {duration}s"
+              config_key = f"{framework} / {rps}rps / {duration}s"
 
               filepath = os.path.join(results_dir, artifact_dir, "test-output.txt")
               if not os.path.exists(filepath):
