@@ -160,6 +160,15 @@ public class FakeCosmosHandler : HttpMessageHandler
         var method = request.Method.Method;
         _requestLog.Add($"{method} {path}");
 
+        // Buffer request content so FaultInjector can safely read it without
+        // consuming the stream that the handler needs later.
+        if (FaultInjector is not null && request.Content is not null)
+        {
+            var body = await request.Content.ReadAsStringAsync(cancellationToken);
+            var mediaType = request.Content.Headers.ContentType?.MediaType ?? "application/json";
+            request.Content = new StringContent(body, Encoding.UTF8, mediaType);
+        }
+
         if (FaultInjectorIncludesMetadata && FaultInjector is not null)
         {
             var earlyFault = FaultInjector(request);
