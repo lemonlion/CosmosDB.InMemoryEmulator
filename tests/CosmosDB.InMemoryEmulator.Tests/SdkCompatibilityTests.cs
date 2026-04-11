@@ -1495,3 +1495,464 @@ public class SdkCompatibilityDivergentBehaviorTests : IDisposable
         results.Count.Should().Be(1);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 35 — Phase A: Additional Reflection Canary Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FeedIteratorSetupIntegrationTests
+{
+    [Fact]
+    public void FeedIteratorSetup_Register_SetsFactory()
+    {
+        InMemoryFeedIteratorSetup.Register();
+        try
+        {
+            CosmosDB.InMemoryEmulator.ProductionExtensions.CosmosOverridableFeedIteratorExtensions
+                .FeedIteratorFactory.Should().NotBeNull(
+                    "Register() should wire up the FeedIteratorFactory delegate");
+        }
+        finally
+        {
+            InMemoryFeedIteratorSetup.Deregister();
+        }
+    }
+
+    [Fact]
+    public void FeedIteratorSetup_Register_ThenDeregister_ClearsFactory()
+    {
+        InMemoryFeedIteratorSetup.Register();
+        InMemoryFeedIteratorSetup.Deregister();
+
+        CosmosDB.InMemoryEmulator.ProductionExtensions.CosmosOverridableFeedIteratorExtensions
+            .FeedIteratorFactory.Should().BeNull(
+                "Deregister() should clear the FeedIteratorFactory delegate");
+    }
+
+    [Fact]
+    public void FeedIteratorSetup_Register_FactoryCreatesInMemoryFeedIterator()
+    {
+        InMemoryFeedIteratorSetup.Register();
+        try
+        {
+            var queryable = new[] { "a", "b", "c" }.AsQueryable();
+            var factory = CosmosDB.InMemoryEmulator.ProductionExtensions.CosmosOverridableFeedIteratorExtensions
+                .FeedIteratorFactory;
+            factory.Should().NotBeNull();
+            var result = factory!(queryable);
+            result.Should().BeOfType<InMemoryFeedIterator<string>>();
+        }
+        finally
+        {
+            InMemoryFeedIteratorSetup.Deregister();
+        }
+    }
+}
+
+public class StoredProcedurePropertiesReflectionTests
+{
+    [Fact]
+    public void StoredProcedureProperties_HasSettableId()
+    {
+        var props = new Microsoft.Azure.Cosmos.Scripts.StoredProcedureProperties();
+        var idProp = typeof(Microsoft.Azure.Cosmos.Scripts.StoredProcedureProperties)
+            .GetProperty("Id");
+        idProp.Should().NotBeNull();
+        idProp!.CanWrite.Should().BeTrue("stored procedure ID should be settable");
+        props.Id = "test-sproc";
+        props.Id.Should().Be("test-sproc");
+    }
+
+    [Fact]
+    public void StoredProcedureProperties_HasSettableBody()
+    {
+        var props = new Microsoft.Azure.Cosmos.Scripts.StoredProcedureProperties();
+        var bodyProp = typeof(Microsoft.Azure.Cosmos.Scripts.StoredProcedureProperties)
+            .GetProperty("Body");
+        bodyProp.Should().NotBeNull();
+        bodyProp!.CanWrite.Should().BeTrue("stored procedure Body should be settable");
+        props.Body = "function() { return true; }";
+        props.Body.Should().Be("function() { return true; }");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 35 — Phase B: ParsePatchBody Error Path Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ParsePatchBodyErrorPathTests
+{
+    private static readonly MethodInfo ParsePatchBodyMethod =
+        typeof(FakeCosmosHandler).GetMethod("ParsePatchBody",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+
+    private void InvokeParsePatchBody(string json)
+    {
+        try { ParsePatchBodyMethod.Invoke(null, [json]); }
+        catch (TargetInvocationException ex) { throw ex.InnerException!; }
+    }
+
+    [Fact]
+    public void ParsePatchBody_NonArrayOperations_Throws()
+    {
+        var act = () => InvokeParsePatchBody("""{"operations": "not-an-array"}""");
+        act.Should().Throw<Exception>("operations must be a JArray, not a string");
+    }
+
+    [Fact]
+    public void ParsePatchBody_MissingPathInOp_Throws()
+    {
+        var act = () => InvokeParsePatchBody(
+            """{"operations": [{"op": "set", "value": "hello"}]}""");
+        act.Should().Throw<Exception>();
+    }
+
+    [Fact]
+    public void ParsePatchBody_UnknownOpType_ThrowsInvalidOperation()
+    {
+        var act = () => InvokeParsePatchBody(
+            """{"operations": [{"op": "unknown", "path": "/name"}]}""");
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*Unknown patch operation*");
+    }
+
+    [Fact]
+    public void ParsePatchBody_EmptyArray_ReturnsEmptyList()
+    {
+        var result = ParsePatchBodyMethod.Invoke(null, ["""{"operations": []}"""]);
+        var tuple = result as System.Runtime.CompilerServices.ITuple;
+        tuple.Should().NotBeNull();
+        var ops = tuple![0] as System.Collections.IList;
+        ops.Should().NotBeNull();
+        ops!.Count.Should().Be(0);
+    }
+
+    [Fact]
+    public void ParsePatchBody_ValidSetOp_ReturnsOperation()
+    {
+        var result = ParsePatchBodyMethod.Invoke(null,
+            ["""{"operations": [{"op": "set", "path": "/name", "value": "test"}]}"""]);
+        var tuple = result as System.Runtime.CompilerServices.ITuple;
+        tuple.Should().NotBeNull();
+        var ops = tuple![0] as System.Collections.IList;
+        ops.Should().NotBeNull();
+        ops!.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public void ParsePatchBody_WithCondition_ReturnsCondition()
+    {
+        var result = ParsePatchBodyMethod.Invoke(null,
+            ["""{"operations": [{"op": "set", "path": "/name", "value": "test"}], "condition": "FROM c WHERE c.id = '1'"}"""]);
+        var tuple = result as System.Runtime.CompilerServices.ITuple;
+        tuple.Should().NotBeNull();
+        var condition = tuple![1] as string;
+        condition.Should().Be("FROM c WHERE c.id = '1'");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 35 — Phase C: ETag Header Round-Trip Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SdkETagHeaderRoundTripTests : IDisposable
+{
+    private readonly InMemoryContainer _container;
+    private readonly CosmosClient _client;
+    private readonly HeaderCapturingHandler _capturer;
+    private readonly FakeCosmosHandler _handler;
+    private readonly Container _cosmosContainer;
+
+    public SdkETagHeaderRoundTripTests()
+    {
+        _container = new InMemoryContainer("etag-rt", "/partitionKey");
+        (_client, _capturer, _handler) = SdkTestHelper.CreateCapturingClient(_container);
+        _cosmosContainer = _client.GetContainer("fakeDb", "etag-rt");
+    }
+
+    public void Dispose()
+    {
+        _client.Dispose();
+        _handler.Dispose();
+        _capturer.Dispose();
+    }
+
+    [Fact]
+    public async Task CreateItem_ReturnsETagInResponse()
+    {
+        var response = await _cosmosContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+        response.ETag.Should().NotBeNullOrWhiteSpace("create response should include an ETag");
+    }
+
+    [Fact]
+    public async Task ReplaceItem_ETagChanges()
+    {
+        var create = await _cosmosContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+        var firstEtag = create.ETag;
+
+        var replace = await _cosmosContainer.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "B" }, "1", new PartitionKey("pk"));
+        var secondEtag = replace.ETag;
+
+        secondEtag.Should().NotBe(firstEtag, "ETag should change after replace");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 35 — Phase D: Partition Range Distribution Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class PartitionRangeDistributionTests : IDisposable
+{
+    private readonly InMemoryContainer _container;
+    private readonly FakeCosmosHandler _handler;
+    private readonly CosmosClient _client;
+    private readonly Container _cosmosContainer;
+
+    public PartitionRangeDistributionTests()
+    {
+        _container = new InMemoryContainer("range-dist", "/partitionKey");
+        _handler = new FakeCosmosHandler(_container, new FakeCosmosHandlerOptions { PartitionKeyRangeCount = 4 });
+        _client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+        _cosmosContainer = _client.GetContainer("fakeDb", "range-dist");
+    }
+
+    public void Dispose()
+    {
+        _client.Dispose();
+        _handler.Dispose();
+    }
+
+    [Fact]
+    public async Task MultiRange_CrossPartitionQuery_ReturnsAllItems()
+    {
+        for (int i = 0; i < 10; i++)
+        {
+            await _container.CreateItemAsync(
+                new TestDocument { Id = $"item-{i}", PartitionKey = $"pk-{i}", Name = $"Name{i}" },
+                new PartitionKey($"pk-{i}"));
+        }
+
+        var iter = _cosmosContainer.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        var all = new List<TestDocument>();
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            all.AddRange(page);
+        }
+        all.Count.Should().Be(10, "cross-partition query should return all items from all ranges");
+    }
+
+    [Fact]
+    public async Task MultiRange_PartitionKeyQuery_ReturnsOnlyMatchingItems()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk-alpha", Name = "A" }, new PartitionKey("pk-alpha"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk-beta", Name = "B" }, new PartitionKey("pk-beta"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "3", PartitionKey = "pk-alpha", Name = "C" }, new PartitionKey("pk-alpha"));
+
+        var iter = _cosmosContainer.GetItemQueryIterator<TestDocument>(
+            new QueryDefinition("SELECT * FROM c WHERE c.partitionKey = @pk")
+                .WithParameter("@pk", "pk-alpha"),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("pk-alpha") });
+
+        var results = new List<TestDocument>();
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            results.AddRange(page);
+        }
+        results.Count.Should().Be(2);
+        results.Should().OnlyContain(d => d.PartitionKey == "pk-alpha");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 35 — Phase E: LINQ Through SDK Pipeline Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SdkLinqPipelineTests : IDisposable
+{
+    private readonly InMemoryContainer _container;
+    private readonly CosmosClient _client;
+    private readonly HeaderCapturingHandler _capturer;
+    private readonly FakeCosmosHandler _handler;
+    private readonly Container _cosmosContainer;
+
+    public SdkLinqPipelineTests()
+    {
+        _container = new InMemoryContainer("linq-sdk", "/partitionKey");
+        _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Alice", Value = 10 },
+            new PartitionKey("pk")).GetAwaiter().GetResult();
+        _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "Bob", Value = 20 },
+            new PartitionKey("pk")).GetAwaiter().GetResult();
+        _container.CreateItemAsync(
+            new TestDocument { Id = "3", PartitionKey = "pk", Name = "Charlie", Value = 30 },
+            new PartitionKey("pk")).GetAwaiter().GetResult();
+        (_client, _capturer, _handler) = SdkTestHelper.CreateCapturingClient(_container);
+        _cosmosContainer = _client.GetContainer("fakeDb", "linq-sdk");
+    }
+
+    public void Dispose()
+    {
+        _client.Dispose();
+        _handler.Dispose();
+        _capturer.Dispose();
+    }
+
+    [Fact]
+    public async Task LinqWhere_ThroughSdk_FiltersCorrectly()
+    {
+        var iter = _cosmosContainer.GetItemLinqQueryable<TestDocument>()
+            .Where(d => d.Name == "Alice")
+            .ToFeedIterator();
+
+        var results = new List<TestDocument>();
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            results.AddRange(page);
+        }
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task LinqProjection_ThroughSdk_SelectsFields()
+    {
+        var iter = _cosmosContainer.GetItemLinqQueryable<TestDocument>()
+            .Select(d => new { d.Name })
+            .ToFeedIterator();
+
+        var results = new List<dynamic>();
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            foreach (var item in page) results.Add(item);
+        }
+        results.Count.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task LinqOrderBy_ThroughSdk_SortsCorrectly()
+    {
+        var iter = _cosmosContainer.GetItemLinqQueryable<TestDocument>()
+            .OrderByDescending(d => d.Name)
+            .ToFeedIterator();
+
+        var results = new List<TestDocument>();
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            results.AddRange(page);
+        }
+        results.First().Name.Should().Be("Charlie");
+        results.Last().Name.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task LinqCount_ThroughSdk_ReturnsCorrectCount()
+    {
+        var count = await _cosmosContainer.GetItemLinqQueryable<TestDocument>().CountAsync();
+        count.Resource.Should().Be(3);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 35 — Phase F: Divergent Behavior Documentation Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SdkCompatibilityPlan35DivergentTests : IDisposable
+{
+    private readonly InMemoryContainer _container;
+    private readonly CosmosClient _client;
+    private readonly HeaderCapturingHandler _capturer;
+    private readonly FakeCosmosHandler _handler;
+    private readonly Container _cosmosContainer;
+
+    public SdkCompatibilityPlan35DivergentTests()
+    {
+        _container = new InMemoryContainer("div35", "/partitionKey");
+        (_client, _capturer, _handler) = SdkTestHelper.CreateCapturingClient(_container);
+        _cosmosContainer = _client.GetContainer("fakeDb", "div35");
+    }
+
+    public void Dispose()
+    {
+        _client.Dispose();
+        _handler.Dispose();
+        _capturer.Dispose();
+    }
+
+    [Fact(Skip = "Real Cosmos DB returns varying request charges based on operation type, document size, and index usage. The emulator always returns 1.0 RU for all operations.")]
+    public void RequestCharge_ShouldReflectOperationCost() { }
+
+    [Fact]
+    public async Task RequestCharge_AlwaysReturns1RU_Divergence()
+    {
+        var response = await _cosmosContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+        response.RequestCharge.Should().Be(1.0);
+    }
+
+    [Fact(Skip = "Real Cosmos DB returns CosmosDiagnostics with real timing, retry, and routing details. The emulator returns a stub diagnostics with no real data.")]
+    public void Diagnostics_ShouldContainRealDetails() { }
+
+    [Fact]
+    public async Task Diagnostics_ReturnsStubDiagnostics_Divergence()
+    {
+        // DIVERGENT BEHAVIOUR: Real Cosmos includes detailed diagnostics.
+        // Through FakeCosmosHandler, the SDK wraps with its own timing,
+        // so we test the raw InMemoryContainer response.
+        var response = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+        response.Diagnostics.Should().NotBeNull();
+        response.Diagnostics.GetClientElapsedTime().Should().Be(TimeSpan.Zero,
+            "emulator diagnostics return zero elapsed time");
+    }
+
+    [Fact(Skip = "Real Cosmos DB returns opaque base64-encoded continuation tokens with partition range info. The emulator returns simple integer offsets.")]
+    public void ContinuationToken_ShouldBeOpaqueJson() { }
+
+    [Fact]
+    public async Task ContinuationToken_IsPlainInteger_Divergence()
+    {
+        // DIVERGENT BEHAVIOUR: Real Cosmos uses opaque tokens.
+        // Through FakeCosmosHandler, the SDK wraps the continuation token,
+        // so we test the raw InMemoryContainer query iterator.
+        for (int i = 0; i < 5; i++)
+            await _container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk", Name = $"N{i}" },
+                new PartitionKey("pk"));
+
+        var iter = _container.GetItemQueryIterator<TestDocument>(
+            "SELECT * FROM c",
+            requestOptions: new QueryRequestOptions { MaxItemCount = 2 });
+
+        var page1 = await iter.ReadNextAsync();
+        page1.Count.Should().Be(2);
+
+        if (iter.HasMoreResults)
+        {
+            var token = page1.ContinuationToken;
+            if (token != null)
+            {
+                int.TryParse(token, out _).Should().BeTrue(
+                    "emulator continuation tokens should be plain integers");
+            }
+        }
+    }
+}
