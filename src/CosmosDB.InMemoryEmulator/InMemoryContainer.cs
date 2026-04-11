@@ -3381,8 +3381,7 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (_c._triggerProperties.ContainsKey(triggerProperties.Id))
-                throw new CosmosException($"Trigger '{triggerProperties.Id}' already exists.",
-                    HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
             _c._triggerProperties[triggerProperties.Id] = triggerProperties;
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created,
                 JsonConvert.SerializeObject(triggerProperties)));
@@ -3392,8 +3391,7 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._triggerProperties.TryGetValue(id, out var props))
-                throw new CosmosException($"Trigger '{id}' not found.",
-                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
                 JsonConvert.SerializeObject(props)));
         }
@@ -3403,8 +3401,7 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (!_c._triggerProperties.ContainsKey(triggerProperties.Id))
-                throw new CosmosException($"Trigger '{triggerProperties.Id}' not found.",
-                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
             _c._triggerProperties[triggerProperties.Id] = triggerProperties;
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
                 JsonConvert.SerializeObject(triggerProperties)));
@@ -3414,8 +3411,7 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._triggerProperties.Remove(id))
-                throw new CosmosException($"Trigger '{id}' not found.",
-                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
             _c._triggers.Remove(id);
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
         }

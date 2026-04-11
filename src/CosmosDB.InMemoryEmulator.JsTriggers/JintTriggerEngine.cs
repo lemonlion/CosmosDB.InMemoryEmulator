@@ -208,7 +208,10 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
         if (result.IsBoolean()) return result.AsBoolean();
         if (result.IsNumber()) return result.AsNumber();
         if (result.IsString()) return result.AsString();
-        // For objects/arrays, serialize then return the string
-        return result.ToString();
+        // For objects/arrays, serialize to JSON and parse as JToken for proper deserialization
+        var engine = new Engine();
+        engine.SetValue("__val", result);
+        var json = engine.Evaluate("JSON.stringify(__val)").AsString();
+        return Newtonsoft.Json.Linq.JToken.Parse(json);
     }
 }
