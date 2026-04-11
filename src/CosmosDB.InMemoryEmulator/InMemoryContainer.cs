@@ -67,9 +67,6 @@ public class InMemoryContainer : Container
     private const int RegexCacheMaxSize = 256;
     private static readonly ConcurrentDictionary<(string Pattern, RegexOptions Options), Regex> RegexCache = new();
 
-    private const int SqlParseCacheMaxSize = 5000;
-    private static readonly ConcurrentDictionary<string, CosmosSqlQuery> SqlParseCache = new();
-
     private const int MaxDocumentSizeBytes = 2 * 1024 * 1024;
     private const double SyntheticRequestCharge = 1.0;
     private const double EarthRadiusMeters = 6_371_000.0;
@@ -83,22 +80,8 @@ public class InMemoryContainer : Container
     private readonly List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> _changeFeed = new();
     private readonly object _changeFeedLock = new();
     private readonly object _uniqueKeyWriteLock = new();
-    private static readonly SemaphoreSlim[] _patchLockStripes = CreatePatchLockStripes(64);
+    private readonly ConcurrentDictionary<(string Id, string PartitionKey), SemaphoreSlim> _patchLocks = new();
     private int _throughput = 400;
-
-    private static SemaphoreSlim[] CreatePatchLockStripes(int count)
-    {
-        var stripes = new SemaphoreSlim[count];
-        for (var i = 0; i < count; i++)
-            stripes[i] = new SemaphoreSlim(1, 1);
-        return stripes;
-    }
-
-    private static SemaphoreSlim GetPatchLock((string Id, string PartitionKey) key)
-    {
-        var hash = (uint)(key.GetHashCode() & 0x7FFFFFFF);
-        return _patchLockStripes[hash % (uint)_patchLockStripes.Length];
-    }
 
     private bool HasUniqueKeys =>
         _containerProperties.UniqueKeyPolicy?.UniqueKeys.Count > 0;
@@ -424,7 +407,7 @@ public class InMemoryContainer : Container
                 var importEtag = GenerateETag();
                 _etags[key] = importEtag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
-                _items[key] = EnrichWithSystemProperties(jObj, importEtag, _timestamps[key]);
+                _items[key] = EnrichWithSystemProperties(itemJson, importEtag, _timestamps[key]);
             }
         }
     }
@@ -480,8 +463,7 @@ public class InMemoryContainer : Container
 
             var key = kvp.Key;
             var etag = $"\"{Guid.NewGuid()}\"";
-            var restoreObj = JsonParseHelpers.ParseJson(kvp.Value.Json);
-            _items[key] = EnrichWithSystemProperties(restoreObj, etag, pointInTime);
+            _items[key] = EnrichWithSystemProperties(kvp.Value.Json, etag, pointInTime);
             _etags[key] = etag;
             _timestamps[key] = pointInTime;
         }
@@ -595,11 +577,8 @@ public class InMemoryContainer : Container
         var jObj = JsonParseHelpers.ParseJson(json);
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Create");
-        if (requestOptions?.PreTriggers is not null)
-        {
-            json = jObj.ToString(Newtonsoft.Json.Formatting.None);
-            ValidateDocumentSize(json);
-        }
+        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+        ValidateDocumentSize(json);
 
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException("Item must have an 'id' property.");
         ValidatePartitionKeyConsistency(partitionKey, jObj);
@@ -633,19 +612,17 @@ public class InMemoryContainer : Container
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        _items[key] = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+        _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
 
         try
         {
-            var responseBodyOverride = ExecutePostTriggers(requestOptions, jObj, "Create");
-            if (requestOptions?.PostTriggers is not null)
+            var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
+            var responseBodyOverride = ExecutePostTriggers(requestOptions, committedDoc, "Create");
+            var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
+            if (postTriggerJson != _items[key])
             {
-                var postTriggerJson = jObj.ToString(Newtonsoft.Json.Formatting.None);
-                if (postTriggerJson != _items[key])
-                {
-                    ValidateDocumentSize(postTriggerJson);
-                    _items[key] = postTriggerJson;
-                }
+                ValidateDocumentSize(postTriggerJson);
+                _items[key] = postTriggerJson;
             }
 
             RecordChangeFeed(itemId, pk, _items[key]);
@@ -700,11 +677,8 @@ public class InMemoryContainer : Container
         var jObj = JsonParseHelpers.ParseJson(json);
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Upsert");
-        if (requestOptions?.PreTriggers is not null)
-        {
-            json = jObj.ToString(Newtonsoft.Json.Formatting.None);
-            ValidateDocumentSize(json);
-        }
+        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+        ValidateDocumentSize(json);
 
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException("Item must have an 'id' property.");
         ValidatePartitionKeyConsistency(partitionKey, jObj);
@@ -738,7 +712,7 @@ public class InMemoryContainer : Container
                 etag = GenerateETag();
                 _etags[key] = etag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
-                _items[key] = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+                _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
             }
         }
         else
@@ -750,21 +724,19 @@ public class InMemoryContainer : Container
             etag = GenerateETag();
             _etags[key] = etag;
             _timestamps[key] = DateTimeOffset.UtcNow;
-            _items[key] = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+            _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         }
         RecordChangeFeed(itemId, pk, _items[key]);
 
         try
         {
-            ExecutePostTriggers(requestOptions, jObj, "Upsert");
-            if (requestOptions?.PostTriggers is not null)
+            var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
+            ExecutePostTriggers(requestOptions, committedDoc, "Upsert");
+            var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
+            if (postTriggerJson != _items[key])
             {
-                var postTriggerJson = jObj.ToString(Newtonsoft.Json.Formatting.None);
-                if (postTriggerJson != _items[key])
-                {
-                    ValidateDocumentSize(postTriggerJson);
-                    _items[key] = postTriggerJson;
-                }
+                ValidateDocumentSize(postTriggerJson);
+                _items[key] = postTriggerJson;
             }
         }
         catch
@@ -807,11 +779,8 @@ public class InMemoryContainer : Container
         }
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
-        if (requestOptions?.PreTriggers is not null)
-        {
-            json = jObj.ToString(Newtonsoft.Json.Formatting.None);
-            ValidateDocumentSize(json);
-        }
+        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+        ValidateDocumentSize(json);
 
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(id, pk);
@@ -839,7 +808,7 @@ public class InMemoryContainer : Container
                 etag = GenerateETag();
                 _etags[key] = etag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
-                _items[key] = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+                _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
             }
         }
         else
@@ -850,21 +819,19 @@ public class InMemoryContainer : Container
             etag = GenerateETag();
             _etags[key] = etag;
             _timestamps[key] = DateTimeOffset.UtcNow;
-            _items[key] = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+            _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         }
         RecordChangeFeed(id, pk, _items[key]);
 
         try
         {
-            ExecutePostTriggers(requestOptions, jObj, "Replace");
-            if (requestOptions?.PostTriggers is not null)
+            var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
+            ExecutePostTriggers(requestOptions, committedDoc, "Replace");
+            var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
+            if (postTriggerJson != _items[key])
             {
-                var postTriggerJson = jObj.ToString(Newtonsoft.Json.Formatting.None);
-                if (postTriggerJson != _items[key])
-                {
-                    ValidateDocumentSize(postTriggerJson);
-                    _items[key] = postTriggerJson;
-                }
+                ValidateDocumentSize(postTriggerJson);
+                _items[key] = postTriggerJson;
             }
         }
         catch
@@ -945,7 +912,7 @@ public class InMemoryContainer : Container
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
 
-        var itemLock = GetPatchLock(key);
+        var itemLock = _patchLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
         try
         {
@@ -1003,7 +970,7 @@ public class InMemoryContainer : Container
                 etag = GenerateETag();
                 _etags[key] = etag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
-                var enriched = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+                var enriched = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
                 _items[key] = enriched;
             }
         }
@@ -1012,13 +979,13 @@ public class InMemoryContainer : Container
             etag = GenerateETag();
             _etags[key] = etag;
             _timestamps[key] = DateTimeOffset.UtcNow;
-            var enriched = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+            var enriched = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
             _items[key] = enriched;
         }
         var enrichedJson = _items[key];
         RecordChangeFeed(id, pk, enrichedJson);
 
-        ExecutePostTriggers(requestOptions, jObj, "Replace");
+        ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Replace");
 
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         var result = JsonConvert.DeserializeObject<T>(enrichedJson, JsonSettings);
@@ -1043,12 +1010,9 @@ public class InMemoryContainer : Container
         { return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest)); }
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Create");
-        if (requestOptions?.PreTriggers is not null)
-        {
-            json = jObj.ToString(Newtonsoft.Json.Formatting.None);
-            sizeError = ValidateDocumentSizeStream(json);
-            if (sizeError is not null) return Task.FromResult(sizeError);
-        }
+        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+        sizeError = ValidateDocumentSizeStream(json);
+        if (sizeError is not null) return Task.FromResult(sizeError);
 
         var itemId = jObj["id"]?.ToString() ?? Guid.NewGuid().ToString();
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
@@ -1076,13 +1040,13 @@ public class InMemoryContainer : Container
         var etag = GenerateETag();
         _etags[key] = etag;
         _timestamps[key] = DateTimeOffset.UtcNow;
-        var enrichedJson = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+        var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
         _items[key] = enrichedJson;
         RecordChangeFeed(itemId, pk, enrichedJson);
 
         try
         {
-            ExecutePostTriggers(requestOptions, jObj, "Create");
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Create");
         }
         catch
         {
@@ -1130,12 +1094,9 @@ public class InMemoryContainer : Container
         { return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest)); }
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Upsert");
-        if (requestOptions?.PreTriggers is not null)
-        {
-            json = jObj.ToString(Newtonsoft.Json.Formatting.None);
-            sizeError = ValidateDocumentSizeStream(json);
-            if (sizeError is not null) return Task.FromResult(sizeError);
-        }
+        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+        sizeError = ValidateDocumentSizeStream(json);
+        if (sizeError is not null) return Task.FromResult(sizeError);
 
         var itemId = jObj["id"]?.ToString();
         if (itemId is null)
@@ -1166,7 +1127,7 @@ public class InMemoryContainer : Container
                 etag = GenerateETag();
                 _etags[key] = etag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
-                enrichedJson = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+                enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
                 _items[key] = enrichedJson;
             }
         }
@@ -1179,14 +1140,14 @@ public class InMemoryContainer : Container
             etag = GenerateETag();
             _etags[key] = etag;
             _timestamps[key] = DateTimeOffset.UtcNow;
-            enrichedJson = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+            enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
             _items[key] = enrichedJson;
         }
         RecordChangeFeed(itemId, pk, enrichedJson);
 
         try
         {
-            ExecutePostTriggers(requestOptions, jObj, "Upsert");
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Upsert");
         }
         catch
         {
@@ -1246,12 +1207,9 @@ public class InMemoryContainer : Container
         }
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
-        if (requestOptions?.PreTriggers is not null)
-        {
-            json = jObj.ToString(Newtonsoft.Json.Formatting.None);
-            sizeError = ValidateDocumentSizeStream(json);
-            if (sizeError is not null) return Task.FromResult(sizeError);
-        }
+        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+        sizeError = ValidateDocumentSizeStream(json);
+        if (sizeError is not null) return Task.FromResult(sizeError);
 
         string etag;
         string enrichedJson;
@@ -1264,7 +1222,7 @@ public class InMemoryContainer : Container
                 etag = GenerateETag();
                 _etags[key] = etag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
-                enrichedJson = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+                enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
                 _items[key] = enrichedJson;
             }
         }
@@ -1275,14 +1233,14 @@ public class InMemoryContainer : Container
             etag = GenerateETag();
             _etags[key] = etag;
             _timestamps[key] = DateTimeOffset.UtcNow;
-            enrichedJson = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+            enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
             _items[key] = enrichedJson;
         }
         RecordChangeFeed(id, pk, enrichedJson);
 
         try
         {
-            ExecutePostTriggers(requestOptions, jObj, "Replace");
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Replace");
         }
         catch
         {
@@ -1359,7 +1317,7 @@ public class InMemoryContainer : Container
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
 
-        var itemLock = GetPatchLock(key);
+        var itemLock = _patchLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
         try
         {
@@ -1424,7 +1382,7 @@ public class InMemoryContainer : Container
                 etag = GenerateETag();
                 _etags[key] = etag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
-                var enriched = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+                var enriched = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
                 _items[key] = enriched;
             }
         }
@@ -1433,7 +1391,7 @@ public class InMemoryContainer : Container
             etag = GenerateETag();
             _etags[key] = etag;
             _timestamps[key] = DateTimeOffset.UtcNow;
-            var enriched = EnrichWithSystemProperties(jObj, etag, _timestamps[key]);
+            var enriched = EnrichWithSystemProperties(updatedJson, etag, _timestamps[key]);
             _items[key] = enriched;
         }
         var enrichedJson = _items[key];
@@ -1441,7 +1399,7 @@ public class InMemoryContainer : Container
 
         try
         {
-            ExecutePostTriggers(requestOptions, jObj, "Replace");
+            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Replace");
         }
         catch
         {
@@ -2323,44 +2281,6 @@ public class InMemoryContainer : Container
         var raw = partitionKey.ToString();
         if (raw.StartsWith("["))
         {
-            // Fast path for single-value partition keys: avoid JArray.Parse
-            // Format is ["stringValue"], [numericValue], [true/false], or [null]
-            if (raw.Length >= 2 && raw[^1] == ']')
-            {
-                // Check for composite key (contains comma outside of string literal)
-                var isComposite = false;
-                var inString = false;
-                for (var i = 1; i < raw.Length - 1; i++)
-                {
-                    if (raw[i] == '"' && (i == 1 || raw[i - 1] != '\\')) inString = !inString;
-                    else if (raw[i] == ',' && !inString) { isComposite = true; break; }
-                }
-
-                if (!isComposite)
-                {
-                    var inner = raw.AsSpan(1, raw.Length - 2).Trim();
-                    if (inner.Length == 0) return raw;
-
-                    if (inner[0] == '"' && inner[^1] == '"')
-                    {
-                        // String value: extract without quotes
-                        var strValue = inner.Slice(1, inner.Length - 2).ToString();
-                        // Handle escaped characters (rare but possible)
-                        if (strValue.Contains('\\'))
-                            strValue = Newtonsoft.Json.Linq.JToken.Parse(inner.ToString()).ToString();
-                        return $"S:{strValue}";
-                    }
-                    if (inner.SequenceEqual("null".AsSpan())) return raw;
-                    if (inner.SequenceEqual("true".AsSpan())) return "B:true";
-                    if (inner.SequenceEqual("false".AsSpan())) return "B:false";
-                    // Numeric value — normalize through double to match JTokenToTypedKey format
-                    if (double.TryParse(inner, System.Globalization.NumberStyles.Float | System.Globalization.NumberStyles.AllowLeadingSign,
-                        System.Globalization.CultureInfo.InvariantCulture, out var numVal))
-                        return $"N:{numVal.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}";
-                    return raw;
-                }
-            }
-
             try
             {
                 var arr = JArray.Parse(raw);
@@ -2570,8 +2490,9 @@ public class InMemoryContainer : Container
         }
     }
 
-    private string EnrichWithSystemProperties(JObject jObj, string etag, DateTimeOffset timestamp)
+    private string EnrichWithSystemProperties(string json, string etag, DateTimeOffset timestamp)
     {
+        var jObj = JsonParseHelpers.ParseJson(json);
         var containerHash = PartitionKeyHash.MurmurHash3(Id);
         var docId = (uint)Interlocked.Increment(ref _docRidCounter);
         var ridBytes = new byte[8];
@@ -3724,11 +3645,8 @@ public class InMemoryContainer : Container
                 }
             }
 
-            return _items
-                .Where(kvp => kvp.Key.PartitionKey == pk && !IsExpired(kvp.Key))
-                .Select(kvp => kvp.Value).ToList();
+            return _items.Where(kvp => kvp.Key.PartitionKey == pk && !IsExpired(kvp.Key)).Select(kvp => kvp.Value).ToList();
         }
-
         return _items.Where(kvp => !IsExpired(kvp.Key)).Select(kvp => kvp.Value).ToList();
     }
 
@@ -3844,9 +3762,7 @@ public class InMemoryContainer : Container
         parameters["__staticTicks"] = now.Ticks;
         parameters["__staticTimestamp"] = new DateTimeOffset(now).ToUnixTimeMilliseconds();
 
-        var parsed = SqlParseCache.GetOrAdd(queryText, static qt => CosmosSqlParser.Parse(qt));
-        if (SqlParseCache.Count > SqlParseCacheMaxSize)
-            SqlParseCache.Clear();
+        var parsed = CosmosSqlParser.Parse(queryText);
 
         var items = GetAllItemsForPartition(requestOptions);
 
@@ -5022,9 +4938,6 @@ public class InMemoryContainer : Container
     //  Query helpers — Parameter extraction
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private static FieldInfo _cachedParameterField;
-    private static volatile bool _parameterFieldResolved;
-
     private static Dictionary<string, object> ExtractQueryParameters(QueryDefinition queryDefinition)
     {
         var parameters = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
@@ -5044,15 +4957,11 @@ public class InMemoryContainer : Container
 
         try
         {
-            if (!_parameterFieldResolved)
-            {
-                _cachedParameterField = typeof(QueryDefinition)
-                    .GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
-                    .FirstOrDefault(f => f.Name.Contains("parameter", StringComparison.OrdinalIgnoreCase));
-                _parameterFieldResolved = true;
-            }
+            var internalField = typeof(QueryDefinition)
+                .GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
+                .FirstOrDefault(f => f.Name.Contains("parameter", StringComparison.OrdinalIgnoreCase));
 
-            if (_cachedParameterField?.GetValue(queryDefinition) is System.Collections.IEnumerable enumerable)
+            if (internalField?.GetValue(queryDefinition) is System.Collections.IEnumerable enumerable)
             {
                 foreach (var item in enumerable)
                 {
