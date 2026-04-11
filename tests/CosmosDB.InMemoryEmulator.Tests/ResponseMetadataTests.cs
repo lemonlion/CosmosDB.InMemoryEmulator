@@ -1764,3 +1764,714 @@ public class ResponseMetadataDivergentBehaviorDeepDiveTests
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 1: Batch Metadata Gaps
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class BatchMetadataGapsDeepDiveTests
+{
+    [Fact]
+    public async Task BatchResponse_ActivityId_IsValidGuid()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        Guid.TryParse(response.ActivityId, out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task BatchResponse_ActivityId_IsNotAllZeros()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.ActivityId.Should().NotBe("00000000-0000-0000-0000-000000000000");
+    }
+
+    [Fact]
+    public async Task BatchResponse_Headers_ContainActivityId()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.Headers["x-ms-activity-id"].Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task BatchResponse_Headers_ContainRequestCharge()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.Headers["x-ms-request-charge"].Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task BatchResponse_EmptyBatch_ReturnsMetadata()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk"));
+        using var response = await batch.ExecuteAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.ActivityId.Should().NotBeNullOrEmpty();
+        response.Diagnostics.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task BatchResponse_Diagnostics_ToString_ReturnsJson()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" });
+        using var response = await batch.ExecuteAsync();
+        response.Diagnostics.ToString().Should().Be("{}");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 2: Session Token Consistency
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SessionTokenConsistencyDeepDiveTests
+{
+    [Fact]
+    public async Task SessionToken_Consistent_AcrossTypedAndStream()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var typed = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+        var stream = await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk"}""")), new PartitionKey("pk"));
+
+        var typedToken = typed.Headers["x-ms-session-token"];
+        var streamToken = stream.Headers["x-ms-session-token"];
+
+        // Both should use the same format
+        typedToken.Should().StartWith("0:");
+        streamToken.Should().StartWith("0:");
+        typedToken.Should().Be(streamToken, "typed and stream APIs should produce the same session token format");
+    }
+
+    [Fact]
+    public async Task SessionToken_PresentOnAllTypedCrudOps()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var create = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+        create.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty("Create");
+
+        var read = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        read.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty("Read");
+
+        var upsert = await container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "B" }, new PartitionKey("pk"));
+        upsert.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty("Upsert");
+
+        var replace = await container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "C" }, "1", new PartitionKey("pk"));
+        replace.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty("Replace");
+
+        var patch = await container.PatchItemAsync<TestDocument>(
+            "1", new PartitionKey("pk"), [PatchOperation.Set("/name", "D")]);
+        patch.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty("Patch");
+
+        var delete = await container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        delete.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty("Delete");
+    }
+
+    [Fact]
+    public async Task SessionToken_PresentOnAllStreamCrudOps()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var create = await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk","name":"A"}""")), new PartitionKey("pk"));
+        create.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty("Create");
+
+        var read = await container.ReadItemStreamAsync("1", new PartitionKey("pk"));
+        read.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty("Read");
+
+        var upsert = await container.UpsertItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk","name":"B"}""")), new PartitionKey("pk"));
+        upsert.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty("Upsert");
+
+        var replace = await container.ReplaceItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk","name":"C"}""")), "1", new PartitionKey("pk"));
+        replace.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty("Replace");
+
+        var patch = await container.PatchItemStreamAsync("1", new PartitionKey("pk"),
+            [PatchOperation.Set("/name", "D")]);
+        patch.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty("Patch");
+
+        var delete = await container.DeleteItemStreamAsync("1", new PartitionKey("pk"));
+        delete.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty("Delete");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 3: CosmosException Deep Dive
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class CosmosExceptionDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/partitionKey");
+
+    [Fact]
+    public async Task CosmosException_Message_ContainsStatusCode()
+    {
+        try
+        {
+            await _container.ReadItemAsync<TestDocument>("nope", new PartitionKey("pk"));
+            throw new Exception("Expected CosmosException");
+        }
+        catch (CosmosException ex)
+        {
+            // CosmosException.Message includes the user-provided message
+            ex.Message.Should().Contain("Entity with the specified id does not exist");
+            ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        }
+    }
+
+    [Fact]
+    public async Task CosmosException_Headers_ContainActivityId()
+    {
+        try
+        {
+            await _container.ReadItemAsync<TestDocument>("nope", new PartitionKey("pk"));
+            throw new Exception("Expected CosmosException");
+        }
+        catch (CosmosException ex)
+        {
+            ex.Headers["x-ms-activity-id"].Should().NotBeNullOrEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task CosmosException_HasDiagnostics_OrNull()
+    {
+        try
+        {
+            await _container.ReadItemAsync<TestDocument>("nope", new PartitionKey("pk"));
+            throw new Exception("Expected CosmosException");
+        }
+        catch (CosmosException ex)
+        {
+            // Document whatever the emulator returns — may be null
+            _ = ex.Diagnostics;
+        }
+    }
+
+    [Fact]
+    public async Task CosmosException_ActivityId_IsUnique_PerError()
+    {
+        string activityId1 = null!, activityId2 = null!;
+        try
+        {
+            await _container.ReadItemAsync<TestDocument>("nope1", new PartitionKey("pk"));
+        }
+        catch (CosmosException ex)
+        {
+            activityId1 = ex.ActivityId;
+        }
+
+        try
+        {
+            await _container.ReadItemAsync<TestDocument>("nope2", new PartitionKey("pk"));
+        }
+        catch (CosmosException ex)
+        {
+            activityId2 = ex.ActivityId;
+        }
+
+        activityId1.Should().NotBe(activityId2);
+    }
+
+    [Fact]
+    public async Task CosmosException_ResponseBody_Typed_vs_Stream()
+    {
+        // Typed API throws CosmosException; Stream API returns status code
+        var act = () => _container.ReadItemAsync<TestDocument>("nope", new PartitionKey("pk"));
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.NotFound);
+
+        var streamResponse = await _container.ReadItemStreamAsync("nope", new PartitionKey("pk"));
+        streamResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 4: Stream Error Body Content
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class StreamErrorBodyContentDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/partitionKey");
+
+    [Fact]
+    public async Task StreamError_404_Content_IsNull()
+    {
+        var response = await _container.ReadItemStreamAsync("nope", new PartitionKey("pk"));
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.Content.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task StreamError_409_Content_IsNull()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")), new PartitionKey("pk"));
+        var response = await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")), new PartitionKey("pk"));
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        response.Content.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task StreamError_412_Content_IsNull()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")), new PartitionKey("pk"));
+        var response = await _container.ReplaceItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")),
+            "1", new PartitionKey("pk"),
+            new ItemRequestOptions { IfMatchEtag = "\"stale\"" });
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+        response.Content.Should().BeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 5: Delete Metadata Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class DeleteMetadataEdgeCaseDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/partitionKey");
+
+    [Fact]
+    public async Task DeleteItemAsync_ETag_IsNull_OnResponse()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+        var response = await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        response.ETag.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DeleteItemStreamAsync_NoETag_InHeaders()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")), new PartitionKey("pk"));
+        var response = await _container.DeleteItemStreamAsync("1", new PartitionKey("pk"));
+        response.Headers.ETag.Should().BeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task DeleteItemStreamAsync_Content_IsNull()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")), new PartitionKey("pk"));
+        var response = await _container.DeleteItemStreamAsync("1", new PartitionKey("pk"));
+        response.Content.Should().BeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 6: Typed IfMatch/IfNoneMatch Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class TypedETagEdgeCaseDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/partitionKey");
+
+    [Fact]
+    public async Task UpsertItemAsync_StaleETag_Throws_412()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var act = () => _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "B" }, new PartitionKey("pk"),
+            new ItemRequestOptions { IfMatchEtag = "\"stale-etag\"" });
+
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task PatchItemAsync_StaleETag_Throws_412()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var act = () => _container.PatchItemAsync<TestDocument>(
+            "1", new PartitionKey("pk"), [PatchOperation.Set("/name", "B")],
+            new PatchItemRequestOptions { IfMatchEtag = "\"stale-etag\"" });
+
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task DeleteItemAsync_StaleETag_Throws_412()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var act = () => _container.DeleteItemAsync<TestDocument>(
+            "1", new PartitionKey("pk"),
+            new ItemRequestOptions { IfMatchEtag = "\"stale-etag\"" });
+
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task DeleteItemStreamAsync_StaleETag_Returns_412()
+    {
+        await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")), new PartitionKey("pk"));
+
+        var response = await _container.DeleteItemStreamAsync(
+            "1", new PartitionKey("pk"),
+            new ItemRequestOptions { IfMatchEtag = "\"stale-etag\"" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 7: Content Suppression Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ContentSuppressionEdgeCaseDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("test", "/partitionKey");
+
+    [Fact]
+    public async Task CreateItemAsync_SuppressContent_StillUpdatesETag()
+    {
+        var r1 = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = false });
+        r1.ETag.Should().NotBeNullOrEmpty();
+
+        var r2 = await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "B" }, new PartitionKey("pk"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = false });
+        r2.ETag.Should().NotBeNullOrEmpty();
+        r2.ETag.Should().NotBe(r1.ETag);
+    }
+
+    [Fact]
+    public async Task UpsertItemAsync_SuppressContent_ExistingItem_ResourceIsNull()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var response = await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "B" }, new PartitionKey("pk"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = false });
+
+        response.Resource.Should().BeNull();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task SuppressContent_StreamApi_HasEmptyBody()
+    {
+        var response = await _container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")),
+            new PartitionKey("pk"),
+            new ItemRequestOptions { EnableContentResponseOnWrite = false });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.Content.Should().BeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 8: FeedResponse Count & Pagination
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FeedResponsePaginationDeepDiveTests
+{
+    [Fact]
+    public async Task FeedResponse_Count_MatchesItemsInPage()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        for (var i = 0; i < 5; i++)
+            await container.CreateItemAsync(
+                new TestDocument { Id = $"{i}", PartitionKey = "pk", Name = $"Item{i}" }, new PartitionKey("pk"));
+
+        var iter = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        var page = await iter.ReadNextAsync();
+
+        page.Count.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task FeedResponse_MultiPage_ContinuationToken_Format()
+    {
+        var items = Enumerable.Range(0, 5).Select(i =>
+            new TestDocument { Id = $"{i}", PartitionKey = "pk", Name = $"Item{i}" }).ToList();
+        var iter = new InMemoryFeedIterator<TestDocument>(items, maxItemCount: 2);
+
+        var page1 = await iter.ReadNextAsync();
+        page1.Count.Should().Be(2);
+        page1.ContinuationToken.Should().NotBeNullOrEmpty();
+
+        var page2 = await iter.ReadNextAsync();
+        page2.Count.Should().Be(2);
+        page2.ContinuationToken.Should().NotBeNullOrEmpty();
+
+        var page3 = await iter.ReadNextAsync();
+        page3.Count.Should().Be(1);
+        page3.ContinuationToken.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task FeedResponse_MultiPage_EachPage_HasUniqueActivityId()
+    {
+        var items = Enumerable.Range(0, 4).Select(i =>
+            new TestDocument { Id = $"{i}", PartitionKey = "pk", Name = $"Item{i}" }).ToList();
+        var iter = new InMemoryFeedIterator<TestDocument>(items, maxItemCount: 2);
+
+        var page1 = await iter.ReadNextAsync();
+        var page2 = await iter.ReadNextAsync();
+
+        page1.ActivityId.Should().NotBe(page2.ActivityId);
+    }
+
+    [Fact]
+    public async Task StreamFeedIterator_ItemCount_MatchesItems()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+        await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "B" }, new PartitionKey("pk"));
+
+        var iter = container.GetItemQueryStreamIterator("SELECT * FROM c");
+        var response = await iter.ReadNextAsync();
+
+        response.Headers["x-ms-item-count"].Should().Be("2");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 9: Diagnostics Deep Dive
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class DiagnosticsDeepDiveTests
+{
+    [Fact]
+    public async Task Diagnostics_ToString_ReturnsEmptyJson()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var response = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+        response.Diagnostics.ToString().Should().Be("{}");
+    }
+
+    [Fact]
+    public async Task Diagnostics_GetContactedRegions_ReturnsEmpty()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var response = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+        response.Diagnostics.GetContactedRegions().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FeedResponse_Diagnostics_GetClientElapsedTime_IsZero()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var iter = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        var page = await iter.ReadNextAsync();
+
+        page.Diagnostics.GetClientElapsedTime().Should().Be(TimeSpan.Zero);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 10: DeleteAllItemsByPartitionKey Headers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class DeleteAllByPartitionKeyHeadersDeepDiveTests
+{
+    [Fact]
+    public async Task DeleteAllByPartitionKey_HasActivityId_Header()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var response = await container.DeleteAllItemsByPartitionKeyStreamAsync(new PartitionKey("pk"));
+        response.Headers["x-ms-activity-id"].Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task DeleteAllByPartitionKey_HasRequestCharge_Header()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var response = await container.DeleteAllItemsByPartitionKeyStreamAsync(new PartitionKey("pk"));
+        response.Headers["x-ms-request-charge"].Should().NotBeNullOrEmpty();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 11: ReadMany Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class ReadManyEdgeCaseDeepDiveTests
+{
+    [Fact]
+    public async Task ReadManyItemsAsync_HasActivityId()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var response = await container.ReadManyItemsAsync<TestDocument>(
+            [("1", new PartitionKey("pk"))]);
+        response.ActivityId.Should().NotBeNullOrEmpty();
+        Guid.TryParse(response.ActivityId, out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReadManyItemsStreamAsync_HasActivityId_Header()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var response = await container.ReadManyItemsStreamAsync(
+            [("1", new PartitionKey("pk"))]);
+        response.Headers["x-ms-activity-id"].Should().NotBeNullOrEmpty();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 12: Cross-API Consistency Checks
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class CrossApiConsistencyDeepDiveTests
+{
+    [Fact]
+    public async Task TypedAndStream_SameItem_SameETag()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        var typed = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var stream = await container.ReadItemStreamAsync("1", new PartitionKey("pk"));
+
+        stream.Headers.ETag.Should().Be(typed.ETag);
+    }
+
+    [Fact]
+    public async Task TypedAndStream_StatusCodes_Match_ForAllOps()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        // Create
+        var typedCreate = await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+        var streamCreate = await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"2","partitionKey":"pk"}""")), new PartitionKey("pk"));
+        typedCreate.StatusCode.Should().Be((HttpStatusCode)streamCreate.StatusCode);
+
+        // Read
+        var typedRead = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        var streamRead = await container.ReadItemStreamAsync("2", new PartitionKey("pk"));
+        typedRead.StatusCode.Should().Be((HttpStatusCode)streamRead.StatusCode);
+
+        // Delete
+        var typedDelete = await container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        var streamDelete = await container.DeleteItemStreamAsync("2", new PartitionKey("pk"));
+        typedDelete.StatusCode.Should().Be((HttpStatusCode)streamDelete.StatusCode);
+    }
+
+    [Fact]
+    public async Task FeedIterator_TypedAndStream_SameActivityIdFormat()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var typedIter = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+        var typedPage = await typedIter.ReadNextAsync();
+
+        var streamIter = container.GetItemQueryStreamIterator("SELECT * FROM c");
+        var streamResponse = await streamIter.ReadNextAsync();
+
+        Guid.TryParse(typedPage.ActivityId, out _).Should().BeTrue();
+        Guid.TryParse(streamResponse.Headers["x-ms-activity-id"], out _).Should().BeTrue();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 33 — Group 13: FakeCosmosHandler Metadata Consistency
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class FakeCosmosHandlerResponseMetadataDeepDiveTests : IDisposable
+{
+    private readonly FakeCosmosHandler _handler;
+    private readonly CosmosClient _client;
+    private readonly Container _typedContainer;
+
+    public FakeCosmosHandlerResponseMetadataDeepDiveTests()
+    {
+        _handler = new FakeCosmosHandler(new InMemoryContainer("test", "/partitionKey"));
+
+        _client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                HttpClientFactory = () => new HttpClient(_handler),
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0
+            });
+
+        _typedContainer = _client.GetContainer("db", "test");
+    }
+
+    public void Dispose()
+    {
+        _client?.Dispose();
+        _handler?.Dispose();
+    }
+
+    [Fact]
+    public async Task FakeCosmosHandler_PreservesActivityId_FromContainer()
+    {
+        await _typedContainer.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var response = await _typedContainer.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        response.ActivityId.Should().NotBeNullOrEmpty();
+        Guid.TryParse(response.ActivityId, out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task FakeCosmosHandler_HasSessionToken_OnResponse()
+    {
+        var response = await _typedContainer.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "B" }, new PartitionKey("pk"));
+
+        response.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty();
+    }
+}

@@ -2937,13 +2937,13 @@ public class InMemoryContainer : Container
 
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
 
-    private static readonly CosmosDiagnostics FakeDiagnostics = CreateFakeDiagnostics();
+    private static readonly CosmosDiagnostics FakeDiagnostics = new InMemoryDiagnostics();
 
-    private static CosmosDiagnostics CreateFakeDiagnostics()
+    private sealed class InMemoryDiagnostics : CosmosDiagnostics
     {
-        var d = Substitute.For<CosmosDiagnostics>();
-        d.GetClientElapsedTime().Returns(TimeSpan.Zero);
-        return d;
+        public override TimeSpan GetClientElapsedTime() => TimeSpan.Zero;
+        public override IReadOnlyList<(string regionName, Uri uri)> GetContactedRegions() => Array.Empty<(string, Uri)>();
+        public override string ToString() => "{}";
     }
 
     private static ItemResponse<T> CreateItemResponse<T>(T item, HttpStatusCode statusCode, string etag = null, bool suppressContent = false)
@@ -2954,7 +2954,7 @@ public class InMemoryContainer : Container
         var activityId = Guid.NewGuid().ToString();
         var headers = new Headers
         {
-            ["x-ms-session-token"] = $"0:{Guid.NewGuid():N}",
+            ["x-ms-session-token"] = "0:0#1",
             ["x-ms-activity-id"] = activityId,
             ["x-ms-request-charge"] = SyntheticRequestCharge.ToString(CultureInfo.InvariantCulture)
         };
@@ -8130,6 +8130,7 @@ public class InMemoryContainer : Container
             response.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
             response.Headers["x-ms-request-charge"] = "1";
             response.Headers["x-ms-session-token"] = "0:0#1";
+            response.Headers["x-ms-item-count"] = documentsArray.Count.ToString();
             if (!done)
                 response.Headers.Add("x-ms-continuation", offset.ToString());
             return Task.FromResult(response);

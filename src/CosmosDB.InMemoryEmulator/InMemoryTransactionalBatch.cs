@@ -326,13 +326,16 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             _readResults = readResults;
             _writeEtags = writeEtags;
             _errorMessage = errorMessage;
+            _headers["x-ms-activity-id"] = ActivityId;
+            _headers["x-ms-request-charge"] = RequestCharge.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            _headers["x-ms-session-token"] = "0:0#1";
         }
 
         public override HttpStatusCode StatusCode => _statusCode;
         public override bool IsSuccessStatusCode => _isSuccess;
         public override int Count => _operationResults.Count;
         public override double RequestCharge => 1d;
-        public override string ActivityId => "00000000-0000-0000-0000-000000000000";
+        public override string ActivityId { get; } = Guid.NewGuid().ToString();
         public override CosmosDiagnostics Diagnostics => new InMemoryBatchDiagnostics();
         public override Headers Headers => _headers;
         private readonly Headers _headers = new Headers();

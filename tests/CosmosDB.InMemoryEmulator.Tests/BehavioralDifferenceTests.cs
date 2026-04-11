@@ -422,7 +422,7 @@ public class BehavioralDifferenceTests
 
     /// <summary>
     /// BEHAVIORAL DIFFERENCE: Real Cosmos session tokens encode partition key range IDs
-    /// and logical sequence numbers. InMemoryContainer uses <c>0:&lt;hex-guid&gt;</c>.
+    /// and logical sequence numbers. InMemoryContainer uses <c>0:0#1</c> (a fixed synthetic token).
     /// </summary>
     [Fact]
     public async Task SessionToken_IsSyntheticGuidFormat()
@@ -432,9 +432,7 @@ public class BehavioralDifferenceTests
 
         var sessionToken = response.Headers["x-ms-session-token"];
         sessionToken.Should().StartWith("0:");
-
-        var guidPart = sessionToken["0:".Length..];
-        Guid.TryParseExact(guidPart, "N", out _).Should().BeTrue();
+        sessionToken.Should().Be("0:0#1");
     }
 
     [Fact(Skip = "Real Cosmos session tokens use format like '0:-1#12345' with partition range and LSN.")]

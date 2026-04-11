@@ -101,13 +101,13 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
         return _items ?? Array.Empty<T>();
     }
 
-    private static readonly CosmosDiagnostics FakeDiagnostics = CreateFakeDiagnostics();
+    private static readonly CosmosDiagnostics FakeDiagnostics = new InMemoryFeedDiagnostics();
 
-    private static CosmosDiagnostics CreateFakeDiagnostics()
+    private sealed class InMemoryFeedDiagnostics : CosmosDiagnostics
     {
-        var diagnostics = Substitute.For<CosmosDiagnostics>();
-        diagnostics.GetClientElapsedTime().Returns(TimeSpan.Zero);
-        return diagnostics;
+        public override TimeSpan GetClientElapsedTime() => TimeSpan.Zero;
+        public override IReadOnlyList<(string regionName, Uri uri)> GetContactedRegions() => Array.Empty<(string, Uri)>();
+        public override string ToString() => "{}";
     }
 
     private sealed class InMemoryFeedResponse<TItem> : FeedResponse<TItem>

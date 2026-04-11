@@ -345,7 +345,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         }
 
         httpResponse.Headers.Add("x-ms-request-charge", "1");
-        httpResponse.Headers.Add("x-ms-activity-id", Guid.NewGuid().ToString());
+        httpResponse.Headers.Add("x-ms-activity-id", cosmosResponse.Headers["x-ms-activity-id"] ?? Guid.NewGuid().ToString());
         httpResponse.Headers.Add("x-ms-session-token", "0:0#1");
 
         var etag = cosmosResponse.Headers["ETag"];
