@@ -80,7 +80,7 @@ public class InMemoryContainer : Container
     private readonly List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> _changeFeed = new();
     private readonly object _changeFeedLock = new();
     private readonly object _uniqueKeyWriteLock = new();
-    private readonly ConcurrentDictionary<(string Id, string PartitionKey), SemaphoreSlim> _patchLocks = new();
+    private readonly ConcurrentDictionary<(string Id, string PartitionKey), SemaphoreSlim> _itemLocks = new();
     private int _throughput = 400;
 
     private bool HasUniqueKeys =>
@@ -767,7 +767,7 @@ public class InMemoryContainer : Container
         return Task.FromResult(CreateItemResponse(item, existed ? HttpStatusCode.OK : HttpStatusCode.Created, etag, suppressContent));
     }
 
-    public override Task<ItemResponse<T>> ReplaceItemAsync<T>(
+    public override async Task<ItemResponse<T>> ReplaceItemAsync<T>(
         T item, string id, PartitionKey? partitionKey = null,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
@@ -792,23 +792,38 @@ public class InMemoryContainer : Container
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(id, pk);
 
-        if (!_items.ContainsKey(key) || IsExpired(key))
+        var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await itemLock.WaitAsync(cancellationToken);
+        try
         {
-            EvictIfExpired(key);
-            throw new CosmosException($"Entity with the specified id does not exist. id = {id}",
-                HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-        }
-
-        CheckIfMatch(requestOptions, key);
-        string previousJson;
-        string previousEtag;
-        DateTimeOffset previousTimestamp;
-        string etag;
-        if (HasUniqueKeys)
-        {
-            lock (_uniqueKeyWriteLock)
+            if (!_items.ContainsKey(key) || IsExpired(key))
             {
-                ValidateUniqueKeys(jObj, pk, excludeItemId: id);
+                EvictIfExpired(key);
+                throw new CosmosException($"Entity with the specified id does not exist. id = {id}",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            }
+
+            CheckIfMatch(requestOptions, key);
+            string previousJson;
+            string previousEtag;
+            DateTimeOffset previousTimestamp;
+            string etag;
+            if (HasUniqueKeys)
+            {
+                lock (_uniqueKeyWriteLock)
+                {
+                    ValidateUniqueKeys(jObj, pk, excludeItemId: id);
+                    previousJson = _items[key];
+                    previousEtag = _etags.GetValueOrDefault(key);
+                    previousTimestamp = _timestamps.GetValueOrDefault(key);
+                    etag = GenerateETag();
+                    _etags[key] = etag;
+                    _timestamps[key] = DateTimeOffset.UtcNow;
+                    _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+                }
+            }
+            else
+            {
                 previousJson = _items[key];
                 previousEtag = _etags.GetValueOrDefault(key);
                 previousTimestamp = _timestamps.GetValueOrDefault(key);
@@ -817,43 +832,37 @@ public class InMemoryContainer : Container
                 _timestamps[key] = DateTimeOffset.UtcNow;
                 _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
             }
-        }
-        else
-        {
-            previousJson = _items[key];
-            previousEtag = _etags.GetValueOrDefault(key);
-            previousTimestamp = _timestamps.GetValueOrDefault(key);
-            etag = GenerateETag();
-            _etags[key] = etag;
-            _timestamps[key] = DateTimeOffset.UtcNow;
-            _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
-        }
-        RecordChangeFeed(id, pk, _items[key]);
+            RecordChangeFeed(id, pk, _items[key]);
 
-        try
-        {
-            var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
-            ExecutePostTriggers(requestOptions, committedDoc, "Replace");
-            var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
-            if (postTriggerJson != _items[key])
+            try
             {
-                ValidateDocumentSize(postTriggerJson);
-                _items[key] = postTriggerJson;
+                var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
+                ExecutePostTriggers(requestOptions, committedDoc, "Replace");
+                var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
+                if (postTriggerJson != _items[key])
+                {
+                    ValidateDocumentSize(postTriggerJson);
+                    _items[key] = postTriggerJson;
+                }
             }
-        }
-        catch
-        {
-            _items[key] = previousJson;
-            _etags[key] = previousEtag!;
-            _timestamps[key] = previousTimestamp;
-            throw;
-        }
+            catch
+            {
+                _items[key] = previousJson;
+                _etags[key] = previousEtag!;
+                _timestamps[key] = previousTimestamp;
+                throw;
+            }
 
-        var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
-        return Task.FromResult(CreateItemResponse(item, HttpStatusCode.OK, etag, suppressContent));
+            var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
+            return CreateItemResponse(item, HttpStatusCode.OK, etag, suppressContent);
+        }
+        finally
+        {
+            itemLock.Release();
+        }
     }
 
-    public override Task<ItemResponse<T>> DeleteItemAsync<T>(
+    public override async Task<ItemResponse<T>> DeleteItemAsync<T>(
         string id, PartitionKey partitionKey,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
@@ -861,38 +870,47 @@ public class InMemoryContainer : Container
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
 
-        if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
-        {
-            EvictIfExpired(key);
-            throw new CosmosException($"Entity with the specified id does not exist. id = {id}",
-                HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-        }
-
-        CheckIfMatch(requestOptions, key);
-
-        ExecutePreTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
-
-        var previousEtag = _etags.TryGetValue(key, out var e) ? e : null;
-        var previousTimestamp = _timestamps.TryGetValue(key, out var ts) ? ts : (DateTimeOffset?)null;
-
-        _items.TryRemove(key, out _);
-        _etags.TryRemove(key, out _);
-        _timestamps.TryRemove(key, out _);
-        RecordDeleteTombstone(id, pk, partitionKey);
-
+        var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await itemLock.WaitAsync(cancellationToken);
         try
         {
-            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
-        }
-        catch
-        {
-            _items[key] = existingJson;
-            if (previousEtag is not null) _etags[key] = previousEtag;
-            if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
-            throw;
-        }
+            if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
+            {
+                EvictIfExpired(key);
+                throw new CosmosException($"Entity with the specified id does not exist. id = {id}",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            }
 
-        return Task.FromResult(CreateItemResponse(default(T), HttpStatusCode.NoContent));
+            CheckIfMatch(requestOptions, key);
+
+            ExecutePreTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
+
+            var previousEtag = _etags.TryGetValue(key, out var e) ? e : null;
+            var previousTimestamp = _timestamps.TryGetValue(key, out var ts) ? ts : (DateTimeOffset?)null;
+
+            _items.TryRemove(key, out _);
+            _etags.TryRemove(key, out _);
+            _timestamps.TryRemove(key, out _);
+            RecordDeleteTombstone(id, pk, partitionKey);
+
+            try
+            {
+                ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
+            }
+            catch
+            {
+                _items[key] = existingJson;
+                if (previousEtag is not null) _etags[key] = previousEtag;
+                if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
+                throw;
+            }
+
+            return CreateItemResponse(default(T), HttpStatusCode.NoContent);
+        }
+        finally
+        {
+            itemLock.Release();
+        }
     }
 
     public override async Task<ItemResponse<T>> PatchItemAsync<T>(
@@ -919,7 +937,7 @@ public class InMemoryContainer : Container
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
 
-        var itemLock = _patchLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
         try
         {
@@ -1177,131 +1195,151 @@ public class InMemoryContainer : Container
             requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag));
     }
 
-    public override Task<ResponseMessage> ReplaceItemStreamAsync(
+    public override async Task<ResponseMessage> ReplaceItemStreamAsync(
         Stream streamPayload, string id, PartitionKey partitionKey,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var json = ReadStream(streamPayload);
         var sizeError = ValidateDocumentSizeStream(json);
-        if (sizeError is not null) return Task.FromResult(sizeError);
+        if (sizeError is not null) return sizeError;
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
-        if (!_items.TryGetValue(key, out var previousJson) || IsExpired(key))
-        {
-            EvictIfExpired(key);
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
-        }
-
-        if (!CheckIfMatchStream(requestOptions, key))
-        {
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
-        }
-
-        var previousEtag = _etags.GetValueOrDefault(key);
-        var previousTimestamp = _timestamps.GetValueOrDefault(key);
 
         JObject jObj;
         try { jObj = JsonParseHelpers.ParseJson(json); }
         catch (Newtonsoft.Json.JsonReaderException)
-        { return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest)); }
+        { return CreateResponseMessage(HttpStatusCode.BadRequest); }
 
         // Validate body id matches parameter id (real Cosmos returns 400 on mismatch)
         var bodyId = jObj["id"]?.ToString();
         if (bodyId is not null && bodyId != id)
         {
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
+            return CreateResponseMessage(HttpStatusCode.BadRequest);
         }
 
-        jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
-        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
-        sizeError = ValidateDocumentSizeStream(json);
-        if (sizeError is not null) return Task.FromResult(sizeError);
-
-        string etag;
-        string enrichedJson;
-        if (HasUniqueKeys)
+        var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await itemLock.WaitAsync(cancellationToken);
+        try
         {
-            lock (_uniqueKeyWriteLock)
+            if (!_items.TryGetValue(key, out var previousJson) || IsExpired(key))
+            {
+                EvictIfExpired(key);
+                return CreateResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            if (!CheckIfMatchStream(requestOptions, key))
+            {
+                return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
+            }
+
+            var previousEtag = _etags.GetValueOrDefault(key);
+            var previousTimestamp = _timestamps.GetValueOrDefault(key);
+
+            jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
+            json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+            sizeError = ValidateDocumentSizeStream(json);
+            if (sizeError is not null) return sizeError;
+
+            string etag;
+            string enrichedJson;
+            if (HasUniqueKeys)
+            {
+                lock (_uniqueKeyWriteLock)
+                {
+                    if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
+                        return CreateResponseMessage(HttpStatusCode.Conflict);
+                    etag = GenerateETag();
+                    _etags[key] = etag;
+                    _timestamps[key] = DateTimeOffset.UtcNow;
+                    enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+                    _items[key] = enrichedJson;
+                }
+            }
+            else
             {
                 if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
-                    return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+                    return CreateResponseMessage(HttpStatusCode.Conflict);
                 etag = GenerateETag();
                 _etags[key] = etag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
                 enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
                 _items[key] = enrichedJson;
             }
-        }
-        else
-        {
-            if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
-                return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
-            etag = GenerateETag();
-            _etags[key] = etag;
-            _timestamps[key] = DateTimeOffset.UtcNow;
-            enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
-            _items[key] = enrichedJson;
-        }
-        RecordChangeFeed(id, pk, enrichedJson);
+            RecordChangeFeed(id, pk, enrichedJson);
 
-        try
-        {
-            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Replace");
-        }
-        catch
-        {
-            _items[key] = previousJson;
-            if (previousEtag is not null) _etags[key] = previousEtag;
-            _timestamps[key] = previousTimestamp;
-            throw;
-        }
+            try
+            {
+                ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Replace");
+            }
+            catch
+            {
+                _items[key] = previousJson;
+                if (previousEtag is not null) _etags[key] = previousEtag;
+                _timestamps[key] = previousTimestamp;
+                throw;
+            }
 
-        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
-            requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag));
+            return CreateResponseMessage(HttpStatusCode.OK,
+                requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag);
+        }
+        finally
+        {
+            itemLock.Release();
+        }
     }
 
-    public override Task<ResponseMessage> DeleteItemStreamAsync(
+    public override async Task<ResponseMessage> DeleteItemStreamAsync(
         string id, PartitionKey partitionKey,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
-        if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
-        {
-            EvictIfExpired(key);
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
-        }
 
-        if (!CheckIfMatchStream(requestOptions, key))
-        {
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
-        }
-
-        ExecutePreTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
-
-        var previousEtag = _etags.TryGetValue(key, out var e) ? e : null;
-        var previousTimestamp = _timestamps.TryGetValue(key, out var ts) ? ts : (DateTimeOffset?)null;
-
-        _items.TryRemove(key, out _);
-        _etags.TryRemove(key, out _);
-        _timestamps.TryRemove(key, out _);
-        RecordDeleteTombstone(id, pk, partitionKey);
-
+        var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await itemLock.WaitAsync(cancellationToken);
         try
         {
-            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
-        }
-        catch
-        {
-            _items[key] = existingJson;
-            if (previousEtag is not null) _etags[key] = previousEtag;
-            if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
-            throw;
-        }
+            if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
+            {
+                EvictIfExpired(key);
+                return CreateResponseMessage(HttpStatusCode.NotFound);
+            }
 
-        return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
+            if (!CheckIfMatchStream(requestOptions, key))
+            {
+                return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
+            }
+
+            ExecutePreTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
+
+            var previousEtag = _etags.TryGetValue(key, out var e) ? e : null;
+            var previousTimestamp = _timestamps.TryGetValue(key, out var ts) ? ts : (DateTimeOffset?)null;
+
+            _items.TryRemove(key, out _);
+            _etags.TryRemove(key, out _);
+            _timestamps.TryRemove(key, out _);
+            RecordDeleteTombstone(id, pk, partitionKey);
+
+            try
+            {
+                ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
+            }
+            catch
+            {
+                _items[key] = existingJson;
+                if (previousEtag is not null) _etags[key] = previousEtag;
+                if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
+                throw;
+            }
+
+            return CreateResponseMessage(HttpStatusCode.NoContent);
+        }
+        finally
+        {
+            itemLock.Release();
+        }
     }
 
     public override async Task<ResponseMessage> PatchItemStreamAsync(
@@ -1324,7 +1362,7 @@ public class InMemoryContainer : Container
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
 
-        var itemLock = _patchLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
         try
         {
