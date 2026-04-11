@@ -13726,12 +13726,11 @@ public class QueryDeepDiveV8_TypeMismatchTests
     }
 
     [Fact]
-    public async Task TypeMismatch_Length_WithNumber_ReturnsStringLength()
+    public async Task TypeMismatch_Length_WithNumber_ReturnsUndefined()
     {
         // LENGTH(12345) — in Cosmos, LENGTH only works on strings; non-string → undefined
-        // Emulator calls ToString()?.Length which returns 5
         var results = await RunQuery<JToken>("SELECT VALUE LENGTH(12345) FROM c");
-        results.Should().ContainSingle();
+        results.Should().BeEmpty();
     }
 
     [Fact]
@@ -16180,12 +16179,9 @@ public class QueryDeepDiveV10_StringEdgeCaseTests
     public async Task Length_OnNumber_ReturnsUndefined()
     {
         await Seed();
-        // LENGTH() is for strings; passing a number → undefined
+        // LENGTH() is for strings; passing a number → undefined (omitted from VALUE results)
         var results = await RunQuery<long>("SELECT VALUE LENGTH(c.num) FROM c");
-        // Number 42 gets toString'd to "42" → length 2
-        // Actually in Cosmos DB, LENGTH(42) returns undefined, but our emulator
-        // auto-converts to string. We'll test current behaviour.
-        results.Should().ContainSingle();
+        results.Should().BeEmpty();
     }
 
     [Fact]

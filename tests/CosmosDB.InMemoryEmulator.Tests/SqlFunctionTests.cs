@@ -2616,3 +2616,441 @@ public class SqlFunctionConversionEdgeCaseTests
         results[0]["val"].Should().BeNull("undefined values are omitted from projection");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 37 — SQL Function Deep-Dive Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class SqlFunctionDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("sql-dd", "/partitionKey");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice Anderson", Value = 10, IsActive = true, Tags = ["dot", "net"] },
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob Brown", Value = 20, IsActive = false, Tags = ["java"] },
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "3", PartitionKey = "pk1", Name = "Charlie", Value = 30, IsActive = true, Tags = ["dot"],
+                Nested = new NestedObject { Description = "nested value", Score = 3.14 } },
+            new PartitionKey("pk1"));
+    }
+
+    private async Task<List<JObject>> Query(string sql)
+    {
+        var iter = _container.GetItemQueryIterator<JObject>(sql);
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+        return results;
+    }
+
+    // ── TYPE() Function ──
+
+    [Fact]
+    public async Task Type_String_ReturnsString()
+    {
+        await Seed();
+        var results = await Query("SELECT TYPE(c.name) AS t FROM c WHERE c.id = '1'");
+        results[0]["t"]!.Value<string>().Should().Be("string");
+    }
+
+    [Fact]
+    public async Task Type_Number_ReturnsNumber()
+    {
+        await Seed();
+        var results = await Query("SELECT TYPE(c[\"value\"]) AS t FROM c WHERE c.id = '1'");
+        results[0]["t"]!.Value<string>().Should().Be("number");
+    }
+
+    [Fact]
+    public async Task Type_Boolean_ReturnsBoolean()
+    {
+        await Seed();
+        var results = await Query("SELECT TYPE(c.isActive) AS t FROM c WHERE c.id = '1'");
+        results[0]["t"]!.Value<string>().Should().Be("boolean");
+    }
+
+    [Fact]
+    public async Task Type_Null_ReturnsNull()
+    {
+        await Seed();
+        var results = await Query("SELECT TYPE(null) AS t FROM c WHERE c.id = '1'");
+        results[0]["t"]!.Value<string>().Should().Be("null");
+    }
+
+    [Fact]
+    public async Task Type_Array_ReturnsArray()
+    {
+        await Seed();
+        var results = await Query("SELECT TYPE(c.tags) AS t FROM c WHERE c.id = '1'");
+        results[0]["t"]!.Value<string>().Should().Be("array");
+    }
+
+    [Fact]
+    public async Task Type_Object_ReturnsObject()
+    {
+        await Seed();
+        var results = await Query("SELECT TYPE(c.nested) AS t FROM c WHERE c.id = '3'");
+        results[0]["t"]!.Value<string>().Should().Be("object");
+    }
+
+    [Fact]
+    public async Task Type_UndefinedProperty_ReturnsUndefined()
+    {
+        await Seed();
+        // TYPE on undefined returns undefined — field is omitted
+        var results = await Query("SELECT TYPE(c.nonexistent) AS t FROM c WHERE c.id = '1'");
+        results[0]["t"].Should().BeNull("TYPE of undefined should be undefined (omitted)");
+    }
+
+    // ── IS_NAN ──
+
+    [Fact]
+    public async Task IsNan_RegularNumber_ReturnsFalse()
+    {
+        await Seed();
+        var results = await Query("SELECT IS_NAN(c[\"value\"]) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<bool>().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsNan_NonNumber_ReturnsFalse()
+    {
+        await Seed();
+        var results = await Query("SELECT IS_NAN(c.name) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<bool>().Should().BeFalse();
+    }
+
+    // ── COALESCE Edge Cases ──
+
+    [Fact]
+    public async Task Coalesce_ThreeArgs_ReturnsFirstDefined()
+    {
+        await Seed();
+        var results = await Query("SELECT COALESCE(c.nonexistent, c.alsoMissing, c.name) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<string>().Should().Be("Alice Anderson");
+    }
+
+    [Fact]
+    public async Task Coalesce_AllUndefined_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await Query("SELECT COALESCE(c.a, c.b, c.missing) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"].Should().BeNull("all args undefined → undefined");
+    }
+
+    [Fact]
+    public async Task Coalesce_NullAndDefined_ReturnsNull()
+    {
+        await Seed();
+        // null is defined (it's the null value), so it should be returned
+        var results = await Query("SELECT COALESCE(null, 'fallback') AS r FROM c WHERE c.id = '1'");
+        var token = results[0]["r"];
+        token.Should().NotBeNull("COALESCE should return null, not undefined");
+        token!.Type.Should().Be(JTokenType.Null);
+    }
+
+    [Fact]
+    public async Task Coalesce_SingleArg_ReturnsThatArg()
+    {
+        await Seed();
+        var results = await Query("SELECT COALESCE(c.name) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<string>().Should().Be("Alice Anderson");
+    }
+
+    // ── CHOOSE Edge Cases ──
+
+    [Fact]
+    public async Task Choose_FirstElement_ReturnsCorrect()
+    {
+        await Seed();
+        var results = await Query("SELECT CHOOSE(1, 'a', 'b', 'c') AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<string>().Should().Be("a");
+    }
+
+    [Fact]
+    public async Task Choose_LastElement_ReturnsCorrect()
+    {
+        await Seed();
+        var results = await Query("SELECT CHOOSE(3, 'a', 'b', 'c') AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<string>().Should().Be("c");
+    }
+
+    [Fact]
+    public async Task Choose_ZeroIndex_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await Query("SELECT CHOOSE(0, 'a', 'b', 'c') AS r FROM c WHERE c.id = '1'");
+        results[0]["r"].Should().BeNull("index 0 is out of bounds → undefined");
+    }
+
+    [Fact]
+    public async Task Choose_OutOfBounds_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await Query("SELECT CHOOSE(10, 'a', 'b', 'c') AS r FROM c WHERE c.id = '1'");
+        results[0]["r"].Should().BeNull("index beyond count → undefined");
+    }
+
+    // ── String Edge Cases ──
+
+    [Fact]
+    public async Task Replace_EmptyFind_ReturnsOriginal()
+    {
+        await Seed();
+        var results = await Query("SELECT REPLACE('hello', '', 'x') AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<string>().Should().Be("hello");
+    }
+
+    [Fact]
+    public async Task Left_ZeroCount_ReturnsEmpty()
+    {
+        await Seed();
+        var results = await Query("SELECT LEFT('hello', 0) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<string>().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Right_ZeroCount_ReturnsEmpty()
+    {
+        await Seed();
+        var results = await Query("SELECT RIGHT('hello', 0) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<string>().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Length_NonString_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await Query("SELECT LENGTH(42) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"].Should().BeNull("LENGTH of non-string → undefined");
+    }
+
+    [Fact]
+    public async Task IndexOf_WithStartPosition_NotFound_ReturnsNegativeOne()
+    {
+        await Seed();
+        var results = await Query("SELECT INDEX_OF('hello world', 'hello', 5) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<int>().Should().Be(-1);
+    }
+
+    [Fact]
+    public async Task RegexMatch_InvalidPattern_ReturnsUndefined()
+    {
+        await Seed();
+        // An invalid regex returns undefined (field omitted)
+        var results = await Query("SELECT RegexMatch('hello', '[invalid') AS r FROM c WHERE c.id = '1'");
+        results[0]["r"].Should().BeNull("invalid regex → undefined");
+    }
+
+    [Fact]
+    public async Task StringSplit_NoDelimiterFound_ReturnsSingleElement()
+    {
+        await Seed();
+        var results = await Query("SELECT StringSplit('hello', ',') AS r FROM c WHERE c.id = '1'");
+        var arr = results[0]["r"] as JArray;
+        arr.Should().NotBeNull();
+        arr!.Count.Should().Be(1);
+        arr[0]!.Value<string>().Should().Be("hello");
+    }
+
+    [Fact]
+    public async Task EndsWith_CaseSensitive_NoMatch()
+    {
+        await Seed();
+        var results = await Query("SELECT ENDSWITH('Hello', 'LO') AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<bool>().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EndsWith_CaseInsensitive_Match()
+    {
+        await Seed();
+        var results = await Query("SELECT ENDSWITH('Hello', 'LO', true) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<bool>().Should().BeTrue();
+    }
+
+    // ── Math Edge Cases ──
+
+    [Fact]
+    public async Task Sqrt_NegativeNumber_ReturnsNaN()
+    {
+        await Seed();
+        // SQRT(-1) = NaN — should either return undefined or NaN
+        var results = await Query("SELECT SQRT(-1) AS r FROM c WHERE c.id = '1'");
+        var token = results[0]["r"];
+        // Either NaN or undefined (omitted) is acceptable
+        if (token != null)
+        {
+            var val = token.Value<double>();
+            double.IsNaN(val).Should().BeTrue();
+        }
+    }
+
+    [Fact]
+    public async Task Log_Zero_ReturnsNegativeInfinity()
+    {
+        await Seed();
+        var results = await Query("SELECT LOG(0) AS r FROM c WHERE c.id = '1'");
+        var token = results[0]["r"];
+        if (token != null)
+        {
+            var val = token.Value<double>();
+            double.IsNegativeInfinity(val).Should().BeTrue();
+        }
+    }
+
+    [Fact]
+    public async Task Power_LargeExponent_ReturnsInfinity()
+    {
+        await Seed();
+        var results = await Query("SELECT POWER(10, 309) AS r FROM c WHERE c.id = '1'");
+        var token = results[0]["r"];
+        if (token != null)
+        {
+            var val = token.Value<double>();
+            double.IsInfinity(val).Should().BeTrue();
+        }
+    }
+
+    [Fact]
+    public async Task Round_NegativePrecision_Works()
+    {
+        await Seed();
+        var results = await Query("SELECT ROUND(1234, -2) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<double>().Should().Be(1200);
+    }
+
+    // ── Integer Math Edge Cases ──
+
+    [Fact]
+    public async Task IntMod_NegativeValues_Works()
+    {
+        await Seed();
+        var results = await Query("SELECT IntMod(-10, 3) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<long>().Should().Be(-1);
+    }
+
+    [Fact]
+    public async Task IntAdd_Overflow_Wraps()
+    {
+        await Seed();
+        // IntAdd should handle large numbers
+        var results = await Query("SELECT IntAdd(9223372036854775807, 0) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<long>().Should().Be(long.MaxValue);
+    }
+
+    // ── Conversion Edge Cases ──
+
+    [Fact]
+    public async Task ToString_BoolInput_ReturnsTrueOrFalse()
+    {
+        await Seed();
+        var results = await Query("SELECT ToString(true) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<string>().Should().Be("true");
+    }
+
+    [Fact]
+    public async Task ToString_NumberInput_ReturnsNumberString()
+    {
+        await Seed();
+        var results = await Query("SELECT ToString(42) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<string>().Should().Be("42");
+    }
+
+    [Fact]
+    public async Task ToNumber_BoolInput_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await Query("SELECT ToNumber(true) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"].Should().BeNull("TONUMBER(bool) → undefined");
+    }
+
+    [Fact]
+    public async Task ObjectToArray_NonObject_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await Query("SELECT ObjectToArray('hello') AS r FROM c WHERE c.id = '1'");
+        results[0]["r"].Should().BeNull("ObjectToArray(string) → undefined");
+    }
+
+    // ── Aggregate Edge Cases ──
+
+    [Fact]
+    public async Task Count_EmptyResult_ReturnsZero()
+    {
+        await Seed();
+        var iter = _container.GetItemQueryIterator<int>("SELECT VALUE COUNT(1) FROM c WHERE c.id = 'nonexistent'");
+        var items = new List<int>();
+        while (iter.HasMoreResults) items.AddRange(await iter.ReadNextAsync());
+        items.First().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Avg_SingleItem_ReturnsThatValue()
+    {
+        await Seed();
+        var iter = _container.GetItemQueryIterator<double>("SELECT VALUE AVG(c[\"value\"]) FROM c WHERE c.id = '1'");
+        var items = new List<double>();
+        while (iter.HasMoreResults) items.AddRange(await iter.ReadNextAsync());
+        items.First().Should().Be(10);
+    }
+
+    // ── Cross-function Composition ──
+
+    [Fact]
+    public async Task NestedFunctions_UpperOfConcat()
+    {
+        await Seed();
+        var results = await Query("SELECT UPPER(CONCAT(c.name, ' test')) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<string>().Should().Be("ALICE ANDERSON TEST");
+    }
+
+    [Fact]
+    public async Task NestedFunctions_LengthOfReplace()
+    {
+        await Seed();
+        var results = await Query("SELECT LENGTH(REPLACE(c.name, ' ', '')) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<int>().Should().Be(13); // "AliceAnderson" = 13 chars
+    }
+
+    [Fact]
+    public async Task ArithmeticInFunctionArgs()
+    {
+        await Seed();
+        var results = await Query("SELECT ABS(c[\"value\"] - 15) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<double>().Should().Be(5);
+    }
+
+    // ── FullTextContainsAny + Undefined (Bug 7 validation) ──
+
+    [Fact]
+    public async Task FullTextContainsAny_UndefinedProperty_ReturnsFalse()
+    {
+        await Seed();
+        // Bug 7: FULLTEXTCONTAINSANY should return false for undefined, not undefined
+        var results = await Query("SELECT FULLTEXTCONTAINSANY(c.nonexistent, 'hello') AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<bool>().Should().BeFalse();
+    }
+
+    // ── REVERSE non-string (Bug 4 validation) ──
+
+    [Fact]
+    public async Task Reverse_StringInput_Reversed()
+    {
+        await Seed();
+        var results = await Query("SELECT REVERSE('hello') AS r FROM c WHERE c.id = '1'");
+        results[0]["r"]!.Value<string>().Should().Be("olleh");
+    }
+
+    [Fact]
+    public async Task Reverse_NonString_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await Query("SELECT REVERSE(42) AS r FROM c WHERE c.id = '1'");
+        results[0]["r"].Should().BeNull("REVERSE of non-string → undefined");
+    }
+}

@@ -5937,7 +5937,7 @@ public class InMemoryContainer : Container
             if (!name.StartsWith("IS_") && name is not "COALESCE" and not "IIF"
                 and not "ARRAY_CONTAINS" and not "ARRAY_CONTAINS_ANY" and not "ARRAY_CONTAINS_ALL"
                 and not "DOCUMENTID" and not "VECTORDISTANCE"
-                and not "FULLTEXTSCORE" and not "FULLTEXTCONTAINS" and not "FULLTEXTCONTAINSALL"
+                and not "FULLTEXTSCORE" and not "FULLTEXTCONTAINS" and not "FULLTEXTCONTAINSALL" and not "FULLTEXTCONTAINSANY"
                 and not "INDEX_OF" and not "TYPE")
             {
                 return UndefinedValue.Instance;
@@ -6114,14 +6114,15 @@ public class InMemoryContainer : Container
                 {
                     if (args.Length == 0) return null;
                     if (args[0] is null or UndefinedValue) return UndefinedValue.Instance;
-                    return (object)(long)(args[0].ToString()!.Length);
+                    if (args[0] is not string s) return UndefinedValue.Instance;
+                    return (object)(long)s.Length;
                 }
             case "LOWER": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.ToLowerInvariant()) : null;
             case "UPPER": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.ToUpperInvariant()) : null;
             case "TRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.Trim()) : null;
             case "LTRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.TrimStart()) : null;
             case "RTRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.TrimEnd()) : null;
-            case "REVERSE": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string rs ? (object)new string(rs.Reverse().ToArray()) : null) : null;
+            case "REVERSE": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string rs ? (object)new string(rs.Reverse().ToArray()) : UndefinedValue.Instance) : null;
             case "LEFT":
                 {
                     if (args.Length < 2)
@@ -6883,7 +6884,7 @@ public class InMemoryContainer : Container
                     if (args.Length < 1) return null;
                     JObject obj;
                     if (args[0] is JObject jo) obj = jo;
-                    else if (args[0] is string s) { try { obj = JObject.Parse(s); } catch { return null; } }
+                    else if (args[0] is string s) { try { obj = JObject.Parse(s); } catch { return UndefinedValue.Instance; } }
                     else return UndefinedValue.Instance;
                     var result = new JArray();
                     foreach (var prop in obj.Properties())
