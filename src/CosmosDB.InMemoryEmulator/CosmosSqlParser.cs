@@ -881,7 +881,7 @@ public static class CosmosSqlParser
     //  Public API
     // ──────────────────────────────────────────────
 
-    private const int ParseCacheMaxSize = 256;
+    private const int ParseCacheMaxSize = 5000;
     private static readonly ConcurrentDictionary<string, CosmosSqlQuery> ParseCache = new();
 
     public static CosmosSqlQuery Parse(string sql)
