@@ -67,7 +67,7 @@ public class InMemoryContainer : Container
     private const int RegexCacheMaxSize = 256;
     private static readonly ConcurrentDictionary<(string Pattern, RegexOptions Options), Regex> RegexCache = new();
 
-    private const int SqlParseCacheMaxSize = 256;
+    private const int SqlParseCacheMaxSize = 5000;
     private static readonly ConcurrentDictionary<string, CosmosSqlQuery> SqlParseCache = new();
 
     private const int MaxDocumentSizeBytes = 2 * 1024 * 1024;
