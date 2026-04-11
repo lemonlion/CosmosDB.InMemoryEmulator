@@ -1550,17 +1550,26 @@ public class InMemoryContainer : Container
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(items);
         var results = new JArray();
+        var etagParts = new List<string>();
         foreach (var (itemId, pk) in items)
         {
             var pkStr = PartitionKeyToString(pk);
             var key = ItemKey(itemId, pkStr);
             if (_items.TryGetValue(key, out var json) && !IsExpired(key))
             {
-                results.Add(JsonParseHelpers.ParseJson(json));
+                var jObj = JsonParseHelpers.ParseJson(json);
+                var itemEtag = jObj["_etag"]?.ToString();
+                if (itemEtag != null) etagParts.Add(itemEtag);
+                results.Add(jObj);
             }
         }
+        var compositeEtag = etagParts.Count > 0 ? $"\"{string.Join(",", etagParts)}\"" : null;
+        if (readManyRequestOptions?.IfNoneMatchEtag != null && compositeEtag == readManyRequestOptions.IfNoneMatchEtag)
+        {
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotModified, etag: compositeEtag));
+        }
         var envelope = new JObject { ["_rid"] = "", ["Documents"] = results, ["_count"] = results.Count };
-        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, envelope.ToString(Formatting.None)));
+        return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, envelope.ToString(Formatting.None), etag: compositeEtag));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
