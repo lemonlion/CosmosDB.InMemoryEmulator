@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Azure.Cosmos.Scripts;
 using Newtonsoft.Json.Linq;
 using Xunit;
 
@@ -1558,5 +1559,427 @@ public class StreamErrorMessageDivergentTests
         var container = new InMemoryContainer("errmsg-test", "/pk");
         using var response = await container.ReadItemStreamAsync("missing", new PartitionKey("a"));
         response.ErrorMessage.Should().NotBeNullOrEmpty();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Plan 40: Stream CRUD Deep Dive Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Bug Verification ──
+public class StreamBugVerificationTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task ReadManyStreamAsync_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = async () => await container.ReadManyItemsStreamAsync(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) },
+            cancellationToken: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task ReadManyStreamAsync_ReturnsETagHeader()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var response = await container.ReadManyItemsStreamAsync(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+
+        response.Headers["etag"].Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task ReadManyStreamAsync_WithIfNoneMatch_MatchingETag_Returns304()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var first = await container.ReadManyItemsStreamAsync(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        var etag = first.Headers["etag"];
+
+        var second = await container.ReadManyItemsStreamAsync(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) },
+            new ReadManyRequestOptions { IfNoneMatchEtag = etag });
+
+        second.StatusCode.Should().Be(HttpStatusCode.NotModified);
+    }
+
+    [Fact]
+    public async Task ReadManyStreamAsync_WithIfNoneMatch_StaleETag_Returns200()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var first = await container.ReadManyItemsStreamAsync(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+        var etag = first.Headers["etag"];
+
+        // Modify item to change ETag
+        await container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "changed" }), new PartitionKey("a"));
+
+        var second = await container.ReadManyItemsStreamAsync(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) },
+            new ReadManyRequestOptions { IfNoneMatchEtag = etag });
+
+        second.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task CreateItemStream_WithCancelledToken_ThrowsOperationCancelled()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = async () => await container.CreateItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"pk\":\"a\"}"), new PartitionKey("a"),
+            cancellationToken: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+}
+
+// ── ReadMany Coverage ──
+public class StreamReadManyCoverageTests
+{
+    [Fact]
+    public async Task ReadManyStreamAsync_EmptyList_Returns200WithEmptyDocuments()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        var response = await container.ReadManyItemsStreamAsync(
+            new List<(string, PartitionKey)>());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var reader = new StreamReader(response.Content);
+        var body = JObject.Parse(reader.ReadToEnd());
+        ((JArray)body["Documents"]!).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ReadManyStreamAsync_MixedFoundAndNotFound_ReturnsOnlyFound()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var response = await container.ReadManyItemsStreamAsync(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")), ("missing", new PartitionKey("a")) });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var reader = new StreamReader(response.Content);
+        var body = JObject.Parse(reader.ReadToEnd());
+        var docs = (JArray)body["Documents"]!;
+        docs.Should().HaveCount(1);
+        docs[0]!["id"]!.Value<string>().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task ReadManyStreamAsync_ResponseContainsEnvelopeFormat()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var response = await container.ReadManyItemsStreamAsync(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+
+        using var reader = new StreamReader(response.Content);
+        var body = JObject.Parse(reader.ReadToEnd());
+        body["_rid"].Should().NotBeNull();
+        body["Documents"].Should().NotBeNull();
+        body["_count"]!.Value<int>().Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReadManyStreamAsync_TtlExpiredItems_ExcludedFromResults()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.DefaultTimeToLive = 1;
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        await Task.Delay(1500);
+
+        var response = await container.ReadManyItemsStreamAsync(
+            new List<(string, PartitionKey)> { ("1", new PartitionKey("a")) });
+
+        using var reader = new StreamReader(response.Content);
+        var body = JObject.Parse(reader.ReadToEnd());
+        ((JArray)body["Documents"]!).Should().BeEmpty();
+    }
+}
+
+// ── Unique Key Violations ──
+public class StreamUniqueKeyViolationTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task CreateStream_UniqueKeyViolation_Returns409Conflict()
+    {
+        var props = new ContainerProperties("test", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy { UniqueKeys = { new UniqueKey { Paths = { "/name" } } } }
+        };
+        var container = new InMemoryContainer(props);
+        await container.CreateItemStreamAsync(ToStream("{\"id\":\"1\",\"pk\":\"a\",\"name\":\"unique\"}"), new PartitionKey("a"));
+
+        var response = await container.CreateItemStreamAsync(ToStream("{\"id\":\"2\",\"pk\":\"a\",\"name\":\"unique\"}"), new PartitionKey("a"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task ReplaceStream_UniqueKeyViolation_Returns409Conflict()
+    {
+        var props = new ContainerProperties("test", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy { UniqueKeys = { new UniqueKey { Paths = { "/name" } } } }
+        };
+        var container = new InMemoryContainer(props);
+        await container.CreateItemStreamAsync(ToStream("{\"id\":\"1\",\"pk\":\"a\",\"name\":\"alice\"}"), new PartitionKey("a"));
+        await container.CreateItemStreamAsync(ToStream("{\"id\":\"2\",\"pk\":\"a\",\"name\":\"bob\"}"), new PartitionKey("a"));
+
+        var response = await container.ReplaceItemStreamAsync(
+            ToStream("{\"id\":\"2\",\"pk\":\"a\",\"name\":\"alice\"}"), "2", new PartitionKey("a"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+}
+
+// ── TTL in Stream Reads ──
+public class StreamTtlTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task ReadStream_TtlExpiredItem_Returns404()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.DefaultTimeToLive = 1;
+        await container.CreateItemStreamAsync(ToStream("{\"id\":\"1\",\"pk\":\"a\"}"), new PartitionKey("a"));
+        await Task.Delay(1500);
+
+        var response = await container.ReadItemStreamAsync("1", new PartitionKey("a"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task UpsertStream_TtlExpiredItem_Returns201Created()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.DefaultTimeToLive = 1;
+        await container.CreateItemStreamAsync(ToStream("{\"id\":\"1\",\"pk\":\"a\"}"), new PartitionKey("a"));
+        await Task.Delay(1500);
+
+        var response = await container.UpsertItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"pk\":\"a\",\"name\":\"renewed\"}"), new PartitionKey("a"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+}
+
+// ── C# Triggers on Stream API ──
+public class StreamCSharpTriggerTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task CreateStream_PreTriggerCSharp_ModifiesDocument()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.RegisterTrigger("addField", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => { doc["injected"] = "yes"; return doc; }));
+
+        var response = await container.CreateItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"pk\":\"a\"}"), new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "addField" } });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var readResp = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        readResp.Resource["injected"]!.Value<string>().Should().Be("yes");
+    }
+
+    [Fact]
+    public async Task CreateStream_PostTriggerCSharp_Fires()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        var triggered = false;
+        container.RegisterTrigger("postAudit", TriggerType.Post, TriggerOperation.Create,
+            (Action<JObject>)(_ => triggered = true));
+
+        var response = await container.CreateItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"pk\":\"a\"}"), new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "postAudit" } });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        triggered.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DeleteStream_PostTriggerCSharp_Fires()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemStreamAsync(ToStream("{\"id\":\"1\",\"pk\":\"a\"}"), new PartitionKey("a"));
+
+        var triggered = false;
+        container.RegisterTrigger("postDel", TriggerType.Post, TriggerOperation.Delete,
+            (Action<JObject>)(_ => triggered = true));
+
+        var response = await container.DeleteItemStreamAsync("1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "postDel" } });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        triggered.Should().BeTrue();
+    }
+}
+
+// ── ETag Header Lifecycle ──
+public class StreamETagHeaderLifecycleTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task PatchStream_ResponseContainsETagHeader()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemStreamAsync(ToStream("{\"id\":\"1\",\"pk\":\"a\",\"name\":\"old\"}"), new PartitionKey("a"));
+
+        var patchBody = new { operations = new[] { new { op = "replace", path = "/name", value = "new" } } };
+        var response = await container.PatchItemStreamAsync(
+            "1", new PartitionKey("a"),
+            new[] { PatchOperation.Replace("/name", "new") });
+
+        response.Headers["etag"].Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task ReadStream_ETagHeader_MatchesBodyEtag()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemStreamAsync(ToStream("{\"id\":\"1\",\"pk\":\"a\"}"), new PartitionKey("a"));
+
+        var response = await container.ReadItemStreamAsync("1", new PartitionKey("a"));
+        var headerEtag = response.Headers["etag"];
+        using var reader = new StreamReader(response.Content);
+        var body = JObject.Parse(reader.ReadToEnd());
+        var bodyEtag = body["_etag"]!.Value<string>();
+
+        headerEtag.Should().Be(bodyEtag);
+    }
+}
+
+// ── Replace Body Validation ──
+public class StreamReplaceValidationTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task ReplaceStream_BodyIdMatchesParameterId_Succeeds()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemStreamAsync(ToStream("{\"id\":\"1\",\"pk\":\"a\"}"), new PartitionKey("a"));
+
+        var response = await container.ReplaceItemStreamAsync(
+            ToStream("{\"id\":\"1\",\"pk\":\"a\",\"name\":\"updated\"}"), "1", new PartitionKey("a"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ReplaceStream_EmptyBody_Returns400BadRequest()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemStreamAsync(ToStream("{\"id\":\"1\",\"pk\":\"a\"}"), new PartitionKey("a"));
+
+        var response = await container.ReplaceItemStreamAsync(
+            ToStream(""), "1", new PartitionKey("a"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+}
+
+// ── Session Token Header ──
+public class StreamSessionTokenTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task Stream_CrudResponses_ContainSessionTokenHeader()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+
+        var create = await container.CreateItemStreamAsync(ToStream("{\"id\":\"1\",\"pk\":\"a\"}"), new PartitionKey("a"));
+        create.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty();
+
+        var read = await container.ReadItemStreamAsync("1", new PartitionKey("a"));
+        read.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty();
+
+        var upsert = await container.UpsertItemStreamAsync(ToStream("{\"id\":\"1\",\"pk\":\"a\",\"name\":\"u\"}"), new PartitionKey("a"));
+        upsert.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty();
+    }
+}
+
+// ── Post-Trigger Rollback + Change Feed (divergent behavior) ──
+public class StreamPostTriggerChangeFeedTests
+{
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact(Skip = "DIVERGENT: Post-trigger exception doesn't clean change feed entry due to append-only design")]
+    public async Task CreateStream_PostTriggerException_DoesNotAppearInChangeFeed()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.RegisterTrigger("failPost", TriggerType.Post, TriggerOperation.Create,
+            (Action<JObject>)(_ => throw new Exception("trigger failure")));
+
+        try
+        {
+            await container.CreateItemStreamAsync(
+                ToStream("{\"id\":\"1\",\"pk\":\"a\"}"), new PartitionKey("a"),
+                new ItemRequestOptions { PostTriggers = new List<string> { "failPost" } });
+        }
+        catch { /* expected */ }
+
+        var iter = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+        iter.HasMoreResults.Should().BeFalse("failed write should not appear in change feed");
+    }
+
+    [Fact]
+    public async Task CreateStream_PostTriggerException_RollsBackItem_ActualBehavior()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        container.RegisterTrigger("failPost", TriggerType.Post, TriggerOperation.Create,
+            (Action<JObject>)(_ => throw new Exception("trigger failure")));
+
+        try
+        {
+            await container.CreateItemStreamAsync(
+                ToStream("{\"id\":\"1\",\"pk\":\"a\"}"), new PartitionKey("a"),
+                new ItemRequestOptions { PostTriggers = new List<string> { "failPost" } });
+        }
+        catch (CosmosException)
+        {
+            // Post-trigger failure throws CosmosException in stream API
+        }
+
+        // Item should be rolled back
+        var readResp = await container.ReadItemStreamAsync("1", new PartitionKey("a"));
+        readResp.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 }
