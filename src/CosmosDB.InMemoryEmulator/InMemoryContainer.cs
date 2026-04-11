@@ -6187,7 +6187,7 @@ public class InMemoryContainer : Container
                 {
                     if (args.Length < 2)
                     {
-                        return null;
+                        return UndefinedValue.Instance;
                     }
 
                     var s = args[0]?.ToString(); var sub = args[1]?.ToString();
@@ -6195,11 +6195,13 @@ public class InMemoryContainer : Container
                     {
                         if (args.Length >= 3 && double.TryParse(args[2]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var startPos))
                         {
-                            return (object)(long)s.IndexOf(sub, (int)startPos, StringComparison.Ordinal);
+                            var sp = (int)startPos;
+                            if (sp < 0 || sp > s.Length) return UndefinedValue.Instance;
+                            return (object)(long)s.IndexOf(sub, sp, StringComparison.Ordinal);
                         }
                         return (object)(long)s.IndexOf(sub, StringComparison.Ordinal);
                     }
-                    return null;
+                    return UndefinedValue.Instance;
                 }
             case "REGEXMATCH":
                 {
@@ -6211,7 +6213,7 @@ public class InMemoryContainer : Container
                     var input = args[0]?.ToString(); var pattern = args[1]?.ToString();
                     if (input is null || pattern is null)
                     {
-                        return false;
+                        return UndefinedValue.Instance;
                     }
 
                     var options = RegexOptions.None;

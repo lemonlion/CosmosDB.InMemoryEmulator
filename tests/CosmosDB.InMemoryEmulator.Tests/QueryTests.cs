@@ -13490,11 +13490,10 @@ public class QueryDeepDiveV8_NullInputTests
     }
 
     [Fact]
-    public async Task Null_IndexOf_FirstArg_ReturnsNull()
+    public async Task Null_IndexOf_FirstArg_ReturnsUndefined()
     {
         var results = await RunQuery<JToken>("SELECT VALUE INDEX_OF(null, 'x') FROM c");
-        results.Should().ContainSingle();
-        results[0].Type.Should().Be(JTokenType.Null);
+        results.Should().BeEmpty("INDEX_OF with null returns undefined, which is omitted from SELECT VALUE");
     }
 }
 

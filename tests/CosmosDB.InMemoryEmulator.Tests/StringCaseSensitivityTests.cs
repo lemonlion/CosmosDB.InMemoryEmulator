@@ -1223,7 +1223,7 @@ public class StringComposedOperationTests
 public class StringIndexOfEdgeCaseTests
 {
     [Fact]
-    public async Task Query_IndexOf_NullInput_ReturnsNull()
+    public async Task Query_IndexOf_NullInput_ReturnsUndefined()
     {
         var c = new InMemoryContainer("indexof-null", "/pk");
         await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
@@ -1231,7 +1231,7 @@ public class StringIndexOfEdgeCaseTests
         var iter = c.GetItemQueryIterator<JObject>(
             "SELECT INDEX_OF(c.name, 'a') AS idx FROM c");
         var page = await iter.ReadNextAsync();
-        page.First()["idx"]!.Type.Should().Be(JTokenType.Null);
+        page.First()["idx"].Should().BeNull("undefined field property is absent from JSON");
     }
 
     [Fact]
@@ -1246,5 +1246,650 @@ public class StringIndexOfEdgeCaseTests
             "SELECT INDEX_OF(c.name, 'hello', 1) AS idx FROM c");
         var page = await iter.ReadNextAsync();
         page.First()["idx"]!.Value<int>().Should().Be(6);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Plan 41: String Case Sensitivity Deep Dive Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── A1: REGEX_MATCH null → undefined ──
+public class RegexMatchNullUndefinedTests
+{
+    private readonly InMemoryContainer _container = new("regexnull", "/pk");
+
+    private async Task<List<T>> Query<T>(string sql)
+    {
+        await EnsureSeeded();
+        var iter = _container.GetItemQueryIterator<T>(sql);
+        var page = await iter.ReadNextAsync();
+        return page.ToList();
+    }
+
+    private bool _seeded;
+    private async Task EnsureSeeded()
+    {
+        if (_seeded) return;
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "hello" }), new PartitionKey("a"));
+        _seeded = true;
+    }
+
+    [Fact]
+    public async Task RegexMatch_NullFirstArg_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE RegexMatch(null, 'abc') FROM c");
+        results.Should().BeEmpty("null input returns undefined, omitted from SELECT VALUE");
+    }
+
+    [Fact]
+    public async Task RegexMatch_NullSecondArg_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE RegexMatch('abc', null) FROM c");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RegexMatch_UndefinedField_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE RegexMatch(c.missing, 'abc') FROM c");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RegexMatch_NullInput_NotInWhere()
+    {
+        var results = await Query<JObject>("SELECT * FROM c WHERE RegexMatch(null, 'x')");
+        results.Should().BeEmpty("undefined is falsy in WHERE");
+    }
+}
+
+// ── A2: INDEX_OF null → undefined ──
+public class IndexOfNullUndefinedTests
+{
+    private readonly InMemoryContainer _container = new("idxnull", "/pk");
+
+    private async Task<List<T>> Query<T>(string sql)
+    {
+        await EnsureSeeded();
+        var iter = _container.GetItemQueryIterator<T>(sql);
+        var page = await iter.ReadNextAsync();
+        return page.ToList();
+    }
+
+    private bool _seeded;
+    private async Task EnsureSeeded()
+    {
+        if (_seeded) return;
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "hello" }), new PartitionKey("a"));
+        _seeded = true;
+    }
+
+    [Fact]
+    public async Task IndexOf_NullFirstArg_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE INDEX_OF(null, 'a') FROM c");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task IndexOf_NullSecondArg_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE INDEX_OF('abc', null) FROM c");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task IndexOf_UndefinedField_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE INDEX_OF(c.missing, 'a') FROM c");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task IndexOf_NullInSelect_ShowsAsNoProperty()
+    {
+        var results = await Query<JObject>("SELECT INDEX_OF(null, 'a') AS idx FROM c");
+        results.Should().ContainSingle();
+        results[0]["idx"].Should().BeNull("undefined property is absent from JSON");
+    }
+}
+
+// ── A3: INDEX_OF bounds checking ──
+public class IndexOfBoundsTests
+{
+    private readonly InMemoryContainer _container = new("idxbounds", "/pk");
+
+    private async Task<List<T>> Query<T>(string sql)
+    {
+        await EnsureSeeded();
+        var iter = _container.GetItemQueryIterator<T>(sql);
+        var page = await iter.ReadNextAsync();
+        return page.ToList();
+    }
+
+    private bool _seeded;
+    private async Task EnsureSeeded()
+    {
+        if (_seeded) return;
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        _seeded = true;
+    }
+
+    [Fact]
+    public async Task IndexOf_NegativeStartPos_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE INDEX_OF('hello', 'e', -1) FROM c");
+        results.Should().BeEmpty("negative start position returns undefined");
+    }
+
+    [Fact]
+    public async Task IndexOf_StartPosBeyondLength_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE INDEX_OF('hello', 'e', 100) FROM c");
+        results.Should().BeEmpty("start position beyond string length returns undefined");
+    }
+}
+
+// ── A4: LIKE on non-string types (divergent — skip + sister) ──
+public class LikeNonStringTypeTests
+{
+    private readonly InMemoryContainer _container = new("likenonstr", "/pk");
+
+    private async Task<List<T>> Query<T>(string sql)
+    {
+        await EnsureSeeded();
+        var iter = _container.GetItemQueryIterator<T>(sql);
+        var page = await iter.ReadNextAsync();
+        return page.ToList();
+    }
+
+    private bool _seeded;
+    private async Task EnsureSeeded()
+    {
+        if (_seeded) return;
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", age = 42 }), new PartitionKey("a"));
+        _seeded = true;
+    }
+
+    [Fact(Skip = "DIVERGENT: Real Cosmos returns undefined for LIKE on numbers; emulator calls ToString()")]
+    public async Task Like_NumberLeftOperand_ReturnsUndefined()
+    {
+        var results = await Query<JObject>("SELECT * FROM c WHERE c.age LIKE '42'");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Like_NumberLeftOperand_EmulatorConvertsToString()
+    {
+        var results = await Query<JObject>("SELECT * FROM c WHERE c.age LIKE '42'");
+        results.Should().ContainSingle("emulator converts number to string via ToString()");
+    }
+
+    [Fact(Skip = "DIVERGENT: Real Cosmos returns undefined for LIKE on booleans; emulator calls ToString()")]
+    public async Task Like_BooleanLeftOperand_ReturnsUndefined()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", flag = true }), new PartitionKey("a"));
+        var results = await Query<JObject>("SELECT * FROM c WHERE c.flag LIKE 'True'");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Like_BooleanLeftOperand_EmulatorConvertsToString()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "2b", pk = "a", flag = true }), new PartitionKey("a"));
+        var results = await Query<JObject>("SELECT * FROM c WHERE c.flag LIKE 'True'");
+        results.Should().ContainSingle();
+    }
+}
+
+// ── B1: LIKE with pipe character ──
+public class LikePipeCharTests
+{
+    [Fact]
+    public async Task Like_WithPipeChar_TreatedAsLiteral()
+    {
+        var c = new InMemoryContainer("likepipe", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "a|b" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "a" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", name = "b" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name LIKE 'a|b'");
+        var page = await iter.ReadNextAsync();
+        page.Should().ContainSingle().Which["id"]!.Value<string>().Should().Be("1");
+    }
+}
+
+// ── B2: LIKE consecutive wildcards ──
+public class LikeConsecutiveWildcardTests
+{
+    [Fact]
+    public async Task Like_ConsecutivePercents_SameAsOnePercent()
+    {
+        var c = new InMemoryContainer("likecwild", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "anything" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name LIKE '%%'");
+        var page = await iter.ReadNextAsync();
+        page.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Like_ConsecutiveUnderscores_MatchesExactLength()
+    {
+        var c = new InMemoryContainer("likeunder", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "ab" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "abc" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name LIKE '__'");
+        var page = await iter.ReadNextAsync();
+        page.Should().ContainSingle().Which["id"]!.Value<string>().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task Like_MixedWildcards_PercentThenUnderscore()
+    {
+        var c = new InMemoryContainer("likemixed", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "x" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", name = "ab" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name LIKE '%_'");
+        var page = await iter.ReadNextAsync();
+        page.Count().Should().Be(2, "matches strings of length >= 1");
+    }
+}
+
+// ── B3: LIKE ESCAPE case sensitivity ──
+public class LikeEscapeCaseSensitivityTests
+{
+    [Fact]
+    public async Task Like_EscapedPercent_CaseSensitive()
+    {
+        var c = new InMemoryContainer("likeesc", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "A%b" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "a%b" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name LIKE 'A!%b' ESCAPE '!'");
+        var page = await iter.ReadNextAsync();
+        page.Should().ContainSingle().Which["id"]!.Value<string>().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task Like_EscapedUnderscore_CaseSensitive()
+    {
+        var c = new InMemoryContainer("likeescus", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "A_b" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "a_b" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name LIKE 'A!_b' ESCAPE '!'");
+        var page = await iter.ReadNextAsync();
+        page.Should().ContainSingle().Which["id"]!.Value<string>().Should().Be("1");
+    }
+}
+
+// ── B4: LIKE with Unicode ──
+public class LikeUnicodeTests
+{
+    [Fact]
+    public async Task Like_UnicodeInPattern_CaseSensitive()
+    {
+        var c = new InMemoryContainer("likeuni", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Über" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "über" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name LIKE 'Über%'");
+        var page = await iter.ReadNextAsync();
+        page.Should().ContainSingle().Which["id"]!.Value<string>().Should().Be("1");
+    }
+
+    [Fact]
+    public async Task Like_UnicodeWildcard_MatchesUnicode()
+    {
+        var c = new InMemoryContainer("likeuniwild", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Über" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name LIKE '_ber'");
+        var page = await iter.ReadNextAsync();
+        page.Should().ContainSingle();
+    }
+}
+
+// ── B5: CONTAINS/STARTSWITH/ENDSWITH third arg ──
+public class StringFunctionThirdArgTests
+{
+    private readonly InMemoryContainer _container = new("thirdarg", "/pk");
+
+    private async Task<List<JObject>> Query(string sql)
+    {
+        await EnsureSeeded();
+        var iter = _container.GetItemQueryIterator<JObject>(sql);
+        var page = await iter.ReadNextAsync();
+        return page.ToList();
+    }
+
+    private bool _seeded;
+    private async Task EnsureSeeded()
+    {
+        if (_seeded) return;
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        _seeded = true;
+    }
+
+    [Fact]
+    public async Task Contains_ThirdArgFalse_Boolean_StaysCaseSensitive()
+    {
+        var results = await Query("SELECT * FROM c WHERE CONTAINS(c.name, 'ALI', false)");
+        results.Should().BeEmpty("false means case-sensitive, no match");
+    }
+
+    [Fact]
+    public async Task Contains_ThirdArgNonBooleanString_StaysCaseSensitive()
+    {
+        var results = await Query("SELECT * FROM c WHERE CONTAINS(c.name, 'ALI', 'yes')");
+        results.Should().BeEmpty("only 'true' activates case-insensitive");
+    }
+}
+
+// ── B6: STRING_EQUALS with undefined/null ──
+public class StringEqualsEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("streq", "/pk");
+
+    private async Task<List<T>> Query<T>(string sql)
+    {
+        await EnsureSeeded();
+        var iter = _container.GetItemQueryIterator<T>(sql);
+        var page = await iter.ReadNextAsync();
+        return page.ToList();
+    }
+
+    private bool _seeded;
+    private async Task EnsureSeeded()
+    {
+        if (_seeded) return;
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        _seeded = true;
+    }
+
+    [Fact]
+    public async Task StringEquals_UndefinedField_ReturnsUndefined()
+    {
+        var results = await Query<JObject>("SELECT * FROM c WHERE StringEquals(c.missing, 'alice')");
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task StringEquals_NullArg_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE StringEquals(null, 'alice') FROM c");
+        results.Should().BeEmpty("null input returns undefined");
+    }
+}
+
+// ── B7: REPLACE edge cases ──
+public class ReplaceCaseSensitivityEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("replcase", "/pk");
+
+    private async Task<List<T>> Query<T>(string sql)
+    {
+        await EnsureSeeded();
+        var iter = _container.GetItemQueryIterator<T>(sql);
+        var page = await iter.ReadNextAsync();
+        return page.ToList();
+    }
+
+    private bool _seeded;
+    private async Task EnsureSeeded()
+    {
+        if (_seeded) return;
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        _seeded = true;
+    }
+
+    [Fact]
+    public async Task Replace_CaseSensitiveSearch_NoMatch()
+    {
+        var results = await Query<string>("SELECT VALUE REPLACE('Alice', 'ALICE', 'Bob') FROM c");
+        results.Should().ContainSingle().Which.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task Replace_UndefinedInput_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE REPLACE(c.missing, 'a', 'b') FROM c");
+        results.Should().BeEmpty();
+    }
+}
+
+// ── B8: ORDER BY mixed types ──
+public class OrderByMixedTypeTests
+{
+    [Fact]
+    public async Task OrderBy_StringWithNull_NullSortsFirst()
+    {
+        var c = new InMemoryContainer("ordmixed", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Bob" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = (string?)null }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", name = "Alice" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT c.name FROM c ORDER BY c.name ASC");
+        var page = await iter.ReadNextAsync();
+        var names = page.Select(x => x["name"]?.Value<string>()).ToList();
+        names[0].Should().BeNull("null sorts before strings in ASC order");
+    }
+}
+
+// ── B9: BETWEEN inclusive boundaries ──
+public class BetweenInclusiveTests
+{
+    [Fact]
+    public async Task Between_ExactLowerBound_IsInclusive()
+    {
+        var c = new InMemoryContainer("between", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "bob" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", name = "Charlie" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name BETWEEN 'Alice' AND 'bob'");
+        var page = await iter.ReadNextAsync();
+        page.Any(x => x["name"]!.Value<string>() == "Alice").Should().BeTrue("lower bound is inclusive");
+    }
+
+    [Fact]
+    public async Task Between_ExactUpperBound_IsInclusive()
+    {
+        var c = new InMemoryContainer("betweenupp", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "bob" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name BETWEEN 'Alice' AND 'bob'");
+        var page = await iter.ReadNextAsync();
+        page.Any(x => x["name"]!.Value<string>() == "bob").Should().BeTrue("upper bound is inclusive");
+    }
+}
+
+// ── B10: IN operator large list ──
+public class InOperatorLargeListTests
+{
+    [Fact]
+    public async Task In_LargeList_AllCaseSensitive()
+    {
+        var c = new InMemoryContainer("inlarge", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", name = "Bob" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>("SELECT * FROM c WHERE c.name IN ('Alice', 'Bob')");
+        var page = await iter.ReadNextAsync();
+        page.Count().Should().Be(2);
+        page.Select(x => x["name"]!.Value<string>()).Should().BeEquivalentTo("Alice", "Bob");
+    }
+}
+
+// ── B11: Empty string edge cases ──
+public class EmptyStringFunctionTests
+{
+    private readonly InMemoryContainer _container = new("emptystr", "/pk");
+
+    private async Task<List<T>> Query<T>(string sql)
+    {
+        await EnsureSeeded();
+        var iter = _container.GetItemQueryIterator<T>(sql);
+        var page = await iter.ReadNextAsync();
+        return page.ToList();
+    }
+
+    private bool _seeded;
+    private async Task EnsureSeeded()
+    {
+        if (_seeded) return;
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        _seeded = true;
+    }
+
+    [Fact]
+    public async Task StartsWith_EmptyStringInput_EmptyPrefix_ReturnsTrue()
+    {
+        var results = await Query<bool>("SELECT VALUE STARTSWITH('', '') FROM c");
+        results.Should().ContainSingle().Which.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EndsWith_EmptyStringInput_EmptyPrefix_ReturnsTrue()
+    {
+        var results = await Query<bool>("SELECT VALUE ENDSWITH('', '') FROM c");
+        results.Should().ContainSingle().Which.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Contains_EmptyStringInput_EmptySub_ReturnsTrue()
+    {
+        var results = await Query<bool>("SELECT VALUE CONTAINS('', '') FROM c");
+        results.Should().ContainSingle().Which.Should().BeTrue();
+    }
+}
+
+// ── B12: REGEX_MATCH invalid regex / empty pattern ──
+public class RegexMatchEdgeCaseTests
+{
+    private readonly InMemoryContainer _container = new("regexedge", "/pk");
+
+    private async Task<List<T>> Query<T>(string sql)
+    {
+        await EnsureSeeded();
+        var iter = _container.GetItemQueryIterator<T>(sql);
+        var page = await iter.ReadNextAsync();
+        return page.ToList();
+    }
+
+    private bool _seeded;
+    private async Task EnsureSeeded()
+    {
+        if (_seeded) return;
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        _seeded = true;
+    }
+
+    [Fact]
+    public async Task RegexMatch_InvalidPattern_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE RegexMatch('test', '[invalid') FROM c");
+        results.Should().BeEmpty("invalid regex returns undefined");
+    }
+
+    [Fact]
+    public async Task RegexMatch_EmptyPattern_MatchesAll()
+    {
+        var results = await Query<bool>("SELECT VALUE RegexMatch('test', '') FROM c");
+        results.Should().ContainSingle().Which.Should().BeTrue();
+    }
+}
+
+// ── B13: String concat with undefined ──
+public class StringConcatUndefinedTests
+{
+    private readonly InMemoryContainer _container = new("concatundef", "/pk");
+
+    private async Task<List<T>> Query<T>(string sql)
+    {
+        await EnsureSeeded();
+        var iter = _container.GetItemQueryIterator<T>(sql);
+        var page = await iter.ReadNextAsync();
+        return page.ToList();
+    }
+
+    private bool _seeded;
+    private async Task EnsureSeeded()
+    {
+        if (_seeded) return;
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        _seeded = true;
+    }
+
+    [Fact]
+    public async Task StringConcat_UndefinedField_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE c.missing || 'suffix' FROM c");
+        results.Should().BeEmpty("concat with undefined field returns undefined");
+    }
+
+    [Fact]
+    public async Task StringConcat_BothUndefined_ReturnsUndefined()
+    {
+        var results = await Query<JToken>("SELECT VALUE c.x || c.y FROM c");
+        results.Should().BeEmpty();
+    }
+}
+
+// ── B14: DISTINCT in subquery ──
+public class DistinctSubqueryCaseSensitiveTests
+{
+    [Fact]
+    public async Task Distinct_InSubquery_CaseSensitive()
+    {
+        var c = new InMemoryContainer("distsub", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", name = "Alice" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<string>("SELECT DISTINCT VALUE c.name FROM c");
+        var page = await iter.ReadNextAsync();
+        page.Should().HaveCount(2).And.Contain("Alice").And.Contain("alice");
+    }
+}
+
+// ── B15: GROUP BY with HAVING case-sensitive ──
+public class GroupByHavingCaseSensitiveTests
+{
+    [Fact]
+    public async Task GroupBy_Having_CaseSensitiveFilter()
+    {
+        var c = new InMemoryContainer("grphaving", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "a", name = "Alice" }), new PartitionKey("a"));
+
+        var iter = c.GetItemQueryIterator<JObject>(
+            "SELECT c.name, COUNT(1) AS cnt FROM c GROUP BY c.name HAVING c.name = 'Alice'");
+        var page = await iter.ReadNextAsync();
+        page.Should().ContainSingle().Which["cnt"]!.Value<int>().Should().Be(2);
+    }
+}
+
+// ── B16: LIKE with parameterized pattern ──
+public class LikeParameterizedTests
+{
+    [Fact]
+    public async Task Like_ParameterizedPattern_CaseSensitive()
+    {
+        var c = new InMemoryContainer("likeparam", "/pk");
+        await c.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", name = "Alice" }), new PartitionKey("a"));
+        await c.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", name = "alice" }), new PartitionKey("a"));
+
+        var qd = new QueryDefinition("SELECT * FROM c WHERE c.name LIKE @pat").WithParameter("@pat", "A%");
+        var iter = c.GetItemQueryIterator<JObject>(qd);
+        var page = await iter.ReadNextAsync();
+        page.Should().ContainSingle().Which["id"]!.Value<string>().Should().Be("1");
     }
 }
