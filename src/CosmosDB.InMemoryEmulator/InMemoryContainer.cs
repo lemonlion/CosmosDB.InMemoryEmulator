@@ -3637,7 +3637,7 @@ public class InMemoryContainer : Container
     //  Private helpers — Query execution pipeline
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private List<string> GetAllItemsForPartition(QueryRequestOptions requestOptions)
+    private IEnumerable<string> GetAllItemsForPartition(QueryRequestOptions requestOptions)
     {
         if (requestOptions?.PartitionKey is not null
             && requestOptions.PartitionKey != PartitionKey.None)
@@ -3654,13 +3654,13 @@ public class InMemoryContainer : Container
                     var prefix = pk + "|";
                     return _items
                         .Where(kvp => (kvp.Key.PartitionKey?.StartsWith(prefix, StringComparison.Ordinal) ?? false) && !IsExpired(kvp.Key))
-                        .Select(kvp => kvp.Value).ToList();
+                        .Select(kvp => kvp.Value);
                 }
             }
 
-            return _items.Where(kvp => kvp.Key.PartitionKey == pk && !IsExpired(kvp.Key)).Select(kvp => kvp.Value).ToList();
+            return _items.Where(kvp => kvp.Key.PartitionKey == pk && !IsExpired(kvp.Key)).Select(kvp => kvp.Value);
         }
-        return _items.Where(kvp => !IsExpired(kvp.Key)).Select(kvp => kvp.Value).ToList();
+        return _items.Where(kvp => !IsExpired(kvp.Key)).Select(kvp => kvp.Value);
     }
 
     private static int CountPartitionKeyComponents(PartitionKey partitionKey)
@@ -3714,10 +3714,10 @@ public class InMemoryContainer : Container
     }
 
     private List<string> AugmentWithComputedProperties(
-        List<string> items, IDictionary<string, object> parameters)
+        IEnumerable<string> items, IDictionary<string, object> parameters)
     {
         var cps = GetParsedComputedProperties();
-        if (cps.Length == 0) return items;
+        if (cps.Length == 0) return items.ToList();
 
         return items.Select(json =>
         {
@@ -3735,9 +3735,9 @@ public class InMemoryContainer : Container
     }
 
     private static List<string> StripComputedProperties(
-        List<string> items, (string Name, string FromAlias, SqlExpression Expr)[] cps)
+        IEnumerable<string> items, (string Name, string FromAlias, SqlExpression Expr)[] cps)
     {
-        if (cps.Length == 0) return items;
+        if (cps.Length == 0) return items.ToList();
         var names = new HashSet<string>(cps.Select(cp => cp.Name));
         return items.Select(json =>
         {
@@ -3777,7 +3777,7 @@ public class InMemoryContainer : Container
 
         var parsed = CosmosSqlParser.Parse(queryText);
 
-        var items = GetAllItemsForPartition(requestOptions);
+        IEnumerable<string> items = GetAllItemsForPartition(requestOptions);
 
         // Computed properties — augment items with virtual properties before any filtering/projection
         var computedProps = GetParsedComputedProperties();
@@ -3809,7 +3809,7 @@ public class InMemoryContainer : Container
             {
                 var jObj = JsonParseHelpers.ParseJson(json);
                 return EvaluateWhereExpression(parsed.Where, jObj, parsed.FromAlias, parameters, parsed.Join);
-            }).ToList();
+            });
         }
 
         // GROUP BY / HAVING — also handles SELECT projection for grouped results
@@ -3848,18 +3848,18 @@ public class InMemoryContainer : Container
         // When DISTINCT is active, TOP is deferred until after deduplication.
         if (parsed.TopCount.HasValue && !parsed.IsDistinct)
         {
-            items = items.Take(parsed.TopCount.Value).ToList();
+            items = items.Take(parsed.TopCount.Value);
         }
 
         // OFFSET / LIMIT
         if (parsed.Offset.HasValue)
         {
-            items = items.Skip(parsed.Offset.Value).ToList();
+            items = items.Skip(parsed.Offset.Value);
         }
 
         if (parsed.Limit.HasValue)
         {
-            items = items.Take(parsed.Limit.Value).ToList();
+            items = items.Take(parsed.Limit.Value);
         }
 
         // SELECT projection (skip if GROUP BY already projected)
@@ -3877,13 +3877,13 @@ public class InMemoryContainer : Container
         // DISTINCT — applied after projection so dedup works on projected shapes
         if (parsed.IsDistinct)
         {
-            items = items.Distinct(JsonStructuralStringComparer.Instance).ToList();
+            items = items.Distinct(JsonStructuralStringComparer.Instance);
         }
 
         // TOP — deferred application after DISTINCT
         if (parsed.TopCount.HasValue && parsed.IsDistinct)
         {
-            items = items.Take(parsed.TopCount.Value).ToList();
+            items = items.Take(parsed.TopCount.Value);
         }
 
         // VALUE SELECT — unwrap scalar values from projected JObjects
@@ -3892,18 +3892,18 @@ public class InMemoryContainer : Container
             items = UnwrapValueSelect(items);
         }
 
-        return items;
+        return items as List<string> ?? items.ToList();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Query helpers — ORDER BY
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private static List<string> ApplyOrderBy(List<string> items, OrderByClause orderBy, string fromAlias)
+    private static List<string> ApplyOrderBy(IEnumerable<string> items, OrderByClause orderBy, string fromAlias)
         => ApplyOrderByFields(items, new[] { new OrderByField(orderBy.Field, orderBy.Ascending) }, fromAlias);
 
     private static List<string> ApplyOrderByRank(
-        List<string> items, SqlExpression rankExpr, string fromAlias, IDictionary<string, object> parameters)
+        IEnumerable<string> items, SqlExpression rankExpr, string fromAlias, IDictionary<string, object> parameters)
     {
         // ORDER BY RANK sorts by the evaluated expression descending (highest score first).
         return items
@@ -3926,12 +3926,12 @@ public class InMemoryContainer : Container
     private static readonly object UndefinedSortSentinel = new();
 
     private static List<string> ApplyOrderByFields(
-        List<string> items, OrderByField[] orderByFields, string fromAlias,
+        IEnumerable<string> items, OrderByField[] orderByFields, string fromAlias,
         IDictionary<string, object> parameters = null)
     {
         if (orderByFields.Length == 0)
         {
-            return items;
+            return items.ToList();
         }
 
         IOrderedEnumerable<string> ordered = null;
@@ -3991,7 +3991,7 @@ public class InMemoryContainer : Container
             });
             ordered = ordered == null ? items.OrderBy(KeySelector, comparer) : ordered.ThenBy(KeySelector, comparer);
         }
-        return ordered?.ToList() ?? items;
+        return ordered?.ToList() ?? items.ToList();
     }
 
     /// <summary>
@@ -4037,7 +4037,7 @@ public class InMemoryContainer : Container
     //  Query helpers — GROUP BY / HAVING
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private List<string> ApplyGroupBy(List<string> items, CosmosSqlQuery parsed, IDictionary<string, object> parameters)
+    private List<string> ApplyGroupBy(IEnumerable<string> items, CosmosSqlQuery parsed, IDictionary<string, object> parameters)
     {
         var fromAlias = parsed.FromAlias;
 
@@ -4227,14 +4227,14 @@ public class InMemoryContainer : Container
            arg.Contains('/') || arg.Contains('%') ||
            (arg.Contains('-') && !arg.StartsWith("-") && arg.IndexOf('-') != arg.IndexOf(".") + 1);
 
-    private static List<double> ExtractNumericValues(List<string> items, string innerArg, string fromAlias)
+    private static List<double> ExtractNumericValues(IEnumerable<string> items, string innerArg, string fromAlias)
     {
         var values = new List<double>();
 
         // Handle numeric literals (e.g., SUM(1), AVG(2.5))
         if (double.TryParse(innerArg, NumberStyles.Any, CultureInfo.InvariantCulture, out var literalValue))
         {
-            values.AddRange(Enumerable.Repeat(literalValue, items.Count));
+            values.AddRange(Enumerable.Repeat(literalValue, items.Count()));
             return values;
         }
 
@@ -4279,7 +4279,7 @@ public class InMemoryContainer : Container
         return values;
     }
 
-    private static List<JToken> ExtractTokenValues(List<string> items, string innerArg, string fromAlias)
+    private static List<JToken> ExtractTokenValues(IEnumerable<string> items, string innerArg, string fromAlias)
     {
         var tokens = new List<JToken>();
 
@@ -4287,7 +4287,7 @@ public class InMemoryContainer : Container
         if (double.TryParse(innerArg, NumberStyles.Any, CultureInfo.InvariantCulture, out var literalValue))
         {
             var token = new JValue(literalValue);
-            tokens.AddRange(Enumerable.Repeat((JToken)token, items.Count));
+            tokens.AddRange(Enumerable.Repeat((JToken)token, items.Count()));
             return tokens;
         }
 
@@ -4551,11 +4551,11 @@ public class InMemoryContainer : Container
     //  Query helpers — JOIN expansion
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private static List<string> ExpandJoinedItems(List<string> items, CosmosSqlQuery parsed)
+    private static List<string> ExpandJoinedItems(IEnumerable<string> items, CosmosSqlQuery parsed)
     {
         if (parsed.Join is null)
         {
-            return items;
+            return items.ToList();
         }
 
         var expanded = new List<string>();
@@ -4578,7 +4578,7 @@ public class InMemoryContainer : Container
         return expanded;
     }
 
-    private static List<string> ExpandAllJoins(List<string> items, CosmosSqlQuery parsed)
+    private static List<string> ExpandAllJoins(IEnumerable<string> items, CosmosSqlQuery parsed)
     {
         var current = items;
         foreach (var join in parsed.Joins)
@@ -4606,13 +4606,13 @@ public class InMemoryContainer : Container
             }
             current = expanded;
         }
-        return current;
+        return current as List<string> ?? current.ToList();
     }
 
     /// <summary>
     /// Expands top-level <c>FROM alias IN c.field</c> — each array element becomes a result row.
     /// </summary>
-    private static List<string> ExpandFromSource(List<string> items, CosmosSqlQuery parsed)
+    private static List<string> ExpandFromSource(IEnumerable<string> items, CosmosSqlQuery parsed)
     {
         var sourcePath = parsed.FromSource;
         // The FromSource is the full dotted path (e.g. "c.tags"). We need to resolve it
@@ -4648,7 +4648,7 @@ public class InMemoryContainer : Container
     //  Query helpers — SELECT projection
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private static List<string> ProjectFields(List<string> items, CosmosSqlQuery parsed, IDictionary<string, object> parameters)
+    private static List<string> ProjectFields(IEnumerable<string> items, CosmosSqlQuery parsed, IDictionary<string, object> parameters)
     {
         var hasAggregate = parsed.SelectFields.Any(f =>
         {
@@ -4719,7 +4719,7 @@ public class InMemoryContainer : Container
         return projected;
     }
 
-    private static List<string> UnwrapValueSelect(List<string> items)
+    private static List<string> UnwrapValueSelect(IEnumerable<string> items)
     {
         var unwrapped = new List<string>();
         foreach (var json in items)
@@ -4752,8 +4752,10 @@ public class InMemoryContainer : Container
         return unwrapped;
     }
 
-    private static List<string> ProjectAggregateFields(List<string> items, CosmosSqlQuery parsed, IDictionary<string, object> parameters = null)
+    private static List<string> ProjectAggregateFields(IEnumerable<string> itemsEnumerable, CosmosSqlQuery parsed, IDictionary<string, object> parameters = null)
     {
+        // Aggregates need multiple passes (Count, Sum, indexing) — materialize once
+        var items = itemsEnumerable as List<string> ?? itemsEnumerable.ToList();
         var resultObj = new JObject();
         foreach (var field in parsed.SelectFields)
         {
@@ -4863,8 +4865,10 @@ public class InMemoryContainer : Container
     /// SELECT VALUE {"cnt": COUNT(1), "total": SUM(c.value)} FROM c.
     /// </summary>
     private static object EvaluateAggregateExpression(
-        SqlExpression expr, List<string> items, string fromAlias, IDictionary<string, object> parameters)
+        SqlExpression expr, IEnumerable<string> itemsEnumerable, string fromAlias, IDictionary<string, object> parameters)
     {
+        // Aggregates need multiple passes — materialize once
+        var items = itemsEnumerable as List<string> ?? itemsEnumerable.ToList();
         switch (expr)
         {
             case FunctionCallExpression func when AggregateFunctions.Contains(func.FunctionName):
