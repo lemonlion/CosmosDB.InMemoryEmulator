@@ -549,19 +549,18 @@ public class ReplacePartitionKeyImmutabilityTests5
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
     [Fact]
-    public async Task Replace_WithDifferentPkInBody_ItemStaysInOriginalPartition()
+    public async Task Replace_WithDifferentPkInBody_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
             new PartitionKey("pk1"));
 
-        // Replace with a different partition key value in the body
+        // Replace with a different partition key value in the body — should throw BadRequest
         var replacement = new TestDocument { Id = "1", PartitionKey = "pk2", Name = "Replaced" };
-        await _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
+        var act = () => _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
 
-        // Item is still accessible with original PK
-        var read = await _container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
-        read.Resource.Name.Should().Be("Replaced");
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
     }
 }
 
@@ -1112,18 +1111,18 @@ public class ReplaceItemGapTests3
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
     [Fact]
-    public async Task Replace_WithDifferentPartitionKey_InBody()
+    public async Task Replace_WithDifferentPartitionKey_InBody_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
             new PartitionKey("pk1"));
 
-        // Replace with a different PK value in the body but same PK parameter
+        // Replace with a different PK value in the body but same PK parameter — should throw
         var replacement = new TestDocument { Id = "1", PartitionKey = "pk2", Name = "Replaced" };
-        var response = await _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
+        var act = () => _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
 
-        // Should succeed using the PK parameter for lookup
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
     }
 }
 

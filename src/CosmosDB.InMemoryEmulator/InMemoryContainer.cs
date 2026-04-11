@@ -803,6 +803,8 @@ public class InMemoryContainer : Container
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
+        ValidatePartitionKeyConsistency(partitionKey, jObj);
+
         jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
         ValidateDocumentSize(json);
