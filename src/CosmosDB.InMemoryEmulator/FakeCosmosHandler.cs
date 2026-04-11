@@ -584,7 +584,8 @@ public class FakeCosmosHandler : HttpMessageHandler
             // response as raw documents and the pre-computed result passes through.
             var isGroupByBypass = parsed.GroupByFields is { Length: > 0 };
             var aggregateFieldCount = parsed.SelectFields.Count(f => ContainsAggregate(f.SqlExpr));
-            var isMultiAggregateBypass = !isGroupByBypass && !parsed.IsValueSelect && aggregateFieldCount > 1;
+            var isMultiAggregateBypass = !isGroupByBypass && !parsed.IsValueSelect
+                && (aggregateFieldCount > 1 || aggregates.Count > 1);
             var isValueAggregateBypass = !isGroupByBypass && parsed.IsValueSelect && aggregateFieldCount > 0;
 
             if (isGroupByBypass || isMultiAggregateBypass || isValueAggregateBypass)
@@ -691,6 +692,13 @@ public class FakeCosmosHandler : HttpMessageHandler
                     groupByAliasToAgg[alias] = aggType;
                 }
             }
+            else
+            {
+                foreach (var arg in func.Arguments)
+                {
+                    DetectAggregates(arg, aggregates, groupByAliasToAgg, alias);
+                }
+            }
         }
         else if (expr is BinaryExpression bin)
         {
@@ -700,6 +708,17 @@ public class FakeCosmosHandler : HttpMessageHandler
         else if (expr is UnaryExpression unary)
         {
             DetectAggregates(unary.Operand, aggregates, groupByAliasToAgg, alias);
+        }
+        else if (expr is TernaryExpression ternary)
+        {
+            DetectAggregates(ternary.Condition, aggregates, groupByAliasToAgg, alias);
+            DetectAggregates(ternary.IfTrue, aggregates, groupByAliasToAgg, alias);
+            DetectAggregates(ternary.IfFalse, aggregates, groupByAliasToAgg, alias);
+        }
+        else if (expr is CoalesceExpression coalesce)
+        {
+            DetectAggregates(coalesce.Left, aggregates, groupByAliasToAgg, alias);
+            DetectAggregates(coalesce.Right, aggregates, groupByAliasToAgg, alias);
         }
     }
 
@@ -712,9 +731,13 @@ public class FakeCosmosHandler : HttpMessageHandler
     {
         return expr switch
         {
-            FunctionCallExpression func => func.FunctionName.ToUpperInvariant() is "COUNT" or "SUM" or "MIN" or "MAX" or "AVG",
+            FunctionCallExpression func =>
+                func.FunctionName.ToUpperInvariant() is "COUNT" or "SUM" or "MIN" or "MAX" or "AVG"
+                || func.Arguments.Any(ContainsAggregate),
             BinaryExpression bin => ContainsAggregate(bin.Left) || ContainsAggregate(bin.Right),
             UnaryExpression unary => ContainsAggregate(unary.Operand),
+            TernaryExpression ternary => ContainsAggregate(ternary.Condition) || ContainsAggregate(ternary.IfTrue) || ContainsAggregate(ternary.IfFalse),
+            CoalesceExpression coalesce => ContainsAggregate(coalesce.Left) || ContainsAggregate(coalesce.Right),
             _ => false
         };
     }
@@ -723,9 +746,13 @@ public class FakeCosmosHandler : HttpMessageHandler
     {
         return expr switch
         {
-            FunctionCallExpression func => func.FunctionName.Equals("AVG", StringComparison.OrdinalIgnoreCase),
+            FunctionCallExpression func =>
+                func.FunctionName.Equals("AVG", StringComparison.OrdinalIgnoreCase)
+                || func.Arguments.Any(ContainsAvg),
             BinaryExpression bin => ContainsAvg(bin.Left) || ContainsAvg(bin.Right),
             UnaryExpression unary => ContainsAvg(unary.Operand),
+            TernaryExpression ternary => ContainsAvg(ternary.Condition) || ContainsAvg(ternary.IfTrue) || ContainsAvg(ternary.IfFalse),
+            CoalesceExpression coalesce => ContainsAvg(coalesce.Left) || ContainsAvg(coalesce.Right),
             _ => false
         };
     }
