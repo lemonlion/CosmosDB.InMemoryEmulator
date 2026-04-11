@@ -430,18 +430,17 @@ public class FakeCosmosHandlerCrudHardeningTests : IDisposable
     }
 
     [Fact]
-    public async Task Handler_PatchItem_SetId_DivergentBehavior()
+    public async Task Handler_PatchItem_SetId_NowRejectsBadRequest()
     {
-        // DIVERGENCE: Real Cosmos returns 400 when patching /id, but the emulator
-        // allows it silently. The SDK doesn't validate patch paths client-side.
-        // Impact: Low — patching /id is not a common operation.
+        // Patching /id is now correctly rejected in both typed and stream variants
         var doc = new TestDocument { Id = "p3-div", PartitionKey = "pk1", Name = "HasId" };
         await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
-        var response = await _container.PatchItemAsync<TestDocument>("p3-div", new PartitionKey("pk1"),
+        var act = () => _container.PatchItemAsync<TestDocument>("p3-div", new PartitionKey("pk1"),
             [PatchOperation.Set("/id", "new-id")]);
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
     }
 
     [Fact]

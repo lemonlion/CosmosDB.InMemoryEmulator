@@ -431,6 +431,7 @@ public class FakeCosmosHandler : HttpMessageHandler
                 "add" => PatchOperation.Add(opPath, value),
                 "remove" => PatchOperation.Remove(opPath),
                 "incr" => PatchOperation.Increment(opPath, value!.Value<double>()),
+                "move" => PatchOperation.Move(op["from"]!.ToString(), opPath),
                 _ => throw new InvalidOperationException($"Unknown patch operation: {opType}")
             });
         }

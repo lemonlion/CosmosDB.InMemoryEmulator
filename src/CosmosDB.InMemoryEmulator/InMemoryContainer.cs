@@ -1397,6 +1397,15 @@ public class InMemoryContainer : Container
             return CreateResponseMessage(HttpStatusCode.BadRequest);
         }
 
+        try
+        {
+            ValidatePatchPaths(patchOperations);
+        }
+        catch (CosmosException)
+        {
+            return CreateResponseMessage(HttpStatusCode.BadRequest);
+        }
+
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
 
