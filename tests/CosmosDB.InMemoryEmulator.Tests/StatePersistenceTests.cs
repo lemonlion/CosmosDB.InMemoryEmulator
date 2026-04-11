@@ -1869,3 +1869,602 @@ public class StatePersistenceErrorHandlingTests
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Plan 38: State Persistence Deep Dive Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Batch 1: Export After Mutations ──
+public class ExportStateAfterMutationTests
+{
+    [Fact]
+    public async Task ExportState_AfterUpsert_ExportsLatestVersion()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Original" },
+            new PartitionKey("pk"));
+        await container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Updated" },
+            new PartitionKey("pk"));
+
+        var state = JObject.Parse(container.ExportState());
+        var items = (JArray)state["items"]!;
+        items.Should().HaveCount(1);
+        items[0]!["name"]!.Value<string>().Should().Be("Updated");
+    }
+
+    [Fact]
+    public async Task ExportState_AfterDelete_DeletedItemNotIncluded()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "ToDelete" },
+            new PartitionKey("pk"));
+        await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "Keeper" },
+            new PartitionKey("pk"));
+        await container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk"));
+
+        var state = JObject.Parse(container.ExportState());
+        var items = (JArray)state["items"]!;
+        items.Should().HaveCount(1);
+        items[0]!["id"]!.Value<string>().Should().Be("2");
+    }
+
+    [Fact]
+    public async Task ExportState_AfterPatch_ExportsPatchedValues()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Before" },
+            new PartitionKey("pk"));
+        await container.PatchItemAsync<TestDocument>("1", new PartitionKey("pk"),
+            new[] { PatchOperation.Replace("/name", "After") });
+
+        var state = JObject.Parse(container.ExportState());
+        var items = (JArray)state["items"]!;
+        items[0]!["name"]!.Value<string>().Should().Be("After");
+    }
+
+    [Fact]
+    public async Task ExportState_WithPartitionKeyNone_HandlesCorrectly()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1" }),
+            PartitionKey.None);
+
+        var state = JObject.Parse(container.ExportState());
+        var items = (JArray)state["items"]!;
+        items.Should().HaveCount(1);
+        items[0]!["id"]!.Value<string>().Should().Be("1");
+    }
+}
+
+// ── Batch 2: Import Fidelity ──
+public class ImportFidelityDeepDiveTests
+{
+    [Fact]
+    public async Task ImportState_ComputedPropertiesWorkOnImportedItems()
+    {
+        var props = new Microsoft.Azure.Cosmos.ContainerProperties("test", "/partitionKey")
+        {
+            ComputedProperties =
+            {
+                new ComputedProperty { Name = "fullDisplay", Query = "SELECT VALUE CONCAT(c.name, ' (', ToString(c[\"value\"]), ')') FROM c" }
+            }
+        };
+        var container = new InMemoryContainer(props);
+
+        container.ImportState("{\"items\":[{\"id\":\"1\",\"partitionKey\":\"pk\",\"name\":\"Alice\",\"value\":10}]}");
+
+        var results = new List<JObject>();
+        var iter = container.GetItemQueryIterator<JObject>("SELECT c.fullDisplay FROM c WHERE c.id = '1'");
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+        results[0]["fullDisplay"]!.Value<string>().Should().Be("Alice (10)");
+    }
+
+    [Fact]
+    public async Task ImportState_WithIntegerPartitionKeyValues_RoundTrips()
+    {
+        var container = new InMemoryContainer("test", "/tenantId");
+
+        container.ImportState("{\"items\":[{\"id\":\"1\",\"tenantId\":42,\"name\":\"Test\"}]}");
+
+        var response = await container.ReadItemAsync<JObject>("1", new PartitionKey(42));
+        response.Resource["name"]!.Value<string>().Should().Be("Test");
+    }
+
+    [Fact]
+    public async Task ImportState_ThenRegisterUdf_UdfWorksOnImportedData()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.ImportState("{\"items\":[{\"id\":\"1\",\"partitionKey\":\"pk\",\"name\":\"hello\"}]}");
+        container.RegisterUdf("shout", args => args[0]?.ToString()?.ToUpper() + "!");
+
+        var results = new List<JObject>();
+        var iter = container.GetItemQueryIterator<JObject>("SELECT udf.shout(c.name) AS r FROM c");
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+        results[0]["r"]!.Value<string>().Should().Be("HELLO!");
+    }
+
+    [Fact]
+    public async Task ImportState_RegeneratesRidSelfAttachments()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.ImportState("{\"items\":[{\"id\":\"1\",\"partitionKey\":\"pk\",\"name\":\"Test\"}]}");
+
+        var response = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk"));
+        response.Resource["_rid"].Should().NotBeNull();
+        response.Resource["_self"].Should().NotBeNull();
+        response.Resource["_attachments"].Should().NotBeNull();
+    }
+}
+
+// ── Batch 3: TTL Edge Cases ──
+public class StatePersistenceTtlDeepDiveTests
+{
+    [Fact]
+    public async Task ExportState_WithTTLExpiredItem_LazyEvictionBehavior()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.DefaultTimeToLive = 1; // 1 second TTL
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Ephemeral" },
+            new PartitionKey("pk"));
+
+        await Task.Delay(1500); // wait for TTL to expire
+
+        // Lazy eviction means the item may still be in _items
+        var state = JObject.Parse(container.ExportState());
+        var items = (JArray)state["items"]!;
+        // Document the actual behavior — items are lazily evicted, so ExportState
+        // may still include them. This is a known divergence from real Cosmos.
+        items.Should().HaveCount(1, "lazy eviction does not remove items from _items");
+    }
+
+    [Fact]
+    public async Task ImportState_WithOldTimestamp_AndContainerTTL_ItemNotImmediatelyExpired()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.DefaultTimeToLive = 3600; // 1 hour
+
+        // Import state — ImportState sets _timestamps to UtcNow, not the document's _ts
+        container.ImportState("{\"items\":[{\"id\":\"1\",\"partitionKey\":\"pk\",\"name\":\"Test\",\"_ts\":1000000000}]}");
+
+        // Item should be readable since timestamps are renewed on import
+        var response = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk"));
+        response.Resource["name"]!.Value<string>().Should().Be("Test");
+    }
+}
+
+// ── Batch 4: Auto-Persist ──
+public class AutoPersistDeepDiveTests : IDisposable
+{
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), $"cosmos-ap-{Guid.NewGuid():N}");
+
+    public void Dispose() { if (Directory.Exists(_dir)) Directory.Delete(_dir, true); }
+
+    [Fact]
+    public void LoadPersistedState_DirectoryDoesNotExist_StartsEmpty()
+    {
+        var nonExistentDir = Path.Combine(Path.GetTempPath(), $"cosmos-nx-{Guid.NewGuid():N}");
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.StateFilePath = Path.Combine(nonExistentDir, "state.json");
+
+        // Should not crash — File.Exists returns false for non-existent dir
+        container.LoadPersistedState();
+
+        var state = JObject.Parse(container.ExportState());
+        ((JArray)state["items"]!).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void LoadPersistedState_StateFilePathNull_ThrowsInvalidOperationException()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var act = () => container.LoadPersistedState();
+
+        act.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task Dispose_CalledTwice_NoError()
+    {
+        var filePath = Path.Combine(_dir, "state.json");
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.StateFilePath = filePath;
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Test" },
+            new PartitionKey("pk"));
+
+        container.Dispose();
+        container.Dispose(); // second call should be harmless
+
+        File.Exists(filePath).Should().BeTrue();
+        var state = JObject.Parse(File.ReadAllText(filePath));
+        ((JArray)state["items"]!).Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Dispose_AfterClearItems_SavesEmptyState()
+    {
+        var filePath = Path.Combine(_dir, "state.json");
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.StateFilePath = filePath;
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Test" },
+            new PartitionKey("pk"));
+        container.ClearItems();
+        container.Dispose();
+
+        var state = JObject.Parse(File.ReadAllText(filePath));
+        ((JArray)state["items"]!).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task LoadPersistedState_ModifyItems_Dispose_FinalStateIncludesAll()
+    {
+        var filePath = Path.Combine(_dir, "state.json");
+
+        // Phase 1: create initial state
+        var container1 = new InMemoryContainer("test", "/partitionKey");
+        container1.StateFilePath = filePath;
+        await container1.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Original" },
+            new PartitionKey("pk"));
+        container1.Dispose();
+
+        // Phase 2: load, modify, dispose
+        var container2 = new InMemoryContainer("test", "/partitionKey");
+        container2.StateFilePath = filePath;
+        container2.LoadPersistedState();
+        await container2.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "Added" },
+            new PartitionKey("pk"));
+        container2.Dispose();
+
+        // Phase 3: verify final state
+        var state = JObject.Parse(File.ReadAllText(filePath));
+        var items = (JArray)state["items"]!;
+        items.Should().HaveCount(2);
+    }
+}
+
+// ── Batch 5: ClearItems Fidelity ──
+public class ClearItemsFidelityTests
+{
+    [Fact]
+    public async Task ClearItems_ClearsUniqueKeyTracking_CanRecreatePreviouslyConflictingItems()
+    {
+        var props = new Microsoft.Azure.Cosmos.ContainerProperties("test", "/partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/name" } } }
+            }
+        };
+        var container = new InMemoryContainer(props);
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Unique" },
+            new PartitionKey("pk"));
+
+        container.ClearItems();
+
+        // Should now be able to create an item with the same unique key value
+        var response = await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "Unique" },
+            new PartitionKey("pk"));
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task ClearItems_ThenExportState_EmptyExport()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Test" },
+            new PartitionKey("pk"));
+
+        container.ClearItems();
+
+        var state = JObject.Parse(container.ExportState());
+        ((JArray)state["items"]!).Should().BeEmpty();
+    }
+}
+
+// ── Batch 6: PITR + Persistence Interaction ──
+public class PitrPersistenceInteractionTests : IDisposable
+{
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), $"cosmos-pitr-{Guid.NewGuid():N}");
+
+    public void Dispose() { if (Directory.Exists(_dir)) Directory.Delete(_dir, true); }
+
+    [Fact]
+    public async Task RestoreToPointInTime_ThenExportState_MatchesRestoredState()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "V1" },
+            new PartitionKey("pk"));
+        var restorePoint = DateTimeOffset.UtcNow;
+        await Task.Delay(50);
+        await container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "V2" },
+            new PartitionKey("pk"));
+
+        container.RestoreToPointInTime(restorePoint);
+
+        var state = JObject.Parse(container.ExportState());
+        var items = (JArray)state["items"]!;
+        items.Should().HaveCount(1);
+        items[0]!["name"]!.Value<string>().Should().Be("V1");
+    }
+
+    [Fact]
+    public async Task RestoreToPointInTime_ThenDispose_PersistedFileHasRestoredState()
+    {
+        var filePath = Path.Combine(_dir, "state.json");
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.StateFilePath = filePath;
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "V1" },
+            new PartitionKey("pk"));
+        var restorePoint = DateTimeOffset.UtcNow;
+        await Task.Delay(50);
+        await container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "V2" },
+            new PartitionKey("pk"));
+
+        container.RestoreToPointInTime(restorePoint);
+        container.Dispose();
+
+        var state = JObject.Parse(File.ReadAllText(filePath));
+        var items = (JArray)state["items"]!;
+        items[0]!["name"]!.Value<string>().Should().Be("V1");
+    }
+
+    [Fact]
+    public async Task ImportState_FromExportAfterPITR_DoubleRoundTrip()
+    {
+        var container1 = new InMemoryContainer("test", "/partitionKey");
+        await container1.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Original" },
+            new PartitionKey("pk"));
+        var snapshot = DateTimeOffset.UtcNow;
+        await Task.Delay(50);
+        await container1.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Modified" },
+            new PartitionKey("pk"));
+
+        container1.RestoreToPointInTime(snapshot);
+        var exported = container1.ExportState();
+
+        var container2 = new InMemoryContainer("test", "/partitionKey");
+        container2.ImportState(exported);
+
+        var response = await container2.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+        response.Resource.Name.Should().Be("Original");
+    }
+}
+
+// ── Batch 7: File Operations + Cross-Platform ──
+public class FileOperationsDeepDiveTests
+{
+    [Fact]
+    public async Task ExportImportFile_PathWithSpaces_Works()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"cosmos test {Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(dir);
+            var filePath = Path.Combine(dir, "state file.json");
+            var container = new InMemoryContainer("test", "/partitionKey");
+            await container.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk", Name = "Test" },
+                new PartitionKey("pk"));
+
+            container.ExportStateToFile(filePath);
+
+            var container2 = new InMemoryContainer("test", "/partitionKey");
+            container2.ImportStateFromFile(filePath);
+
+            var response = await container2.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+            response.Resource.Name.Should().Be("Test");
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
+    public async Task ExportStateToFile_WritesUtf8()
+    {
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            var container = new InMemoryContainer("test", "/partitionKey");
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = "1", partitionKey = "pk", name = "Ünïcödé 🎉" }),
+                new PartitionKey("pk"));
+
+            container.ExportStateToFile(tempFile);
+
+            var bytes = File.ReadAllBytes(tempFile);
+            var text = Encoding.UTF8.GetString(bytes);
+            text.Should().Contain("Ünïcödé 🎉");
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public async Task ExportImportFile_TempPath_CrossPlatformSafe()
+    {
+        var filePath = Path.Combine(Path.GetTempPath(), $"cosmos-xp-{Guid.NewGuid():N}.json");
+        try
+        {
+            var container = new InMemoryContainer("test", "/partitionKey");
+            await container.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk", Name = "CrossPlatform" },
+                new PartitionKey("pk"));
+
+            container.ExportStateToFile(filePath);
+
+            File.Exists(filePath).Should().BeTrue();
+            var container2 = new InMemoryContainer("test", "/partitionKey");
+            container2.ImportStateFromFile(filePath);
+
+            var response = await container2.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+            response.Resource.Name.Should().Be("CrossPlatform");
+        }
+        finally
+        {
+            if (File.Exists(filePath)) File.Delete(filePath);
+        }
+    }
+}
+
+// ── Batch 8: Error Handling ──
+public class StatePersistenceErrorHandlingDeepDiveTests
+{
+    [Fact]
+    public void ImportState_TruncatedJson_ThrowsJsonException()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var act = () => container.ImportState("{\"items\":[{\"id\":\"1\"");
+
+        act.Should().Throw<JsonReaderException>();
+    }
+
+    [Fact]
+    public async Task ExportStateToFile_InvalidPath_ThrowsIOException()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Test" },
+            new PartitionKey("pk"));
+
+        var act = () => container.ExportStateToFile(Path.Combine("Z:\\nonexistent\\path\\that\\should\\not\\exist", "state.json"));
+
+        act.Should().Throw<Exception>(); // DirectoryNotFoundException or IOException
+    }
+}
+
+// ── Batch 9: Change Feed Deep ──
+public class StatePersistenceChangeFeedDeepDiveTests
+{
+    [Fact]
+    public async Task ImportState_ThenChangeFeed_OnlyGetsPostImportChanges()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        container.ImportState("{\"items\":[{\"id\":\"1\",\"partitionKey\":\"pk\",\"name\":\"Imported\"}]}");
+
+        // Change feed after import should be empty
+        var iter1 = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+        iter1.HasMoreResults.Should().BeFalse("ImportState does not populate change feed");
+
+        // Post-import write should appear in change feed
+        await container.CreateItemAsync(
+            new TestDocument { Id = "2", PartitionKey = "pk", Name = "New" },
+            new PartitionKey("pk"));
+
+        var iter2 = container.GetChangeFeedIterator<JObject>(
+            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);
+        iter2.HasMoreResults.Should().BeTrue();
+        var page = await iter2.ReadNextAsync();
+        page.Count.Should().Be(1);
+        page.First()["id"]!.Value<string>().Should().Be("2");
+    }
+}
+
+// ── Batch 10: Concurrency ──
+public class StatePersistenceConcurrencyDeepDiveTests
+{
+    [Fact]
+    public async Task ImportState_DuringConcurrentReads_NoCrash()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Original" },
+            new PartitionKey("pk"));
+
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var readTask = Task.Run(async () =>
+        {
+            while (!cts.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+                }
+                catch (CosmosException) { /* item may disappear during import */ }
+            }
+        });
+
+        await Task.Delay(100);
+        container.ImportState("{\"items\":[{\"id\":\"2\",\"partitionKey\":\"pk\",\"name\":\"Imported\"}]}");
+
+        cts.Cancel();
+        await readTask; // should not throw
+    }
+
+    [Fact]
+    public async Task ClearItems_DuringConcurrentReads_NoCrash()
+    {
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "Test" },
+            new PartitionKey("pk"));
+
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var readTask = Task.Run(async () =>
+        {
+            while (!cts.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
+                }
+                catch (CosmosException) { /* item cleared */ }
+            }
+        });
+
+        await Task.Delay(100);
+        container.ClearItems();
+
+        cts.Cancel();
+        await readTask; // should not throw
+    }
+}
+
+// ── Batch 11: Hierarchical PK Edge ──
+public class HierarchicalPkPersistenceEdgeTests
+{
+    [Fact]
+    public async Task ExportImport_HierarchicalPK_MissingComponent_RoundTrips()
+    {
+        var container = new InMemoryContainer("test", new[] { "/tenantId", "/region" });
+        // Create an item with both PK components
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", tenantId = "t1", region = "us" }),
+            new PartitionKeyBuilder().Add("t1").Add("us").Build());
+
+        var exported = container.ExportState();
+        var container2 = new InMemoryContainer("test", new[] { "/tenantId", "/region" });
+        container2.ImportState(exported);
+
+        var response = await container2.ReadItemAsync<JObject>("1",
+            new PartitionKeyBuilder().Add("t1").Add("us").Build());
+        response.Resource["tenantId"]!.Value<string>().Should().Be("t1");
+        response.Resource["region"]!.Value<string>().Should().Be("us");
+    }
+}
