@@ -463,6 +463,7 @@ public class InMemoryContainer : Container
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
+        _itemLocks.Clear();
 
         foreach (var kvp in lastPerKey)
         {
