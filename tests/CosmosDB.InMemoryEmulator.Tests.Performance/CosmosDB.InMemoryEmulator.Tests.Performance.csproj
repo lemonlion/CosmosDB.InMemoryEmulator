@@ -7,7 +7,6 @@
 		<NoWarn>xUnit1051</NoWarn>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<IsPackable>false</IsPackable>
-		<ServerGarbageCollection>true</ServerGarbageCollection>
 	</PropertyGroup>
 
 	<ItemGroup>
