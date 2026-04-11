@@ -308,6 +308,13 @@ public class InMemoryContainer : Container
     public IReadOnlyList<string> PartitionKeyPaths { get; }
 
     /// <summary>
+    /// Maximum number of entries retained in the change feed log. When a new entry
+    /// would exceed this limit, the oldest entries are evicted. Defaults to <c>1000</c>.
+    /// Set to <c>0</c> to disable eviction (unbounded growth).
+    /// </summary>
+    public int MaxChangeFeedSize { get; set; } = 1000;
+
+    /// <summary>
     /// Number of feed ranges returned by <see cref="GetFeedRangesAsync"/>. Defaults to 1.
     /// Set to a higher value to simulate multiple physical partitions so that
     /// FeedRange-scoped queries and change feed iterators return subsets of data.
@@ -2521,6 +2528,12 @@ public class InMemoryContainer : Container
         lock (_changeFeedLock)
         {
             _changeFeed.Add((DateTimeOffset.UtcNow, id, partitionKey, json, isDelete));
+
+            if (MaxChangeFeedSize > 0 && _changeFeed.Count > MaxChangeFeedSize)
+            {
+                var excess = _changeFeed.Count - MaxChangeFeedSize;
+                _changeFeed.RemoveRange(0, excess);
+            }
         }
     }
 
