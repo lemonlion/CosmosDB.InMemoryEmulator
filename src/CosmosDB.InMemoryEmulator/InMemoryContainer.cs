@@ -574,7 +574,7 @@ public class InMemoryContainer : Container
     //  Item CRUD — Typed
     // ═══════════════════════════════════════════════════════════════════════════
 
-    public override Task<ItemResponse<T>> CreateItemAsync<T>(
+    public override async Task<ItemResponse<T>> CreateItemAsync<T>(
         T item, PartitionKey? partitionKey = null,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
@@ -593,63 +593,72 @@ public class InMemoryContainer : Container
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
 
-        EvictIfExpired(key);
-
-        if (HasUniqueKeys)
+        var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await itemLock.WaitAsync(cancellationToken);
+        try
         {
-            lock (_uniqueKeyWriteLock)
+            EvictIfExpired(key);
+
+            if (HasUniqueKeys)
             {
-                ValidateUniqueKeys(jObj, pk);
+                lock (_uniqueKeyWriteLock)
+                {
+                    ValidateUniqueKeys(jObj, pk);
+                    if (!_items.TryAdd(key, json))
+                    {
+                        throw new CosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
+                            HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                    }
+                }
+            }
+            else
+            {
                 if (!_items.TryAdd(key, json))
                 {
                     throw new CosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
                         HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
             }
-        }
-        else
-        {
-            if (!_items.TryAdd(key, json))
+
+            var etag = GenerateETag();
+            _etags[key] = etag;
+            _timestamps[key] = DateTimeOffset.UtcNow;
+            _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+
+            try
             {
-                throw new CosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
-                    HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
+                var responseBodyOverride = ExecutePostTriggers(requestOptions, committedDoc, "Create");
+                var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
+                if (postTriggerJson != _items[key])
+                {
+                    ValidateDocumentSize(postTriggerJson);
+                    _items[key] = postTriggerJson;
+                }
+
+                RecordChangeFeed(itemId, pk, _items[key]);
+
+                var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
+                if (responseBodyOverride is not null && !suppressContent)
+                {
+                    return CreateItemResponse(
+                        responseBodyOverride.ToObject<T>(JsonSerializer.Create(JsonSettings)),
+                        HttpStatusCode.Created, etag, suppressContent);
+                }
+
+                return CreateItemResponse(item, HttpStatusCode.Created, etag, suppressContent);
+            }
+            catch
+            {
+                _items.TryRemove(key, out _);
+                _etags.TryRemove(key, out _);
+                _timestamps.TryRemove(key, out _);
+                throw;
             }
         }
-
-        var etag = GenerateETag();
-        _etags[key] = etag;
-        _timestamps[key] = DateTimeOffset.UtcNow;
-        _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
-
-        try
+        finally
         {
-            var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
-            var responseBodyOverride = ExecutePostTriggers(requestOptions, committedDoc, "Create");
-            var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
-            if (postTriggerJson != _items[key])
-            {
-                ValidateDocumentSize(postTriggerJson);
-                _items[key] = postTriggerJson;
-            }
-
-            RecordChangeFeed(itemId, pk, _items[key]);
-
-            var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
-            if (responseBodyOverride is not null && !suppressContent)
-            {
-                return Task.FromResult(CreateItemResponse(
-                    responseBodyOverride.ToObject<T>(JsonSerializer.Create(JsonSettings)),
-                    HttpStatusCode.Created, etag, suppressContent));
-            }
-
-            return Task.FromResult(CreateItemResponse(item, HttpStatusCode.Created, etag, suppressContent));
-        }
-        catch
-        {
-            _items.TryRemove(key, out _);
-            _etags.TryRemove(key, out _);
-            _timestamps.TryRemove(key, out _);
-            throw;
+            itemLock.Release();
         }
     }
 
@@ -674,7 +683,7 @@ public class InMemoryContainer : Container
         return Task.FromResult(CreateItemResponse(result, HttpStatusCode.OK, etag));
     }
 
-    public override Task<ItemResponse<T>> UpsertItemAsync<T>(
+    public override async Task<ItemResponse<T>> UpsertItemAsync<T>(
         T item, PartitionKey? partitionKey = null,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
@@ -693,25 +702,41 @@ public class InMemoryContainer : Container
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
 
-        EvictIfExpired(key);
-
-        if (requestOptions?.IfMatchEtag is not null && !_items.ContainsKey(key))
+        var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await itemLock.WaitAsync(cancellationToken);
+        try
         {
-            throw new CosmosException($"Entity with the specified id does not exist. id = {itemId}",
-                HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-        }
+            EvictIfExpired(key);
 
-        CheckIfMatch(requestOptions, key);
-        bool existed;
-        string previousJson;
-        string previousEtag;
-        DateTimeOffset? previousTimestamp;
-        string etag;
-        if (HasUniqueKeys)
-        {
-            lock (_uniqueKeyWriteLock)
+            if (requestOptions?.IfMatchEtag is not null && !_items.ContainsKey(key))
             {
-                ValidateUniqueKeys(jObj, pk, excludeItemId: itemId);
+                throw new CosmosException($"Entity with the specified id does not exist. id = {itemId}",
+                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            }
+
+            CheckIfMatch(requestOptions, key);
+            bool existed;
+            string previousJson;
+            string previousEtag;
+            DateTimeOffset? previousTimestamp;
+            string etag;
+            if (HasUniqueKeys)
+            {
+                lock (_uniqueKeyWriteLock)
+                {
+                    ValidateUniqueKeys(jObj, pk, excludeItemId: itemId);
+                    existed = _items.ContainsKey(key);
+                    previousJson = existed ? _items[key] : null;
+                    previousEtag = existed ? _etags.GetValueOrDefault(key) : null;
+                    previousTimestamp = existed ? _timestamps.GetValueOrDefault(key) : default(DateTimeOffset?);
+                    etag = GenerateETag();
+                    _etags[key] = etag;
+                    _timestamps[key] = DateTimeOffset.UtcNow;
+                    _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+                }
+            }
+            else
+            {
                 existed = _items.ContainsKey(key);
                 previousJson = existed ? _items[key] : null;
                 previousEtag = existed ? _etags.GetValueOrDefault(key) : null;
@@ -721,50 +746,43 @@ public class InMemoryContainer : Container
                 _timestamps[key] = DateTimeOffset.UtcNow;
                 _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
             }
-        }
-        else
-        {
-            existed = _items.ContainsKey(key);
-            previousJson = existed ? _items[key] : null;
-            previousEtag = existed ? _etags.GetValueOrDefault(key) : null;
-            previousTimestamp = existed ? _timestamps.GetValueOrDefault(key) : default(DateTimeOffset?);
-            etag = GenerateETag();
-            _etags[key] = etag;
-            _timestamps[key] = DateTimeOffset.UtcNow;
-            _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
-        }
-        RecordChangeFeed(itemId, pk, _items[key]);
+            RecordChangeFeed(itemId, pk, _items[key]);
 
-        try
-        {
-            var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
-            ExecutePostTriggers(requestOptions, committedDoc, "Upsert");
-            var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
-            if (postTriggerJson != _items[key])
+            try
             {
-                ValidateDocumentSize(postTriggerJson);
-                _items[key] = postTriggerJson;
+                var committedDoc = JsonParseHelpers.ParseJson(_items[key]);
+                ExecutePostTriggers(requestOptions, committedDoc, "Upsert");
+                var postTriggerJson = committedDoc.ToString(Newtonsoft.Json.Formatting.None);
+                if (postTriggerJson != _items[key])
+                {
+                    ValidateDocumentSize(postTriggerJson);
+                    _items[key] = postTriggerJson;
+                }
             }
-        }
-        catch
-        {
-            if (existed && previousJson is not null)
+            catch
             {
-                _items[key] = previousJson;
-                _etags[key] = previousEtag!;
-                if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
+                if (existed && previousJson is not null)
+                {
+                    _items[key] = previousJson;
+                    _etags[key] = previousEtag!;
+                    if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
+                }
+                else
+                {
+                    _items.TryRemove(key, out _);
+                    _etags.TryRemove(key, out _);
+                    _timestamps.TryRemove(key, out _);
+                }
+                throw;
             }
-            else
-            {
-                _items.TryRemove(key, out _);
-                _etags.TryRemove(key, out _);
-                _timestamps.TryRemove(key, out _);
-            }
-            throw;
-        }
 
-        var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
-        return Task.FromResult(CreateItemResponse(item, existed ? HttpStatusCode.OK : HttpStatusCode.Created, etag, suppressContent));
+            var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
+            return CreateItemResponse(item, existed ? HttpStatusCode.OK : HttpStatusCode.Created, etag, suppressContent);
+        }
+        finally
+        {
+            itemLock.Release();
+        }
     }
 
     public override async Task<ItemResponse<T>> ReplaceItemAsync<T>(
@@ -1021,68 +1039,77 @@ public class InMemoryContainer : Container
     //  Item CRUD — Stream
     // ═══════════════════════════════════════════════════════════════════════════
 
-    public override Task<ResponseMessage> CreateItemStreamAsync(
+    public override async Task<ResponseMessage> CreateItemStreamAsync(
         Stream streamPayload, PartitionKey partitionKey,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var json = ReadStream(streamPayload);
         var sizeError = ValidateDocumentSizeStream(json);
-        if (sizeError is not null) return Task.FromResult(sizeError);
+        if (sizeError is not null) return sizeError;
         JObject jObj;
         try { jObj = JsonParseHelpers.ParseJson(json); }
         catch (Newtonsoft.Json.JsonReaderException)
-        { return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest)); }
+        { return CreateResponseMessage(HttpStatusCode.BadRequest); }
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Create");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
         sizeError = ValidateDocumentSizeStream(json);
-        if (sizeError is not null) return Task.FromResult(sizeError);
+        if (sizeError is not null) return sizeError;
 
         var itemId = jObj["id"]?.ToString() ?? Guid.NewGuid().ToString();
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
 
-        EvictIfExpired(key);
-
-        if (HasUniqueKeys)
-        {
-            lock (_uniqueKeyWriteLock)
-            {
-                if (!ValidateUniqueKeysStream(jObj, pk))
-                    return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
-
-                if (!_items.TryAdd(key, json))
-                    return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
-            }
-        }
-        else
-        {
-            if (!_items.TryAdd(key, json))
-                return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
-        }
-
-        var etag = GenerateETag();
-        _etags[key] = etag;
-        _timestamps[key] = DateTimeOffset.UtcNow;
-        var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
-        _items[key] = enrichedJson;
-        RecordChangeFeed(itemId, pk, enrichedJson);
-
+        var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await itemLock.WaitAsync(cancellationToken);
         try
         {
-            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Create");
-        }
-        catch
-        {
-            _items.TryRemove(key, out _);
-            _etags.TryRemove(key, out _);
-            _timestamps.TryRemove(key, out _);
-            throw;
-        }
+            EvictIfExpired(key);
 
-        return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created,
-            requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag));
+            if (HasUniqueKeys)
+            {
+                lock (_uniqueKeyWriteLock)
+                {
+                    if (!ValidateUniqueKeysStream(jObj, pk))
+                        return CreateResponseMessage(HttpStatusCode.Conflict);
+
+                    if (!_items.TryAdd(key, json))
+                        return CreateResponseMessage(HttpStatusCode.Conflict);
+                }
+            }
+            else
+            {
+                if (!_items.TryAdd(key, json))
+                    return CreateResponseMessage(HttpStatusCode.Conflict);
+            }
+
+            var etag = GenerateETag();
+            _etags[key] = etag;
+            _timestamps[key] = DateTimeOffset.UtcNow;
+            var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+            _items[key] = enrichedJson;
+            RecordChangeFeed(itemId, pk, enrichedJson);
+
+            try
+            {
+                ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Create");
+            }
+            catch
+            {
+                _items.TryRemove(key, out _);
+                _etags.TryRemove(key, out _);
+                _timestamps.TryRemove(key, out _);
+                throw;
+            }
+
+            return CreateResponseMessage(HttpStatusCode.Created,
+                requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag);
+        }
+        finally
+        {
+            itemLock.Release();
+        }
     }
 
     public override Task<ResponseMessage> ReadItemStreamAsync(
@@ -1105,48 +1132,65 @@ public class InMemoryContainer : Container
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, json, etag));
     }
 
-    public override Task<ResponseMessage> UpsertItemStreamAsync(
+    public override async Task<ResponseMessage> UpsertItemStreamAsync(
         Stream streamPayload, PartitionKey partitionKey,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var json = ReadStream(streamPayload);
         var sizeError = ValidateDocumentSizeStream(json);
-        if (sizeError is not null) return Task.FromResult(sizeError);
+        if (sizeError is not null) return sizeError;
         JObject jObj;
         try { jObj = JsonParseHelpers.ParseJson(json); }
         catch (Newtonsoft.Json.JsonReaderException)
-        { return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest)); }
+        { return CreateResponseMessage(HttpStatusCode.BadRequest); }
 
         jObj = ExecutePreTriggers(requestOptions, jObj, "Upsert");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
         sizeError = ValidateDocumentSizeStream(json);
-        if (sizeError is not null) return Task.FromResult(sizeError);
+        if (sizeError is not null) return sizeError;
 
         var itemId = jObj["id"]?.ToString();
         if (itemId is null)
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.BadRequest));
+            return CreateResponseMessage(HttpStatusCode.BadRequest);
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
 
-        EvictIfExpired(key);
+        var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await itemLock.WaitAsync(cancellationToken);
+        try
+        {
+            EvictIfExpired(key);
 
-        if (!CheckIfMatchStream(requestOptions, key))
-        {
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.PreconditionFailed));
-        }
-        bool existed;
-        string etag;
-        string enrichedJson;
-        string previousJson = null;
-        string previousEtag = null;
-        DateTimeOffset? previousTimestamp = null;
-        if (HasUniqueKeys)
-        {
-            lock (_uniqueKeyWriteLock)
+            if (!CheckIfMatchStream(requestOptions, key))
+            {
+                return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
+            }
+            bool existed;
+            string etag;
+            string enrichedJson;
+            string previousJson = null;
+            string previousEtag = null;
+            DateTimeOffset? previousTimestamp = null;
+            if (HasUniqueKeys)
+            {
+                lock (_uniqueKeyWriteLock)
+                {
+                    if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: itemId))
+                        return CreateResponseMessage(HttpStatusCode.Conflict);
+                    existed = _items.TryGetValue(key, out previousJson);
+                    if (existed) { previousEtag = _etags.GetValueOrDefault(key); previousTimestamp = _timestamps.GetValueOrDefault(key); }
+                    etag = GenerateETag();
+                    _etags[key] = etag;
+                    _timestamps[key] = DateTimeOffset.UtcNow;
+                    enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
+                    _items[key] = enrichedJson;
+                }
+            }
+            else
             {
                 if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: itemId))
-                    return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+                    return CreateResponseMessage(HttpStatusCode.Conflict);
                 existed = _items.TryGetValue(key, out previousJson);
                 if (existed) { previousEtag = _etags.GetValueOrDefault(key); previousTimestamp = _timestamps.GetValueOrDefault(key); }
                 etag = GenerateETag();
@@ -1155,44 +1199,36 @@ public class InMemoryContainer : Container
                 enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
                 _items[key] = enrichedJson;
             }
-        }
-        else
-        {
-            if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: itemId))
-                return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
-            existed = _items.TryGetValue(key, out previousJson);
-            if (existed) { previousEtag = _etags.GetValueOrDefault(key); previousTimestamp = _timestamps.GetValueOrDefault(key); }
-            etag = GenerateETag();
-            _etags[key] = etag;
-            _timestamps[key] = DateTimeOffset.UtcNow;
-            enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
-            _items[key] = enrichedJson;
-        }
-        RecordChangeFeed(itemId, pk, enrichedJson);
+            RecordChangeFeed(itemId, pk, enrichedJson);
 
-        try
-        {
-            ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Upsert");
-        }
-        catch
-        {
-            if (existed && previousJson is not null)
+            try
             {
-                _items[key] = previousJson;
-                if (previousEtag is not null) _etags[key] = previousEtag;
-                if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
+                ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Upsert");
             }
-            else
+            catch
             {
-                _items.TryRemove(key, out _);
-                _etags.TryRemove(key, out _);
-                _timestamps.TryRemove(key, out _);
+                if (existed && previousJson is not null)
+                {
+                    _items[key] = previousJson;
+                    if (previousEtag is not null) _etags[key] = previousEtag;
+                    if (previousTimestamp.HasValue) _timestamps[key] = previousTimestamp.Value;
+                }
+                else
+                {
+                    _items.TryRemove(key, out _);
+                    _etags.TryRemove(key, out _);
+                    _timestamps.TryRemove(key, out _);
+                }
+                throw;
             }
-            throw;
-        }
 
-        return Task.FromResult(CreateResponseMessage(existed ? HttpStatusCode.OK : HttpStatusCode.Created,
-            requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag));
+            return CreateResponseMessage(existed ? HttpStatusCode.OK : HttpStatusCode.Created,
+                requestOptions?.EnableContentResponseOnWrite == false ? null : enrichedJson, etag);
+        }
+        finally
+        {
+            itemLock.Release();
+        }
     }
 
     public override async Task<ResponseMessage> ReplaceItemStreamAsync(

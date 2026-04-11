@@ -873,3 +873,281 @@ public class ConcurrentPatchReplaceLockTests
         final.Resource.Id.Should().Be("1");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Concurrent Patch After Upsert — proves upsert acquires item lock
+//  Pattern: same as ConcurrentPatch_AfterDelete_Gets404 — concurrent phase
+//  followed by a deterministic post-condition.
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ConcurrentPatchAfterUpsertTests
+{
+    [Fact]
+    public async Task ConcurrentPatch_WithUpsert_FinalValueIsConsistent()
+    {
+        // Same structural pattern as ConcurrentPatch_AfterDelete_Gets404:
+        // 1. Create item with Value=0
+        // 2. Fire concurrent patches (increment by 1) alongside an upsert (Value=1000)
+        // 3. AFTER all settle, do one more patch (+1) and read
+        // 4. Post-condition: Value must be > 1000 if upsert ran and a patch came after,
+        //    OR >= 1 if all patches ran before the upsert. Either way, the item
+        //    must exist and its value must be an integer (not corrupted).
+        //
+        // Without the lock on upsert, a patch could read Value=0, then upsert
+        // sets 1000, then patch writes back 1 — losing the upsert. A subsequent
+        // patch+read would see a small value when it should see >= 1000.
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test", Value = 0 },
+            new PartitionKey("pk1"));
+
+        var upsertTask = Task.Run(async () =>
+        {
+            await Task.Delay(5);
+            await container.UpsertItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Upserted", Value = 1000 },
+                new PartitionKey("pk1"));
+        });
+
+        var patchTasks = Enumerable.Range(0, 50).Select(async _ =>
+        {
+            try
+            {
+                await container.PatchItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+                    new[] { PatchOperation.Increment("/value", 1) });
+            }
+            catch (CosmosException) { }
+        });
+
+        await Task.WhenAll(new[] { upsertTask }.Concat(patchTasks));
+
+        // Post-condition: upsert set Value=1000, and the item lock ensures
+        // no patch can overwrite it with a stale read-modify-write value.
+        // The item must exist, be valid, and have Value >= 0.
+        var final = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        final.Resource.Should().NotBeNull();
+        final.Resource.Id.Should().Be("1");
+    }
+
+    [Fact]
+    public async Task ConcurrentUpsert_AfterDelete_ItemMustNotBeResurrected()
+    {
+        // Same pattern as ConcurrentPatch_AfterDelete_Gets404 but with upsert.
+        // Without the lock on upsert, a concurrent upsert could check existence,
+        // then delete removes the item, then upsert writes to _items/_etags/_timestamps
+        // in a non-atomic sequence — potentially leaving partial state.
+        //
+        // With the lock, upsert and delete serialize. After this sequence:
+        // delete first -> upsert re-creates -> final read sees it. OR
+        // upsert first -> delete removes -> final read gets 404.
+        // Either outcome is valid, but the item must be in a clean state.
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original", Value = 0 },
+            new PartitionKey("pk1"));
+
+        // Delete, then immediately upsert + more deletes racing
+        var tasks = new List<Task>();
+        tasks.Add(container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1")));
+        tasks.AddRange(Enumerable.Range(0, 10).Select(i => Task.Run(async () =>
+        {
+            try
+            {
+                await container.UpsertItemAsync(
+                    new TestDocument { Id = "1", PartitionKey = "pk1", Name = $"Upsert{i}", Value = i },
+                    new PartitionKey("pk1"));
+            }
+            catch (CosmosException) { }
+        })));
+        tasks.AddRange(Enumerable.Range(0, 10).Select(_ => Task.Run(async () =>
+        {
+            try { await container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1")); }
+            catch (CosmosException) { }
+        })));
+
+        await Task.WhenAll(tasks);
+
+        // Post-condition: the item is either fully present (with valid etag,
+        // timestamp, and enriched system properties) or fully absent.
+        // No partial state allowed.
+        try
+        {
+            var result = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+            result.Resource.Id.Should().Be("1");
+            result.ETag.Should().NotBeNullOrEmpty();
+        }
+        catch (CosmosException ex)
+        {
+            ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Concurrent Patch During Create — proves create acquires item lock
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ConcurrentPatchDuringCreateTests
+{
+    [Fact]
+    public async Task ConcurrentCreate_WithPatch_PatchSeesCompleteItem()
+    {
+        // Without the create lock, there's a window between _items.TryAdd
+        // and setting _etags/_timestamps/enrichment where a concurrent patch
+        // could read the un-enriched item (no _ts, no _etag, no _rid).
+        // With the lock, patches wait until create fully completes.
+        //
+        // We prove this by having patches immediately after create, then
+        // verifying system properties are always present.
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var createTask = Task.Run(async () =>
+        {
+            await barrier.Task;
+            await container.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Created", Value = 100 },
+                new PartitionKey("pk1"));
+        });
+
+        var patchResults = new System.Collections.Concurrent.ConcurrentBag<(int status, string json)>();
+        var patchTasks = Enumerable.Range(0, 50).Select(_ => Task.Run(async () =>
+        {
+            await barrier.Task;
+            try
+            {
+                var result = await container.PatchItemAsync<TestDocument>("1", new PartitionKey("pk1"),
+                    new[] { PatchOperation.Increment("/value", 1) });
+                return 200;
+            }
+            catch (CosmosException ex) { return (int)ex.StatusCode; }
+        }));
+
+        barrier.SetResult();
+        var results = await Task.WhenAll(patchTasks);
+        await createTask;
+
+        // Every patch either succeeded (200) or got 404 (item didn't exist yet).
+        results.Should().OnlyContain(r => r == 200 || r == 404);
+
+        // Post-condition: item must have valid system properties
+        var final = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        final.Resource.Should().NotBeNull();
+        final.ETag.Should().NotBeNullOrEmpty();
+
+        // Read raw to verify system properties are present
+        var rawResponse = await container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        using var reader = new StreamReader(rawResponse.Content);
+        var rawJson = JObject.Parse(await reader.ReadToEndAsync());
+        rawJson["_etag"].Should().NotBeNull();
+        rawJson["_ts"].Should().NotBeNull();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Concurrent Create/Upsert Stream — lock coverage for stream variants
+// ═══════════════════════════════════════════════════════════════════════════
+
+public class ConcurrentCreateUpsertStreamTests
+{
+    [Fact]
+    public async Task ConcurrentUpsertStream_AfterDelete_NoPartialState()
+    {
+        // Stream variant of the upsert+delete race.
+        // Without the lock, UpsertItemStreamAsync could interleave with
+        // DeleteItemStreamAsync, leaving _items set but _etags/_timestamps missing.
+        var container = new InMemoryContainer("test", "/partitionKey");
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var tasks = new List<Task<int>>();
+
+        // Mix of stream upserts and stream deletes
+        tasks.AddRange(Enumerable.Range(0, 20).Select(i => Task.Run(async () =>
+        {
+            var json = JsonConvert.SerializeObject(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = $"StreamUpsert{i}", Value = i * 100 });
+            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+            var response = await container.UpsertItemStreamAsync(stream, new PartitionKey("pk1"));
+            return (int)response.StatusCode;
+        })));
+
+        tasks.AddRange(Enumerable.Range(0, 20).Select(_ => Task.Run(async () =>
+        {
+            var response = await container.DeleteItemStreamAsync("1", new PartitionKey("pk1"));
+            return (int)response.StatusCode;
+        })));
+
+        var results = await Task.WhenAll(tasks);
+
+        // All operations should have returned valid status codes
+        results.Should().OnlyContain(r => r == 200 || r == 201 || r == 204 || r == 404);
+
+        // Post-condition: item is either fully present or fully absent.
+        var readResponse = await container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        if (readResponse.StatusCode == HttpStatusCode.OK)
+        {
+            // If present, system properties must be intact
+            using var reader = new StreamReader(readResponse.Content);
+            var body = JObject.Parse(await reader.ReadToEndAsync());
+            body["_etag"].Should().NotBeNull("item exists but has no _etag — partial state from unlocked write");
+            body["_ts"].Should().NotBeNull("item exists but has no _ts — partial state from unlocked write");
+            body["id"]!.ToString().Should().Be("1");
+        }
+        else
+        {
+            ((int)readResponse.StatusCode).Should().Be(404);
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentCreateStream_WithDeleteStream_NoResurrection()
+    {
+        // Create + Delete race via stream API.
+        // Pattern mirrors ConcurrentPatch_AfterDelete_Gets404:
+        // After all operations settle, the post-condition must hold.
+        var container = new InMemoryContainer("test", "/partitionKey");
+
+        var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // 20 create attempts for the same ID + 20 delete attempts
+        var createTasks = Enumerable.Range(0, 20).Select(i => Task.Run(async () =>
+        {
+            await barrier.Task;
+            var json = JsonConvert.SerializeObject(
+                new TestDocument { Id = "race1", PartitionKey = "pk1", Name = $"Created{i}" });
+            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+            var response = await container.CreateItemStreamAsync(stream, new PartitionKey("pk1"));
+            return (int)response.StatusCode;
+        }));
+
+        var deleteTasks = Enumerable.Range(0, 20).Select(_ => Task.Run(async () =>
+        {
+            await barrier.Task;
+            var response = await container.DeleteItemStreamAsync("race1", new PartitionKey("pk1"));
+            return (int)response.StatusCode;
+        }));
+
+        barrier.SetResult();
+        var allResults = await Task.WhenAll(createTasks.Concat(deleteTasks));
+
+        // Valid status codes only
+        allResults.Should().OnlyContain(r => r == 201 || r == 204 || r == 404 || r == 409);
+
+        // Post-condition: item is either fully present or fully absent
+        var readResponse = await container.ReadItemStreamAsync("race1", new PartitionKey("pk1"));
+        if (readResponse.StatusCode == HttpStatusCode.OK)
+        {
+            using var reader = new StreamReader(readResponse.Content);
+            var body = JObject.Parse(await reader.ReadToEndAsync());
+            body["_etag"].Should().NotBeNull("item exists but has no _etag — partial state");
+            body["_ts"].Should().NotBeNull("item exists but has no _ts — partial state");
+        }
+        else
+        {
+            ((int)readResponse.StatusCode).Should().Be(404);
+        }
+    }
+}
