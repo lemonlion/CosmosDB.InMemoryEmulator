@@ -1149,9 +1149,23 @@ public class QueryPlanResponseCanaryTests : IDisposable
     [Fact]
     public async Task QueryPlan_Aggregates_SumMinMaxAcceptedBySdk()
     {
-        // Test COUNT aggregate through the SDK pipeline (SUM needs non-reserved field names)
-        var count = await _cosmosContainer.GetItemLinqQueryable<TestDocument>().CountAsync();
-        count.Resource.Should().Be(2);
+        // Test SUM, MIN, MAX aggregates through the SDK query plan pipeline
+        // VALUE queries return scalars, so use matching scalar types (not JObject)
+        // Seeded items have Value=0 (default), so SUM(1) gives the count
+        var sumIter = _cosmosContainer.GetItemQueryIterator<int>(
+            "SELECT VALUE SUM(1) FROM c");
+        var sumResult = await sumIter.ReadNextAsync();
+        sumResult.First().Should().Be(2);
+
+        var minIter = _cosmosContainer.GetItemQueryIterator<string>(
+            "SELECT VALUE MIN(c.name) FROM c");
+        var minResult = await minIter.ReadNextAsync();
+        minResult.First().Should().Be("A");
+
+        var maxIter = _cosmosContainer.GetItemQueryIterator<string>(
+            "SELECT VALUE MAX(c.name) FROM c");
+        var maxResult = await maxIter.ReadNextAsync();
+        maxResult.First().Should().Be("B");
     }
 
     [Fact]
