@@ -90,9 +90,13 @@ public class InMemoryCosmosOptions
         ContainerProperties containerProperties,
         string? databaseName = null)
     {
+        string pkPath;
+        try { pkPath = containerProperties.PartitionKeyPath; }
+        catch (NotImplementedException) { pkPath = containerProperties.PartitionKeyPaths[0]; }
+
         Containers.Add(new ContainerConfig(
             containerProperties.Id,
-            containerProperties.PartitionKeyPath,
+            pkPath,
             databaseName,
             containerProperties));
         return this;

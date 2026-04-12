@@ -52,9 +52,13 @@ public class InMemoryContainerOptions
     /// </summary>
     public InMemoryContainerOptions AddContainer(ContainerProperties containerProperties)
     {
+        string pkPath;
+        try { pkPath = containerProperties.PartitionKeyPath; }
+        catch (NotImplementedException) { pkPath = containerProperties.PartitionKeyPaths[0]; }
+
         Containers.Add(new ContainerConfig(
             containerProperties.Id,
-            containerProperties.PartitionKeyPath,
+            pkPath,
             ContainerProperties: containerProperties));
         return this;
     }
