@@ -809,6 +809,7 @@ public class InMemoryContainer : Container
         jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
         ValidateDocumentSize(json);
+        ValidatePerItemTtl(jObj);
 
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(id, pk);
@@ -1005,6 +1006,7 @@ public class InMemoryContainer : Container
         jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
 
         ApplyPatchOperations(jObj, patchOperations);
+        ValidatePerItemTtl(jObj);
         var updatedJson = jObj.ToString(Formatting.None);
         ValidateDocumentSize(updatedJson);
         string etag;
@@ -1059,6 +1061,8 @@ public class InMemoryContainer : Container
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
         sizeError = ValidateDocumentSizeStream(json);
         if (sizeError is not null) return sizeError;
+        var ttlError = ValidatePerItemTtlStream(jObj);
+        if (ttlError is not null) return ttlError;
 
         var itemId = jObj["id"]?.ToString() ?? Guid.NewGuid().ToString();
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
@@ -1152,6 +1156,8 @@ public class InMemoryContainer : Container
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
         sizeError = ValidateDocumentSizeStream(json);
         if (sizeError is not null) return sizeError;
+        var ttlError = ValidatePerItemTtlStream(jObj);
+        if (ttlError is not null) return ttlError;
 
         var itemId = jObj["id"]?.ToString();
         if (itemId is null)
@@ -1279,6 +1285,8 @@ public class InMemoryContainer : Container
             json = jObj.ToString(Newtonsoft.Json.Formatting.None);
             sizeError = ValidateDocumentSizeStream(json);
             if (sizeError is not null) return sizeError;
+            var ttlError = ValidatePerItemTtlStream(jObj);
+            if (ttlError is not null) return ttlError;
 
             string etag;
             string enrichedJson;
@@ -1461,6 +1469,8 @@ public class InMemoryContainer : Container
         var updatedJson = jObj.ToString(Formatting.None);
         var sizeError = ValidateDocumentSizeStream(updatedJson);
         if (sizeError is not null) return sizeError;
+        var ttlError = ValidatePerItemTtlStream(jObj);
+        if (ttlError is not null) return ttlError;
 
         var previousEtag = _etags.GetValueOrDefault(key);
         var previousTimestamp = _timestamps.GetValueOrDefault(key);
@@ -2488,6 +2498,16 @@ public class InMemoryContainer : Container
                 "The value of _ttl must be either -1 or a positive integer.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
+    }
+
+    private ResponseMessage ValidatePerItemTtlStream(JObject jObj)
+    {
+        var ttlToken = jObj["_ttl"];
+        if (ttlToken is not null && int.TryParse(ttlToken.ToString(), out var ttlValue) && ttlValue == 0)
+        {
+            return CreateResponseMessage(HttpStatusCode.BadRequest);
+        }
+        return null;
     }
 
     private static void ValidateMaxItemCount(QueryRequestOptions requestOptions)
