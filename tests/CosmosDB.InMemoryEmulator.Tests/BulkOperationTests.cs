@@ -542,7 +542,7 @@ public class BulkOperationTests
         var tasks = Enumerable.Range(0, 50).Select(i =>
             Task.Run(async () =>
             {
-                var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+                var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
                     container.ReplaceItemAsync(
                         new TestDocument { Id = $"missing-{i}", PartitionKey = "pk1", Name = "X" },
                         $"missing-{i}", new PartitionKey("pk1")));
@@ -561,7 +561,7 @@ public class BulkOperationTests
         var tasks = Enumerable.Range(0, 50).Select(i =>
             Task.Run(async () =>
             {
-                var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+                var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
                     container.DeleteItemAsync<TestDocument>($"missing-{i}", new PartitionKey("pk1")));
                 return ex.StatusCode;
             }));
@@ -578,7 +578,7 @@ public class BulkOperationTests
         var tasks = Enumerable.Range(0, 50).Select(i =>
             Task.Run(async () =>
             {
-                var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+                var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
                     container.PatchItemAsync<TestDocument>($"missing-{i}", new PartitionKey("pk1"),
                         new[] { PatchOperation.Set("/name", "X") }));
                 return ex.StatusCode;
@@ -596,7 +596,7 @@ public class BulkOperationTests
         var tasks = Enumerable.Range(0, 50).Select(i =>
             Task.Run(async () =>
             {
-                var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+                var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
                     container.ReadItemAsync<TestDocument>($"missing-{i}", new PartitionKey("pk1")));
                 return ex.StatusCode;
             }));
@@ -656,7 +656,7 @@ public class BulkOperationTests
         var tasks = Enumerable.Range(0, 100).Select(i =>
             Task.Run(async () =>
             {
-                var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+                var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
                     container.ReplaceItemAsync(
                         new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Stale{i}" },
                         $"{i}", new PartitionKey("pk1"),
@@ -1042,7 +1042,7 @@ public class BulkOperationTests
         var tasks = Enumerable.Range(0, 10).Select(i =>
             Task.Run(async () =>
             {
-                var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+                var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
                     container.CreateItemAsync(
                         JObject.FromObject(new { id = $"{i}", partitionKey = "pk1", data = bigValue }),
                         new PartitionKey("pk1")));
@@ -1088,7 +1088,7 @@ public class BulkOperationTests
         var tasks = Enumerable.Range(0, 10).Select(i =>
             Task.Run(async () =>
             {
-                var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+                var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
                     container.UpsertItemAsync(
                         JObject.FromObject(new { id = $"{i}", partitionKey = "pk1", data = bigValue }),
                         new PartitionKey("pk1")));
@@ -1159,7 +1159,7 @@ public class BulkOperationTests
         var tasks = Enumerable.Range(0, 50).Select(i =>
             Task.Run(async () =>
             {
-                var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+                var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
                     container.CreateItemAsync(
                         new TestDocument { Id = $"{i}", PartitionKey = "pk1", Name = $"Dup{i}" },
                         new PartitionKey("pk1")));
@@ -1216,7 +1216,7 @@ public class BulkOperationTests
         var tasks = Enumerable.Range(0, 100).Select(i =>
             Task.Run(async () =>
             {
-                var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+                var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
                     container.DeleteItemAsync<TestDocument>($"{i}", new PartitionKey("pk1"),
                         new ItemRequestOptions { IfMatchEtag = oldEtags[i] }));
                 return ex.StatusCode;
@@ -1244,7 +1244,7 @@ public class BulkOperationTests
         var tasks = Enumerable.Range(0, 100).Select(i =>
             Task.Run(async () =>
             {
-                var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+                var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
                     container.ReadItemAsync<TestDocument>($"{i}", new PartitionKey("pk1"),
                         new ItemRequestOptions { IfNoneMatchEtag = createResults[i].ETag }));
                 return ex.StatusCode;

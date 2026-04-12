@@ -331,7 +331,7 @@ public class FakeCosmosHandler : HttpMessageHandler
     //  CRUD helpers
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private static HttpResponseMessage ConvertToHttpResponse(ResponseMessage cosmosResponse)
+    private HttpResponseMessage ConvertToHttpResponse(ResponseMessage cosmosResponse)
     {
         var httpResponse = new HttpResponseMessage(cosmosResponse.StatusCode);
         if (cosmosResponse.Content is not null)
@@ -346,7 +346,7 @@ public class FakeCosmosHandler : HttpMessageHandler
 
         httpResponse.Headers.Add("x-ms-request-charge", "1");
         httpResponse.Headers.Add("x-ms-activity-id", cosmosResponse.Headers["x-ms-activity-id"] ?? Guid.NewGuid().ToString());
-        httpResponse.Headers.Add("x-ms-session-token", "0:0#1");
+        httpResponse.Headers.Add("x-ms-session-token", _container.CurrentSessionToken);
 
         var etag = cosmosResponse.Headers["ETag"];
         if (etag is not null)
@@ -1329,7 +1329,7 @@ public class FakeCosmosHandler : HttpMessageHandler
 
         response.Headers.Add("x-ms-request-charge", "1");
         response.Headers.Add("x-ms-activity-id", Guid.NewGuid().ToString());
-        response.Headers.Add("x-ms-session-token", "0:0#1");
+        response.Headers.Add("x-ms-session-token", _container.CurrentSessionToken);
         response.Headers.Add("x-ms-item-count", paged.Count.ToString());
 
         if (continuationToken is not null)
@@ -1486,7 +1486,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         return Convert.ToBase64String(Encoding.UTF8.GetBytes(json));
     }
 
-    private static HttpResponseMessage CreateJsonResponse(string json)
+    private HttpResponseMessage CreateJsonResponse(string json)
     {
         var response = new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -1494,7 +1494,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         };
         response.Headers.Add("x-ms-request-charge", "0");
         response.Headers.Add("x-ms-activity-id", Guid.NewGuid().ToString());
-        response.Headers.Add("x-ms-session-token", "0:0#1");
+        response.Headers.Add("x-ms-session-token", _container.CurrentSessionToken);
         return response;
     }
 

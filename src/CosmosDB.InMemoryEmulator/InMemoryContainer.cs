@@ -79,6 +79,8 @@ public class InMemoryContainer : Container
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), DateTimeOffset> _timestamps = new();
     private readonly List<(DateTimeOffset Timestamp, string Id, string PartitionKey, string Json, bool IsDelete)> _changeFeed = new();
     private readonly object _changeFeedLock = new();
+    private long _changeFeedLsnCounter;
+    private long _sessionSequence;
     private readonly object _uniqueKeyWriteLock = new();
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), SemaphoreSlim> _itemLocks = new();
     private int _throughput = 400;
@@ -298,7 +300,7 @@ public class InMemoryContainer : Container
         set
         {
             if (value == 0)
-                throw new CosmosException("The value of DefaultTimeToLive must be either null, -1, or a positive integer.",
+                throw new InMemoryCosmosException("The value of DefaultTimeToLive must be either null, -1, or a positive integer.",
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _defaultTimeToLive = value;
         }
@@ -314,6 +316,12 @@ public class InMemoryContainer : Container
     /// Set to <c>0</c> to disable eviction (unbounded growth).
     /// </summary>
     public int MaxChangeFeedSize { get; set; } = 1000;
+
+    /// <summary>
+    /// Gets the current session token for this container.
+    /// The token advances each time a write operation succeeds.
+    /// </summary>
+    internal string CurrentSessionToken => $"0:{_sessionSequence}#{_sessionSequence}";
 
     /// <summary>
     /// Number of feed ranges returned by <see cref="GetFeedRangesAsync"/>. Defaults to 1.
@@ -402,25 +410,28 @@ public class InMemoryContainer : Container
     public void ImportState(string json)
     {
         var state = JObject.Parse(json);
+
+        if (state["items"] is not JArray items)
+            return; // No "items" key — do nothing (preserve existing data)
+
         ClearItems();
 
-        if (state["items"] is JArray items)
+        foreach (var item in items)
         {
-            foreach (var item in items)
-            {
-                var itemJson = item.ToString(Formatting.None);
-                var id = item["id"]?.ToString() ?? "";
-                var jObj = JsonParseHelpers.ParseJson(itemJson);
-                var pk = ExtractPartitionKeyValue(null, jObj);
-                var key = (id, pk);
+            var itemJson = item.ToString(Formatting.None);
+            if (item["id"] is null)
+                throw new InvalidOperationException("Each imported item must have an 'id' property.");
+            var id = item["id"]!.ToString();
+            var jObj = JsonParseHelpers.ParseJson(itemJson);
+            var pk = ExtractPartitionKeyValue(null, jObj);
+            var key = (id, pk);
 
-                ValidateUniqueKeys(jObj, pk);
+            ValidateUniqueKeys(jObj, pk);
 
-                var importEtag = GenerateETag();
-                _etags[key] = importEtag;
-                _timestamps[key] = DateTimeOffset.UtcNow;
-                _items[key] = EnrichWithSystemProperties(itemJson, importEtag, _timestamps[key]);
-            }
+            var importEtag = GenerateETag();
+            _etags[key] = importEtag;
+            _timestamps[key] = DateTimeOffset.UtcNow;
+            _items[key] = EnrichWithSystemProperties(itemJson, importEtag, _timestamps[key]);
         }
     }
 
@@ -458,10 +469,14 @@ public class InMemoryContainer : Container
                 .ToList();
         }
 
-        // Replay: keep the last entry per (Id, PartitionKey), skip if it was a delete
+        // Replay: keep the last entry per (Id, PartitionKey), skip if it was a delete.
+        // TTL eviction tombstones (marked with _ttlEviction) are ignored so that PITR
+        // can resurrect items whose TTL expired — matching real Cosmos PITR behaviour.
         var lastPerKey = new Dictionary<(string Id, string PartitionKey), (string Json, bool IsDelete)>();
         foreach (var entry in feedSnapshot)
         {
+            if (entry.IsDelete && entry.Json.Contains("\"_ttlEviction\":true", StringComparison.Ordinal))
+                continue;
             lastPerKey[(entry.Id, entry.PartitionKey)] = (entry.Json, entry.IsDelete);
         }
 
@@ -597,7 +612,7 @@ public class InMemoryContainer : Container
 
         if (itemId.Length == 0)
         {
-            throw new CosmosException("The 'id' property cannot be an empty string.",
+            throw new InMemoryCosmosException("The 'id' property cannot be an empty string.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
@@ -619,7 +634,7 @@ public class InMemoryContainer : Container
                     ValidateUniqueKeys(jObj, pk);
                     if (!_items.TryAdd(key, json))
                     {
-                        throw new CosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
+                        throw new InMemoryCosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
                             HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                     }
                 }
@@ -628,7 +643,7 @@ public class InMemoryContainer : Container
             {
                 if (!_items.TryAdd(key, json))
                 {
-                    throw new CosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
+                    throw new InMemoryCosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
                         HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
             }
@@ -659,7 +674,9 @@ public class InMemoryContainer : Container
                         HttpStatusCode.Created, etag, suppressContent);
                 }
 
-                return CreateItemResponse(item, HttpStatusCode.Created, etag, suppressContent);
+                return CreateItemResponse(
+                    JsonConvert.DeserializeObject<T>(_items[key], JsonSettings),
+                    HttpStatusCode.Created, etag, suppressContent);
             }
             catch
             {
@@ -686,7 +703,7 @@ public class InMemoryContainer : Container
         if (!_items.TryGetValue(key, out var json) || IsExpired(key))
         {
             EvictIfExpired(key);
-            throw new CosmosException($"Entity with the specified id does not exist in the system. id = {id}",
+            throw new InMemoryCosmosException($"Entity with the specified id does not exist in the system. id = {id}",
                 HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
@@ -723,7 +740,7 @@ public class InMemoryContainer : Container
 
             if (requestOptions?.IfMatchEtag is not null && !_items.ContainsKey(key))
             {
-                throw new CosmosException($"Entity with the specified id does not exist. id = {itemId}",
+                throw new InMemoryCosmosException($"Entity with the specified id does not exist. id = {itemId}",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
 
@@ -790,7 +807,9 @@ public class InMemoryContainer : Container
             }
 
             var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
-            return CreateItemResponse(item, existed ? HttpStatusCode.OK : HttpStatusCode.Created, etag, suppressContent);
+            return CreateItemResponse(
+                JsonConvert.DeserializeObject<T>(_items[key], JsonSettings),
+                existed ? HttpStatusCode.OK : HttpStatusCode.Created, etag, suppressContent);
         }
         finally
         {
@@ -811,7 +830,7 @@ public class InMemoryContainer : Container
         var bodyId = jObj["id"]?.ToString();
         if (bodyId is not null && bodyId != id)
         {
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 "The 'id' property in the body does not match the 'id' parameter.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
@@ -830,7 +849,7 @@ public class InMemoryContainer : Container
             if (!_items.ContainsKey(key) || IsExpired(key))
             {
                 EvictIfExpired(key);
-                throw new CosmosException($"Entity with the specified id does not exist. id = {id}",
+                throw new InMemoryCosmosException($"Entity with the specified id does not exist. id = {id}",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
 
@@ -890,7 +909,7 @@ public class InMemoryContainer : Container
             }
 
             var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
-            return CreateItemResponse(item, HttpStatusCode.OK, etag, suppressContent);
+            return CreateItemResponse(JsonConvert.DeserializeObject<T>(_items[key], JsonSettings), HttpStatusCode.OK, etag, suppressContent);
         }
         finally
         {
@@ -913,7 +932,7 @@ public class InMemoryContainer : Container
             if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
             {
                 EvictIfExpired(key);
-                throw new CosmosException($"Entity with the specified id does not exist. id = {id}",
+                throw new InMemoryCosmosException($"Entity with the specified id does not exist. id = {id}",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
 
@@ -958,13 +977,13 @@ public class InMemoryContainer : Container
 
         if (patchOperations is null || patchOperations.Count == 0)
         {
-            throw new CosmosException("Patch request has no operations.",
+            throw new InMemoryCosmosException("Patch request has no operations.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
         if (patchOperations.Count > 10)
         {
-            throw new CosmosException("Patch request has too many operations.",
+            throw new InMemoryCosmosException("Patch request has too many operations.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
@@ -993,7 +1012,7 @@ public class InMemoryContainer : Container
         if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
         {
             EvictIfExpired(key);
-            throw new CosmosException($"Entity with the specified id does not exist. id = {id}",
+            throw new InMemoryCosmosException($"Entity with the specified id does not exist. id = {id}",
                 HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
@@ -1012,7 +1031,7 @@ public class InMemoryContainer : Container
                     new Dictionary<string, object>(), null);
                 if (!matches)
                 {
-                    throw new CosmosException("Precondition Failed",
+                    throw new InMemoryCosmosException("Precondition Failed",
                         HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
             }
@@ -1620,7 +1639,7 @@ public class InMemoryContainer : Container
         catch (CosmosException) { throw; }
         catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or FormatException)
         {
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 ex.Message, HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
         }
     }
@@ -1634,7 +1653,10 @@ public class InMemoryContainer : Container
         var filtered = ExecuteQuerySafe(() => FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions));
         var items = filtered.Select(json => JsonConvert.DeserializeObject<T>(json, JsonSettings)).ToList();
         var initialOffset = ParseContinuationToken(continuationToken);
-        return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, initialOffset);
+        return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, initialOffset)
+        {
+            PopulateIndexMetrics = requestOptions?.PopulateIndexMetrics ?? false
+        };
     }
 
     public override FeedIterator<T> GetItemQueryIterator<T>(
@@ -1654,7 +1676,10 @@ public class InMemoryContainer : Container
             items = filtered.Select(json => JsonConvert.DeserializeObject<T>(json, JsonSettings)).ToList();
         }
         var initialOffset = ParseContinuationToken(continuationToken);
-        return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, initialOffset);
+        return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, initialOffset)
+        {
+            PopulateIndexMetrics = requestOptions?.PopulateIndexMetrics ?? false
+        };
     }
 
     public override FeedIterator<T> GetItemQueryIterator<T>(
@@ -1663,11 +1688,14 @@ public class InMemoryContainer : Container
     {
         ValidateMaxItemCount(requestOptions);
         var parameters = ExtractQueryParameters(queryDefinition);
-        var filtered = ExecuteQuerySafe(() => FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions));
-        filtered = FilterByFeedRange(filtered, feedRange);
+        var preFiltered = FilterByFeedRange(GetAllItemsForPartition(requestOptions).ToList(), feedRange);
+        var filtered = ExecuteQuerySafe(() => FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions, preFiltered));
         var items = filtered.Select(json => JsonConvert.DeserializeObject<T>(json, JsonSettings)).ToList();
         var initialOffset = ParseContinuationToken(continuationToken);
-        return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, initialOffset);
+        return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, initialOffset)
+        {
+            PopulateIndexMetrics = requestOptions?.PopulateIndexMetrics ?? false
+        };
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1701,8 +1729,8 @@ public class InMemoryContainer : Container
         QueryRequestOptions requestOptions = null)
     {
         var parameters = ExtractQueryParameters(queryDefinition);
-        var filtered = ExecuteQuerySafe(() => FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions));
-        filtered = FilterByFeedRange(filtered, feedRange);
+        var preFiltered = FilterByFeedRange(GetAllItemsForPartition(requestOptions).ToList(), feedRange);
+        var filtered = ExecuteQuerySafe(() => FilterItemsByQuery(queryDefinition.QueryText, parameters, requestOptions, preFiltered));
         return CreateStreamFeedIterator(filtered, ParseContinuationToken(continuationToken), requestOptions?.MaxItemCount);
     }
 
@@ -2020,7 +2048,9 @@ public class InMemoryContainer : Container
             var pkStr = pkToken.ToString();
             var pkArray = JArray.Parse(pkStr);
             if (pkArray.Count == 0) return null;
-            return JTokenToTypedKey(pkArray[0]);
+            // For null PK values (PartitionKey.Null), JTokenToTypedKey returns null.
+            // Return "" to match what ExtractPartitionKeyValueFromJson returns for null-PK items.
+            return JTokenToTypedKey(pkArray[0]) ?? "";
         }
         catch
         {
@@ -2123,7 +2153,7 @@ public class InMemoryContainer : Container
         cancellationToken.ThrowIfCancellationRequested();
         if (_isDeleted || (!ExplicitlyCreated && _items.IsEmpty))
         {
-            throw new CosmosException($"Container '{Id}' not found.", HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            throw new InMemoryCosmosException($"Container '{Id}' not found.", HttpStatusCode.NotFound, 1003, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
         _containerProperties.IndexingPolicy = IndexingPolicy;
         _containerProperties.DefaultTimeToLive = DefaultTimeToLive;
@@ -2153,7 +2183,7 @@ public class InMemoryContainer : Container
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (containerProperties.Id != Id)
-            throw new CosmosException($"Container id '{containerProperties.Id}' does not match the existing container id '{Id}'.", HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            throw new InMemoryCosmosException($"Container id '{containerProperties.Id}' does not match the existing container id '{Id}'.", HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         ValidateContainerReplace(containerProperties);
         ValidateComputedProperties(containerProperties);
         // Preserve UniqueKeyPolicy from the existing properties if the replacement doesn't include it
@@ -2312,7 +2342,7 @@ public class InMemoryContainer : Container
     {
         var pk = ExtractPartitionKeyValueCore(partitionKey, jObj);
         if (pk is not null && System.Text.Encoding.UTF8.GetByteCount(pk) > 2048)
-            throw new CosmosException("Partition key value exceeds the maximum allowed size of 2KB.",
+            throw new InMemoryCosmosException("Partition key value exceeds the maximum allowed size of 2KB.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         return pk;
     }
@@ -2355,7 +2385,7 @@ public class InMemoryContainer : Container
             }
         }
 
-        return jObj["id"] is { } idToken ? JTokenToTypedKey(idToken) : null;
+        return null;
     }
 
     internal static string JTokenToTypedKey(JToken token)
@@ -2456,7 +2486,7 @@ public class InMemoryContainer : Container
 
         if (bodyPk != explicitPk)
         {
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 "Partition key provided either doesn't correspond to definition in the collection or doesn't match partition key field values specified in the document.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
@@ -2469,7 +2499,7 @@ public class InMemoryContainer : Container
             var path = op.Path;
             if (string.Equals(path, "/id", StringComparison.OrdinalIgnoreCase))
             {
-                throw new CosmosException(
+                throw new InMemoryCosmosException(
                     "Cannot patch the 'id' field.",
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
@@ -2480,7 +2510,7 @@ public class InMemoryContainer : Container
                 {
                     if (string.Equals(path, pkPath, StringComparison.OrdinalIgnoreCase))
                     {
-                        throw new CosmosException(
+                        throw new InMemoryCosmosException(
                             "Cannot patch the partition key field.",
                             HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                     }
@@ -2494,7 +2524,7 @@ public class InMemoryContainer : Container
                 {
                     if (string.Equals(path, "/" + cp.Name, StringComparison.OrdinalIgnoreCase))
                     {
-                        throw new CosmosException(
+                        throw new InMemoryCosmosException(
                             "Cannot patch a computed property path.",
                             HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                     }
@@ -2510,7 +2540,7 @@ public class InMemoryContainer : Container
         var newPkPath = newProperties.PartitionKeyPath;
         if (!string.IsNullOrEmpty(newPkPath) && !string.IsNullOrEmpty(existingPkPath) && newPkPath != existingPkPath)
         {
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 "Partition key paths for a container cannot be changed.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
@@ -2521,7 +2551,7 @@ public class InMemoryContainer : Container
         var ttlToken = jObj["_ttl"];
         if (ttlToken is not null && int.TryParse(ttlToken.ToString(), out var ttlValue) && ttlValue == 0)
         {
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 "The value of _ttl must be either -1 or a positive integer.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
@@ -2541,7 +2571,7 @@ public class InMemoryContainer : Container
     {
         if (requestOptions?.MaxItemCount == 0)
         {
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 "MaxItemCount must be a positive value or -1.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
         }
@@ -2562,7 +2592,7 @@ public class InMemoryContainer : Container
 
         if (cps.Count > 20)
         {
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 "A container can have at most 20 computed properties.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
         }
@@ -2573,7 +2603,7 @@ public class InMemoryContainer : Container
         {
             if (!allNames.Add(cp.Name))
             {
-                throw new CosmosException(
+                throw new InMemoryCosmosException(
                     $"Duplicate computed property name '{cp.Name}'.",
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
             }
@@ -2583,14 +2613,14 @@ public class InMemoryContainer : Container
         {
             if (ReservedComputedPropertyNames.Contains(cp.Name))
             {
-                throw new CosmosException(
+                throw new InMemoryCosmosException(
                     $"Computed property name '{cp.Name}' is a reserved system property name.",
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
             }
 
             if (string.IsNullOrWhiteSpace(cp.Query))
             {
-                throw new CosmosException(
+                throw new InMemoryCosmosException(
                     $"Computed property '{cp.Name}' must have a non-empty query.",
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
             }
@@ -2599,7 +2629,7 @@ public class InMemoryContainer : Container
             var normalized = System.Text.RegularExpressions.Regex.Replace(cp.Query.Trim(), @"\s+", " ");
             if (!normalized.StartsWith("SELECT VALUE", StringComparison.OrdinalIgnoreCase))
             {
-                throw new CosmosException(
+                throw new InMemoryCosmosException(
                     "Computed property query must use 'SELECT VALUE' syntax.",
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
             }
@@ -2609,7 +2639,7 @@ public class InMemoryContainer : Container
             {
                 if (normalized.IndexOf(clause, StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    throw new CosmosException(
+                    throw new InMemoryCosmosException(
                         $"Computed property query cannot contain '{clause.Trim()}' clause.",
                         HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
                 }
@@ -2619,7 +2649,7 @@ public class InMemoryContainer : Container
             var selfPattern = @"\." + System.Text.RegularExpressions.Regex.Escape(cp.Name) + @"(?![a-zA-Z0-9_])";
             if (System.Text.RegularExpressions.Regex.IsMatch(normalized, selfPattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
             {
-                throw new CosmosException(
+                throw new InMemoryCosmosException(
                     $"Computed property '{cp.Name}' cannot reference itself.",
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
             }
@@ -2631,7 +2661,7 @@ public class InMemoryContainer : Container
                 var crossPattern = @"\." + System.Text.RegularExpressions.Regex.Escape(otherName) + @"(?![a-zA-Z0-9_])";
                 if (System.Text.RegularExpressions.Regex.IsMatch(normalized, crossPattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                 {
-                    throw new CosmosException(
+                    throw new InMemoryCosmosException(
                         $"Computed property '{cp.Name}' cannot reference another computed property '{otherName}'.",
                         HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
                 }
@@ -2652,24 +2682,32 @@ public class InMemoryContainer : Container
         jObj["_etag"] = etag;
         jObj["_ts"] = timestamp.ToUnixTimeSeconds();
         jObj["_attachments"] = "attachments/";
-        return jObj.ToString(Formatting.None);
+        var enriched = jObj.ToString(Formatting.None);
+        ValidateDocumentSize(enriched);
+        return enriched;
     }
 
     private static int ParseContinuationToken(string continuationToken)
     {
-        if (continuationToken is not null && int.TryParse(continuationToken, out var offset))
-        {
-            return offset;
-        }
+        if (continuationToken is null)
+            return 0;
 
-        return 0;
+        if (int.TryParse(continuationToken, out var offset))
+            return offset;
+
+        throw new InMemoryCosmosException(
+            $"Invalid continuation token '{continuationToken}'.",
+            HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), 0);
     }
 
     private void RecordChangeFeed(string id, string partitionKey, string json, bool isDelete = false)
     {
         lock (_changeFeedLock)
         {
-            _changeFeed.Add((DateTimeOffset.UtcNow, id, partitionKey, json, isDelete));
+            _sessionSequence++;
+            var lsn = _changeFeedLsnCounter++;
+            var jsonWithLsn = json.Insert(1, $"\"_lsn\":{lsn},");
+            _changeFeed.Add((DateTimeOffset.UtcNow, id, partitionKey, jsonWithLsn, isDelete));
 
             if (MaxChangeFeedSize > 0 && _changeFeed.Count > MaxChangeFeedSize)
             {
@@ -2679,9 +2717,10 @@ public class InMemoryContainer : Container
         }
     }
 
-    private void RecordDeleteTombstone(string id, string pk, PartitionKey partitionKey = default)
+    private void RecordDeleteTombstone(string id, string pk, PartitionKey partitionKey = default, bool isTtlEviction = false)
     {
         var tombstone = new JObject { ["id"] = id, ["_deleted"] = true, ["_ts"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds() };
+        if (isTtlEviction) tombstone["_ttlEviction"] = true;
 
         if (PartitionKeyPaths.Count > 1 && partitionKey != default && partitionKey != PartitionKey.None && partitionKey != PartitionKey.Null)
         {
@@ -2762,7 +2801,17 @@ public class InMemoryContainer : Container
                 if (trigger.TriggerType != TriggerType.Pre || trigger.PreHandler is null) continue;
                 if (!TriggerOperationMatches(trigger.TriggerOperation, currentOp)) continue;
 
-                jObj = trigger.PreHandler(jObj);
+                try
+                {
+                    jObj = trigger.PreHandler(jObj);
+                }
+                catch (CosmosException) { throw; }
+                catch (Exception ex)
+                {
+                    throw new InMemoryCosmosException(
+                        $"Pre-trigger '{name}' failed: {ex.Message}",
+                        HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                }
                 break; // Real Cosmos only fires the first matching trigger
             }
 
@@ -2774,7 +2823,7 @@ public class InMemoryContainer : Container
 
                 if (JsTriggerEngine is null)
                 {
-                    throw new CosmosException(
+                    throw new InMemoryCosmosException(
                         $"Trigger '{name}' has a JavaScript body but no JS trigger engine is configured. " +
                         "Install the CosmosDB.InMemoryEmulator.JsTriggers package and call container.UseJsTriggers().",
                         HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
@@ -2792,13 +2841,13 @@ public class InMemoryContainer : Container
                 var newPk = jObj.SelectToken(pkPath)?.ToString();
                 if (!string.Equals(originalId, newId, StringComparison.Ordinal))
                 {
-                    throw new CosmosException(
+                    throw new InMemoryCosmosException(
                         $"Pre-trigger '{name}' is not allowed to modify the document id.",
                         HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
                 if (!string.Equals(originalPk, newPk, StringComparison.Ordinal))
                 {
-                    throw new CosmosException(
+                    throw new InMemoryCosmosException(
                         $"Pre-trigger '{name}' is not allowed to modify the partition key.",
                         HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
@@ -2806,7 +2855,7 @@ public class InMemoryContainer : Container
                 break; // Real Cosmos only fires the first matching trigger
             }
 
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 $"Trigger '{name}' is not registered. Register it via RegisterTrigger() or CreateTriggerAsync() before referencing it in PreTriggers.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
@@ -2840,7 +2889,7 @@ public class InMemoryContainer : Container
                 }
                 catch (Exception ex)
                 {
-                    throw new CosmosException(
+                    throw new InMemoryCosmosException(
                         $"Post-trigger '{name}' failed: {ex.Message}",
                         HttpStatusCode.InternalServerError, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
@@ -2855,7 +2904,7 @@ public class InMemoryContainer : Container
 
                 if (JsTriggerEngine is null)
                 {
-                    throw new CosmosException(
+                    throw new InMemoryCosmosException(
                         $"Trigger '{name}' has a JavaScript body but no JS trigger engine is configured. " +
                         "Install the CosmosDB.InMemoryEmulator.JsTriggers package and call container.UseJsTriggers().",
                         HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
@@ -2876,14 +2925,14 @@ public class InMemoryContainer : Container
                 }
                 catch (Exception ex)
                 {
-                    throw new CosmosException(
+                    throw new InMemoryCosmosException(
                         $"Post-trigger '{name}' failed: {ex.Message}",
                         HttpStatusCode.InternalServerError, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
                 break; // Real Cosmos only fires the first matching trigger
             }
 
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 $"Trigger '{name}' is not registered. Register it via RegisterTrigger() or CreateTriggerAsync() before referencing it in PostTriggers.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
@@ -2910,7 +2959,7 @@ public class InMemoryContainer : Container
 
         if (requestOptions.IfMatchEtag != currentEtag)
         {
-            throw new CosmosException("Precondition Failed", HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            throw new InMemoryCosmosException("Precondition Failed", HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
     }
 
@@ -2923,12 +2972,12 @@ public class InMemoryContainer : Container
 
         if (requestOptions.IfNoneMatchEtag == "*" && _etags.ContainsKey(key))
         {
-            throw new CosmosException("Not Modified", HttpStatusCode.NotModified, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            throw new InMemoryCosmosException("Not Modified", HttpStatusCode.NotModified, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
         if (_etags.TryGetValue(key, out var currentEtag) && requestOptions.IfNoneMatchEtag == currentEtag)
         {
-            throw new CosmosException("Not Modified", HttpStatusCode.NotModified, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            throw new InMemoryCosmosException("Not Modified", HttpStatusCode.NotModified, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
     }
 
@@ -2945,12 +2994,12 @@ public class InMemoryContainer : Container
 
         if (requestOptions.IfNoneMatchEtag == "*" && _etags.ContainsKey(key))
         {
-            throw new CosmosException("Precondition Failed", HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            throw new InMemoryCosmosException("Precondition Failed", HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
         if (_etags.TryGetValue(key, out var currentEtag) && requestOptions.IfNoneMatchEtag == currentEtag)
         {
-            throw new CosmosException("Precondition Failed", HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            throw new InMemoryCosmosException("Precondition Failed", HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
     }
 
@@ -3015,7 +3064,7 @@ public class InMemoryContainer : Container
         public override string ToString() => "{}";
     }
 
-    private static ItemResponse<T> CreateItemResponse<T>(T item, HttpStatusCode statusCode, string etag = null, bool suppressContent = false)
+    private ItemResponse<T> CreateItemResponse<T>(T item, HttpStatusCode statusCode, string etag = null, bool suppressContent = false)
     {
         var r = Substitute.For<ItemResponse<T>>();
         r.StatusCode.Returns(statusCode);
@@ -3023,7 +3072,7 @@ public class InMemoryContainer : Container
         var activityId = Guid.NewGuid().ToString();
         var headers = new Headers
         {
-            ["x-ms-session-token"] = "0:0#1",
+            ["x-ms-session-token"] = CurrentSessionToken,
             ["x-ms-activity-id"] = activityId,
             ["x-ms-request-charge"] = SyntheticRequestCharge.ToString(CultureInfo.InvariantCulture)
         };
@@ -3035,7 +3084,7 @@ public class InMemoryContainer : Container
         return r;
     }
 
-    private static ResponseMessage CreateResponseMessage(HttpStatusCode statusCode, string json = null, string etag = null)
+    private ResponseMessage CreateResponseMessage(HttpStatusCode statusCode, string json = null, string etag = null)
     {
         var errorMessage = (int)statusCode >= 400
             ? $"Response status code does not indicate success: {statusCode} ({(int)statusCode})"
@@ -3046,7 +3095,7 @@ public class InMemoryContainer : Container
         };
         msg.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
         msg.Headers["x-ms-request-charge"] = SyntheticRequestCharge.ToString(CultureInfo.InvariantCulture);
-        msg.Headers["x-ms-session-token"] = "0:0#1";
+        msg.Headers["x-ms-session-token"] = CurrentSessionToken;
         if (etag is not null)
         {
             msg.Headers["ETag"] = etag;
@@ -3060,7 +3109,7 @@ public class InMemoryContainer : Container
         var byteCount = Encoding.UTF8.GetByteCount(json);
         if (byteCount > MaxDocumentSizeBytes)
         {
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 $"Request size is too large. Max allowed size in bytes: {MaxDocumentSizeBytes}. Found: {byteCount}.",
                 HttpStatusCode.RequestEntityTooLarge, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
@@ -3095,7 +3144,7 @@ public class InMemoryContainer : Container
 
                 if (newValues.SequenceEqual(existingValues))
                 {
-                    throw new CosmosException(
+                    throw new InMemoryCosmosException(
                         "Unique index constraint violation.",
                         HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
@@ -3163,6 +3212,9 @@ public class InMemoryContainer : Container
         _items.TryRemove(key, out _);
         _etags.TryRemove(key, out _);
         _timestamps.TryRemove(key, out _);
+
+        // Record a delete tombstone in the change feed so consumers see TTL evictions
+        RecordDeleteTombstone(key.Id, key.PartitionKey, isTtlEviction: true);
     }
 
     internal Dictionary<(string Id, string PartitionKey), string> SnapshotItems()
@@ -3228,7 +3280,7 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (_c._storedProcedureProperties.ContainsKey(storedProcedureProperties.Id))
-                throw new CosmosException($"StoredProcedure '{storedProcedureProperties.Id}' already exists.",
+                throw new InMemoryCosmosException($"StoredProcedure '{storedProcedureProperties.Id}' already exists.",
                     HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._storedProcedureProperties[storedProcedureProperties.Id] = storedProcedureProperties;
             EnrichStoredProcedureSystemProperties(storedProcedureProperties);
@@ -3242,7 +3294,7 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._storedProcedureProperties.TryGetValue(id, out var props))
-                throw new CosmosException($"StoredProcedure '{id}' not found.",
+                throw new InMemoryCosmosException($"StoredProcedure '{id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             EnrichStoredProcedureSystemProperties(props);
             var r = Substitute.For<StoredProcedureResponse>();
@@ -3256,7 +3308,7 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (!_c._storedProcedureProperties.ContainsKey(storedProcedureProperties.Id))
-                throw new CosmosException($"StoredProcedure '{storedProcedureProperties.Id}' not found.",
+                throw new InMemoryCosmosException($"StoredProcedure '{storedProcedureProperties.Id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._storedProcedureProperties[storedProcedureProperties.Id] = storedProcedureProperties;
             EnrichStoredProcedureSystemProperties(storedProcedureProperties);
@@ -3270,7 +3322,7 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._storedProcedureProperties.Remove(id))
-                throw new CosmosException($"StoredProcedure '{id}' not found.",
+                throw new InMemoryCosmosException($"StoredProcedure '{id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._storedProcedures.Remove(id);
             var r = Substitute.For<StoredProcedureResponse>();
@@ -3285,11 +3337,11 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (_c._storedProcedureProperties.ContainsKey(storedProcedureProperties.Id))
-                throw new CosmosException($"StoredProcedure '{storedProcedureProperties.Id}' already exists.",
+                throw new InMemoryCosmosException($"StoredProcedure '{storedProcedureProperties.Id}' already exists.",
                     HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._storedProcedureProperties[storedProcedureProperties.Id] = storedProcedureProperties;
             EnrichStoredProcedureSystemProperties(storedProcedureProperties);
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created,
+            return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.Created,
                 JsonConvert.SerializeObject(storedProcedureProperties)));
         }
 
@@ -3297,10 +3349,10 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._storedProcedureProperties.TryGetValue(id, out var props))
-                throw new CosmosException($"StoredProcedure '{id}' not found.",
+                throw new InMemoryCosmosException($"StoredProcedure '{id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             EnrichStoredProcedureSystemProperties(props);
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+            return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.OK,
                 JsonConvert.SerializeObject(props)));
         }
 
@@ -3309,11 +3361,11 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (!_c._storedProcedureProperties.ContainsKey(storedProcedureProperties.Id))
-                throw new CosmosException($"StoredProcedure '{storedProcedureProperties.Id}' not found.",
+                throw new InMemoryCosmosException($"StoredProcedure '{storedProcedureProperties.Id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._storedProcedureProperties[storedProcedureProperties.Id] = storedProcedureProperties;
             EnrichStoredProcedureSystemProperties(storedProcedureProperties);
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+            return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.OK,
                 JsonConvert.SerializeObject(storedProcedureProperties)));
         }
 
@@ -3321,10 +3373,10 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._storedProcedureProperties.Remove(id))
-                throw new CosmosException($"StoredProcedure '{id}' not found.",
+                throw new InMemoryCosmosException($"StoredProcedure '{id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._storedProcedures.Remove(id);
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
+            return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.NoContent));
         }
 
         // ── Stored Procedure Execute ──────────────────────────────────────
@@ -3334,7 +3386,7 @@ public class InMemoryContainer : Container
             StoredProcedureRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._storedProcedures.ContainsKey(storedProcedureId) && !_c._storedProcedureProperties.ContainsKey(storedProcedureId))
-                throw new CosmosException($"StoredProcedure '{storedProcedureId}' not found.",
+                throw new InMemoryCosmosException($"StoredProcedure '{storedProcedureId}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
 
             string handlerResult = null;
@@ -3379,7 +3431,7 @@ public class InMemoryContainer : Container
             StoredProcedureRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._storedProcedures.ContainsKey(storedProcedureId) && !_c._storedProcedureProperties.ContainsKey(storedProcedureId))
-                throw new CosmosException($"StoredProcedure '{storedProcedureId}' not found.",
+                throw new InMemoryCosmosException($"StoredProcedure '{storedProcedureId}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
 
             string handlerResult = null;
@@ -3394,7 +3446,7 @@ public class InMemoryContainer : Container
                 handlerResult = ExecuteJsEngine(storedProcedureId, sprocProps.Body, partitionKey, parameters);
             }
 
-            var msg = CreateResponseMessage(HttpStatusCode.OK, handlerResult);
+            var msg = _c.CreateResponseMessage(HttpStatusCode.OK, handlerResult);
             if (_c.SprocEngine?.CapturedLogs is { Count: > 0 } logs)
                 msg.Headers["x-ms-documentdb-script-log-results"] = Uri.EscapeDataString(string.Join("\n", logs));
             return Task.FromResult(msg);
@@ -3417,7 +3469,7 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (_c._triggerProperties.ContainsKey(triggerProperties.Id))
-                throw new CosmosException($"Trigger '{triggerProperties.Id}' already exists.",
+                throw new InMemoryCosmosException($"Trigger '{triggerProperties.Id}' already exists.",
                     HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._triggerProperties[triggerProperties.Id] = triggerProperties;
             var r = Substitute.For<TriggerResponse>();
@@ -3430,7 +3482,7 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._triggerProperties.TryGetValue(id, out var props))
-                throw new CosmosException($"Trigger '{id}' not found.",
+                throw new InMemoryCosmosException($"Trigger '{id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             var r = Substitute.For<TriggerResponse>();
             r.StatusCode.Returns(HttpStatusCode.OK);
@@ -3443,7 +3495,7 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (!_c._triggerProperties.ContainsKey(triggerProperties.Id))
-                throw new CosmosException($"Trigger '{triggerProperties.Id}' not found.",
+                throw new InMemoryCosmosException($"Trigger '{triggerProperties.Id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._triggerProperties[triggerProperties.Id] = triggerProperties;
             var r = Substitute.For<TriggerResponse>();
@@ -3456,7 +3508,7 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._triggerProperties.Remove(id))
-                throw new CosmosException($"Trigger '{id}' not found.",
+                throw new InMemoryCosmosException($"Trigger '{id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._triggers.Remove(id);
             var r = Substitute.For<TriggerResponse>();
@@ -3471,9 +3523,9 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (_c._triggerProperties.ContainsKey(triggerProperties.Id))
-                return Task.FromResult(CreateResponseMessage(HttpStatusCode.Conflict));
+                return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.Conflict));
             _c._triggerProperties[triggerProperties.Id] = triggerProperties;
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created,
+            return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.Created,
                 JsonConvert.SerializeObject(triggerProperties)));
         }
 
@@ -3481,8 +3533,8 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._triggerProperties.TryGetValue(id, out var props))
-                return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+                return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.NotFound));
+            return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.OK,
                 JsonConvert.SerializeObject(props)));
         }
 
@@ -3491,9 +3543,9 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (!_c._triggerProperties.ContainsKey(triggerProperties.Id))
-                return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
+                return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.NotFound));
             _c._triggerProperties[triggerProperties.Id] = triggerProperties;
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+            return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.OK,
                 JsonConvert.SerializeObject(triggerProperties)));
         }
 
@@ -3501,9 +3553,9 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._triggerProperties.Remove(id))
-                return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
+                return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.NotFound));
             _c._triggers.Remove(id);
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
+            return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.NoContent));
         }
 
         // ── UDF CRUD (typed) ──────────────────────────────────────────────
@@ -3513,7 +3565,7 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (_c._udfProperties.ContainsKey(userDefinedFunctionProperties.Id))
-                throw new CosmosException($"UDF '{userDefinedFunctionProperties.Id}' already exists.",
+                throw new InMemoryCosmosException($"UDF '{userDefinedFunctionProperties.Id}' already exists.",
                     HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._udfProperties[userDefinedFunctionProperties.Id] = userDefinedFunctionProperties;
             if (!_c._userDefinedFunctions.ContainsKey("UDF." + userDefinedFunctionProperties.Id))
@@ -3528,7 +3580,7 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._udfProperties.TryGetValue(id, out var props))
-                throw new CosmosException($"UDF '{id}' not found.",
+                throw new InMemoryCosmosException($"UDF '{id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             var r = Substitute.For<UserDefinedFunctionResponse>();
             r.StatusCode.Returns(HttpStatusCode.OK);
@@ -3541,7 +3593,7 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (!_c._udfProperties.ContainsKey(userDefinedFunctionProperties.Id))
-                throw new CosmosException($"UDF '{userDefinedFunctionProperties.Id}' not found.",
+                throw new InMemoryCosmosException($"UDF '{userDefinedFunctionProperties.Id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._udfProperties[userDefinedFunctionProperties.Id] = userDefinedFunctionProperties;
             var r = Substitute.For<UserDefinedFunctionResponse>();
@@ -3554,7 +3606,7 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._udfProperties.Remove(id))
-                throw new CosmosException($"UDF '{id}' not found.",
+                throw new InMemoryCosmosException($"UDF '{id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._userDefinedFunctions.Remove("UDF." + id);
             var r = Substitute.For<UserDefinedFunctionResponse>();
@@ -3569,12 +3621,12 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (_c._udfProperties.ContainsKey(userDefinedFunctionProperties.Id))
-                throw new CosmosException($"UDF '{userDefinedFunctionProperties.Id}' already exists.",
+                throw new InMemoryCosmosException($"UDF '{userDefinedFunctionProperties.Id}' already exists.",
                     HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._udfProperties[userDefinedFunctionProperties.Id] = userDefinedFunctionProperties;
             if (!_c._userDefinedFunctions.ContainsKey("UDF." + userDefinedFunctionProperties.Id))
                 _c._userDefinedFunctions["UDF." + userDefinedFunctionProperties.Id] = UdfPlaceholder;
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.Created,
+            return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.Created,
                 JsonConvert.SerializeObject(userDefinedFunctionProperties)));
         }
 
@@ -3582,9 +3634,9 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._udfProperties.TryGetValue(id, out var props))
-                throw new CosmosException($"UDF '{id}' not found.",
+                throw new InMemoryCosmosException($"UDF '{id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+            return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.OK,
                 JsonConvert.SerializeObject(props)));
         }
 
@@ -3593,10 +3645,10 @@ public class InMemoryContainer : Container
             CancellationToken cancellationToken = default)
         {
             if (!_c._udfProperties.ContainsKey(userDefinedFunctionProperties.Id))
-                throw new CosmosException($"UDF '{userDefinedFunctionProperties.Id}' not found.",
+                throw new InMemoryCosmosException($"UDF '{userDefinedFunctionProperties.Id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._udfProperties[userDefinedFunctionProperties.Id] = userDefinedFunctionProperties;
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK,
+            return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.OK,
                 JsonConvert.SerializeObject(userDefinedFunctionProperties)));
         }
 
@@ -3604,10 +3656,10 @@ public class InMemoryContainer : Container
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
             if (!_c._udfProperties.Remove(id))
-                throw new CosmosException($"UDF '{id}' not found.",
+                throw new InMemoryCosmosException($"UDF '{id}' not found.",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             _c._userDefinedFunctions.Remove("UDF." + id);
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NoContent));
+            return Task.FromResult(_c.CreateResponseMessage(HttpStatusCode.NoContent));
         }
 
         // ── Query iterators (typed) ───────────────────────────────────────
@@ -3641,32 +3693,32 @@ public class InMemoryContainer : Container
         public override FeedIterator GetStoredProcedureQueryStreamIterator(
             string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
             => new InMemoryStreamFeedIterator(
-                () => FilterById(_c._storedProcedureProperties, queryText).Cast<object>().ToList(), "StoredProcedures");
+                () => FilterById(_c._storedProcedureProperties, queryText).Cast<object>().ToList(), "StoredProcedures", () => _c.CurrentSessionToken);
 
         public override FeedIterator GetStoredProcedureQueryStreamIterator(
             QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
             => new InMemoryStreamFeedIterator(
-                () => FilterById(_c._storedProcedureProperties, queryDefinition).Cast<object>().ToList(), "StoredProcedures");
+                () => FilterById(_c._storedProcedureProperties, queryDefinition).Cast<object>().ToList(), "StoredProcedures", () => _c.CurrentSessionToken);
 
         public override FeedIterator GetTriggerQueryStreamIterator(
             string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
             => new InMemoryStreamFeedIterator(
-                () => FilterById(_c._triggerProperties, queryText).Cast<object>().ToList(), "Triggers");
+                () => FilterById(_c._triggerProperties, queryText).Cast<object>().ToList(), "Triggers", () => _c.CurrentSessionToken);
 
         public override FeedIterator GetTriggerQueryStreamIterator(
             QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
             => new InMemoryStreamFeedIterator(
-                () => FilterById(_c._triggerProperties, queryDefinition).Cast<object>().ToList(), "Triggers");
+                () => FilterById(_c._triggerProperties, queryDefinition).Cast<object>().ToList(), "Triggers", () => _c.CurrentSessionToken);
 
         public override FeedIterator GetUserDefinedFunctionQueryStreamIterator(
             string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
             => new InMemoryStreamFeedIterator(
-                () => FilterById(_c._udfProperties, queryText).Cast<object>().ToList(), "UserDefinedFunctions");
+                () => FilterById(_c._udfProperties, queryText).Cast<object>().ToList(), "UserDefinedFunctions", () => _c.CurrentSessionToken);
 
         public override FeedIterator GetUserDefinedFunctionQueryStreamIterator(
             QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
             => new InMemoryStreamFeedIterator(
-                () => FilterById(_c._udfProperties, queryDefinition).Cast<object>().ToList(), "UserDefinedFunctions");
+                () => FilterById(_c._udfProperties, queryDefinition).Cast<object>().ToList(), "UserDefinedFunctions", () => _c.CurrentSessionToken);
 
         // ── Private helpers ───────────────────────────────────────────────
 
@@ -3719,7 +3771,7 @@ public class InMemoryContainer : Container
             {
                 var task = Task.Run(invoker);
                 if (!task.Wait(TimeSpan.FromSeconds(10)))
-                    throw new CosmosException(
+                    throw new InMemoryCosmosException(
                         $"Stored procedure '{sprocId}' exceeded the 10-second execution timeout.",
                         HttpStatusCode.RequestTimeout, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 result = task.Result;
@@ -3729,18 +3781,18 @@ public class InMemoryContainer : Container
             catch (AggregateException ae)
             {
                 var inner = ae.InnerException ?? ae;
-                throw new CosmosException($"Stored procedure '{sprocId}' failed: {inner.Message}",
+                throw new InMemoryCosmosException($"Stored procedure '{sprocId}' failed: {inner.Message}",
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
             catch (Exception ex)
             {
-                throw new CosmosException($"Stored procedure '{sprocId}' failed: {ex.Message}",
+                throw new InMemoryCosmosException($"Stored procedure '{sprocId}' failed: {ex.Message}",
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
 
             const int MaxResponseSize = 2 * 1024 * 1024;
             if (result != null && Encoding.UTF8.GetByteCount(result) > MaxResponseSize)
-                throw new CosmosException($"Stored procedure '{sprocId}' response exceeds the 2MB size limit.",
+                throw new InMemoryCosmosException($"Stored procedure '{sprocId}' response exceeds the 2MB size limit.",
                     (HttpStatusCode)413, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             return result;
         }
@@ -3755,7 +3807,7 @@ public class InMemoryContainer : Container
             catch (CosmosException) { throw; }
             catch (Exception ex)
             {
-                throw new CosmosException($"Stored procedure '{sprocId}' failed: {ex.Message}",
+                throw new InMemoryCosmosException($"Stored procedure '{sprocId}' failed: {ex.Message}",
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
         }
@@ -3909,7 +3961,8 @@ public class InMemoryContainer : Container
     }
 
     private List<string> FilterItemsByQuery(
-        string queryText, IDictionary<string, object> parameters, QueryRequestOptions requestOptions)
+        string queryText, IDictionary<string, object> parameters, QueryRequestOptions requestOptions,
+        IEnumerable<string> preFilteredItems = null)
     {
         // Detect ORDER BY RANK RRF(...) early — the parser may silently drop it on some runtimes
         if (System.Text.RegularExpressions.Regex.IsMatch(
@@ -3937,7 +3990,7 @@ public class InMemoryContainer : Container
 
         var parsed = CosmosSqlParser.Parse(queryText);
 
-        IEnumerable<string> items = GetAllItemsForPartition(requestOptions);
+        IEnumerable<string> items = preFilteredItems ?? GetAllItemsForPartition(requestOptions);
 
         // Computed properties — augment items with virtual properties before any filtering/projection
         var computedProps = GetParsedComputedProperties();
@@ -5781,7 +5834,7 @@ public class InMemoryContainer : Container
             catch (NotSupportedException)
             {
                 // Malformed SQL — throw 400 like real Cosmos DB
-                throw new CosmosException(
+                throw new InMemoryCosmosException(
                     $"Syntax error in EXISTS subquery: {raw}",
                     System.Net.HttpStatusCode.BadRequest, 0, string.Empty, 0);
             }
@@ -7974,7 +8027,7 @@ public class InMemoryContainer : Container
             // Reject patches to system-generated properties
             if (SystemProperties.Contains(path))
             {
-                throw new CosmosException(
+                throw new InMemoryCosmosException(
                     $"Cannot patch system property '{path}'.",
                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
@@ -7999,7 +8052,7 @@ public class InMemoryContainer : Container
                         {
                             if (insertIdx < 0 || insertIdx > insertArray.Count)
                             {
-                                throw new CosmosException("Array index out of bounds.",
+                                throw new InMemoryCosmosException("Array index out of bounds.",
                                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                             }
                             insertArray.Insert(insertIdx, newToken);
@@ -8020,7 +8073,7 @@ public class InMemoryContainer : Container
                         {
                             if (idx < 0 || idx >= arr.Count)
                             {
-                                throw new CosmosException("Array index out of bounds.",
+                                throw new InMemoryCosmosException("Array index out of bounds.",
                                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                             }
                             arr[idx] = newToken;
@@ -8040,7 +8093,7 @@ public class InMemoryContainer : Container
                         {
                             if (idx < 0 || idx >= arr.Count)
                             {
-                                throw new CosmosException("Array index out of bounds.",
+                                throw new InMemoryCosmosException("Array index out of bounds.",
                                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                             }
                             arr[idx] = newToken;
@@ -8050,7 +8103,7 @@ public class InMemoryContainer : Container
                             var parent = rawParent as JObject ?? jObj;
                             if (parent[propertyName] is null)
                             {
-                                throw new CosmosException("Replace target does not exist.",
+                                throw new InMemoryCosmosException("Replace target does not exist.",
                                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                             }
                             parent[propertyName] = newToken;
@@ -8063,7 +8116,7 @@ public class InMemoryContainer : Container
                         {
                             if (idx < 0 || idx >= arr.Count)
                             {
-                                throw new CosmosException("Array index out of bounds.",
+                                throw new InMemoryCosmosException("Array index out of bounds.",
                                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                             }
                             arr.RemoveAt(idx);
@@ -8073,7 +8126,7 @@ public class InMemoryContainer : Container
                             var parent = rawParent as JObject ?? jObj;
                             if (parent[propertyName] is null)
                             {
-                                throw new CosmosException("Remove target does not exist.",
+                                throw new InMemoryCosmosException("Remove target does not exist.",
                                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                             }
                             parent.Remove(propertyName);
@@ -8088,7 +8141,7 @@ public class InMemoryContainer : Container
                             // Reject when destination is a child of source (e.g. move /nested → /nested/child)
                             if (path.StartsWith(sourcePath + "/", StringComparison.Ordinal))
                             {
-                                throw new CosmosException(
+                                throw new InMemoryCosmosException(
                                     "The 'path' attribute can't be a JSON child of the 'from' JSON location.",
                                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                             }
@@ -8102,7 +8155,7 @@ public class InMemoryContainer : Container
                             var sourceValue = sourceParent[sourcePropertyName];
                             if (sourceValue is null)
                             {
-                                throw new CosmosException("Move source does not exist.",
+                                throw new InMemoryCosmosException("Move source does not exist.",
                                     HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                             }
                             sourceParent.Remove(sourcePropertyName);
@@ -8123,7 +8176,7 @@ public class InMemoryContainer : Container
                             {
                                 if (existingToken.Type is not (JTokenType.Integer or JTokenType.Float))
                                 {
-                                    throw new CosmosException(
+                                    throw new InMemoryCosmosException(
                                         $"Cannot increment non-numeric field '{path}'. Field type is {existingToken.Type}.",
                                         HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                                 }
@@ -8178,17 +8231,17 @@ public class InMemoryContainer : Container
     //  Stream FeedIterator factory
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private static FeedIterator CreateStreamFeedIterator(List<string> items, int initialOffset = 0, int? maxItemCount = null)
+    private FeedIterator CreateStreamFeedIterator(List<string> items, int initialOffset = 0, int? maxItemCount = null)
     {
         return CreateStreamFeedIteratorFromFactory(() => items, initialOffset, maxItemCount ?? items.Count);
     }
 
-    private static FeedIterator CreateStreamFeedIterator(Func<IReadOnlyList<object>> itemsFactory)
+    private FeedIterator CreateStreamFeedIterator(Func<IReadOnlyList<object>> itemsFactory)
     {
         return CreateStreamFeedIteratorFromFactory(() => itemsFactory().Select(o => o?.ToString() ?? "").ToList(), 0, null);
     }
 
-    private static FeedIterator CreateStreamFeedIteratorFromFactory(Func<List<string>> itemsFactory, int initialOffset, int? maxItemCount)
+    private FeedIterator CreateStreamFeedIteratorFromFactory(Func<List<string>> itemsFactory, int initialOffset, int? maxItemCount)
     {
         var offset = initialOffset;
         var done = false;
@@ -8215,7 +8268,7 @@ public class InMemoryContainer : Container
             var response = new ResponseMessage(HttpStatusCode.OK) { Content = stream };
             response.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
             response.Headers["x-ms-request-charge"] = "1";
-            response.Headers["x-ms-session-token"] = "0:0#1";
+            response.Headers["x-ms-session-token"] = CurrentSessionToken;
             response.Headers["x-ms-item-count"] = documentsArray.Count.ToString();
             if (!done)
                 response.Headers.Add("x-ms-continuation", offset.ToString());
@@ -8265,7 +8318,7 @@ public class InMemoryContainer : Container
     {
         // VECTORDISTANCE(vector1, vector2 [, bool_bruteForce] [, {distanceFunction:'cosine'|'dotproduct'|'euclidean'})
         if (args.Length > 4)
-            throw new CosmosException("VECTORDISTANCE accepts at most 4 arguments.", HttpStatusCode.BadRequest, 0, string.Empty, 0);
+            throw new InMemoryCosmosException("VECTORDISTANCE accepts at most 4 arguments.", HttpStatusCode.BadRequest, 0, string.Empty, 0);
 
         var vec1 = ToDoubleArray(args[0]);
         var vec2 = ToDoubleArray(args[1]);
@@ -8293,7 +8346,7 @@ public class InMemoryContainer : Container
             "cosine" => CosineSimilarity(vec1, vec2),
             "dotproduct" => (object)DotProduct(vec1, vec2),
             "euclidean" => (object)EuclideanDistance(vec1, vec2),
-            _ => throw new CosmosException($"Unknown distanceFunction '{distanceFunction}'. Supported values: 'cosine', 'dotproduct', 'euclidean'.", HttpStatusCode.BadRequest, 0, string.Empty, 0),
+            _ => throw new InMemoryCosmosException($"Unknown distanceFunction '{distanceFunction}'. Supported values: 'cosine', 'dotproduct', 'euclidean'.", HttpStatusCode.BadRequest, 0, string.Empty, 0),
         };
 
         // Guard against Infinity/NaN which are not valid JSON numbers

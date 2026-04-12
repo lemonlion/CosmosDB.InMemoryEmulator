@@ -1246,9 +1246,7 @@ public class IndexPolicyClientCreationTests
 
 public class IndexMetricsTests
 {
-    [Fact(Skip = "Real Cosmos DB returns index utilization metrics in FeedResponse.IndexMetrics " +
-        "when PopulateIndexMetrics=true. The emulator always returns null. Implementing realistic " +
-        "index metrics would require modeling the full Cosmos DB indexing engine.")]
+    [Fact]
     public async Task IndexMetrics_ReturnsUtilizationData()
     {
         var container = new InMemoryContainer("test", "/pk");
@@ -1265,11 +1263,8 @@ public class IndexMetricsTests
     }
 
     [Fact]
-    public async Task BehavioralDifference_IndexMetrics_ReturnsNull()
+    public async Task IndexMetrics_WithoutPopulateFlag_ReturnsNull()
     {
-        // DIVERGENT BEHAVIOR: Real Cosmos DB returns index utilization metrics
-        // when PopulateIndexMetrics=true. The emulator always returns null
-        // because it doesn't model the indexing engine.
         var container = new InMemoryContainer("test", "/pk");
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "1", pk = "a", val = 10 }),

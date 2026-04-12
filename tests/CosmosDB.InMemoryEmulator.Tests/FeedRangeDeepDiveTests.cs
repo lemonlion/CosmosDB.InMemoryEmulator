@@ -21,9 +21,9 @@ public class FeedRangeAggregateDivergentTests
         return container;
     }
 
-    // 1.1 — Aggregate COUNT over FeedRange doesn't produce per-range counts
-    [Fact(Skip = "Known limitation: aggregate queries execute before FeedRange filtering, so per-range COUNT doesn't sum to total")]
-    public async Task AggregateCOUNT_WithFeedRange_PerRangeSumsToTotal_Divergent()
+    // 1.1 — Aggregate COUNT over FeedRange produces per-range counts
+    [Fact]
+    public async Task AggregateCOUNT_WithFeedRange_PerRangeSumsToTotal()
     {
         var container = await CreatePopulatedContainer();
         var ranges = await container.GetFeedRangesAsync();
@@ -31,7 +31,7 @@ public class FeedRangeAggregateDivergentTests
         var perRangeSum = 0;
         foreach (var range in ranges)
         {
-            var iterator = container.GetItemQueryIterator<JObject>(range, new QueryDefinition("SELECT VALUE COUNT(1) FROM c"));
+            var iterator = container.GetItemQueryIterator<JToken>(range, new QueryDefinition("SELECT VALUE COUNT(1) FROM c"));
             while (iterator.HasMoreResults)
             {
                 var page = await iterator.ReadNextAsync();
@@ -43,9 +43,9 @@ public class FeedRangeAggregateDivergentTests
         perRangeSum.Should().Be(50);
     }
 
-    // Sister test: show actual behavior
+    // Sister test: verify per-range counts are non-trivially distributed
     [Fact]
-    public async Task AggregateCOUNT_WithFeedRange_ActualBehavior_AllInOneRange()
+    public async Task AggregateCOUNT_WithFeedRange_PerRangeCounts_DistributedAcrossRanges()
     {
         var container = await CreatePopulatedContainer();
         var ranges = await container.GetFeedRangesAsync();
@@ -63,16 +63,15 @@ public class FeedRangeAggregateDivergentTests
             perRangeCounts.Add(rangeCount);
         }
 
-        // Aggregate is computed globally then FeedRange-filtered on the result.
-        // The single aggregate row has no PK → hashes to one range → only that range gets 50, others get 0.
+        // Items are pre-filtered by FeedRange before aggregation, so multiple ranges should have counts.
         var rangesWithCount = perRangeCounts.Count(c => c > 0);
-        rangesWithCount.Should().Be(1, "aggregate result lands in exactly one range");
-        perRangeCounts.Sum().Should().Be(50, "the total count still equals 50 in the one range it lands in");
+        rangesWithCount.Should().BeGreaterThan(1, "items should be distributed across multiple ranges");
+        perRangeCounts.Sum().Should().Be(50);
     }
 
     // 1.2 — Aggregate SUM
-    [Fact(Skip = "Known limitation: aggregate SUM over FeedRange doesn't produce per-range sums")]
-    public async Task AggregateSUM_WithFeedRange_PerRangeSumsToTotal_Divergent()
+    [Fact]
+    public async Task AggregateSUM_WithFeedRange_PerRangeSumsToTotal()
     {
         var container = await CreatePopulatedContainer();
         var ranges = await container.GetFeedRangesAsync();
@@ -80,7 +79,7 @@ public class FeedRangeAggregateDivergentTests
         var perRangeSum = 0;
         foreach (var range in ranges)
         {
-            var iterator = container.GetItemQueryIterator<JObject>(range, new QueryDefinition("SELECT VALUE SUM(c.value) FROM c"));
+            var iterator = container.GetItemQueryIterator<JToken>(range, new QueryDefinition("SELECT VALUE SUM(c.value) FROM c"));
             while (iterator.HasMoreResults)
             {
                 var page = await iterator.ReadNextAsync();
@@ -91,9 +90,9 @@ public class FeedRangeAggregateDivergentTests
         perRangeSum.Should().Be(Enumerable.Range(0, 50).Sum(i => i * 10));
     }
 
-    // Sister test
+    // Sister test: verify per-range sums add up
     [Fact]
-    public async Task AggregateSUM_WithFeedRange_ActualBehavior_AllInOneRange()
+    public async Task AggregateSUM_WithFeedRange_PerRangeSums_DistributedCorrectly()
     {
         var container = await CreatePopulatedContainer();
         var ranges = await container.GetFeedRangesAsync();
@@ -114,35 +113,13 @@ public class FeedRangeAggregateDivergentTests
         }
 
         var rangesWithSum = perRangeSums.Count(s => s > 0);
-        rangesWithSum.Should().Be(1, "aggregate SUM lands in one range");
+        rangesWithSum.Should().BeGreaterThan(1, "sums should be distributed across multiple ranges");
         perRangeSums.Sum().Should().Be(expectedTotal);
     }
 
     // 1.3 — Aggregate AVG
-    [Fact(Skip = "Known limitation: aggregate AVG over FeedRange doesn't produce per-range averages")]
-    public async Task AggregateAVG_WithFeedRange_PerRangeDoesNotMatchGlobal_Divergent()
-    {
-        var container = await CreatePopulatedContainer();
-        var ranges = await container.GetFeedRangesAsync();
-
-        var perRangeAvgs = new List<double>();
-        foreach (var range in ranges)
-        {
-            var iterator = container.GetItemQueryIterator<JObject>(range, new QueryDefinition("SELECT VALUE AVG(c.value) FROM c"));
-            while (iterator.HasMoreResults)
-            {
-                var page = await iterator.ReadNextAsync();
-                foreach (var item in page) perRangeAvgs.Add(item.Value<double>());
-            }
-        }
-
-        // In real Cosmos, per-partition AVGs would be computed and merged
-        perRangeAvgs.Should().HaveCount(4, "each range should return an AVG");
-    }
-
-    // Sister test
     [Fact]
-    public async Task AggregateAVG_WithFeedRange_ActualBehavior_SingleResult()
+    public async Task AggregateAVG_WithFeedRange_EachRangeReturnsLocalAvg()
     {
         var container = await CreatePopulatedContainer();
         var ranges = await container.GetFeedRangesAsync();
@@ -158,35 +135,35 @@ public class FeedRangeAggregateDivergentTests
             }
         }
 
-        // Only one range gets the aggregate result
-        perRangeAvgs.Count(a => a > 0).Should().Be(1);
+        // Each range should return its own local AVG
+        perRangeAvgs.Should().HaveCountGreaterThan(1, "multiple ranges should return AVGs");
     }
 
-    // 1.4 — Aggregate MIN/MAX
-    [Fact(Skip = "Known limitation: aggregate MIN/MAX over FeedRange doesn't match global result per range")]
-    public async Task AggregateMinMax_WithFeedRange_PerRangeDoesNotMatchGlobal_Divergent()
+    // Sister test: verify local AVGs are reasonable values
+    [Fact]
+    public async Task AggregateAVG_WithFeedRange_LocalAvgs_AreReasonableValues()
     {
         var container = await CreatePopulatedContainer();
         var ranges = await container.GetFeedRangesAsync();
 
-        var allMins = new List<int>();
+        var perRangeAvgs = new List<double>();
         foreach (var range in ranges)
         {
-            var iterator = container.GetItemQueryIterator<JObject>(range, new QueryDefinition("SELECT VALUE MIN(c.value) FROM c"));
+            var iterator = container.GetItemQueryIterator<JToken>(range, new QueryDefinition("SELECT VALUE AVG(c.value) FROM c"));
             while (iterator.HasMoreResults)
             {
                 var page = await iterator.ReadNextAsync();
-                foreach (var item in page) allMins.Add(item.Value<int>());
+                foreach (var item in page) perRangeAvgs.Add(item.Value<double>());
             }
         }
 
-        // In real Cosmos, each partition would return its local MIN
-        allMins.Should().HaveCount(4);
+        // All per-range AVGs should be within the global range [0, 490]
+        perRangeAvgs.Should().AllSatisfy(avg => avg.Should().BeInRange(0, 490));
     }
 
-    // Sister test
+    // 1.4 — Aggregate MIN/MAX
     [Fact]
-    public async Task AggregateMinMax_WithFeedRange_ActualBehavior_SingleResult()
+    public async Task AggregateMinMax_WithFeedRange_EachRangeReturnsLocalMin()
     {
         var container = await CreatePopulatedContainer();
         var ranges = await container.GetFeedRangesAsync();
@@ -202,14 +179,34 @@ public class FeedRangeAggregateDivergentTests
             }
         }
 
-        // Only one range gets the MIN aggregate
-        allMins.Count(m => m >= 0).Should().BeLessThanOrEqualTo(1);
-        allMins.Should().Contain(0, "global MIN is 0");
+        // Each range should return its local MIN
+        allMins.Should().HaveCountGreaterThan(1, "multiple ranges should return MIN values");
     }
 
-    // 1.5 — VALUE keyword strips PK
-    [Fact(Skip = "Known limitation: VALUE queries strip PK fields, making FeedRange filtering unreliable")]
-    public async Task VALUE_WithFeedRange_PerRangeSumsToTotal_Divergent()
+    // Sister test: global MIN is 0 and appears somewhere in per-range results
+    [Fact]
+    public async Task AggregateMinMax_WithFeedRange_GlobalMinAppearsInOneRange()
+    {
+        var container = await CreatePopulatedContainer();
+        var ranges = await container.GetFeedRangesAsync();
+
+        var allMins = new List<int>();
+        foreach (var range in ranges)
+        {
+            var iterator = container.GetItemQueryIterator<JToken>(range, new QueryDefinition("SELECT VALUE MIN(c.value) FROM c"));
+            while (iterator.HasMoreResults)
+            {
+                var page = await iterator.ReadNextAsync();
+                foreach (var item in page) allMins.Add(item.Value<int>());
+            }
+        }
+
+        allMins.Should().Contain(0, "global MIN of 0 should appear in one of the ranges");
+    }
+
+    // 1.5 — VALUE keyword with FeedRange
+    [Fact]
+    public async Task VALUE_WithFeedRange_PerRangeSumsToTotal()
     {
         var container = await CreatePopulatedContainer();
         var ranges = await container.GetFeedRangesAsync();
@@ -217,7 +214,7 @@ public class FeedRangeAggregateDivergentTests
         var allNames = new List<string>();
         foreach (var range in ranges)
         {
-            var iterator = container.GetItemQueryIterator<JObject>(range, new QueryDefinition("SELECT VALUE c.name FROM c"));
+            var iterator = container.GetItemQueryIterator<JToken>(range, new QueryDefinition("SELECT VALUE c.name FROM c"));
             while (iterator.HasMoreResults)
             {
                 var page = await iterator.ReadNextAsync();
@@ -228,9 +225,9 @@ public class FeedRangeAggregateDivergentTests
         allNames.Should().HaveCount(50, "all 50 names should be returned across ranges");
     }
 
-    // Sister test
+    // Sister test: VALUE results distributed across ranges
     [Fact]
-    public async Task VALUE_WithFeedRange_ActualBehavior_ScalarsInOneRange()
+    public async Task VALUE_WithFeedRange_ScalarsDistributedAcrossRanges()
     {
         var container = await CreatePopulatedContainer();
         var ranges = await container.GetFeedRangesAsync();
@@ -248,9 +245,9 @@ public class FeedRangeAggregateDivergentTests
             perRangeCounts.Add(count);
         }
 
-        // Scalar results have no PK → all land in one range (hash of empty PK)
+        // Items are pre-filtered by FeedRange, so results are distributed
         var rangesWithResults = perRangeCounts.Count(c => c > 0);
-        rangesWithResults.Should().Be(1, "all VALUE results land in one FeedRange");
+        rangesWithResults.Should().BeGreaterThan(1, "VALUE results should be distributed across ranges");
         perRangeCounts.Sum().Should().Be(50, "total count is still 50");
     }
 }

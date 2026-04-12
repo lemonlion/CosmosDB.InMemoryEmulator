@@ -487,7 +487,7 @@ public class ImportStateEdgeCaseTests
     }
 
     [Fact]
-    public async Task ImportState_MissingItemsKey_ClearsContainer()
+    public async Task ImportState_MissingItemsKey_PreservesExistingData()
     {
         var container = new InMemoryContainer("import-nokey", "/pk");
         await container.CreateItemStreamAsync(
@@ -495,11 +495,11 @@ public class ImportStateEdgeCaseTests
             new PartitionKey("a"));
 
         container.ImportState("""{"foo":"bar"}""");
-        container.ItemCount.Should().Be(0, "missing 'items' key means nothing to import, but ClearItems runs first");
+        container.ItemCount.Should().Be(1, "missing 'items' key means import is a no-op");
     }
 
     [Fact]
-    public async Task ImportState_EmptyJsonObject_ClearsContainer()
+    public async Task ImportState_EmptyJsonObject_PreservesExistingData()
     {
         var container = new InMemoryContainer("import-obj", "/pk");
         await container.CreateItemStreamAsync(
@@ -507,7 +507,7 @@ public class ImportStateEdgeCaseTests
             new PartitionKey("a"));
 
         container.ImportState("{}");
-        container.ItemCount.Should().Be(0);
+        container.ItemCount.Should().Be(1);
     }
 
     [Fact]
@@ -595,14 +595,13 @@ public class ImportStateEdgeCaseTests
     }
 
     [Fact]
-    public async Task ImportState_ItemsMissingId_UsesEmptyStringAsId()
+    public void ImportState_ItemsMissingId_ThrowsInvalidOperation()
     {
         var container = new InMemoryContainer("import-noid", "/pk");
-        container.ImportState("""{"items":[{"pk":"a","name":"no-id-item"}]}""");
+        var act = () => container.ImportState("""{"items":[{"pk":"a","name":"no-id-item"}]}""");
 
-        container.ItemCount.Should().Be(1);
-        var result = await container.ReadItemAsync<JObject>("", new PartitionKey("a"));
-        result.Resource["name"]!.ToString().Should().Be("no-id-item");
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*'id'*");
     }
 
     [Fact]
@@ -612,8 +611,8 @@ public class ImportStateEdgeCaseTests
         container.ImportState("""{"items":[{"id":"1","name":"no-pk"}]}""");
 
         container.ItemCount.Should().Be(1);
-        // When PK field is missing and partitionKey param is null, falls back to id value
-        var result = await container.ReadItemAsync<JObject>("1", new PartitionKey("1"));
+        // When PK field is missing, item is stored with null partition key
+        var result = await container.ReadItemAsync<JObject>("1", PartitionKey.None);
         result.Resource["name"]!.ToString().Should().Be("no-pk");
     }
 

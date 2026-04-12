@@ -619,20 +619,17 @@ public class SqlParseErrorDivergenceTests
 public class InvalidContinuationTokenEdgeCaseTests
 {
     [Fact]
-    public async Task ContinuationToken_InvalidToken_EmulatorBehavior_FallsBackToStart()
+    public void ContinuationToken_InvalidToken_ThrowsBadRequest()
     {
         var container = new InMemoryContainer("test-d18", "/pk");
-        for (var i = 0; i < 5; i++)
-            await container.CreateItemAsync(
-                JObject.FromObject(new { id = $"{i}", pk = "a" }), new PartitionKey("a"));
 
-        var iterator = container.GetItemQueryIterator<JObject>(
+        var act = () => container.GetItemQueryIterator<JObject>(
             "SELECT * FROM c",
             continuationToken: "not-a-valid-token",
             requestOptions: new QueryRequestOptions { MaxItemCount = 10, PartitionKey = new PartitionKey("a") });
 
-        var response = await iterator.ReadNextAsync();
-        response.Count.Should().Be(5, "invalid token silently falls back to start");
+        act.Should().Throw<CosmosException>()
+            .Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }
 

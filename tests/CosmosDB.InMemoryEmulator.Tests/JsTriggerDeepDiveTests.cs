@@ -829,7 +829,7 @@ public class TriggerExecutionEdgeCaseDeepTests
             JObject.FromObject(new { id = "1", pk = "p" }), new PartitionKey("p"),
             new ItemRequestOptions { PreTriggers = new List<string> { "preBlock" } });
 
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        await act.Should().ThrowAsync<CosmosException>();
         // Item should not exist
         var readAct = () => _container.ReadItemAsync<JObject>("1", new PartitionKey("p"));
         await readAct.Should().ThrowAsync<CosmosException>().Where(e => e.StatusCode == HttpStatusCode.NotFound);

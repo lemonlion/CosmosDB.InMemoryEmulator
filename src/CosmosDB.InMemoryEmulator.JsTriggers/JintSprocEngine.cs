@@ -109,7 +109,7 @@ public class JintSprocEngine : ISprocEngine
         }
         catch (JavaScriptException ex)
         {
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 $"Stored procedure failed: {ex.Message}",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }

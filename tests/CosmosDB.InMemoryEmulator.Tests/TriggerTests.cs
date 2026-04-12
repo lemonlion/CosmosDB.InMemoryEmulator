@@ -552,7 +552,7 @@ public class DeleteTriggerTests
         var act = () => _container.DeleteItemAsync<JObject>("1", new PartitionKey("a"),
             new ItemRequestOptions { PreTriggers = new List<string> { "blockDelete" } });
 
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        await act.Should().ThrowAsync<CosmosException>();
 
         // Item should still exist — delete was aborted
         var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
@@ -816,7 +816,7 @@ public class PreTriggerEdgeCaseTests
             new PartitionKey("a"),
             new ItemRequestOptions { PreTriggers = new List<string> { "fail" } });
 
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        await act.Should().ThrowAsync<CosmosException>();
         _container.ItemCount.Should().Be(0);
     }
 
@@ -831,7 +831,7 @@ public class PreTriggerEdgeCaseTests
             new PartitionKey("a"),
             new ItemRequestOptions { PreTriggers = new List<string> { "fail" } });
 
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        await act.Should().ThrowAsync<CosmosException>();
         _container.ItemCount.Should().Be(0);
     }
 
@@ -850,7 +850,7 @@ public class PreTriggerEdgeCaseTests
             "1", new PartitionKey("a"),
             new ItemRequestOptions { PreTriggers = new List<string> { "fail" } });
 
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        await act.Should().ThrowAsync<CosmosException>();
         var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
         item["v"]!.Value<string>().Should().Be("orig");
     }

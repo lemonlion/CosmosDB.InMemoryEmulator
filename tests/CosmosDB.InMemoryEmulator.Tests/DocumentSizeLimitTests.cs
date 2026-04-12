@@ -144,15 +144,11 @@ public class DocumentSizeLimitTests
     [Fact]
     public async Task Create_Exactly2MB_Succeeds()
     {
-        // Build a JSON document whose total UTF-8 byte count is exactly 2MB.
-        // Envelope: {"id":"1","partitionKey":"pk1","data":"....."} is a fixed overhead.
+        // Build a JSON document that fits within 2MB INCLUDING system properties (~200 bytes).
         var envelope = BuildJsonDocument("1", "pk1", "");
         var envelopeBytes = Encoding.UTF8.GetByteCount(envelope);
-        // The envelope includes an empty string for data — fill it to exactly 2MB total.
-        var fillSize = TwoMB - envelopeBytes;
+        var fillSize = TwoMB - envelopeBytes - 300; // Leave room for system property overhead
         var json = BuildJsonDocument("1", "pk1", new string('a', fillSize));
-
-        Encoding.UTF8.GetByteCount(json).Should().Be(TwoMB);
 
         var response = await _container.CreateItemStreamAsync(ToStream(json), new PartitionKey("pk1"));
 
@@ -359,10 +355,7 @@ public class DocumentSizeLimitTests
     /// In real Cosmos DB, a document whose input JSON is exactly 2MB would be rejected because
     /// after the server adds system properties (~200 bytes), the total exceeds 2MB.
     /// </summary>
-    [Fact(Skip = "KNOWN DIVERGENCE: Real Cosmos DB includes system properties (_ts, _rid, _self, _etag, " +
-                  "_attachments) in the 2MB size calculation. The emulator checks input size before system " +
-                  "properties are added, making it ~200 bytes more permissive. Impact: negligible — only " +
-                  "affects documents within ~200 bytes of the 2MB limit.")]
+    [Fact]
     public async Task SizeCheck_Exactly2MB_RealCosmosWouldRejectDueToSystemProperties()
     {
         // Build a document whose input JSON is exactly 2MB
@@ -381,29 +374,18 @@ public class DocumentSizeLimitTests
     }
 
     /// <summary>
-    /// Sister test for the skipped SizeCheck_Exactly2MB_RealCosmosWouldRejectDueToSystemProperties.
-    ///
-    /// This demonstrates the emulator's actual (divergent) behaviour: an input document of
-    /// exactly 2MB is accepted because the emulator validates input size only, before adding
-    /// system properties (_ts, _rid, _self, _etag, _attachments, ~200 bytes). After enrichment
-    /// the stored document exceeds 2MB, but the size is not re-checked.
-    ///
-    /// In real Cosmos DB, the total size including system properties is checked, so a 2MB input
-    /// document would be rejected (total ~2MB + 200 bytes).
-    ///
-    /// Impact: negligible — only affects documents within ~200 bytes of the 2MB limit.
+    /// Confirms that a document just under 2MB (accounting for system property overhead)
+    /// is accepted, proving the post-enrichment size check works correctly.
     /// </summary>
     [Fact]
-    public async Task SizeCheck_Exactly2MB_EmulatorAcceptsPreEnrichment_Divergence()
+    public async Task SizeCheck_JustUnder2MB_WithSystemPropertyOverhead_Accepted()
     {
+        // Leave ~300 byte margin for system properties (_rid, _self, _etag, _ts, _attachments)
         var envelope = BuildJsonDocument("1", "pk1", "");
         var envelopeBytes = Encoding.UTF8.GetByteCount(envelope);
-        var fillSize = TwoMB - envelopeBytes;
+        var fillSize = TwoMB - envelopeBytes - 300;
         var json = BuildJsonDocument("1", "pk1", new string('a', fillSize));
 
-        Encoding.UTF8.GetByteCount(json).Should().Be(TwoMB);
-
-        // Emulator: accepts because size check happens before system property enrichment
         var response = await _container.CreateItemStreamAsync(ToStream(json), new PartitionKey("pk1"));
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -536,7 +518,8 @@ public class TypedBoundaryPrecisionTests
     [Fact]
     public async Task TypedCreate_Exactly2MB_Succeeds()
     {
-        var name = MakePaddedName(TwoMB);
+        // System properties (~200 bytes) are added during enrichment, so input must leave room
+        var name = MakePaddedName(TwoMB - 300);
         var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = name };
 
         var response = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
@@ -557,7 +540,7 @@ public class TypedBoundaryPrecisionTests
     [Fact]
     public async Task Upsert_Exactly2MB_Succeeds()
     {
-        var name = MakePaddedName(TwoMB);
+        var name = MakePaddedName(TwoMB - 300);
         var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = name };
 
         var response = await _container.UpsertItemAsync(doc, new PartitionKey("pk1"));
@@ -582,7 +565,7 @@ public class TypedBoundaryPrecisionTests
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "small" },
             new PartitionKey("pk1"));
 
-        var name = MakePaddedName(TwoMB);
+        var name = MakePaddedName(TwoMB - 300);
         var doc = new TestDocument { Id = "1", PartitionKey = "pk1", Name = name };
 
         var response = await _container.ReplaceItemAsync(doc, "1", new PartitionKey("pk1"));
@@ -663,7 +646,7 @@ public class StreamBoundaryPrecisionTests
     {
         var envelope = BuildJsonDocument("1", "pk1", "");
         var envelopeBytes = Encoding.UTF8.GetByteCount(envelope);
-        var json = BuildJsonDocument("1", "pk1", new string('a', TwoMB - envelopeBytes));
+        var json = BuildJsonDocument("1", "pk1", new string('a', TwoMB - envelopeBytes - 300));
 
         var response = await _container.UpsertItemStreamAsync(ToStream(json), new PartitionKey("pk1"));
         ((int)response.StatusCode).Should().BeOneOf(200, 201);
@@ -688,7 +671,7 @@ public class StreamBoundaryPrecisionTests
 
         var envelope = BuildJsonDocument("1", "pk1", "");
         var envelopeBytes = Encoding.UTF8.GetByteCount(envelope);
-        var json = BuildJsonDocument("1", "pk1", new string('a', TwoMB - envelopeBytes));
+        var json = BuildJsonDocument("1", "pk1", new string('a', TwoMB - envelopeBytes - 300));
 
         var response = await _container.ReplaceItemStreamAsync(ToStream(json), "1", new PartitionKey("pk1"));
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -1212,7 +1195,7 @@ public class StoredProcedureSizeLimitDivergenceTests
         container.RegisterStoredProcedure("bigSproc", (pk, args) => new string('x', 5 * 1024 * 1024));
 
         var scripts = container.Scripts;
-        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
             scripts.ExecuteStoredProcedureAsync<string>(
                 "bigSproc", new PartitionKey("pk1"), []));
 

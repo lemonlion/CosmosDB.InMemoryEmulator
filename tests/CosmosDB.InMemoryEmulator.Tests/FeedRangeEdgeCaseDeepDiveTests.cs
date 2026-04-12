@@ -118,8 +118,7 @@ public class FeedRangeFromPartitionKeyTests
         results.Select(r => r["id"]!.Value<string>()).Should().BeEquivalentTo(["1", "3"]);
     }
 
-    [Fact(Skip = "DIVERGENT BEHAVIOUR: FeedRange.FromPartitionKey(PartitionKey.Null) does not correctly filter to only null-PK items. " +
-                   "TryExtractPartitionKeyFromFeedRange cannot distinguish null PK from no PK. See sister test.")]
+    [Fact]
     public async Task FeedRange_FromPartitionKey_NullPK_Works()
     {
         var container = new InMemoryContainer("fr-pk-null", "/partitionKey") { FeedRangeCount = 4 };
@@ -140,9 +139,9 @@ public class FeedRangeFromPartitionKeyTests
         results[0]["id"]!.Value<string>().Should().Be("2");
     }
 
-    // Sister test: actual behavior — returns all items when using PartitionKey.Null FeedRange
+    // Sister test: null PK FeedRange correctly filters to just null-PK items
     [Fact]
-    public async Task FeedRange_FromPartitionKey_NullPK_ActualBehavior_ReturnsAllItems()
+    public async Task FeedRange_FromPartitionKey_NullPK_DoesNotReturnOtherItems()
     {
         var container = new InMemoryContainer("fr-pk-null-sis", "/partitionKey") { FeedRangeCount = 4 };
         await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk-a" }), new PartitionKey("pk-a"));
@@ -157,8 +156,10 @@ public class FeedRangeFromPartitionKeyTests
             var page = await iterator.ReadNextAsync();
             results.AddRange(page);
         }
-        // Actual behavior: returns all items because null PK FeedRange falls through to hash-based filtering
-        results.Should().HaveCount(3, "null PK FeedRange does not filter — returns all items");
+        // Null PK FeedRange correctly filters — excludes non-null PK items
+        results.Should().ContainSingle();
+        results.Should().NotContain(r => r["id"]!.Value<string>() == "1");
+        results.Should().NotContain(r => r["id"]!.Value<string>() == "3");
     }
 }
 

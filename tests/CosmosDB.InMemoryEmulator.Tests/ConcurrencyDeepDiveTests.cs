@@ -754,13 +754,8 @@ public class ConcurrentDeleteAndPatchTests
 
 public class ConcurrentETagTOCTOUTests
 {
-    [Fact(Skip = "ETag check (CheckIfMatch) runs outside all locks. Between the ETag " +
-                 "check and the item write, another thread can modify the item. " +
-                 "Real Cosmos serializes all writes per logical partition.")]
-    public void ETagTOCTOU_RealCosmos_OnlyOneWriteSucceeds() { }
-
     [Fact]
-    public async Task ETagTOCTOU_EmulatorBehaviour_MultipleWritesMaySucceed()
+    public async Task ETagTOCTOU_OnlyOneWriteSucceeds()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
         var created = await container.CreateItemAsync(
@@ -783,14 +778,14 @@ public class ConcurrentETagTOCTOUTests
 
         var results = await Task.WhenAll(tasks);
 
-        // DIVERGENT: Due to CheckIfMatch being outside locks, multiple may succeed
+        // CheckIfMatch is now inside _itemLocks — exactly 1 should succeed
         var succeeded = results.Count(r => r == 200);
         var preconditionFailed = results.Count(r => r == 412);
 
-        succeeded.Should().BeGreaterThanOrEqualTo(1);
-        (succeeded + preconditionFailed).Should().Be(50);
+        succeeded.Should().Be(1);
+        preconditionFailed.Should().Be(49);
 
-        // Item should be in a valid state regardless
+        // Item should be in a valid state
         var final = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
         final.Resource.Should().NotBeNull();
     }
@@ -841,14 +836,8 @@ public class ConcurrentBatchRestoreTests
 
 public class ConcurrentPatchReplaceLockTests
 {
-    [Fact(Skip = "PatchItemAsync acquires _patchLocks[key] but ReplaceItemAsync does NOT " +
-                 "acquire the same lock. A concurrent Replace can modify the item while " +
-                 "a Patch is in its read-modify-write cycle. Real Cosmos serializes " +
-                 "all writes per partition.")]
-    public void PatchAndReplace_SameItem_SerializedWrites_RealCosmos() { }
-
     [Fact]
-    public async Task PatchAndReplace_EmulatorBehaviour_FinalStateIsValid()
+    public async Task PatchAndReplace_SameItem_WritesAreSerialized()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
         await container.CreateItemAsync(
@@ -866,8 +855,7 @@ public class ConcurrentPatchReplaceLockTests
 
         await Task.WhenAll(patchTasks.Select(t => (Task)t).Concat(replaceTasks.Select(t => (Task)t)));
 
-        // DIVERGENT: Due to patch/replace lock mismatch, final value may not be deterministic.
-        // But the item should always be in a valid state.
+        // Patch and Replace now use the same _itemLocks — writes are serialized per item.
         var final = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
         final.Resource.Should().NotBeNull();
         final.Resource.Id.Should().Be("1");

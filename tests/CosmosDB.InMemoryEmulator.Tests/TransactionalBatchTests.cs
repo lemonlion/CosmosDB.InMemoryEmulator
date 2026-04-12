@@ -866,17 +866,14 @@ public class TransactionalBatchSizeLimitTests
     [Fact]
     public async Task Batch_Exactly2MB_Succeeds()
     {
-        // Create a payload that is exactly at the 2MB limit
-        // Overhead from JSON field names + structure ~200 bytes
-        // We want total batch size <= 2MB = 2,097,152 bytes
+        // Create a payload that fits within 2MB including system property overhead (~200 bytes)
         var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
-        var dataSize = (2 * 1024 * 1024) - 200; // Leave room for JSON overhead
+        var dataSize = (2 * 1024 * 1024) - 500; // Leave room for JSON overhead + system properties
         var data = new string('a', dataSize);
         batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = data });
 
-        // This should succeed or be just under the limit
+        // This should succeed — item fits within 2MB after enrichment
         using var response = await batch.ExecuteAsync();
-        // If it's under 2MB it succeeds; the point is it doesn't wrongly fail
         response.IsSuccessStatusCode.Should().BeTrue();
     }
 

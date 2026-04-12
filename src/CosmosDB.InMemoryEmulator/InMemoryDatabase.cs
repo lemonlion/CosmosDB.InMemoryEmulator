@@ -142,7 +142,7 @@ public class InMemoryDatabase : Database
         container.ExplicitlyCreated = true;
         if (!_containers.TryAdd(id, container))
         {
-            throw new CosmosException("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
+            throw new InMemoryCosmosException("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
         }
         _explicitlyCreatedContainers.TryAdd(id, true);
         var response = BuildContainerResponse(container, partitionKeyPath, HttpStatusCode.Created);
@@ -166,7 +166,7 @@ public class InMemoryDatabase : Database
             container.IndexingPolicy = containerProperties.IndexingPolicy;
         if (!_containers.TryAdd(id, container))
         {
-            throw new CosmosException("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
+            throw new InMemoryCosmosException("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
         }
         _explicitlyCreatedContainers.TryAdd(id, true);
         var response = BuildContainerResponse(container, containerProperties, HttpStatusCode.Created);
@@ -254,7 +254,7 @@ public class InMemoryDatabase : Database
     {
         if (_client != null && !_client.IsDatabaseExplicitlyCreated(Id))
         {
-            throw new CosmosException($"Database '{Id}' not found.", HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), 0);
+            throw new InMemoryCosmosException($"Database '{Id}' not found.", HttpStatusCode.NotFound, 1003, Guid.NewGuid().ToString(), 0);
         }
         var response = Substitute.For<DatabaseResponse>();
         response.Database.Returns(this);
@@ -300,7 +300,7 @@ public class InMemoryDatabase : Database
         var msg = new ResponseMessage(statusCode);
         msg.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
         msg.Headers["x-ms-request-charge"] = "1";
-        msg.Headers["x-ms-session-token"] = "0:0#1";
+        msg.Headers["x-ms-session-token"] = "0:0#0";
         return msg;
     }
 
@@ -379,14 +379,19 @@ public class InMemoryDatabase : Database
 
     public override User GetUser(string id)
     {
-        return _users.GetOrAdd(id, uid => new InMemoryUser(uid, () => _users.TryRemove(uid, out _)));
+        if (_users.TryGetValue(id, out var existing))
+            return existing;
+
+        // Return a proxy that is NOT registered in _users.
+        // ReadAsync will check _users and throw 404 if not explicitly created.
+        return new InMemoryUser(id, () => _users.TryRemove(id, out _), _users);
     }
 
     public override Task<UserResponse> CreateUserAsync(string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         var user = new InMemoryUser(id, () => _users.TryRemove(id, out _));
         if (!_users.TryAdd(id, user))
-            throw new CosmosException($"User '{id}' already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
+            throw new InMemoryCosmosException($"User '{id}' already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
 
         var response = Substitute.For<UserResponse>();
         response.StatusCode.Returns(HttpStatusCode.Created);

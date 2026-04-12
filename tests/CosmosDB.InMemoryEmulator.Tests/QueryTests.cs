@@ -1576,25 +1576,15 @@ public class QueryContinuationTokenEdgeCaseTests5
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
     [Fact]
-    public async Task QueryIterator_WithInvalidContinuationToken_HandlesGracefully()
+    public void QueryIterator_WithInvalidContinuationToken_ThrowsBadRequest()
     {
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
-            new PartitionKey("pk1"));
-
-        // Invalid continuation token — should not crash, may return all or empty results
-        var iterator = _container.GetItemQueryIterator<TestDocument>(
+        // Invalid continuation token should throw BadRequest (matching real Cosmos DB)
+        var act = () => _container.GetItemQueryIterator<TestDocument>(
             "SELECT * FROM c",
             continuationToken: "not-a-valid-token");
 
-        var act = async () =>
-        {
-            while (iterator.HasMoreResults)
-                await iterator.ReadNextAsync();
-        };
-
-        // Should not throw — graceful handling of invalid tokens
-        await act.Should().NotThrowAsync();
+        act.Should().Throw<CosmosException>()
+            .Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]

@@ -76,6 +76,12 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
 
     private int PageSize => _maxItemCount is > 0 ? _maxItemCount.Value : EnsureItems().Count;
 
+    /// <summary>
+    /// When true, <see cref="FeedResponse{T}.IndexMetrics"/> returns a synthetic stub
+    /// instead of null, matching real Cosmos DB behaviour when PopulateIndexMetrics is requested.
+    /// </summary>
+    public bool PopulateIndexMetrics { get; set; }
+
     public override bool HasMoreResults => _offset < EnsureItems().Count;
 
     public override Task<FeedResponse<T>> ReadNextAsync(CancellationToken cancellationToken = default)
@@ -89,7 +95,7 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
         }
 
         var continuationToken = _offset < items.Count ? _offset.ToString() : null;
-        return Task.FromResult<FeedResponse<T>>(new InMemoryFeedResponse<T>(page, continuationToken));
+        return Task.FromResult<FeedResponse<T>>(new InMemoryFeedResponse<T>(page, continuationToken, PopulateIndexMetrics));
     }
 
     private IReadOnlyList<T> EnsureItems()
@@ -113,10 +119,12 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
     private sealed class InMemoryFeedResponse<TItem> : FeedResponse<TItem>
     {
         private readonly IReadOnlyList<TItem> _items;
+        private readonly bool _populateIndexMetrics;
 
-        public InMemoryFeedResponse(IReadOnlyList<TItem> items, string continuationToken = null)
+        public InMemoryFeedResponse(IReadOnlyList<TItem> items, string continuationToken = null, bool populateIndexMetrics = false)
         {
             _items = items;
+            _populateIndexMetrics = populateIndexMetrics;
             ContinuationToken = continuationToken;
             ActivityId = Guid.NewGuid().ToString();
             var headers = new Headers();
@@ -132,7 +140,9 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
         public override HttpStatusCode StatusCode => HttpStatusCode.OK;
         public override CosmosDiagnostics Diagnostics => FakeDiagnostics;
         public override int Count => _items.Count;
-        public override string IndexMetrics => null!;
+        public override string IndexMetrics => _populateIndexMetrics
+            ? "{\"UtilizedSingleIndexes\":[],\"PotentialSingleIndexes\":[],\"UtilizedCompositeIndexes\":[],\"PotentialCompositeIndexes\":[]}"
+            : null!;
         public override string ContinuationToken { get; }
         public override double RequestCharge => 1;
         public override string ActivityId { get; }

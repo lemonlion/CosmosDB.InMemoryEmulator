@@ -1854,7 +1854,8 @@ public class SessionTokenConsistencyDeepDiveTests
         // Both should use the same format
         typedToken.Should().StartWith("0:");
         streamToken.Should().StartWith("0:");
-        typedToken.Should().Be(streamToken, "typed and stream APIs should produce the same session token format");
+        typedToken.Should().MatchRegex(@"^0:\d+#\d+$");
+        streamToken.Should().MatchRegex(@"^0:\d+#\d+$");
     }
 
     [Fact]

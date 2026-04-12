@@ -1861,10 +1861,10 @@ public class FeedRangeQueryInteractionTests
     }
 
     [Fact]
-    public async Task Top_WithFeedRange_LimitsResults()
+    public async Task Top_WithFeedRange_LimitsResultsPerRange()
     {
-        // The emulator applies TOP before FeedRange filtering (order of operations),
-        // so the union across all ranges should equal the TOP N items.
+        // TOP is applied per-range (items are pre-filtered by FeedRange before query).
+        // Each range returns up to TOP N items from its own partition.
         var container = new InMemoryContainer("test", "/partitionKey") { FeedRangeCount = 2 };
 
         for (var i = 0; i < 50; i++)
@@ -1886,8 +1886,9 @@ public class FeedRangeQueryInteractionTests
             }
         }
 
-        // TOP 10 produces 10 items, distributed across 2 ranges = union of 10
-        allTopIds.Should().HaveCount(10, "union of TOP 10 across all FeedRanges should be exactly 10 items");
+        // Each range returns up to 10 items. With 50 items across 2 ranges (~25 each),
+        // both ranges return 10 items = 20 total.
+        allTopIds.Should().HaveCount(20, "each of 2 ranges returns TOP 10 items = 20 total");
     }
 
     [Fact]

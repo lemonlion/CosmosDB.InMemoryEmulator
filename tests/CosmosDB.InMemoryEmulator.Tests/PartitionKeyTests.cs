@@ -1145,12 +1145,12 @@ public class DeleteAllChangeFeedTombstoneTests
 public class PkExtractionConsistencyTests
 {
     [Fact]
-    public async Task PartitionKey_None_PathMissing_FallsToIdField()
+    public async Task PartitionKey_None_PathMissing_StoresWithNullPk()
     {
         var container = new InMemoryContainer("test", "/nonexistent");
-        // PK field doesn't exist in document, should fall back to id
+        // PK field doesn't exist in document, should store with null partition key
         await container.CreateItemAsync(JObject.FromObject(new { id = "1" }), PartitionKey.None);
-        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("1"))).Resource;
+        var item = (await container.ReadItemAsync<JObject>("1", PartitionKey.None)).Resource;
         item["id"]!.ToString().Should().Be("1");
     }
 
@@ -1508,14 +1508,14 @@ public class PkExtractionEdgeCaseTests
     }
 
     [Fact]
-    public async Task SinglePk_MissingField_FallsBackToId()
+    public async Task SinglePk_MissingField_StoresWithNullPartitionKey()
     {
         var container = new InMemoryContainer("test", "/nonexistent");
 
         await container.CreateItemAsync(JObject.FromObject(new { id = "myid", name = "test" }));
 
-        // When PK field is missing, falls back to id as PK value
-        var read = (await container.ReadItemAsync<JObject>("myid", new PartitionKey("myid"))).Resource;
+        // When PK field is missing, item is stored with null partition key
+        var read = (await container.ReadItemAsync<JObject>("myid", PartitionKey.None)).Resource;
         read["name"]!.ToString().Should().Be("test");
     }
 

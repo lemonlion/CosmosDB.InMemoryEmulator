@@ -1504,7 +1504,7 @@ public class CaseSensitivityTests
         var container = new InMemoryContainer("test", "/partitionKey");
         await container.CreateItemAsync(JObject.FromObject(new { id = "Item1", partitionKey = "pk1" }), new PartitionKey("pk1"));
 
-        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
             container.ReplaceItemAsync(JObject.FromObject(new { id = "item1", partitionKey = "pk1" }), "item1", new PartitionKey("pk1")));
         ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
@@ -1515,7 +1515,7 @@ public class CaseSensitivityTests
         var container = new InMemoryContainer("test", "/partitionKey");
         await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "PkA" }), new PartitionKey("PkA"));
 
-        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
             container.ReplaceItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pka" }), "1", new PartitionKey("pka")));
         ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
@@ -1687,7 +1687,7 @@ public class CaseSensitivityTests
         var container = new InMemoryContainer("test", "/partitionKey");
         await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1" }), new PartitionKey("pk1"));
 
-        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
             container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
                 new[] { PatchOperation.Set("/ID", "new-id") }));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -1699,7 +1699,7 @@ public class CaseSensitivityTests
         var container = new InMemoryContainer("test", "/partitionKey");
         await container.CreateItemAsync(JObject.FromObject(new { id = "1", partitionKey = "pk1" }), new PartitionKey("pk1"));
 
-        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
             container.PatchItemAsync<JObject>("1", new PartitionKey("pk1"),
                 new[] { PatchOperation.Set("/PartitionKey", "new-pk") }));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -1731,7 +1731,7 @@ public class CaseSensitivityTests
             JObject.FromObject(new { id = "1", tenant = "TenantA", region = "RegionX" }),
             new PartitionKeyBuilder().Add("TenantA").Add("RegionX").Build());
 
-        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
             container.ReadItemAsync<JObject>("1",
                 new PartitionKeyBuilder().Add("tenantA").Add("RegionX").Build()));
         ex.StatusCode.Should().Be(HttpStatusCode.NotFound);

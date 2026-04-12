@@ -108,7 +108,7 @@ public class InMemoryCosmosClient : CosmosClient
         var database = new InMemoryDatabase(id, this);
         if (!_databases.TryAdd(id, database))
         {
-            throw new CosmosException("Database already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
+            throw new InMemoryCosmosException("Database already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
         }
         _explicitlyCreatedDatabases.TryAdd(id, true);
         var response = BuildDatabaseResponse(database, HttpStatusCode.Created);
@@ -151,7 +151,7 @@ public class InMemoryCosmosClient : CosmosClient
         var msg = new ResponseMessage(statusCode);
         msg.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
         msg.Headers["x-ms-request-charge"] = "1";
-        msg.Headers["x-ms-session-token"] = "0:0#1";
+        msg.Headers["x-ms-session-token"] = "0:0#0";
         if (databaseProperties != null)
         {
             var json = Newtonsoft.Json.JsonConvert.SerializeObject(databaseProperties);
@@ -300,13 +300,13 @@ public class InMemoryCosmosClient : CosmosClient
     {
         if (name.Length > 255)
         {
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 $"{resourceType} name must not exceed 255 characters.",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
         if (name.IndexOfAny(['/', '\\', '#', '?']) >= 0)
         {
-            throw new CosmosException(
+            throw new InMemoryCosmosException(
                 $"{resourceType} name must not contain '/', '\\', '#', or '?' characters.",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }

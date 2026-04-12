@@ -98,12 +98,14 @@ public class InMemoryTransactionalBatch : TransactionalBatch
 
     public override TransactionalBatch DeleteItem(string id, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
+        _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(id) + 128;
         _operations.Add((async () => await _container.DeleteItemAsync<object>(id, _partitionKey, ToItemRequestOptions(requestOptions)), BatchOpType.Delete));
         return this;
     }
 
     public override TransactionalBatch ReadItem(string id, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
+        _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(id) + 128;
         var operationIndex = _operations.Count;
         _operations.Add((async () =>
         {
@@ -145,7 +147,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
 
         if (_operations.Count > MaxBatchOperations)
         {
-            throw new CosmosException("Batch request has more operations than what is supported.",
+            throw new InMemoryCosmosException("Batch request has more operations than what is supported.",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
 
@@ -155,7 +157,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             for (var i = 0; i < _operations.Count; i++)
                 overSizeResults.Add((HttpStatusCode.FailedDependency, false));
             return new InMemoryBatchResponse(HttpStatusCode.RequestEntityTooLarge, false, overSizeResults, _readResults, _writeEtags,
-                "Request size is too large.");
+                "Request size is too large.", _container.CurrentSessionToken);
         }
 
         var itemsSnapshot = _container.SnapshotItems();
@@ -207,10 +209,10 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             }
 
             return new InMemoryBatchResponse(failedStatusCode, false, operationResults, _readResults, _writeEtags,
-                $"Batch operation at index {failedIndex} failed with status code {(int)failedStatusCode}.");
+                $"Batch operation at index {failedIndex} failed with status code {(int)failedStatusCode}.", _container.CurrentSessionToken);
         }
 
-        return new InMemoryBatchResponse(HttpStatusCode.OK, true, operationResults, _readResults, _writeEtags);
+        return new InMemoryBatchResponse(HttpStatusCode.OK, true, operationResults, _readResults, _writeEtags, sessionToken: _container.CurrentSessionToken);
     }
 
     public override Task<TransactionalBatchResponse> ExecuteAsync(TransactionalBatchRequestOptions requestOptions, CancellationToken cancellationToken = default)
@@ -230,7 +232,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
             var response = await _container.CreateItemStreamAsync(stream, _partitionKey, ToItemRequestOptions(requestOptions));
             if (!response.IsSuccessStatusCode)
-                throw new CosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
+                throw new InMemoryCosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
             _writeEtags[opIndex] = response.Headers.ETag;
             if (response.Content != null)
             {
@@ -255,7 +257,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
             var response = await _container.UpsertItemStreamAsync(stream, _partitionKey, ToItemRequestOptions(requestOptions));
             if (!response.IsSuccessStatusCode)
-                throw new CosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
+                throw new InMemoryCosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
             _writeEtags[opIndex] = response.Headers.ETag;
             _opStatusCodes[opIndex] = response.StatusCode;
             if (response.Content != null)
@@ -281,7 +283,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
             var response = await _container.ReplaceItemStreamAsync(stream, id, _partitionKey, ToItemRequestOptions(requestOptions));
             if (!response.IsSuccessStatusCode)
-                throw new CosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
+                throw new InMemoryCosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
             _writeEtags[opIndex] = response.Headers.ETag;
             if (response.Content != null)
             {
@@ -343,7 +345,8 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             List<(HttpStatusCode status, bool isSuccess)> operationResults,
             Dictionary<int, string> readResults,
             Dictionary<int, string> writeEtags,
-            string? errorMessage = null)
+            string? errorMessage = null,
+            string? sessionToken = null)
         {
             _statusCode = statusCode;
             _isSuccess = isSuccess;
@@ -353,7 +356,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             _errorMessage = errorMessage;
             _headers["x-ms-activity-id"] = ActivityId;
             _headers["x-ms-request-charge"] = RequestCharge.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            _headers["x-ms-session-token"] = "0:0#1";
+            _headers["x-ms-session-token"] = sessionToken ?? "0:0#0";
         }
 
         public override HttpStatusCode StatusCode => _statusCode;

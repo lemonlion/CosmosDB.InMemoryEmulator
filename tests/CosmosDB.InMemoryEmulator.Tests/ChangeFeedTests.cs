@@ -3739,19 +3739,42 @@ public class ChangeFeedDeepDiveSkippedAndSisterTests
         receivedNames.Should().Contain("V3");
     }
 
-    [Fact(Skip = "TTL eviction in the emulator is lazy (items removed on next read access). " +
-                   "TTL-evicted items do not call RecordDeleteTombstone(), so they silently " +
-                   "disappear without a change feed entry.")]
+    [Fact]
     public async Task ChangeFeed_TTL_Eviction_RecordsDeleteInChangeFeed()
     {
-        await Task.CompletedTask;
+        var container = new InMemoryContainer("test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Expiring" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(1500);
+
+        // Trigger lazy eviction
+        try { await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1")); }
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound) { }
+
+        // Use checkpoint-based API (which includes deletes, unlike LatestVersion mode)
+        var iterator = container.GetChangeFeedIterator<JObject>(0);
+        var changes = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            if (page.StatusCode == HttpStatusCode.NotModified) break;
+            changes.AddRange(page.Resource);
+        }
+
+        changes.Should().HaveCount(2);
     }
 
     /// <summary>
-    /// SISTER TEST: Documents that TTL eviction does NOT produce a change feed entry.
+    /// TTL eviction now produces a change feed delete tombstone.
     /// </summary>
     [Fact]
-    public async Task ChangeFeed_TTL_ExpiredItem_SilentlyRemoved_NoChangeFeedEntry()
+    public async Task ChangeFeed_TTL_ExpiredItem_ProducesDeleteTombstone()
     {
         var container = new InMemoryContainer("test", "/partitionKey")
         {
@@ -3776,7 +3799,7 @@ public class ChangeFeedDeepDiveSkippedAndSisterTests
         }
 
         var newCheckpoint = container.GetChangeFeedCheckpoint();
-        newCheckpoint.Should().Be(checkpointAfterCreate,
-            "TTL eviction should not produce a change feed entry");
+        newCheckpoint.Should().BeGreaterThan(checkpointAfterCreate,
+            "TTL eviction should produce a change feed delete tombstone");
     }
 }

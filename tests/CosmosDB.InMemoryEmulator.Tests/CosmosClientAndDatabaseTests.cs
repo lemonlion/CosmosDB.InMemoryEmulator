@@ -2374,47 +2374,35 @@ public class DisposeAndContinueDivergentTests
 
 public class GetUserAutoCreateDivergentTests
 {
-    [Fact(Skip = "InMemoryDatabase.GetUser auto-creates user entries for test convenience, " +
-        "mirroring the GetDatabase/GetContainer lazy-creation pattern. Real SDK's Database.GetUser " +
-        "returns a lightweight proxy reference — it does NOT create the user. A subsequent " +
-        "ReadAsync on a non-existent user would throw CosmosException with 404 NotFound. " +
-        "The auto-create behavior simplifies test setup but means you cannot test " +
-        "'user not found' scenarios through GetUser + ReadAsync.")]
-    public async Task GetUser_NonExistent_ReadAsync_ShouldThrowNotFound()
+    [Fact]
+    public async Task GetUser_NonExistent_ReadAsync_ThrowsNotFound()
     {
         var client = new InMemoryCosmosClient();
         var db = client.GetDatabase("test-db");
 
         var user = db.GetUser("nonexistent-user");
 
-        // Real SDK: ReadAsync on a non-existent user throws 404
+        // GetUser now returns a proxy — ReadAsync throws 404 for non-existent users
         var act = () => user.ReadAsync();
         await act.Should().ThrowAsync<CosmosException>()
             .Where(e => e.StatusCode == HttpStatusCode.NotFound);
     }
 
     /// <summary>
-    /// DIVERGENT BEHAVIOR: InMemoryDatabase.GetUser auto-creates user entries.
-    /// Real SDK returns a proxy; ReadAsync would throw 404 for non-existent users.
-    /// This mirrors the GetDatabase/GetContainer lazy-creation pattern for test convenience.
+    /// Explicitly created users can be read via GetUser.
     /// </summary>
     [Fact]
-    public async Task DivergentBehavior_GetUser_AutoCreatesUser()
+    public async Task GetUser_AfterCreate_ReadAsyncSucceeds()
     {
-        // InMemoryDatabase.GetUser uses ConcurrentDictionary.GetOrAdd to auto-create,
-        // same pattern as GetDatabase and GetContainer for test convenience.
         var client = new InMemoryCosmosClient();
         var db = client.GetDatabase("test-db");
 
-        var user = db.GetUser("auto-created-user");
+        await ((InMemoryDatabase)db).CreateUserAsync("created-user");
+        var user = db.GetUser("created-user");
 
-        user.Should().NotBeNull();
-        user.Id.Should().Be("auto-created-user");
-
-        // ReadAsync succeeds because the user was auto-created
         var response = await user.ReadAsync();
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        response.Resource.Id.Should().Be("auto-created-user");
+        response.Resource.Id.Should().Be("created-user");
     }
 }
 

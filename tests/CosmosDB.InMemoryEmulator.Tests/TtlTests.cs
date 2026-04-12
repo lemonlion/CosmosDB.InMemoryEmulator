@@ -944,22 +944,9 @@ public class TtlStreamVariantTests
 
 public class TtlChangeFeedDivergentTests
 {
-    [Fact(Skip = "DIVERGENT BEHAVIOUR: In real Cosmos DB (AllVersionsAndDeletes mode), TTL-expired items " +
-        "produce delete events in the change feed. The in-memory emulator uses lazy eviction — items are " +
-        "silently removed on the next read/query without generating a change feed event. Implementing this " +
-        "would require a background eviction thread or hooking lazy eviction into the change feed pipeline, " +
-        "which is a significant architectural change. See Known-Limitations.md for details.")]
+    [Fact]
     public async Task TtlExpiry_ProducesChangeFeedDeleteEvent()
     {
-        // In real Cosmos DB with AllVersionsAndDeletes mode, when an item's TTL expires,
-        // a delete event is emitted to the change feed. This is how consumers can detect
-        // TTL-triggered deletions.
-        //
-        // The in-memory emulator does NOT do this because:
-        // 1. Items are lazily evicted (removed on next read), not proactively deleted
-        // 2. Lazy eviction happens in read paths which don't call RecordDeleteTombstone
-        // 3. A background eviction thread would add complexity and non-determinism to tests
-
         var container = new InMemoryContainer("ttl-test", "/partitionKey")
         {
             DefaultTimeToLive = 1
@@ -971,72 +958,59 @@ public class TtlChangeFeedDivergentTests
 
         await Task.Delay(TimeSpan.FromSeconds(2));
 
-        // In real Cosmos DB, the change feed would contain a delete event for this item.
-        // This test documents the expected real behaviour but is skipped because the
-        // emulator doesn't support it.
-        await Task.CompletedTask;
-    }
-
-    [Fact]
-    public async Task TtlExpiry_DoesNotProduceChangeFeedEvent_InEmulator()
-    {
-        // Sister test showing actual emulator behaviour:
-        // When an item expires via TTL and is lazily evicted, NO change feed event is produced.
-        // This is because EvictIfExpired() directly removes items from the internal dictionaries
-        // without calling RecordDeleteTombstone(). The item simply vanishes from all read paths.
-        //
-        // Sequence of events:
-        // 1. Item created → change feed records a create event ✓
-        // 2. Item TTL expires (time passes)
-        // 3. Next read triggers lazy eviction via EvictIfExpired()
-        // 4. EvictIfExpired removes from _items, _etags, _timestamps only — NO tombstone
-        // 5. Change feed has no record of the deletion
-        //
-        // This differs from real Cosmos DB where TTL expiry produces a delete event
-        // (in AllVersionsAndDeletes mode). Users testing change feed consumers that rely
-        // on TTL delete events should be aware of this limitation.
-
-        var container = new InMemoryContainer("ttl-test", "/partitionKey")
-        {
-            DefaultTimeToLive = 1
-        };
-
-        await container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
-            new PartitionKey("pk1"));
-
-        // Record the change feed state after creation
-        var iteratorBefore = container.GetChangeFeedIterator<JObject>(
-            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.LatestVersion);
-        var changesBefore = new List<JObject>();
-        while (iteratorBefore.HasMoreResults)
-        {
-            var page = await iteratorBefore.ReadNextAsync();
-            if (page.StatusCode == HttpStatusCode.NotModified) break;
-            changesBefore.AddRange(page.Resource);
-        }
-
-        changesBefore.Should().HaveCount(1, "the create event should be in the change feed");
-
-        await Task.Delay(TimeSpan.FromSeconds(2));
-
-        // Trigger lazy eviction by reading
+        // Trigger lazy eviction by reading the expired item
         var act = () => container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
         await act.Should().ThrowAsync<CosmosException>();
 
-        // Check change feed again — should still have only the create event, no delete event
-        var iteratorAfter = container.GetChangeFeedIterator<JObject>(
-            ChangeFeedStartFrom.Beginning(), ChangeFeedMode.LatestVersion);
-        var changesAfter = new List<JObject>();
-        while (iteratorAfter.HasMoreResults)
+        // Use checkpoint-based API (which includes deletes, unlike LatestVersion mode)
+        var iterator = container.GetChangeFeedIterator<JObject>(0);
+        var changes = new List<JObject>();
+        while (iterator.HasMoreResults)
         {
-            var page = await iteratorAfter.ReadNextAsync();
+            var page = await iterator.ReadNextAsync();
             if (page.StatusCode == HttpStatusCode.NotModified) break;
-            changesAfter.AddRange(page.Resource);
+            changes.AddRange(page.Resource);
         }
 
-        changesAfter.Should().HaveCount(1,
-            "lazy eviction should NOT produce a change feed delete event — only the original create event remains");
+        // Create event + delete tombstone from lazy eviction
+        changes.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task TtlExpiry_ChangeFeedDeleteTombstone_HasCorrectShape()
+    {
+        // When an item expires via TTL and is lazily evicted, a delete tombstone
+        // is now recorded in the change feed (matching real Cosmos behavior).
+
+        var container = new InMemoryContainer("ttl-test", "/partitionKey")
+        {
+            DefaultTimeToLive = 1
+        };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // Trigger lazy eviction
+        var act = () => container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        await act.Should().ThrowAsync<CosmosException>();
+
+        // Use checkpoint-based API (which includes deletes, unlike LatestVersion mode)
+        var iterator = container.GetChangeFeedIterator<JObject>(0);
+        var changes = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            if (page.StatusCode == HttpStatusCode.NotModified) break;
+            changes.AddRange(page.Resource);
+        }
+
+        changes.Should().HaveCount(2);
+        var tombstone = changes.Last();
+        tombstone["id"]!.Value<string>().Should().Be("1");
+        tombstone["_deleted"]!.Value<bool>().Should().BeTrue();
     }
 }
 

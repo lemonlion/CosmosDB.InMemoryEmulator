@@ -1945,7 +1945,7 @@ public class WafDivergentBehaviorDeepTests : IDisposable
             new PartitionKey("pk"));
 
         // Duplicate unique key should fail with Conflict
-        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
             container.CreateItemAsync(
                 new { id = "2", partitionKey = "pk", Email = "a@b.com" },
                 new PartitionKey("pk")));

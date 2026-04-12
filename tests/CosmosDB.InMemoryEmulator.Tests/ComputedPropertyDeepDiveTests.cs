@@ -745,7 +745,7 @@ public class ComputedPropertyValidationDeepTests
                 new() { Name = "cp_x", Query = "SELECT VALUE c.b FROM c" }
             }
         };
-        var ex = Assert.Throws<CosmosException>(() => new InMemoryContainer(props));
+        var ex = Assert.ThrowsAny<CosmosException>(() => new InMemoryContainer(props));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -773,7 +773,7 @@ public class ComputedPropertyValidationDeepTests
                 new() { Name = "cp_x", Query = "SELECT VALUE c.name FROM c ORDER BY c.name" }
             }
         };
-        var ex = Assert.Throws<CosmosException>(() => new InMemoryContainer(props));
+        var ex = Assert.ThrowsAny<CosmosException>(() => new InMemoryContainer(props));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -787,7 +787,7 @@ public class ComputedPropertyValidationDeepTests
                 new() { Name = "cp_x", Query = "SELECT VALUE COUNT(1) FROM c GROUP BY c.pk" }
             }
         };
-        var ex = Assert.Throws<CosmosException>(() => new InMemoryContainer(props));
+        var ex = Assert.ThrowsAny<CosmosException>(() => new InMemoryContainer(props));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -801,7 +801,7 @@ public class ComputedPropertyValidationDeepTests
                 new() { Name = "cp_x", Query = "SELECT DISTINCT VALUE c.name FROM c" }
             }
         };
-        var ex = Assert.Throws<CosmosException>(() => new InMemoryContainer(props));
+        var ex = Assert.ThrowsAny<CosmosException>(() => new InMemoryContainer(props));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -815,7 +815,7 @@ public class ComputedPropertyValidationDeepTests
                 new() { Name = "cp_x", Query = "SELECT VALUE c.cp_x FROM c" }
             }
         };
-        var ex = Assert.Throws<CosmosException>(() => new InMemoryContainer(props));
+        var ex = Assert.ThrowsAny<CosmosException>(() => new InMemoryContainer(props));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -829,7 +829,7 @@ public class ComputedPropertyValidationDeepTests
                 new() { Name = "cp_x", Query = null! }
             }
         };
-        var ex = Assert.Throws<CosmosException>(() => new InMemoryContainer(props));
+        var ex = Assert.ThrowsAny<CosmosException>(() => new InMemoryContainer(props));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -843,7 +843,7 @@ public class ComputedPropertyValidationDeepTests
                 new() { Name = "cp_x", Query = "" }
             }
         };
-        var ex = Assert.Throws<CosmosException>(() => new InMemoryContainer(props));
+        var ex = Assert.ThrowsAny<CosmosException>(() => new InMemoryContainer(props));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -859,7 +859,7 @@ public class ComputedPropertyValidationDeepTests
                 new() { Name = "cp_lower", Query = "SELECT VALUE LOWER(c.name) FROM c" }
             }
         };
-        var ex = Assert.Throws<CosmosException>(() => new InMemoryContainer(props));
+        var ex = Assert.ThrowsAny<CosmosException>(() => new InMemoryContainer(props));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -890,7 +890,7 @@ public class ComputedPropertyValidationDeepTests
                 new() { Name = "_ts", Query = "SELECT VALUE c.name FROM c" }
             }
         };
-        var ex = Assert.Throws<CosmosException>(() => new InMemoryContainer(props));
+        var ex = Assert.ThrowsAny<CosmosException>(() => new InMemoryContainer(props));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -904,7 +904,7 @@ public class ComputedPropertyValidationDeepTests
                 new() { Name = "_etag", Query = "SELECT VALUE c.name FROM c" }
             }
         };
-        var ex = Assert.Throws<CosmosException>(() => new InMemoryContainer(props));
+        var ex = Assert.ThrowsAny<CosmosException>(() => new InMemoryContainer(props));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -918,7 +918,7 @@ public class ComputedPropertyValidationDeepTests
                 new() { Name = "cp_x", Query = "SELECT VALUE TOP 1 c.name FROM c" }
             }
         };
-        var ex = Assert.Throws<CosmosException>(() => new InMemoryContainer(props));
+        var ex = Assert.ThrowsAny<CosmosException>(() => new InMemoryContainer(props));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -932,7 +932,7 @@ public class ComputedPropertyValidationDeepTests
                 new() { Name = "cp_x", Query = "SELECT VALUE t FROM c JOIN t IN c.tags" }
             }
         };
-        var ex = Assert.Throws<CosmosException>(() => new InMemoryContainer(props));
+        var ex = Assert.ThrowsAny<CosmosException>(() => new InMemoryContainer(props));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -957,7 +957,7 @@ public class ComputedPropertyValidationDeepTests
             ComputedProperties = new Collection<ComputedProperty>(defs)
         };
 
-        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
             container.ReplaceContainerAsync(newProps));
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }

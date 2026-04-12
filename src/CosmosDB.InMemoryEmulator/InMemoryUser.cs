@@ -22,6 +22,7 @@ public sealed class InMemoryUser : User
 {
     private readonly ConcurrentDictionary<string, PermissionProperties> _permissions = new();
     private readonly Action _onDeleted;
+    private readonly ConcurrentDictionary<string, InMemoryUser> _parentUsers;
     private string _id;
 
     public InMemoryUser(string id, Action onDeleted = null)
@@ -30,12 +31,30 @@ public sealed class InMemoryUser : User
         _onDeleted = onDeleted;
     }
 
+    /// <summary>
+    /// Creates a proxy user that checks <paramref name="parentUsers"/> for existence on ReadAsync.
+    /// If the user is not in the dictionary, ReadAsync throws 404 NotFound.
+    /// </summary>
+    internal InMemoryUser(string id, Action onDeleted, ConcurrentDictionary<string, InMemoryUser> parentUsers)
+    {
+        _id = id;
+        _onDeleted = onDeleted;
+        _parentUsers = parentUsers;
+    }
+
     public override string Id => _id;
 
     public override Task<UserResponse> ReadAsync(
         RequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
     {
+        if (_parentUsers is not null && !_parentUsers.ContainsKey(_id))
+        {
+            throw new InMemoryCosmosException(
+                $"User with id '{_id}' not found.",
+                HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), 0);
+        }
+
         return Task.FromResult(BuildUserResponse(CreateUserProperties(_id), HttpStatusCode.OK));
     }
 
@@ -45,7 +64,7 @@ public sealed class InMemoryUser : User
         CancellationToken cancellationToken = default)
     {
         if (userProperties.Id != _id)
-            throw new CosmosException($"Replacing user id is not allowed.", HttpStatusCode.BadRequest, 0, string.Empty, 0);
+            throw new InMemoryCosmosException($"Replacing user id is not allowed.", HttpStatusCode.BadRequest, 0, string.Empty, 0);
 
         _id = userProperties.Id;
         return Task.FromResult(BuildUserResponse(CreateUserProperties(_id), HttpStatusCode.OK));
@@ -72,7 +91,7 @@ public sealed class InMemoryUser : User
     {
         var props = InMemoryPermission.WithSyntheticMetadata(permissionProperties);
         if (!_permissions.TryAdd(props.Id, props))
-            throw new CosmosException($"Permission '{props.Id}' already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
+            throw new InMemoryCosmosException($"Permission '{props.Id}' already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
 
         var perm = new InMemoryPermission(props.Id, _permissions);
         var response = Substitute.For<PermissionResponse>();

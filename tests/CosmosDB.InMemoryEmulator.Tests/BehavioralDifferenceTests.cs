@@ -422,7 +422,7 @@ public class BehavioralDifferenceTests
 
     /// <summary>
     /// BEHAVIORAL DIFFERENCE: Real Cosmos session tokens encode partition key range IDs
-    /// and logical sequence numbers. InMemoryContainer uses <c>0:0#1</c> (a fixed synthetic token).
+    /// and logical sequence numbers. InMemoryContainer uses <c>0:{N}#{N}</c> where N increments with each write.
     /// </summary>
     [Fact]
     public async Task SessionToken_IsSyntheticGuidFormat()
@@ -432,7 +432,7 @@ public class BehavioralDifferenceTests
 
         var sessionToken = response.Headers["x-ms-session-token"];
         sessionToken.Should().StartWith("0:");
-        sessionToken.Should().Be("0:0#1");
+        sessionToken.Should().MatchRegex(@"^0:\d+#\d+$");
     }
 
     [Fact(Skip = "Real Cosmos session tokens use format like '0:-1#12345' with partition range and LSN.")]
@@ -597,7 +597,7 @@ public class BehavioralDifferenceTests
             new PartitionKey("pk1"));
 
         // Trigger 409 Conflict by inserting duplicate
-        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
             _container.CreateItemAsync(
                 new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Dup" },
                 new PartitionKey("pk1")));
@@ -620,7 +620,7 @@ public class BehavioralDifferenceTests
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
             new PartitionKey("pk1"));
 
-        var ex = await Assert.ThrowsAsync<CosmosException>(() =>
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
             _container.CreateItemAsync(
                 new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Dup" },
                 new PartitionKey("pk1")));
@@ -658,34 +658,22 @@ public class BehavioralDifferenceTests
     }
 
     /// <summary>
-    /// BEHAVIORAL DIFFERENCE: Real Cosmos returns 400 BadRequest for invalid
-    /// continuation tokens. InMemoryContainer silently falls back to offset 0.
+    /// Invalid continuation tokens now throw 400 BadRequest (matching real Cosmos).
     /// </summary>
     [Fact]
-    public async Task ContinuationToken_Invalid_SilentlyFallsToStart()
+    public async Task ContinuationToken_Invalid_ThrowsBadRequest()
     {
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
             new PartitionKey("pk1"));
 
-        // Pass garbage continuation token — should not throw
-        var iterator = _container.GetItemQueryIterator<TestDocument>(
+        // Pass garbage continuation token — should throw BadRequest
+        var act = () => _container.GetItemQueryIterator<TestDocument>(
             "SELECT * FROM c",
             continuationToken: "invalid-garbage-token");
-
-        var results = new List<TestDocument>();
-        while (iterator.HasMoreResults)
-        {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
-        }
-
-        // Still returns data (fell back to start)
-        results.Should().NotBeEmpty();
+        act.Should().Throw<CosmosException>()
+            .Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
-
-    [Fact(Skip = "Real Cosmos returns 400 BadRequest for invalid continuation tokens.")]
-    public void ContinuationToken_InvalidShouldReturn400_RealCosmos() { }
 
     // ══════════════════════════════════════════════════════════════════════════
     // Phase 7: LINQ Enhancements

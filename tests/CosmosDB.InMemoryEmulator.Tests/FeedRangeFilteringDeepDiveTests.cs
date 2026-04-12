@@ -54,24 +54,14 @@ public class FeedRangeQueryClauseInteractionTests
     }
 
     [Fact]
-    public async Task QueryIterator_WithFeedRange_OffsetLimit_AppliesGloballyThenFiltersByRange()
+    public async Task QueryIterator_WithFeedRange_OffsetLimit_AppliesPerRange()
     {
-        // OFFSET/LIMIT is applied globally first, then FeedRange post-filters.
-        // So per-range results may have fewer items than LIMIT.
+        // OFFSET/LIMIT is applied per-range (items are pre-filtered by FeedRange before query).
+        // So each range gets its own OFFSET/LIMIT window, and the union covers all items.
         var container = await CreatePopulatedContainer();
         var ranges = await container.GetFeedRangesAsync();
 
-        // Global OFFSET 0 LIMIT 10
-        var globalIter = container.GetItemQueryIterator<JObject>(new QueryDefinition("SELECT * FROM c OFFSET 0 LIMIT 10"));
-        var globalIds = new HashSet<string>();
-        while (globalIter.HasMoreResults)
-        {
-            var page = await globalIter.ReadNextAsync();
-            foreach (var item in page) globalIds.Add(item["id"]!.Value<string>()!);
-        }
-        globalIds.Should().HaveCount(10);
-
-        // Per-range with same query — union should be subset of global (FeedRange post-filters)
+        // Per-range with OFFSET 0 LIMIT 10 — each range gets up to 10 items
         var allRangeIds = new HashSet<string>();
         foreach (var range in ranges)
         {
@@ -83,9 +73,10 @@ public class FeedRangeQueryClauseInteractionTests
             }
         }
 
-        // Because OFFSET/LIMIT is global, per-range results are subsets of the global OFFSET/LIMIT result
-        allRangeIds.Should().BeSubsetOf(globalIds);
-        allRangeIds.Should().BeEquivalentTo(globalIds, "all global items should land in exactly one range");
+        // Each range returns up to 10 items; with 50 items across 4 ranges,
+        // each range has ~12-13 items, so LIMIT 10 caps each range's results.
+        allRangeIds.Count.Should().BeGreaterThan(10, "multiple ranges each return up to 10 items");
+        allRangeIds.Count.Should().BeLessThanOrEqualTo(40, "at most 4 ranges × 10 items each");
     }
 
     [Fact]
@@ -621,8 +612,8 @@ public class FeedRangeQueryRequestOptionsFilteringTests
 
 public class FeedRangeAggregateQueryFilteringTests
 {
-    [Fact(Skip = "Known limitation: aggregate COUNT with FeedRange returns scalar without PK — FeedRange post-filtering produces incorrect per-range results")]
-    public async Task AggregateCount_WithFeedRange_ScalarResult_NoPartitionKey_Divergent()
+    [Fact]
+    public async Task AggregateCount_WithFeedRange_PerRangeSumsToTotal()
     {
         var container = new InMemoryContainer("fr-aggcount", "/partitionKey") { FeedRangeCount = 4 };
         for (var i = 0; i < 50; i++)
