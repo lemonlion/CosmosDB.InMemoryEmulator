@@ -8218,6 +8218,7 @@ public class InMemoryContainer : Container
             {
                 JObject jo => jo,
                 string s when s.TrimStart().StartsWith("{") => JObject.Parse(s),
+                string s => new JObject { ["distanceFunction"] = s },
                 _ => null,
             };
             var df = options?["distanceFunction"]?.ToString();

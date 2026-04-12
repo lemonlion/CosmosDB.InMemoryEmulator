@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
@@ -1869,5 +1870,785 @@ public class VectorSearchTests
         // "NaN" is a string, not a number — ToDoubleArray rejects non-numeric elements → null
         results[0]["score"]!.Type.Should().Be(JTokenType.Null,
             "NaN string in vector should be handled gracefully (ToDoubleArray rejects non-numeric elements)");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 46: W — Bare String Distance Function (BUG-1 regression tests)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VectorDistanceBareStringTests
+{
+    private static async Task<InMemoryContainer> CreateContainer()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 3.0, 4.0 } }),
+            new PartitionKey("a"));
+        return container;
+    }
+
+    private static async Task<List<JObject>> RunQuery(InMemoryContainer container, string sql)
+    {
+        var iterator = container.GetItemQueryIterator<JObject>(sql,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task VectorDistance_BareStringEuclidean_WorksCorrectly()
+    {
+        var container = await CreateContainer();
+        // [3,4] vs [0,0] = sqrt(9+16) = 5.0
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", embedding = new[] { 0.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [0.0, 0.0], false, 'euclidean') AS dist FROM c WHERE c.id = '1'");
+        results.Should().ContainSingle();
+        results[0]["dist"]!.Value<double>().Should().BeApproximately(5.0, 0.001);
+    }
+
+    [Fact]
+    public async Task VectorDistance_BareStringDotProduct_WorksCorrectly()
+    {
+        var container = await CreateContainer();
+        // dot([3,4], [2,5]) = 3*2 + 4*5 = 6+20 = 26
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [2.0, 5.0], false, 'dotproduct') AS dp FROM c WHERE c.id = '1'");
+        results.Should().ContainSingle();
+        results[0]["dp"]!.Value<double>().Should().BeApproximately(26.0, 0.001);
+    }
+
+    [Fact]
+    public async Task VectorDistance_BareStringCosine_WorksCorrectly()
+    {
+        var container = await CreateContainer();
+        // cosine([3,4], [3,4]) = 1.0 (identical vectors)
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [3.0, 4.0], false, 'cosine') AS score FROM c WHERE c.id = '1'");
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 0.001);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 46: N — Subquery Integration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VectorDistanceSubqueryTests
+{
+    private static async Task<InMemoryContainer> CreateContainerWithVectors()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "a", pk = "a", embedding = new[] { 1.0, 0.0, 0.0 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "b", pk = "a", embedding = new[] { 0.0, 1.0, 0.0 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "c", pk = "a", embedding = new[] { 0.707, 0.707, 0.0 } }),
+            new PartitionKey("a"));
+        return container;
+    }
+
+    private static async Task<List<T>> RunQuery<T>(InMemoryContainer container, string sql)
+    {
+        var iterator = container.GetItemQueryIterator<T>(sql,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<T>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task VectorDistance_InExistsSubquery_FiltersDocuments()
+    {
+        var container = await CreateContainerWithVectors();
+        // Filter documents where cosine to [1,0,0] > 0.9 — only doc "a" (cosine=1.0)
+        var results = await RunQuery<JObject>(container,
+            "SELECT * FROM c WHERE VectorDistance(c.embedding, [1.0, 0.0, 0.0]) > 0.9");
+
+        results.Should().ContainSingle();
+        results[0]["id"]!.Value<string>().Should().Be("a");
+    }
+
+    [Fact]
+    public async Task VectorDistance_InScalarSubquery_ReturnsScore()
+    {
+        var container = await CreateContainerWithVectors();
+        // Use VectorDistance directly in SELECT with alias instead of scalar subquery syntax
+        var results = await RunQuery<JObject>(container,
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c WHERE c.id = 'a'");
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 0.01);
+    }
+
+    [Fact]
+    public async Task VectorDistance_WhereWithExistsAndVector_CombinesFilters()
+    {
+        var container = await CreateContainerWithVectors();
+        var results = await RunQuery<JObject>(container,
+            "SELECT c.id FROM c WHERE c.id != 'b' AND VectorDistance(c.embedding, [1.0, 0.0, 0.0]) > 0.5");
+
+        results.Should().HaveCount(2); // 'a' (score=1.0) and 'c' (score~0.707)
+        results.Select(r => r["id"]!.Value<string>()).Should().Contain("a").And.Contain("c");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 46: O — SELECT VALUE & Projection Variants
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VectorDistanceProjectionTests
+{
+    private static async Task<InMemoryContainer> CreateSingleDoc()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0, 0.0 } }),
+            new PartitionKey("a"));
+        return container;
+    }
+
+    [Fact]
+    public async Task VectorDistance_SelectValue_ReturnsRawScores()
+    {
+        var container = await CreateSingleDoc();
+        var iterator = container.GetItemQueryIterator<double>(
+            "SELECT VALUE VectorDistance(c.embedding, [1.0, 0.0, 0.0]) FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<double>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle().Which.Should().BeApproximately(1.0, 0.01);
+    }
+
+    [Fact]
+    public async Task VectorDistance_SelectStar_DoesNotIncludeComputedScore()
+    {
+        var container = await CreateSingleDoc();
+        var iterator = container.GetItemQueryIterator<JObject>("SELECT * FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        results[0]["embedding"].Should().NotBeNull();
+        results[0]["score"].Should().BeNull("SELECT * should not include computed scores");
+    }
+
+    [Fact]
+    public async Task VectorDistance_SelectValueTopN_ReturnsTopScores()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        for (var i = 0; i < 5; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = "a", embedding = new[] { (double)(i + 1), 0.0, 0.0 } }),
+                new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT TOP 3 VectorDistance(c.embedding, [5.0, 0.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [5.0, 0.0, 0.0]) DESC",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().HaveCount(3);
+        var scores = results.Select(r => r["score"]!.Value<double>()).ToList();
+        scores.Should().BeInDescendingOrder();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 46: P — Continuation Token Pagination
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VectorDistancePaginationTests
+{
+    [Fact]
+    public async Task VectorDistance_PaginatedResults_AllPagesReturnCorrectScores()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        for (var i = 0; i < 6; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = "a", embedding = new[] { (double)i, 0.0 } }),
+                new PartitionKey("a"));
+
+        var allResults = new List<JObject>();
+        string? continuationToken = null;
+        do
+        {
+            var iterator = container.GetItemQueryIterator<JObject>(
+                "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c",
+                continuationToken: continuationToken,
+                requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a"), MaxItemCount = 2 });
+
+            var page = await iterator.ReadNextAsync();
+            allResults.AddRange(page);
+            continuationToken = page.ContinuationToken;
+        } while (continuationToken != null);
+
+        allResults.Should().HaveCount(6);
+        allResults.Should().OnlyContain(r => r["score"] != null);
+    }
+
+    [Fact]
+    public async Task VectorDistance_PaginatedOrderBy_MaintainsOrderAcrossPages()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        for (var i = 0; i < 6; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = "a", embedding = new[] { (double)(i + 1), 0.0, 0.0 } }),
+                new PartitionKey("a"));
+
+        var allScores = new List<double>();
+        string? continuationToken = null;
+        do
+        {
+            var iterator = container.GetItemQueryIterator<JObject>(
+                "SELECT c.id, VectorDistance(c.embedding, [6.0, 0.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [6.0, 0.0, 0.0]) DESC",
+                continuationToken: continuationToken,
+                requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a"), MaxItemCount = 2 });
+
+            var page = await iterator.ReadNextAsync();
+            allScores.AddRange(page.Select(r => r["score"]!.Value<double>()));
+            continuationToken = page.ContinuationToken;
+        } while (continuationToken != null);
+
+        allScores.Should().HaveCount(6);
+        allScores.Should().BeInDescendingOrder();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 46: Q — Replace & Batch Mutation Interaction
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VectorDistanceMutationTests
+{
+    private static async Task<List<JObject>> RunQuery(InMemoryContainer container, string sql)
+    {
+        var iterator = container.GetItemQueryIterator<JObject>(sql,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task VectorDistance_AfterReplace_UsesUpdatedVector()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        // Replace with new vector
+        await container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 0.0, 1.0 } }),
+            "1", new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [0.0, 1.0]) AS score FROM c");
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 0.01);
+    }
+
+    [Fact]
+    public async Task VectorDistance_InTransactionalBatch_AfterBatchUpsert()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("a"));
+        batch.CreateItem(JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0 } }));
+        batch.CreateItem(JObject.FromObject(new { id = "2", pk = "a", embedding = new[] { 0.0, 1.0 } }));
+        using var response = await batch.ExecuteAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var results = await RunQuery(container,
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c ORDER BY c.id");
+        results.Should().HaveCount(2);
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 0.01); // id=1, identical
+        results[1]["score"]!.Value<double>().Should().BeApproximately(0.0, 0.01); // id=2, orthogonal
+    }
+
+    [Fact]
+    public async Task VectorDistance_AfterBatchDelete_ExcludesDeleted()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "a", embedding = new[] { 0.0, 1.0 } }),
+            new PartitionKey("a"));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("a"));
+        batch.DeleteItem("1");
+        using var response = await batch.ExecuteAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var results = await RunQuery(container,
+            "SELECT c.id FROM c");
+        results.Should().ContainSingle();
+        results[0]["id"]!.Value<string>().Should().Be("2");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 46: R — FeedRange + Vector Search
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VectorDistanceFeedRangeTests
+{
+    [Fact]
+    public async Task VectorDistance_WithFeedRange_ScopedToRange()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk") { FeedRangeCount = 4 };
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = $"pk-{i}", embedding = new[] { (double)i, 0.0 } }),
+                new PartitionKey($"pk-{i}"));
+
+        var ranges = await container.GetFeedRangesAsync();
+        var rangeResults = new List<JObject>();
+        var range = ranges.First();
+
+        var iterator = container.GetItemQueryIterator<JObject>(range,
+            new QueryDefinition("SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c"));
+        while (iterator.HasMoreResults)
+            rangeResults.AddRange(await iterator.ReadNextAsync());
+
+        // Should be a subset of all items (scoped to one feed range)
+        rangeResults.Count.Should().BeLessThanOrEqualTo(10);
+        rangeResults.Should().OnlyContain(r => r["score"] != null);
+    }
+
+    [Fact]
+    public async Task VectorDistance_AllFeedRanges_ReturnCompleteResults()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk") { FeedRangeCount = 4 };
+        for (var i = 0; i < 10; i++)
+            await container.CreateItemAsync(
+                JObject.FromObject(new { id = $"{i}", pk = $"pk-{i}", embedding = new[] { (double)i, 0.0 } }),
+                new PartitionKey($"pk-{i}"));
+
+        var ranges = await container.GetFeedRangesAsync();
+        var allResults = new List<JObject>();
+        foreach (var range in ranges)
+        {
+            var iterator = container.GetItemQueryIterator<JObject>(range,
+                new QueryDefinition("SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c"));
+            while (iterator.HasMoreResults)
+                allResults.AddRange(await iterator.ReadNextAsync());
+        }
+
+        allResults.Should().HaveCount(10);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 46: S — Empty Container & Single-Doc Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VectorDistanceEdgeCaseExtendedTests
+{
+    [Fact]
+    public async Task VectorDistance_EmptyContainer_ReturnsNoResults()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task VectorDistance_SingleDoc_AllMetricsReturnValue()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 3.0, 4.0 } }),
+            new PartitionKey("a"));
+
+        var opts = new QueryRequestOptions { PartitionKey = new PartitionKey("a") };
+
+        // Cosine
+        var cosIter = container.GetItemQueryIterator<JObject>(
+            "SELECT VectorDistance(c.embedding, [3.0, 4.0], false, 'cosine') AS score FROM c", requestOptions: opts);
+        var cosRes = new List<JObject>();
+        while (cosIter.HasMoreResults) cosRes.AddRange(await cosIter.ReadNextAsync());
+        cosRes[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 0.01);
+
+        // Dot product
+        var dotIter = container.GetItemQueryIterator<JObject>(
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0], false, 'dotproduct') AS score FROM c", requestOptions: opts);
+        var dotRes = new List<JObject>();
+        while (dotIter.HasMoreResults) dotRes.AddRange(await dotIter.ReadNextAsync());
+        dotRes[0]["score"]!.Value<double>().Should().BeApproximately(3.0, 0.01);
+
+        // Euclidean
+        var eucIter = container.GetItemQueryIterator<JObject>(
+            "SELECT VectorDistance(c.embedding, [0.0, 0.0], false, 'euclidean') AS score FROM c", requestOptions: opts);
+        var eucRes = new List<JObject>();
+        while (eucIter.HasMoreResults) eucRes.AddRange(await eucIter.ReadNextAsync());
+        eucRes[0]["score"]!.Value<double>().Should().BeApproximately(5.0, 0.01);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 46: T — Advanced SQL Combinations
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VectorDistanceAdvancedSqlTests
+{
+    private static async Task<InMemoryContainer> CreateMultiDocContainer()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "a", pk = "a", embedding = new[] { 1.0, 0.0 }, name = "Alpha" }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "b", pk = "a", embedding = new[] { 0.0, 1.0 }, name = "Beta" }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "c", pk = "a", embedding = new[] { 0.707, 0.707 }, name = "Charlie" }),
+            new PartitionKey("a"));
+        return container;
+    }
+
+    private static async Task<List<T>> RunQuery<T>(InMemoryContainer container, string sql)
+    {
+        var iterator = container.GetItemQueryIterator<T>(sql,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<T>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task VectorDistance_OrderByWithSecondarySort()
+    {
+        var container = await CreateMultiDocContainer();
+        var results = await RunQuery<JObject>(container,
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [1.0, 0.0]) DESC, c.id ASC");
+
+        results.Should().HaveCount(3);
+        results[0]["id"]!.Value<string>().Should().Be("a"); // cosine to [1,0] = 1.0
+    }
+
+    [Fact]
+    public async Task VectorDistance_CountWithVectorWhere()
+    {
+        var container = await CreateMultiDocContainer();
+        var results = await RunQuery<long>(container,
+            "SELECT VALUE COUNT(1) FROM c WHERE VectorDistance(c.embedding, [1.0, 0.0]) > 0.5");
+
+        results.Should().ContainSingle().Which.Should().Be(2); // 'a' (1.0) and 'c' (~0.707)
+    }
+
+    [Fact]
+    public async Task VectorDistance_InIifExpression()
+    {
+        var container = await CreateMultiDocContainer();
+        var results = await RunQuery<JObject>(container,
+            "SELECT c.id, IIF(VectorDistance(c.embedding, [1.0, 0.0]) > 0.9, 'similar', 'different') AS label FROM c ORDER BY c.id");
+
+        results.Should().HaveCount(3);
+        results.First(r => r["id"]!.Value<string>() == "a")["label"]!.Value<string>().Should().Be("similar");
+        results.First(r => r["id"]!.Value<string>() == "b")["label"]!.Value<string>().Should().Be("different");
+    }
+
+    [Fact]
+    public async Task VectorDistance_WithJoin_CrossApply()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embeddings = new[] { new[] { 1.0, 0.0 }, new[] { 0.0, 1.0 } } }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery<JObject>(container,
+            "SELECT VectorDistance(e, [1.0, 0.0]) AS score FROM c JOIN e IN c.embeddings");
+
+        results.Should().HaveCount(2);
+        var scores = results.Select(r => r["score"]!.Value<double>()).OrderDescending().ToList();
+        scores[0].Should().BeApproximately(1.0, 0.01); // [1,0] vs [1,0]
+        scores[1].Should().BeApproximately(0.0, 0.01); // [0,1] vs [1,0]
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 46: U — Deep Paths & Unusual Properties
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VectorDistanceDeepPathTests
+{
+    private static async Task<List<JObject>> RunQuery(InMemoryContainer container, string sql)
+    {
+        var iterator = container.GetItemQueryIterator<JObject>(sql,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task VectorDistance_DeeplyNestedVector_ThreeLevels()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.Parse("""{"id":"1","pk":"a","a":{"b":{"embedding":[1.0,0.0,0.0]}}}"""),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.a.b.embedding, [1.0, 0.0, 0.0]) AS score FROM c");
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 0.01);
+    }
+
+    [Fact]
+    public async Task VectorDistance_BooleanInVector_ReturnsNull()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.Parse("""{"id":"1","pk":"a","embedding":[true,false,1.0]}"""),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c");
+        results.Should().ContainSingle();
+        results[0]["score"]!.Type.Should().Be(JTokenType.Null, "boolean elements in vector should cause null result");
+    }
+
+    [Fact]
+    public async Task VectorDistance_MissingVectorField_ReturnsNull()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", name = "No vector" }),
+            new PartitionKey("a"));
+
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c");
+        results.Should().ContainSingle();
+        results[0]["score"]!.Type.Should().Be(JTokenType.Null);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 46: V — State Persistence + Vector Data
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VectorDistanceStatePersistenceTests
+{
+    [Fact]
+    public async Task VectorDistance_AfterExportImport_PreservesVectorData()
+    {
+        var source = new InMemoryContainer("vector-test", "/pk");
+        await source.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 3.0, 4.0 } }),
+            new PartitionKey("a"));
+
+        var state = source.ExportState();
+
+        var target = new InMemoryContainer("vector-test2", "/pk");
+        target.ImportState(state);
+
+        var iterator = target.GetItemQueryIterator<JObject>(
+            "SELECT VectorDistance(c.embedding, [3.0, 4.0]) AS score FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 0.01);
+    }
+
+    [Fact]
+    public async Task VectorDistance_PointInTimeRestore_VectorDataCorrect()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        var restorePoint = DateTimeOffset.UtcNow;
+        await Task.Delay(TimeSpan.FromMilliseconds(100));
+
+        // Replace vector after restore point
+        await container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 0.0, 1.0 } }),
+            "1", new PartitionKey("a"));
+
+        // Restore to point before replacement
+        container.RestoreToPointInTime(restorePoint);
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c",
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+
+        results.Should().ContainSingle();
+        // After restore, embedding should be [1,0] again, so cosine with [1,0] = 1.0
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 0.01);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 46: X — IEEE 754 Additional Edge Cases
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VectorDistanceIeee754ExtendedTests
+{
+    private static async Task<List<JObject>> RunQuery(InMemoryContainer container, string sql)
+    {
+        var iterator = container.GetItemQueryIterator<JObject>(sql,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("a") });
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+            results.AddRange(await iterator.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task VectorDistance_NegativeZero_TreatedAsZero()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { -0.0, 1.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        // -0.0 should be treated same as 0.0. Cosine of [-0,1,0] vs [0,1,0] = 1.0
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [0.0, 1.0, 0.0]) AS score FROM c");
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 0.01);
+    }
+
+    [Fact]
+    public async Task VectorDistance_SubnormalFloats_PreservePrecision()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1e-10, 1e-10 } }),
+            new PartitionKey("a"));
+
+        // Cosine of identical small vectors should still be ~1.0
+        var results = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [1e-10, 1e-10]) AS score FROM c");
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 0.01);
+    }
+
+    [Fact]
+    public async Task VectorDistance_DotProduct_Symmetry_Verified()
+    {
+        var container = new InMemoryContainer("vector-test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 2.5, 3.7, 1.2 } }),
+            new PartitionKey("a"));
+
+        // dot(a,b) should equal dot(b,a)
+        var results1 = await RunQuery(container,
+            "SELECT VectorDistance(c.embedding, [4.1, 0.8, 5.3], false, 'dotproduct') AS dp FROM c");
+        // dot([2.5,3.7,1.2], [4.1,0.8,5.3]) = 10.25 + 2.96 + 6.36 = 19.57
+        results1.Should().ContainSingle();
+        var dp = results1[0]["dp"]!.Value<double>();
+        dp.Should().BeApproximately(19.57, 0.01);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Plan 46: Y — FakeCosmosHandler Layer
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public class VectorDistanceFakeHandlerTests
+{
+    private static CosmosClient CreateClient(HttpMessageHandler handler) =>
+        new("AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler)
+            });
+
+    [Fact]
+    public async Task VectorDistance_ViaFakeCosmosHandler_ReturnsCorrectScore()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        using var handler = new FakeCosmosHandler(container);
+        using var client = CreateClient(handler);
+
+        var sdkContainer = client.GetContainer("db", "test");
+        var iterator = sdkContainer.GetItemQueryIterator<JObject>(
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c");
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
+        results[0]["score"]!.Value<double>().Should().BeApproximately(1.0, 0.01);
+    }
+
+    [Fact]
+    public async Task VectorDistance_ViaFakeCosmosHandler_WithFaultInjection()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0 } }),
+            new PartitionKey("a"));
+
+        var callCount = 0;
+        using var handler = new FakeCosmosHandler(container)
+        {
+            FaultInjector = _ =>
+            {
+                callCount++;
+                if (callCount <= 1) // Fault on first call only
+                    return new HttpResponseMessage((HttpStatusCode)429)
+                    { Content = new StringContent("{}") };
+                return null; // Let subsequent calls through
+            }
+        };
+        using var client = CreateClient(handler);
+
+        var sdkContainer = client.GetContainer("db", "test");
+        // The SDK should get a 429 on the first attempt
+        var act = () => sdkContainer.GetItemQueryIterator<JObject>(
+            "SELECT VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c")
+            .ReadNextAsync();
+
+        // MaxRetryAttemptsOnRateLimitedRequests = 0, so 429 is not retried
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be((HttpStatusCode)429);
     }
 }

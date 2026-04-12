@@ -8979,8 +8979,7 @@ public class QueryDeepDiveV3_FunctionCoverageTests
 
     // ── F23: VectorDistance modes ──
 
-    [Fact(Skip = "Known limitation: VectorDistance with inline array literal [3.0, 4.0] " +
-                 "causes parsing/serialization issues. Use parameterized vectors instead.")]
+    [Fact]
     public async Task VectorDistance_Euclidean_Works()
     {
         await _container.CreateItemStreamAsync(
