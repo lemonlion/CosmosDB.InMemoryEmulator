@@ -2006,7 +2006,7 @@ public class ImportFidelityDeepDiveTests
 public class StatePersistenceTtlDeepDiveTests
 {
     [Fact]
-    public async Task ExportState_WithTTLExpiredItem_LazyEvictionBehavior()
+    public async Task ExportState_WithTTLExpiredItem_ExcludesExpired()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
         container.DefaultTimeToLive = 1; // 1 second TTL
@@ -2016,12 +2016,10 @@ public class StatePersistenceTtlDeepDiveTests
 
         await Task.Delay(1500); // wait for TTL to expire
 
-        // Lazy eviction means the item may still be in _items
+        // ExportState now filters out expired items (matches real Cosmos behavior)
         var state = JObject.Parse(container.ExportState());
         var items = (JArray)state["items"]!;
-        // Document the actual behavior — items are lazily evicted, so ExportState
-        // may still include them. This is a known divergence from real Cosmos.
-        items.Should().HaveCount(1, "lazy eviction does not remove items from _items");
+        items.Should().HaveCount(0);
     }
 
     [Fact]

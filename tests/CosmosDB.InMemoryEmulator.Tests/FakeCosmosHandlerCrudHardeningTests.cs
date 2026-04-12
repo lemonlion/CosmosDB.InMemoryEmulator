@@ -256,9 +256,7 @@ public class FakeCosmosHandlerCrudHardeningTests : IDisposable
         ex.Which.StatusCode.Should().Be(HttpStatusCode.NotModified);
     }
 
-    [Fact(Skip = "Real Cosmos returns 412 PreconditionFailed for upsert with IfMatch on non-existent item, " +
-                 "but the emulator's upsert creates the item (create path ignores IfMatch). " +
-                 "Fixing requires ETag check before create in upsert flow.")]
+    [Fact]
     public async Task Handler_UpsertItem_NewItem_WithIfMatchETag_ThrowsNotFound()
     {
         var doc = new TestDocument { Id = "e7-new", PartitionKey = "pk1", Name = "NeverCreated" };
@@ -268,20 +266,6 @@ public class FakeCosmosHandlerCrudHardeningTests : IDisposable
 
         var ex = await act.Should().ThrowAsync<CosmosException>();
         ex.Which.StatusCode.Should().BeOneOf(HttpStatusCode.NotFound, HttpStatusCode.PreconditionFailed);
-    }
-
-    [Fact]
-    public async Task Handler_UpsertItem_NewItem_WithIfMatchETag_DivergentBehavior()
-    {
-        // DIVERGENCE: Real Cosmos returns 412 for upsert with IfMatch when the item
-        // doesn't exist. The emulator's upsert falls through to create, which ignores
-        // IfMatch headers. Impact: Medium — affects optimistic concurrency patterns.
-        var doc = new TestDocument { Id = "e7-div", PartitionKey = "pk1", Name = "Created" };
-
-        var response = await _container.UpsertItemAsync(doc, new PartitionKey("pk1"),
-            new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
-
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     [Fact]
@@ -313,10 +297,7 @@ public class FakeCosmosHandlerCrudHardeningTests : IDisposable
     //  Phase 3: Replace Validation Edge Cases (R1–R3)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    [Fact(Skip = "Real Cosmos returns 400 when body.id mismatches URL id, " +
-                 "but the SDK serializes the id from the object itself into the URL, " +
-                 "so in practice the body and URL id always match. " +
-                 "FakeCosmosHandler uses the URL id and doesn't re-parse the body.")]
+    [Fact]
     public async Task Handler_ReplaceItem_BodyIdMismatch_Throws400()
     {
         var doc = new TestDocument { Id = "r1", PartitionKey = "pk1", Name = "Original" };
@@ -329,30 +310,6 @@ public class FakeCosmosHandlerCrudHardeningTests : IDisposable
 
         var ex = await act.Should().ThrowAsync<CosmosException>();
         ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    }
-
-    [Fact]
-    public async Task Handler_ReplaceItem_BodyIdMismatch_DivergentBehavior()
-    {
-        // DIVERGENCE: Unlike real Cosmos (which returns 400 BadRequest when the
-        // body's "id" field doesn't match the id in the URL), FakeCosmosHandler
-        // accepts the replace and uses the URL id. This is because the Cosmos SDK
-        // always serializes the id from the C# object into the URL path, so in
-        // practice the body and URL id always match.
-        //
-        // Real Cosmos: 400 BadRequest
-        // Emulator:    200 OK (silently uses URL id)
-        //
-        // Impact: Low — SDK always sends matching ids.
-        var doc = new TestDocument { Id = "r1-div", PartitionKey = "pk1", Name = "Original" };
-        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
-
-        // Replace with a different id in body — SDK extracts the URL id from the body anyway
-        var replacement = new TestDocument { Id = "r1-div", PartitionKey = "pk1", Name = "Replaced" };
-        var response = await _container.ReplaceItemAsync(replacement, "r1-div", new PartitionKey("pk1"));
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        response.Resource.Name.Should().Be("Replaced");
     }
 
     [Fact]
@@ -415,8 +372,7 @@ public class FakeCosmosHandlerCrudHardeningTests : IDisposable
         await act.Should().ThrowAsync<Exception>();
     }
 
-    [Fact(Skip = "Real Cosmos returns 400 when patching /id, but the emulator allows it. " +
-                 "Enforcing this would require adding path validation to the patch handler.")]
+    [Fact]
     public async Task Handler_PatchItem_SetId_Throws()
     {
         var doc = new TestDocument { Id = "p3", PartitionKey = "pk1", Name = "HasId" };
@@ -427,20 +383,6 @@ public class FakeCosmosHandlerCrudHardeningTests : IDisposable
 
         // Patching /id should fail
         await act.Should().ThrowAsync<Exception>();
-    }
-
-    [Fact]
-    public async Task Handler_PatchItem_SetId_NowRejectsBadRequest()
-    {
-        // Patching /id is now correctly rejected in both typed and stream variants
-        var doc = new TestDocument { Id = "p3-div", PartitionKey = "pk1", Name = "HasId" };
-        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
-
-        var act = () => _container.PatchItemAsync<TestDocument>("p3-div", new PartitionKey("pk1"),
-            [PatchOperation.Set("/id", "new-id")]);
-
-        await act.Should().ThrowAsync<CosmosException>()
-            .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
     }
 
     [Fact]
@@ -522,8 +464,7 @@ public class FakeCosmosHandlerCrudHardeningTests : IDisposable
         await act.Should().ThrowAsync<Exception>();
     }
 
-    [Fact(Skip = "Real Cosmos rejects empty string id, but the emulator accepts it. " +
-                 "Enforcing this would require adding id validation to the create path.")]
+    [Fact]
     public async Task Handler_CreateItem_WithEmptyStringId_Throws()
     {
         var doc = new { id = "", partitionKey = "pk1", name = "EmptyId" };
@@ -531,18 +472,6 @@ public class FakeCosmosHandlerCrudHardeningTests : IDisposable
         var act = () => _container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
         await act.Should().ThrowAsync<Exception>();
-    }
-
-    [Fact]
-    public async Task Handler_CreateItem_WithEmptyStringId_DivergentBehavior()
-    {
-        // DIVERGENCE: Real Cosmos rejects empty string ids with 400 BadRequest,
-        // but the emulator accepts them. Impact: Low — empty ids are uncommon.
-        var doc = new { id = "", partitionKey = "pk1", name = "EmptyId" };
-
-        var response = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
-
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

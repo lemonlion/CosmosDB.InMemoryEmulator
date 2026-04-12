@@ -23395,24 +23395,21 @@ public class QueryDeepDiveV17_LikeNonStringTests
     }
 
     [Fact]
-    public async Task Like_NumericFieldValue_MatchesAfterToString()
+    public async Task Like_NumericFieldValue_ReturnsEmpty()
     {
         await Seed();
-        // When a number is compared with LIKE, Cosmos DB converts to string first
-        // 42 LIKE '%2' → "42" matches pattern %2
+        // Real Cosmos: LIKE only operates on string types; numeric fields yield undefined
         var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.val LIKE '%2'");
-        // Numeric LIKE may match via ToString conversion
-        r.Should().HaveCount(1);
+        r.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task Like_BooleanFieldValue()
+    public async Task Like_BooleanFieldValue_ReturnsEmpty()
     {
         await Seed();
-        // true LIKE 'T%' — boolean ToString gives "True" or "true"
+        // Real Cosmos: LIKE only operates on string types; boolean fields yield undefined
         var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.flag LIKE '%rue'");
-        // Should match via ToString
-        r.Should().HaveCount(1);
+        r.Should().BeEmpty();
     }
 
     [Fact]
@@ -23700,12 +23697,12 @@ public class QueryDeepDiveV17_LikeFieldTypeTests
     }
 
     [Fact]
-    public async Task Like_NumericField_MatchesViaToString()
+    public async Task Like_NumericField_ReturnsEmpty()
     {
         await Seed();
-        // c.code is 42 (number); LIKE '%2' should match via ToString
+        // Real Cosmos: LIKE only operates on string types; numeric fields yield undefined
         var r = await RunQuery<JObject>("SELECT * FROM c WHERE c.code LIKE '%2'");
-        r.Should().ContainSingle();
+        r.Should().BeEmpty();
     }
 
     [Fact]

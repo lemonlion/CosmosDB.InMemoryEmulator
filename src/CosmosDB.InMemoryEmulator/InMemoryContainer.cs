@@ -82,6 +82,7 @@ public class InMemoryContainer : Container
     private readonly object _uniqueKeyWriteLock = new();
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), SemaphoreSlim> _itemLocks = new();
     private int _throughput = 400;
+    private bool _isDeleted;
 
     private bool HasUniqueKeys =>
         _containerProperties.UniqueKeyPolicy?.UniqueKeys.Count > 0;
@@ -346,8 +347,10 @@ public class InMemoryContainer : Container
         lock (_changeFeedLock) { _changeFeed.Clear(); }
     }
 
-    /// <summary>Returns the number of items currently stored in the container.</summary>
-    public int ItemCount => _items.Count;
+    /// <summary>Returns the number of non-expired items currently stored in the container.</summary>
+    public int ItemCount => DefaultTimeToLive is null
+        ? _items.Count
+        : _items.Keys.Count(k => !IsExpired(k));
 
     /// <summary>
     /// Saves the current container state to the file specified by <see cref="StateFilePath"/>.
@@ -386,7 +389,9 @@ public class InMemoryContainer : Container
     /// </summary>
     public string ExportState()
     {
-        var items = _items.Select(kvp => JsonParseHelpers.ParseJson(kvp.Value)).ToList();
+        var items = _items
+            .Where(kvp => !IsExpired(kvp.Key))
+            .Select(kvp => JsonParseHelpers.ParseJson(kvp.Value)).ToList();
         var state = new JObject { ["items"] = new JArray(items) };
         return state.ToString(Formatting.Indented);
     }
@@ -589,6 +594,13 @@ public class InMemoryContainer : Container
         ValidateDocumentSize(json);
 
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException("Item must have an 'id' property.");
+
+        if (itemId.Length == 0)
+        {
+            throw new CosmosException("The 'id' property cannot be an empty string.",
+                HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+        }
+
         ValidatePartitionKeyConsistency(partitionKey, jObj);
         ValidatePerItemTtl(jObj);
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
@@ -806,9 +818,6 @@ public class InMemoryContainer : Container
 
         ValidatePartitionKeyConsistency(partitionKey, jObj);
 
-        jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
-        json = jObj.ToString(Newtonsoft.Json.Formatting.None);
-        ValidateDocumentSize(json);
         ValidatePerItemTtl(jObj);
 
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
@@ -826,6 +835,11 @@ public class InMemoryContainer : Container
             }
 
             CheckIfMatch(requestOptions, key);
+
+            // Pre-triggers run after ETag check (matching real Cosmos behavior)
+            jObj = ExecutePreTriggers(requestOptions, jObj, "Replace");
+            json = jObj.ToString(Newtonsoft.Json.Formatting.None);
+            ValidateDocumentSize(json);
             string previousJson;
             string previousEtag;
             DateTimeOffset previousTimestamp;
@@ -984,6 +998,7 @@ public class InMemoryContainer : Container
         }
 
         CheckIfMatch(requestOptions, key);
+        CheckIfNoneMatchForWrite(requestOptions, key);
 
         var jObj = JsonParseHelpers.ParseJson(existingJson);
 
@@ -1065,6 +1080,10 @@ public class InMemoryContainer : Container
         if (ttlError is not null) return ttlError;
 
         var itemId = jObj["id"]?.ToString() ?? Guid.NewGuid().ToString();
+
+        if (itemId.Length == 0)
+            return CreateResponseMessage(HttpStatusCode.BadRequest);
+
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
 
@@ -1170,6 +1189,12 @@ public class InMemoryContainer : Container
         try
         {
             EvictIfExpired(key);
+
+            // IfMatch on non-existent item: return NotFound (matching real Cosmos)
+            if (requestOptions?.IfMatchEtag is not null && !_items.ContainsKey(key))
+            {
+                return CreateResponseMessage(HttpStatusCode.NotFound);
+            }
 
             if (!CheckIfMatchStream(requestOptions, key))
             {
@@ -2096,7 +2121,7 @@ public class InMemoryContainer : Container
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!ExplicitlyCreated && _items.IsEmpty)
+        if (_isDeleted || (!ExplicitlyCreated && _items.IsEmpty))
         {
             throw new CosmosException($"Container '{Id}' not found.", HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
@@ -2113,7 +2138,7 @@ public class InMemoryContainer : Container
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!ExplicitlyCreated && _items.IsEmpty)
+        if (_isDeleted || (!ExplicitlyCreated && _items.IsEmpty))
         {
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
         }
@@ -2183,6 +2208,7 @@ public class InMemoryContainer : Container
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        _isDeleted = true;
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
@@ -2204,6 +2230,7 @@ public class InMemoryContainer : Container
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        _isDeleted = true;
         _items.Clear();
         _etags.Clear();
         _timestamps.Clear();
@@ -2905,6 +2932,28 @@ public class InMemoryContainer : Container
         }
     }
 
+    /// <summary>
+    /// IfNoneMatch check for write operations (Patch). Write operations return 412 PreconditionFailed
+    /// instead of 304 NotModified when the ETag matches.
+    /// </summary>
+    private void CheckIfNoneMatchForWrite(ItemRequestOptions requestOptions, (string Id, string PartitionKey) key)
+    {
+        if (requestOptions?.IfNoneMatchEtag is null)
+        {
+            return;
+        }
+
+        if (requestOptions.IfNoneMatchEtag == "*" && _etags.ContainsKey(key))
+        {
+            throw new CosmosException("Precondition Failed", HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+        }
+
+        if (_etags.TryGetValue(key, out var currentEtag) && requestOptions.IfNoneMatchEtag == currentEtag)
+        {
+            throw new CosmosException("Precondition Failed", HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+        }
+    }
+
     private bool CheckIfMatchStream(ItemRequestOptions requestOptions, (string Id, string PartitionKey) key)
     {
         if (requestOptions?.IfMatchEtag is null)
@@ -3592,32 +3641,32 @@ public class InMemoryContainer : Container
         public override FeedIterator GetStoredProcedureQueryStreamIterator(
             string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
             => new InMemoryStreamFeedIterator(
-                () => _c._storedProcedureProperties.Values.Cast<object>().ToList(), "StoredProcedures");
+                () => FilterById(_c._storedProcedureProperties, queryText).Cast<object>().ToList(), "StoredProcedures");
 
         public override FeedIterator GetStoredProcedureQueryStreamIterator(
             QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
             => new InMemoryStreamFeedIterator(
-                () => _c._storedProcedureProperties.Values.Cast<object>().ToList(), "StoredProcedures");
+                () => FilterById(_c._storedProcedureProperties, queryDefinition).Cast<object>().ToList(), "StoredProcedures");
 
         public override FeedIterator GetTriggerQueryStreamIterator(
             string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
             => new InMemoryStreamFeedIterator(
-                () => _c._triggerProperties.Values.Cast<object>().ToList(), "Triggers");
+                () => FilterById(_c._triggerProperties, queryText).Cast<object>().ToList(), "Triggers");
 
         public override FeedIterator GetTriggerQueryStreamIterator(
             QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
             => new InMemoryStreamFeedIterator(
-                () => _c._triggerProperties.Values.Cast<object>().ToList(), "Triggers");
+                () => FilterById(_c._triggerProperties, queryDefinition).Cast<object>().ToList(), "Triggers");
 
         public override FeedIterator GetUserDefinedFunctionQueryStreamIterator(
             string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
             => new InMemoryStreamFeedIterator(
-                () => _c._udfProperties.Values.Cast<object>().ToList(), "UserDefinedFunctions");
+                () => FilterById(_c._udfProperties, queryText).Cast<object>().ToList(), "UserDefinedFunctions");
 
         public override FeedIterator GetUserDefinedFunctionQueryStreamIterator(
             QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
             => new InMemoryStreamFeedIterator(
-                () => _c._udfProperties.Values.Cast<object>().ToList(), "UserDefinedFunctions");
+                () => FilterById(_c._udfProperties, queryDefinition).Cast<object>().ToList(), "UserDefinedFunctions");
 
         // ── Private helpers ───────────────────────────────────────────────
 
@@ -4784,6 +4833,14 @@ public class InMemoryContainer : Container
             var resultObj = new JObject();
             foreach (var field in parsed.SelectFields)
             {
+                // Handle SELECT * combined with other fields (e.g. SELECT *, expr AS alias)
+                if (field.Expression == "*")
+                {
+                    foreach (var prop in jObj.Properties())
+                        resultObj[prop.Name] = prop.Value.DeepClone();
+                    continue;
+                }
+
                 var outputName = field.Alias ?? field.Expression.Split('.').Last();
 
                 if (field.SqlExpr is not null and not IdentifierExpression)
@@ -5488,6 +5545,12 @@ public class InMemoryContainer : Container
         }
 
         if (left is null || right is null)
+        {
+            return UndefinedValue.Instance;
+        }
+
+        // Real Cosmos DB: LIKE only operates on strings. Non-string left operand returns undefined.
+        if (left is not string)
         {
             return UndefinedValue.Instance;
         }

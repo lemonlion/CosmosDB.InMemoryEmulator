@@ -272,6 +272,8 @@ public class InMemoryDatabase : Database
     public override Task<DatabaseResponse> DeleteAsync(
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        foreach (var container in _containers.Values)
+            container.DeleteContainerAsync().GetAwaiter().GetResult();
         _containers.Clear();
         _explicitlyCreatedContainers.Clear();
         _users.Clear();
@@ -284,6 +286,8 @@ public class InMemoryDatabase : Database
     public override Task<ResponseMessage> DeleteStreamAsync(
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
+        foreach (var container in _containers.Values)
+            container.DeleteContainerAsync().GetAwaiter().GetResult();
         _containers.Clear();
         _explicitlyCreatedContainers.Clear();
         _users.Clear();

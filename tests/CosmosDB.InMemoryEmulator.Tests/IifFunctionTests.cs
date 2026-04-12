@@ -911,7 +911,7 @@ public class IifFunctionTests
         results[0]["status"]!.ToString().Should().Be("no"); // id='2' → inactive
     }
 
-    [Fact(Skip = "Known limitation: SELECT *, <expr> AS alias causes 'Path returned multiple tokens' in ProjectFields")]
+    [Fact]
     public async Task Iif_WithSelectStar_IncludesComputedField()
     {
         await SeedItems();

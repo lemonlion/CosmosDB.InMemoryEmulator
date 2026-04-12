@@ -331,30 +331,18 @@ public class QueryPlanDeepDiveTests : IDisposable
     //  Phase 3: Divergent Behavior Tests (skipped + sister pairs)
     // ═══════════════════════════════════════════════════════════════
 
-    [Fact(Skip = "COUNT(DISTINCT UPPER(c.name)) — regex only matches simple property paths")]
+    [Fact]
     public async Task QueryPlan_CountDistinct_ComplexExpression_ShouldPopulateDCountInfo()
     {
         var plan = await GetQueryPlanAsync(
             "SELECT COUNT(DISTINCT UPPER(c.name)) FROM c");
         var info = plan["queryInfo"]!;
 
-        // Ideal: dCountInfo should be populated for complex expressions
+        // dCountInfo should be populated for complex expressions
         info["dCountInfo"].Should().NotBeNull();
     }
 
     [Fact]
-    public async Task QueryPlan_CountDistinct_ComplexExpression_DivergentBehavior_RegexFails()
-    {
-        // DIVERGENT: Regex [\w.]+ doesn't match function calls inside COUNT(DISTINCT ...)
-        var plan = await GetQueryPlanAsync(
-            "SELECT COUNT(DISTINCT UPPER(c.name)) FROM c");
-        var info = plan["queryInfo"]!;
-
-        // Actual: dCountInfo not populated for complex expressions
-        info["dCountInfo"].Should().BeNull();
-    }
-
-    [Fact(Skip = "Multiple COUNT(DISTINCT) — Regex.Match captures only the first occurrence")]
     public async Task QueryPlan_MultipleCountDistinct_AllShouldBeDetected()
     {
         var plan = await GetQueryPlanAsync(
@@ -364,19 +352,5 @@ public class QueryPlanDeepDiveTests : IDisposable
         // Ideal: All COUNT(DISTINCT) expressions should be captured
         // This would need an array of dCountInfo objects
         info["dCountInfo"].Should().NotBeNull();
-    }
-
-    [Fact]
-    public async Task QueryPlan_MultipleCountDistinct_DivergentBehavior_OnlyFirstCaptured()
-    {
-        // DIVERGENT: Only first COUNT(DISTINCT) captured by Regex.Match
-        var plan = await GetQueryPlanAsync(
-            "SELECT COUNT(DISTINCT c.name), COUNT(DISTINCT c.status) FROM c");
-        var info = plan["queryInfo"]!;
-
-        var dCountInfo = info["dCountInfo"] as JObject;
-        dCountInfo.Should().NotBeNull("dCountInfo should be populated for first COUNT(DISTINCT)");
-        // Only the first match is captured
-        dCountInfo!["dCountExpressionBase"]!["propertyPath"]!.ToString().Should().Be("name");
     }
 }

@@ -32,7 +32,7 @@ public class PatchEtagEdgeCaseTests
         result.Resource.Name.Should().Be("Updated");
     }
 
-    [Fact(Skip = "Emulator does not check IfNoneMatchEtag for Patch operations — only IfMatchEtag is supported")]
+    [Fact]
     public async Task Patch_WithIfNoneMatchCurrentETag_ThrowsPreconditionFailed()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
@@ -47,23 +47,6 @@ public class PatchEtagEdgeCaseTests
 
         await act.Should().ThrowAsync<CosmosException>()
             .Where(e => e.StatusCode == HttpStatusCode.PreconditionFailed);
-    }
-
-    [Fact]
-    public async Task Patch_WithIfNoneMatchCurrentETag_EmulatorIgnores()
-    {
-        // Emulator doesn't check IfNoneMatchEtag on Patch — operation succeeds
-        var container = new InMemoryContainer("test", "/partitionKey");
-        var created = await container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
-            new PartitionKey("pk1"));
-
-        var result = await container.PatchItemAsync<TestDocument>(
-            "1", new PartitionKey("pk1"),
-            [PatchOperation.Set("/name", "Updated")],
-            new PatchItemRequestOptions { IfNoneMatchEtag = created.ETag });
-
-        result.Resource.Name.Should().Be("Updated");
     }
 
     [Fact]

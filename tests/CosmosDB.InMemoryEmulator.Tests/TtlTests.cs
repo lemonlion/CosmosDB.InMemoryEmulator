@@ -2130,12 +2130,8 @@ public class TtlPatchTtlValidationTests
 
 public class TtlStatePersistenceTests
 {
-    [Fact(Skip = "DIVERGENT: ExportState enumerates _items directly without TTL filtering. "
-               + "Expired-but-unevicted items appear in export. Lazy eviction by design.")]
-    public void ExportState_ShouldExcludeExpiredItems() { }
-
     [Fact]
-    public async Task ExportState_EmulatorIncludesExpiredButUnevictedItems()
+    public async Task ExportState_ShouldExcludeExpiredItems()
     {
         var container = new InMemoryContainer("ttl-test", "/partitionKey") { DefaultTimeToLive = 1 };
 
@@ -2145,11 +2141,10 @@ public class TtlStatePersistenceTests
 
         await Task.Delay(TimeSpan.FromSeconds(2));
 
-        // Item is expired but not evicted yet (no CRUD access triggered eviction)
         var state = container.ExportState();
         var parsed = JObject.Parse(state);
         var items = parsed["items"] as JArray;
-        items.Should().HaveCount(1, "expired-but-unevicted items are included in export");
+        items.Should().BeEmpty("expired items should not be exported");
     }
 
     [Fact]
@@ -2653,9 +2648,8 @@ public class TtlTriggerTests
             new ItemRequestOptions { PreTriggers = new List<string> { "preTrigger" } });
         var ex = await act.Should().ThrowAsync<CosmosException>();
         ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
-        // Note: emulator fires pre-triggers BEFORE the expiration check (same divergence as ETag ordering).
-        // The trigger fires, but the operation still returns 404.
-        triggerFired.Should().BeTrue();
+        // ETag/existence check now happens before pre-triggers, so expired item → 404 without firing trigger
+        triggerFired.Should().BeFalse();
     }
 
     [Fact]
@@ -3030,12 +3024,8 @@ public class TtlQuerySqlExpressionsTests
 
 public class TtlItemCountDivergentTests
 {
-    [Fact(Skip = "DIVERGENT: ItemCount uses raw _items.Count without filtering expired items. "
-               + "Real Cosmos DB has background GC. Lazy eviction by design (Known Limitation #37).")]
-    public void ItemCount_ShouldExcludeExpiredItems() { }
-
     [Fact]
-    public async Task ItemCount_EmulatorIncludesExpiredUnevictedItems()
+    public async Task ItemCount_ShouldExcludeExpiredItems()
     {
         var container = new InMemoryContainer("ttl-test", "/partitionKey") { DefaultTimeToLive = 1 };
 
@@ -3045,9 +3035,21 @@ public class TtlItemCountDivergentTests
 
         await Task.Delay(TimeSpan.FromSeconds(2));
 
-        // Item is expired but still in _items dictionary (not evicted)
-        container.DefaultTimeToLive = null; // Disable TTL to prevent eviction during ItemCount
-        container.ItemCount.Should().Be(1, "expired-but-unevicted items included in ItemCount");
+        container.ItemCount.Should().Be(0, "expired items should not be counted");
+    }
+
+    [Fact]
+    public async Task ItemCount_IncludesNonExpiredItems()
+    {
+        var container = new InMemoryContainer("ttl-test", "/partitionKey") { DefaultTimeToLive = 1 };
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Temp" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        container.ItemCount.Should().Be(0, "expired items should not be counted");
     }
 }
 

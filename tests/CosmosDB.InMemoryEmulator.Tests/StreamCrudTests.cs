@@ -1305,14 +1305,14 @@ public class StreamETagWildcardTests
     }
 
     [Fact]
-    public async Task UpsertStream_IfMatch_OnNonExistentItem_CurrentBehavior()
+    public async Task UpsertStream_IfMatch_OnNonExistentItem_ReturnsNotFound()
     {
         var container = new InMemoryContainer("wild-test", "/pk");
         var response = await container.UpsertItemStreamAsync(
             ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"),
             new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
-        // Current behavior: upsert proceeds as create (IfMatch silently ignored for non-existent items)
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        // IfMatch on non-existent item returns NotFound (matches real Cosmos DB)
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 }
 
@@ -1940,7 +1940,7 @@ public class StreamPostTriggerChangeFeedTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
 
-    [Fact(Skip = "DIVERGENT: Post-trigger exception doesn't clean change feed entry due to append-only design")]
+    [Fact]
     public async Task CreateStream_PostTriggerException_DoesNotAppearInChangeFeed()
     {
         var container = new InMemoryContainer("test", "/pk");

@@ -591,13 +591,9 @@ public class DeleteContainerIdempotencyDeepDiveTests
 
 public class DatabaseDeletionContainerDeepDiveTests
 {
-    // T27/S01 — Database delete cascade behavior (SKIP + SISTER pattern)
-    [Fact(Skip = "InMemoryDatabase.DeleteAsync clears the container dictionary but does not invoke " +
-                 "DeleteContainerAsync on individual containers. Container internal state (items, change feed, " +
-                 "sprocs) remains in memory if external references are held. Real Cosmos DB cascades database " +
-                 "deletion to all containers. Implementation would require iterating all containers and calling " +
-                 "DeleteContainerAsync on each, risking side effects.")]
-    public async Task DatabaseDeleteAsync_ShouldCascadeContainerCleanup_SKIPPED()
+    // T27/S01 — Database delete cascade behavior
+    [Fact]
+    public async Task DatabaseDeleteAsync_ShouldCascadeContainerCleanup()
     {
         var db = new InMemoryDatabase("testdb");
         await db.CreateContainerAsync("c1", "/pk");
@@ -607,30 +603,10 @@ public class DatabaseDeletionContainerDeepDiveTests
 
         await db.DeleteAsync();
 
-        // In real Cosmos, items would be gone. Here they persist on the container object.
+        // Items should be gone after database delete (cascade)
         var act = () => container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
         (await act.Should().ThrowAsync<CosmosException>()).Which
             .StatusCode.Should().Be(HttpStatusCode.NotFound);
-    }
-
-    // SISTER test: documents actual behavior
-    [Fact]
-    public async Task DatabaseDeleteAsync_ClearsContainerDictionary_ButNotInternalState()
-    {
-        var db = new InMemoryDatabase("testdb");
-        await db.CreateContainerAsync("c1", "/pk");
-        var container = (InMemoryContainer)db.GetContainer("c1");
-        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }),
-            new PartitionKey("a"));
-
-        await db.DeleteAsync();
-
-        // Container dictionary is cleared, so GetContainer creates a fresh one
-        var newContainer = (InMemoryContainer)db.GetContainer("c1");
-
-        // The external reference still has the items (divergent behavior)
-        var item = await container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
-        item.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }
 
@@ -779,12 +755,9 @@ public class ContainerTtlValidationTests
 
 public class DeletedContainerBehaviorTests
 {
-    // S02 — After DeleteContainerAsync, held reference still works
-    [Fact(Skip = "After DeleteContainerAsync, the container object itself remains usable — " +
-                 "ReadContainerAsync returns OK because ExplicitlyCreated was set to true during creation " +
-                 "and is never reset to false on delete. Real Cosmos DB returns 404 for all operations " +
-                 "on a deleted container. Fixing requires an _isDeleted flag in every operation.")]
-    public async Task ReadContainerAsync_ShouldReturn404ForDeletedContainer_SKIPPED()
+    // S02 — After DeleteContainerAsync, held reference returns 404
+    [Fact]
+    public async Task ReadContainerAsync_ShouldReturn404ForDeletedContainer()
     {
         var db = new InMemoryDatabase("testdb");
         await db.CreateContainerAsync("c1", "/pk");
@@ -792,7 +765,6 @@ public class DeletedContainerBehaviorTests
 
         await container.DeleteContainerAsync();
 
-        // Real Cosmos would return 404
         var act = () => container.ReadContainerAsync();
         (await act.Should().ThrowAsync<CosmosException>()).Which
             .StatusCode.Should().Be(HttpStatusCode.NotFound);
@@ -800,7 +772,7 @@ public class DeletedContainerBehaviorTests
 
     // SISTER: documents actual divergent behavior
     [Fact]
-    public async Task DeleteContainerAsync_ThenReadContainer_HeldReferenceStillWorks()
+    public async Task DeleteContainerAsync_ThenReadContainer_Returns404()
     {
         var db = new InMemoryDatabase("testdb");
         await db.CreateContainerAsync("c1", "/pk");
@@ -808,9 +780,8 @@ public class DeletedContainerBehaviorTests
 
         await container.DeleteContainerAsync();
 
-        // The held reference still works because ExplicitlyCreated is true
-        // and only the database dictionary was cleaned up
-        var response = await container.ReadContainerAsync();
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var act = () => container.ReadContainerAsync();
+        (await act.Should().ThrowAsync<CosmosException>()).Which
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 }

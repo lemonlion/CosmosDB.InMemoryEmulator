@@ -1411,7 +1411,7 @@ public class LikeNonStringTypeTests
         _seeded = true;
     }
 
-    [Fact(Skip = "DIVERGENT: Real Cosmos returns undefined for LIKE on numbers; emulator calls ToString()")]
+    [Fact]
     public async Task Like_NumberLeftOperand_ReturnsUndefined()
     {
         var results = await Query<JObject>("SELECT * FROM c WHERE c.age LIKE '42'");
@@ -1419,26 +1419,11 @@ public class LikeNonStringTypeTests
     }
 
     [Fact]
-    public async Task Like_NumberLeftOperand_EmulatorConvertsToString()
-    {
-        var results = await Query<JObject>("SELECT * FROM c WHERE c.age LIKE '42'");
-        results.Should().ContainSingle("emulator converts number to string via ToString()");
-    }
-
-    [Fact(Skip = "DIVERGENT: Real Cosmos returns undefined for LIKE on booleans; emulator calls ToString()")]
     public async Task Like_BooleanLeftOperand_ReturnsUndefined()
     {
         await _container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "a", flag = true }), new PartitionKey("a"));
         var results = await Query<JObject>("SELECT * FROM c WHERE c.flag LIKE 'True'");
         results.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task Like_BooleanLeftOperand_EmulatorConvertsToString()
-    {
-        await _container.CreateItemAsync(JObject.FromObject(new { id = "2b", pk = "a", flag = true }), new PartitionKey("a"));
-        var results = await Query<JObject>("SELECT * FROM c WHERE c.flag LIKE 'True'");
-        results.Should().ContainSingle();
     }
 }
 

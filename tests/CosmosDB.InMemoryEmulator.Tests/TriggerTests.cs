@@ -1655,7 +1655,7 @@ public class TriggerSameNameTests
 // ── M22: Triggers + IfMatchEtag ──
 public class TriggerETagInteractionTests
 {
-    [Fact(Skip = "DIVERGENT: Emulator fires pre-trigger before ETag check; real Cosmos checks ETag first")]
+    [Fact]
     public async Task PreTrigger_WithStaleEtag_EtagCheckedBeforeTrigger()
     {
         var container = new InMemoryContainer("trig-etag", "/pk");
@@ -1670,24 +1670,6 @@ public class TriggerETagInteractionTests
             new ItemRequestOptions { IfMatchEtag = "stale-etag", PreTriggers = new List<string> { "pre" } });
         await act.Should().ThrowAsync<CosmosException>();
         preFired.Should().BeFalse("ETag check should happen before trigger");
-    }
-
-    [Fact]
-    public async Task PreTrigger_WithStaleEtag_EmulatorFiresTriggerFirst()
-    {
-        var container = new InMemoryContainer("trig-etag2", "/pk");
-        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", v = "orig" }), new PartitionKey("a"));
-
-        var preFired = false;
-        container.RegisterTrigger("pre", TriggerType.Pre, TriggerOperation.Replace,
-            (Func<JObject, JObject>)(doc => { preFired = true; return doc; }));
-
-        var act = () => container.ReplaceItemAsync(
-            JObject.FromObject(new { id = "1", pk = "a", v = "upd" }), "1", new PartitionKey("a"),
-            new ItemRequestOptions { IfMatchEtag = "stale-etag", PreTriggers = new List<string> { "pre" } });
-        await act.Should().ThrowAsync<CosmosException>();
-        // Emulator fires pre-trigger before ETag check
-        preFired.Should().BeTrue("emulator fires trigger before ETag check");
     }
 }
 

@@ -488,15 +488,13 @@ public class ReadManyConcurrencyDeepDiveTests
 public class ReadManyEmptyIdDeepDiveTests
 {
     [Fact]
-    public async Task ReadMany_EmptyStringId_ReturnsItem()
+    public async Task CreateItem_EmptyStringId_ThrowsBadRequest()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
-        await container.CreateItemAsync(
+        var act = () => container.CreateItemAsync(
             new TestDocument { Id = "", PartitionKey = "pk1", Name = "EmptyId" },
             new PartitionKey("pk1"));
-        var items = new List<(string, PartitionKey)> { ("", new PartitionKey("pk1")) };
-        var response = await container.ReadManyItemsAsync<TestDocument>(items);
-        response.Should().HaveCount(1);
-        response.First().Name.Should().Be("EmptyId");
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }

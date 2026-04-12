@@ -167,10 +167,10 @@ public class DistinctObjectPropertyOrderTests
         results.Should().HaveCount(1);
     }
 
-    [Fact(Skip = "DISTINCT: emulator uses JToken.DeepEquals which correctly deduplicates regardless of property order")]
+    [Fact]
     public async Task Distinct_ObjectPropertyOrder_Divergent_EmulatorTreatsAsDifferent()
     {
-        // This divergent behavior doesn't exist — emulator correctly handles property order
+        // No divergence here — emulator correctly handles property order via JToken.DeepEquals
         await Task.CompletedTask;
     }
 

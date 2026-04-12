@@ -629,22 +629,26 @@ public class FakeCosmosHandler : HttpMessageHandler
         // COUNT(DISTINCT ...) — dCountInfo (regex-based, works even when parser
         // cannot handle the DISTINCT keyword inside a function call)
         var countDistinctMatch = Regex.Match(sqlQuery,
-            @"COUNT\s*\(\s*DISTINCT\s+([\w.]+)\s*\)", RegexOptions.IgnoreCase);
+            @"COUNT\s*\(\s*DISTINCT\s+(.+?)\s*\)", RegexOptions.IgnoreCase);
         if (countDistinctMatch.Success)
         {
-            var distinctPath = countDistinctMatch.Groups[1].Value;
+            var distinctExpr = countDistinctMatch.Groups[1].Value.Trim();
             var aliasMatch = Regex.Match(sqlQuery, @"\bFROM\s+(\w+)", RegexOptions.IgnoreCase);
             var fromAlias = aliasMatch.Success ? aliasMatch.Groups[1].Value : "c";
+
+            // Try to extract a simple property path; for complex expressions use the expression as-is
+            var distinctPath = distinctExpr;
             if (distinctPath.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
                 distinctPath = distinctPath[(fromAlias.Length + 1)..];
+
+            // Determine kind: simple property ref or expression
+            var isSimplePath = Regex.IsMatch(distinctPath, @"^[\w.]+$");
             queryInfo["dCountInfo"] = new JObject
             {
                 ["dCountAlias"] = "$1",
-                ["dCountExpressionBase"] = new JObject
-                {
-                    ["kind"] = "PropertyRef",
-                    ["propertyPath"] = distinctPath
-                }
+                ["dCountExpressionBase"] = isSimplePath
+                    ? new JObject { ["kind"] = "PropertyRef", ["propertyPath"] = distinctPath }
+                    : new JObject { ["kind"] = "Expression", ["expression"] = distinctExpr }
             };
         }
 

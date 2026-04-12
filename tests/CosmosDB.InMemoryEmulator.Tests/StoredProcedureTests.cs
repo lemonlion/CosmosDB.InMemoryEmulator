@@ -2726,8 +2726,8 @@ public class StoredProcedureEdgeCaseTests
         iter.HasMoreResults.Should().BeFalse();
     }
 
-    [Fact(Skip = "DIVERGENT: Stream query iterators ignore query filtering — always return all entries")]
-    public async Task StreamQueryIterator_ShouldFilterById_ButDoesNot()
+    [Fact]
+    public async Task StreamQueryIterator_ShouldFilterById()
     {
         var container = new InMemoryContainer("test", "/pk");
         await container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp1", Body = "function(){}" });
@@ -2737,24 +2737,7 @@ public class StoredProcedureEdgeCaseTests
         var response = await iter.ReadNextAsync();
         using var reader = new StreamReader(response.Content);
         var body = reader.ReadToEnd();
-        // Ideally should only contain sp1, but returns all
         body.Should().Contain("sp1");
         body.Should().NotContain("sp2");
-    }
-
-    [Fact]
-    public async Task StreamQueryIterator_ReturnsAllRegardlessOfFilter_ActualBehavior()
-    {
-        var container = new InMemoryContainer("test", "/pk");
-        await container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp1", Body = "function(){}" });
-        await container.Scripts.CreateStoredProcedureAsync(new StoredProcedureProperties { Id = "sp2", Body = "function(){}" });
-
-        var iter = container.Scripts.GetStoredProcedureQueryStreamIterator("SELECT * FROM c WHERE c.id = 'sp1'");
-        var response = await iter.ReadNextAsync();
-        using var reader = new StreamReader(response.Content);
-        var body = reader.ReadToEnd();
-        // Actual behavior: returns all sprocs regardless of query
-        body.Should().Contain("sp1");
-        body.Should().Contain("sp2");
     }
 }

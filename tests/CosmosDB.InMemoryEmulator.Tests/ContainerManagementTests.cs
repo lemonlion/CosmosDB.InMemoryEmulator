@@ -163,11 +163,8 @@ public class ContainerManagementEdgeCaseTests
     }
 
     [Fact]
-    public async Task DeleteContainerAsync_ThenReadContainer_StillSucceeds()
+    public async Task DeleteContainerAsync_ThenReadContainer_Returns404()
     {
-        // InMemoryContainer.DeleteContainerAsync clears items but the container
-        // object is still usable (it doesn't remove itself from the database).
-        // This is a known behavioral difference from real Cosmos DB.
         var container = new InMemoryContainer("test-container", "/partitionKey");
 
         await container.CreateItemAsync(
@@ -176,9 +173,10 @@ public class ContainerManagementEdgeCaseTests
 
         await container.DeleteContainerAsync();
 
-        // After delete, ReadContainerAsync still works on the InMemory implementation
-        var response = await container.ReadContainerAsync();
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        // After delete, ReadContainerAsync returns 404 (matches real Cosmos DB)
+        var act = () => container.ReadContainerAsync();
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     [Fact]
