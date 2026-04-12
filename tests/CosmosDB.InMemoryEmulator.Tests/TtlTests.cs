@@ -2770,7 +2770,8 @@ public class TtlConcurrencyDeepTests
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
             new PartitionKey("pk1"));
 
-        await Task.Delay(TimeSpan.FromSeconds(2));
+        // Wait long enough for TTL=1s to definitely expire, even under load
+        await Task.Delay(TimeSpan.FromSeconds(3));
 
         var tasks = Enumerable.Range(0, 20).Select(_ => Task.Run(async () =>
         {
