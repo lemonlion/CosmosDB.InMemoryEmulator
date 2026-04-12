@@ -2131,3 +2131,491 @@ public class TransactionalBatchSkippedAndDivergentTests
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  Plan 42: Transactional Batch Deep Dive Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Bug Fix Verification ──
+public class TransactionalBatchBugFixTests
+{
+    private readonly InMemoryContainer _container = new("batch-bugfix", "/partitionKey");
+
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task Batch_UpsertItemStream_NewItem_Returns201Created()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItemStream(ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Alice\"}"));
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+        response[0].StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Batch_UpsertItemStream_ExistingItem_Returns200OK()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" }, new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItemStream(ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Updated\"}"));
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+        response[0].StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Batch_CreateItemStream_ResourceStream_ContainsSystemProperties()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItemStream(ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Alice\"}"));
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        using var reader = new StreamReader(response[0].ResourceStream);
+        var body = JObject.Parse(reader.ReadToEnd());
+        body["_ts"].Should().NotBeNull("system property _ts should be present");
+        body["_etag"].Should().NotBeNull("system property _etag should be present");
+    }
+
+    [Fact]
+    public async Task Batch_UpsertItemStream_ResourceStream_ContainsSystemProperties()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItemStream(ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Alice\"}"));
+        using var response = await batch.ExecuteAsync();
+
+        using var reader = new StreamReader(response[0].ResourceStream);
+        var body = JObject.Parse(reader.ReadToEnd());
+        body["_ts"].Should().NotBeNull();
+        body["_etag"].Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Batch_ReplaceItemStream_ResourceStream_ContainsSystemProperties()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" }, new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItemStream("1", ToStream("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Updated\"}"));
+        using var response = await batch.ExecuteAsync();
+
+        using var reader = new StreamReader(response[0].ResourceStream);
+        var body = JObject.Parse(reader.ReadToEnd());
+        body["_ts"].Should().NotBeNull();
+        body["_etag"].Should().NotBeNull();
+    }
+}
+
+// ── Request Options Extended ──
+public class TransactionalBatchRequestOptionsExtendedTests
+{
+    private readonly InMemoryContainer _container = new("batch-reqopt", "/partitionKey");
+
+    [Fact]
+    public async Task Batch_PatchItem_WithFilterPredicate_MatchingFilter_Succeeds()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 }, new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.PatchItem("1", new[] { PatchOperation.Set("/name", "Updated") },
+            new TransactionalBatchPatchItemRequestOptions { FilterPredicate = "FROM c WHERE c.name = 'Alice'" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Batch_PatchItem_WithFilterPredicate_NonMatchingFilter_Fails()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" }, new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.PatchItem("1", new[] { PatchOperation.Set("/name", "Updated") },
+            new TransactionalBatchPatchItemRequestOptions { FilterPredicate = "FROM c WHERE c.name = 'NonExistent'" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Batch_ReplaceItemStream_WithIfMatchEtag_StaleEtag_Fails()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" }, new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItemStream("1",
+            new MemoryStream(Encoding.UTF8.GetBytes("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Updated\"}")),
+            new TransactionalBatchItemRequestOptions { IfMatchEtag = "stale-etag" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Batch_ReplaceItemStream_WithIfMatchEtag_CurrentEtag_Succeeds()
+    {
+        var createResp = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" }, new PartitionKey("pk1"));
+        var currentEtag = createResp.ETag;
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItemStream("1",
+            new MemoryStream(Encoding.UTF8.GetBytes("{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Updated\"}")),
+            new TransactionalBatchItemRequestOptions { IfMatchEtag = currentEtag });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+    }
+}
+
+// ── Edge Cases Extended ──
+public class TransactionalBatchEdgeCaseExtendedTests
+{
+    private readonly InMemoryContainer _container = new("batch-edge", "/partitionKey");
+
+    private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
+
+    [Fact]
+    public async Task Batch_FirstOperationFails_AllSubsequent424()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        // Replace non-existent item (fails)
+        batch.ReplaceItem("nonexistent", new TestDocument { Id = "nonexistent", PartitionKey = "pk1", Name = "X" });
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        batch.CreateItem(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B" });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response[0].StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response[1].StatusCode.Should().Be(HttpStatusCode.FailedDependency);
+        response[2].StatusCode.Should().Be(HttpStatusCode.FailedDependency);
+    }
+
+    [Fact]
+    public async Task Batch_LastOperationFails_AllPrior424()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        batch.CreateItem(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B" });
+        // Replace non-existent item (fails)
+        batch.ReplaceItem("nonexistent", new TestDocument { Id = "nonexistent", PartitionKey = "pk1", Name = "X" });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response[0].StatusCode.Should().Be(HttpStatusCode.FailedDependency);
+        response[1].StatusCode.Should().Be(HttpStatusCode.FailedDependency);
+        response[2].StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Batch_StreamWithInvalidJson_ThrowsOnExecute()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItemStream(ToStream("not valid json"));
+        var act = async () => await batch.ExecuteAsync();
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task Batch_CreateItemStream_MissingIdField_AutoGeneratesId()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItemStream(ToStream("{\"partitionKey\":\"pk1\",\"name\":\"NoId\"}"));
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+        response[0].StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Batch_SingleItemFails_ResponseHasOneEntry()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItem("nonexistent", new TestDocument { Id = "nonexistent", PartitionKey = "pk1", Name = "X" });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response.Count.Should().Be(1);
+        response[0].StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+}
+
+// ── TTL Tests ──
+public class TransactionalBatchTtlExtendedTests
+{
+    [Fact]
+    public async Task Batch_CreateItem_WithContainerTtl_ItemGetsTimestamp()
+    {
+        var container = new InMemoryContainer("batch-ttl", "/partitionKey");
+        container.DefaultTimeToLive = 3600;
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var item = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        item.Resource["_ts"].Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Batch_CreateItem_WithContainerTtl_ItemExpires()
+    {
+        var container = new InMemoryContainer("batch-ttl2", "/partitionKey");
+        container.DefaultTimeToLive = 1;
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        await Task.Delay(2000);
+        var readResponse = await container.ReadItemStreamAsync("1", new PartitionKey("pk1"));
+        readResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Batch_Rollback_DoesNotLeakTtlMetadata()
+    {
+        var container = new InMemoryContainer("batch-ttl3", "/partitionKey");
+        container.DefaultTimeToLive = 3600;
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "existing", PartitionKey = "pk1", Name = "Original" }, new PartitionKey("pk1"));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "new1", PartitionKey = "pk1", Name = "New" });
+        // This will fail — non-existent item
+        batch.ReplaceItem("nonexistent", new TestDocument { Id = "nonexistent", PartitionKey = "pk1", Name = "X" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+
+        // Original item should still be there and unchanged
+        var item = await container.ReadItemAsync<TestDocument>("existing", new PartitionKey("pk1"));
+        item.Resource.Name.Should().Be("Original");
+    }
+}
+
+// ── Unique Key Extended ──
+public class TransactionalBatchUniqueKeyExtendedTests
+{
+    [Fact]
+    public async Task Batch_Rollback_FreesUniqueKeySlots_RecreateSucceeds()
+    {
+        var props = new ContainerProperties("batch-uk1", "/partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy { UniqueKeys = { new UniqueKey { Paths = { "/name" } } } }
+        };
+        var container = new InMemoryContainer(props);
+
+        // Batch: create unique item, then fail
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "UniqueAlice" });
+        batch.ReplaceItem("nonexistent", new TestDocument { Id = "nonexistent", PartitionKey = "pk1", Name = "X" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+
+        // Now create with same unique key — should succeed since batch was rolled back
+        var batch2 = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch2.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "UniqueAlice" });
+        using var response2 = await batch2.ExecuteAsync();
+        response2.IsSuccessStatusCode.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Batch_IntraBatch_TwoItems_SameUniqueKey_SecondFails()
+    {
+        var props = new ContainerProperties("batch-uk2", "/partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy { UniqueKeys = { new UniqueKey { Paths = { "/name" } } } }
+        };
+        var container = new InMemoryContainer(props);
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "SameName" });
+        batch.CreateItem(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "SameName" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Batch_UpsertAsCreate_ConflictingUniqueKey_Fails()
+    {
+        var props = new ContainerProperties("batch-uk3", "/partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy { UniqueKeys = { new UniqueKey { Paths = { "/name" } } } }
+        };
+        var container = new InMemoryContainer(props);
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "UniqueAlice" }, new PartitionKey("pk1"));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItem(new TestDocument { Id = "2", PartitionKey = "pk1", Name = "UniqueAlice" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+    }
+}
+
+// ── GetOperationResultAtIndex ──
+public class TransactionalBatchGetOperationResultTests
+{
+    private readonly InMemoryContainer _container = new("batch-getop", "/partitionKey");
+
+    [Fact]
+    public async Task Batch_GetOperationResultAtIndex_Create_ReturnsTypedResource()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" });
+        using var response = await batch.ExecuteAsync();
+
+        var result = response.GetOperationResultAtIndex<TestDocument>(0);
+        result.Resource.Id.Should().Be("1");
+        result.Resource.Name.Should().Be("Alice");
+        result.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Batch_GetOperationResultAtIndex_Upsert_ReturnsTypedResource()
+    {
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" });
+        using var response = await batch.ExecuteAsync();
+
+        var result = response.GetOperationResultAtIndex<TestDocument>(0);
+        result.Resource.Id.Should().Be("1");
+        result.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Batch_GetOperationResultAtIndex_Replace_ReturnsTypedResource()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" }, new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItem("1", new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" });
+        using var response = await batch.ExecuteAsync();
+
+        var result = response.GetOperationResultAtIndex<TestDocument>(0);
+        result.Resource.Name.Should().Be("Updated");
+        result.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Batch_GetOperationResultAtIndex_Patch_ReturnsTypedResource()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 10 }, new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.PatchItem("1", new[] { PatchOperation.Set("/name", "Patched") });
+        using var response = await batch.ExecuteAsync();
+
+        var result = response.GetOperationResultAtIndex<TestDocument>(0);
+        result.Resource.Name.Should().Be("Patched");
+        result.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Batch_GetOperationResultAtIndex_Delete_ResourceIsDefault()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" }, new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.DeleteItem("1");
+        using var response = await batch.ExecuteAsync();
+
+        var result = response.GetOperationResultAtIndex<TestDocument>(0);
+        result.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+}
+
+// ── Concurrent Batches ──
+public class TransactionalBatchConcurrentExtendedTests
+{
+    [Fact]
+    public async Task Batch_TwoConcurrentBatches_DifferentPartitions_BothSucceed()
+    {
+        var container = new InMemoryContainer("batch-conc", "/partitionKey");
+
+        var batch1 = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch1.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" });
+        var batch2 = container.CreateTransactionalBatch(new PartitionKey("pk2"));
+        batch2.CreateItem(new TestDocument { Id = "2", PartitionKey = "pk2", Name = "B" });
+
+        var results = await Task.WhenAll(batch1.ExecuteAsync(), batch2.ExecuteAsync());
+        results[0].IsSuccessStatusCode.Should().BeTrue();
+        results[1].IsSuccessStatusCode.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Batch_ThenDirectCrud_StateConsistent()
+    {
+        var container = new InMemoryContainer("batch-state", "/partitionKey");
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        // Direct CRUD should see the batch result
+        var item = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        item.Resource.Name.Should().Be("Alice");
+
+        // Direct update should succeed
+        await container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" }, "1", new PartitionKey("pk1"));
+        var updated = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        updated.Resource.Name.Should().Be("Updated");
+    }
+}
+
+// ── Miscellaneous ──
+public class TransactionalBatchMiscExtendedTests
+{
+    [Fact]
+    public async Task Batch_PatchItem_AllFivePatchTypes_InSingleBatch()
+    {
+        var container = new InMemoryContainer("batch-allpatch", "/partitionKey");
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", partitionKey = "pk1", name = "Alice", counter = 10, tags = new[] { "a" }, extra = "old" }),
+            new PartitionKey("pk1"));
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.PatchItem("1", new[]
+        {
+            PatchOperation.Set("/name", "Updated"),           // Set
+            PatchOperation.Replace("/extra", "new"),           // Replace
+            PatchOperation.Add("/added", "newField"),          // Add
+            PatchOperation.Remove("/tags"),                    // Remove
+            PatchOperation.Increment("/counter", 5),           // Increment
+        });
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var item = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        item.Resource["name"]!.Value<string>().Should().Be("Updated");
+        item.Resource["extra"]!.Value<string>().Should().Be("new");
+        item.Resource["added"]!.Value<string>().Should().Be("newField");
+        item.Resource["tags"].Should().BeNull();
+        item.Resource["counter"]!.Value<int>().Should().Be(15);
+    }
+
+    [Fact]
+    public async Task Batch_NestedPartitionKeyPath_WorksCorrectly()
+    {
+        var container = new InMemoryContainer("batch-nested-pk", "/metadata/partitionKey");
+        var doc = JObject.FromObject(new { id = "1", metadata = new { partitionKey = "pk1" }, name = "Alice" });
+
+        var batch = container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.CreateItem(doc);
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeTrue();
+
+        var item = await container.ReadItemAsync<JObject>("1", new PartitionKey("pk1"));
+        item.Resource["name"]!.Value<string>().Should().Be("Alice");
+    }
+}
+

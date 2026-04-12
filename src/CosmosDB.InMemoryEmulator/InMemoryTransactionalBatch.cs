@@ -232,7 +232,15 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             if (!response.IsSuccessStatusCode)
                 throw new CosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
             _writeEtags[opIndex] = response.Headers.ETag;
-            _readResults[opIndex] = json;
+            if (response.Content != null)
+            {
+                using var responseReader = new StreamReader(response.Content);
+                _readResults[opIndex] = await responseReader.ReadToEndAsync();
+            }
+            else
+            {
+                _readResults[opIndex] = json;
+            }
         }, BatchOpType.Create));
         return this;
     }
@@ -249,7 +257,16 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             if (!response.IsSuccessStatusCode)
                 throw new CosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
             _writeEtags[opIndex] = response.Headers.ETag;
-            _readResults[opIndex] = json;
+            _opStatusCodes[opIndex] = response.StatusCode;
+            if (response.Content != null)
+            {
+                using var responseReader = new StreamReader(response.Content);
+                _readResults[opIndex] = await responseReader.ReadToEndAsync();
+            }
+            else
+            {
+                _readResults[opIndex] = json;
+            }
         }, BatchOpType.Upsert));
         return this;
     }
@@ -266,7 +283,15 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             if (!response.IsSuccessStatusCode)
                 throw new CosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
             _writeEtags[opIndex] = response.Headers.ETag;
-            _readResults[opIndex] = json;
+            if (response.Content != null)
+            {
+                using var responseReader = new StreamReader(response.Content);
+                _readResults[opIndex] = await responseReader.ReadToEndAsync();
+            }
+            else
+            {
+                _readResults[opIndex] = json;
+            }
         }, BatchOpType.Replace));
         return this;
     }
