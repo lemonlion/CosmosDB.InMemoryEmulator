@@ -1336,3 +1336,452 @@ public class TriggerDivergentBehaviorTests
         items.Should().BeEmpty("change feed should not contain entries for rolled-back operations");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Plan 44: Trigger Tests Deep Dive
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── B1-B5: Change Feed Rollback on Post-Trigger Failure ──
+public class TriggerChangeFeedRollbackTests
+{
+    private static async Task<List<JObject>> GetChangeFeedSince(InMemoryContainer container, long checkpoint)
+    {
+        var iter = container.GetChangeFeedIterator<JObject>(checkpoint);
+        var items = new List<JObject>();
+        while (iter.HasMoreResults)
+        {
+            var page = await iter.ReadNextAsync();
+            items.AddRange(page);
+        }
+        return items;
+    }
+
+    [Fact]
+    public async Task PostTrigger_ExceptionOnUpsert_ChangeFeedIsClean()
+    {
+        var container = new InMemoryContainer("cf-upsert", "/pk");
+        var checkpoint = container.GetChangeFeedCheckpoint();
+
+        container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
+        await act.Should().ThrowAsync<Exception>();
+
+        var changes = await GetChangeFeedSince(container, checkpoint);
+        changes.Should().BeEmpty("change feed should not contain entries for rolled-back upsert");
+    }
+
+    [Fact]
+    public async Task PostTrigger_ExceptionOnReplace_ChangeFeedIsClean()
+    {
+        var container = new InMemoryContainer("cf-replace", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", v = "orig" }), new PartitionKey("a"));
+        var checkpoint = container.GetChangeFeedCheckpoint();
+
+        container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", v = "upd" }), "1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
+        await act.Should().ThrowAsync<Exception>();
+
+        var changes = await GetChangeFeedSince(container, checkpoint);
+        changes.Should().BeEmpty("change feed should not contain entries for rolled-back replace");
+    }
+
+    [Fact]
+    public async Task PostTrigger_ExceptionOnCreateStream_ChangeFeedIsClean()
+    {
+        var container = new InMemoryContainer("cf-cstream", "/pk");
+        var checkpoint = container.GetChangeFeedCheckpoint();
+
+        container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.Create,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => container.CreateItemStreamAsync(
+            new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"id\":\"1\",\"pk\":\"a\"}")),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
+        await act.Should().ThrowAsync<Exception>();
+
+        var changes = await GetChangeFeedSince(container, checkpoint);
+        changes.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task PostTrigger_ExceptionOnUpsertStream_ChangeFeedIsClean()
+    {
+        var container = new InMemoryContainer("cf-ustream", "/pk");
+        var checkpoint = container.GetChangeFeedCheckpoint();
+
+        container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => container.UpsertItemStreamAsync(
+            new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"id\":\"1\",\"pk\":\"a\"}")),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
+        await act.Should().ThrowAsync<Exception>();
+
+        var changes = await GetChangeFeedSince(container, checkpoint);
+        changes.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task PostTrigger_ExceptionOnReplaceStream_ChangeFeedIsClean()
+    {
+        var container = new InMemoryContainer("cf-rstream", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        var checkpoint = container.GetChangeFeedCheckpoint();
+
+        container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => container.ReplaceItemStreamAsync(
+            new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"id\":\"1\",\"pk\":\"a\",\"v\":\"upd\"}")),
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
+        await act.Should().ThrowAsync<Exception>();
+
+        var changes = await GetChangeFeedSince(container, checkpoint);
+        changes.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task PostTrigger_ExceptionOnDelete_ChangeFeedHasNoTombstone()
+    {
+        var container = new InMemoryContainer("cf-delete", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        var checkpoint = container.GetChangeFeedCheckpoint();
+
+        container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.Delete,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => container.DeleteItemAsync<JObject>("1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
+        await act.Should().ThrowAsync<Exception>();
+
+        var changes = await GetChangeFeedSince(container, checkpoint);
+        changes.Should().BeEmpty("delete tombstone should not appear for rolled-back delete");
+    }
+
+    [Fact]
+    public async Task PostTrigger_ExceptionOnDeleteStream_ChangeFeedHasNoTombstone()
+    {
+        var container = new InMemoryContainer("cf-dstream", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+        var checkpoint = container.GetChangeFeedCheckpoint();
+
+        container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.Delete,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => container.DeleteItemStreamAsync("1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
+        await act.Should().ThrowAsync<Exception>();
+
+        var changes = await GetChangeFeedSince(container, checkpoint);
+        changes.Should().BeEmpty();
+    }
+}
+
+// ── M1-M6: Stream Trigger Coverage ──
+public class TriggerStreamCoverageTests
+{
+    private readonly InMemoryContainer _container = new("trig-stream", "/pk");
+
+    [Fact]
+    public async Task PostTrigger_OnUpsertStream_FiresAfterUpsert()
+    {
+        var triggered = false;
+        _container.RegisterTrigger("post-flag", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => triggered = true));
+
+        await _container.UpsertItemStreamAsync(
+            new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"id\":\"1\",\"pk\":\"a\"}")),
+            new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "post-flag" } });
+
+        triggered.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PostTrigger_OnReplaceStream_FiresAfterReplace()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var triggered = false;
+        _container.RegisterTrigger("post-flag", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => triggered = true));
+
+        await _container.ReplaceItemStreamAsync(
+            new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"id\":\"1\",\"pk\":\"a\",\"v\":\"upd\"}")),
+            "1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "post-flag" } });
+
+        triggered.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PostTrigger_OnDeleteStream_FiresAfterDelete()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var triggered = false;
+        _container.RegisterTrigger("post-del", TriggerType.Post, TriggerOperation.Delete,
+            (Action<JObject>)(_ => triggered = true));
+
+        await _container.DeleteItemStreamAsync("1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "post-del" } });
+
+        triggered.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PostTrigger_Stream_RollsBack_OnExceptionDuringDeleteStream()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        _container.RegisterTrigger("fail-post", TriggerType.Post, TriggerOperation.Delete,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => _container.DeleteItemStreamAsync("1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail-post" } });
+        await act.Should().ThrowAsync<Exception>();
+
+        // Item should still exist (rolled back)
+        var read = await _container.ReadItemStreamAsync("1", new PartitionKey("a"));
+        read.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+}
+
+// ── M7: TriggerOperation Filtering ──
+public class TriggerOperationFilteringDeepDiveTests
+{
+    private readonly InMemoryContainer _container = new("trig-filter", "/pk");
+
+    [Fact]
+    public async Task PreTrigger_OperationAll_FiresOnDelete()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var triggered = false;
+        _container.RegisterTrigger("pre-all", TriggerType.Pre, TriggerOperation.All,
+            (Func<JObject, JObject>)(doc => { triggered = true; return doc; }));
+
+        await _container.DeleteItemAsync<JObject>("1", new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "pre-all" } });
+
+        triggered.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PostTrigger_OperationAll_FiresOnDelete()
+    {
+        await _container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"));
+
+        var triggered = false;
+        _container.RegisterTrigger("post-all", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => triggered = true));
+
+        await _container.DeleteItemAsync<JObject>("1", new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "post-all" } });
+
+        triggered.Should().BeTrue();
+    }
+}
+
+// ── E4: Multiple Triggers ──
+public class TriggerMultipleTriggerTests
+{
+    private readonly InMemoryContainer _container = new("trig-multi", "/pk");
+
+    [Fact]
+    public async Task PreTrigger_MultipleTriggers_FirstMismatchSecondMatches()
+    {
+        _container.RegisterTrigger("trigA", TriggerType.Pre, TriggerOperation.Replace,
+            (Func<JObject, JObject>)(doc => { doc["trigA"] = true; return doc; }));
+        _container.RegisterTrigger("trigB", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => { doc["trigB"] = true; return doc; }));
+
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "trigA", "trigB" } });
+
+        var item = (await _container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["trigA"].Should().BeNull("trigA is for Replace, should not fire on Create");
+        item["trigB"]!.Value<bool>().Should().BeTrue("trigB is for Create, should fire");
+    }
+
+    [Fact]
+    public async Task PreTrigger_MultipleTriggers_FirstNotFound_ThrowsBadRequest()
+    {
+        _container.RegisterTrigger("trigB", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => doc));
+
+        var act = () => _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "unknown", "trigB" } });
+        await act.Should().ThrowAsync<CosmosException>();
+    }
+}
+
+// ── E9: Same Name for Pre and Post ──
+public class TriggerSameNameTests
+{
+    [Fact]
+    public async Task RegisterTrigger_SameNameForPreAndPost_LastWins()
+    {
+        var container = new InMemoryContainer("trig-samename", "/pk");
+
+        var preFired = false;
+        container.RegisterTrigger("t1", TriggerType.Pre, TriggerOperation.All,
+            (Func<JObject, JObject>)(doc => { preFired = true; return doc; }));
+        // This overwrites the pre-trigger registration
+        container.RegisterTrigger("t1", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => { }));
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "t1" } });
+
+        preFired.Should().BeFalse("pre-trigger was overwritten by post-trigger registration");
+    }
+}
+
+// ── M22: Triggers + IfMatchEtag ──
+public class TriggerETagInteractionTests
+{
+    [Fact(Skip = "DIVERGENT: Emulator fires pre-trigger before ETag check; real Cosmos checks ETag first")]
+    public async Task PreTrigger_WithStaleEtag_EtagCheckedBeforeTrigger()
+    {
+        var container = new InMemoryContainer("trig-etag", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", v = "orig" }), new PartitionKey("a"));
+
+        var preFired = false;
+        container.RegisterTrigger("pre", TriggerType.Pre, TriggerOperation.Replace,
+            (Func<JObject, JObject>)(doc => { preFired = true; return doc; }));
+
+        var act = () => container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", v = "upd" }), "1", new PartitionKey("a"),
+            new ItemRequestOptions { IfMatchEtag = "stale-etag", PreTriggers = new List<string> { "pre" } });
+        await act.Should().ThrowAsync<CosmosException>();
+        preFired.Should().BeFalse("ETag check should happen before trigger");
+    }
+
+    [Fact]
+    public async Task PreTrigger_WithStaleEtag_EmulatorFiresTriggerFirst()
+    {
+        var container = new InMemoryContainer("trig-etag2", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "a", v = "orig" }), new PartitionKey("a"));
+
+        var preFired = false;
+        container.RegisterTrigger("pre", TriggerType.Pre, TriggerOperation.Replace,
+            (Func<JObject, JObject>)(doc => { preFired = true; return doc; }));
+
+        var act = () => container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a", v = "upd" }), "1", new PartitionKey("a"),
+            new ItemRequestOptions { IfMatchEtag = "stale-etag", PreTriggers = new List<string> { "pre" } });
+        await act.Should().ThrowAsync<CosmosException>();
+        // Emulator fires pre-trigger before ETag check
+        preFired.Should().BeTrue("emulator fires trigger before ETag check");
+    }
+}
+
+// ── M25: Upsert New Item Rollback ──
+public class TriggerUpsertNewItemRollbackTests
+{
+    [Fact]
+    public async Task PostTrigger_ExceptionRollsBack_Upsert_NewItem()
+    {
+        var container = new InMemoryContainer("trig-upsert-new", "/pk");
+
+        container.RegisterTrigger("fail", TriggerType.Post, TriggerOperation.All,
+            (Action<JObject>)(_ => throw new InvalidOperationException("fail!")));
+
+        var act = () => container.UpsertItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"),
+            new ItemRequestOptions { PostTriggers = new List<string> { "fail" } });
+        await act.Should().ThrowAsync<Exception>();
+
+        // Item should not exist at all (was a new upsert, rolled back)
+        var readAct = () => container.ReadItemAsync<JObject>("1", new PartitionKey("a"));
+        await readAct.Should().ThrowAsync<CosmosException>();
+    }
+}
+
+// ── M9-M10: EnableContentResponseOnWrite + Triggers ──
+public class TriggerContentResponseOptionsTests
+{
+    [Fact]
+    public async Task PreTrigger_WithEnableContentResponseOnWriteFalse_StillModifiesDoc()
+    {
+        var container = new InMemoryContainer("trig-ecrow", "/pk");
+        container.RegisterTrigger("add-field", TriggerType.Pre, TriggerOperation.Create,
+            (Func<JObject, JObject>)(doc => { doc["injected"] = "yes"; return doc; }));
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"),
+            new ItemRequestOptions
+            {
+                EnableContentResponseOnWrite = false,
+                PreTriggers = new List<string> { "add-field" }
+            });
+
+        var item = (await container.ReadItemAsync<JObject>("1", new PartitionKey("a"))).Resource;
+        item["injected"]!.Value<string>().Should().Be("yes");
+    }
+
+    [Fact]
+    public async Task PostTrigger_WithEnableContentResponseOnWriteFalse_StillFires()
+    {
+        var container = new InMemoryContainer("trig-ecrow2", "/pk");
+        var triggered = false;
+        container.RegisterTrigger("post", TriggerType.Post, TriggerOperation.Create,
+            (Action<JObject>)(_ => triggered = true));
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), new PartitionKey("a"),
+            new ItemRequestOptions
+            {
+                EnableContentResponseOnWrite = false,
+                PostTriggers = new List<string> { "post" }
+            });
+
+        triggered.Should().BeTrue();
+    }
+}
+
+// ── M12-M13: Nonexistent Item with Triggers ──
+public class TriggerNonexistentItemTests
+{
+    [Fact]
+    public async Task ReplaceNonExistentItem_WithPreTrigger_ThrowsNotFound()
+    {
+        var container = new InMemoryContainer("trig-nexist", "/pk");
+        container.RegisterTrigger("pre", TriggerType.Pre, TriggerOperation.Replace,
+            (Func<JObject, JObject>)(doc => doc));
+
+        var act = () => container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "1", pk = "a" }), "1", new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "pre" } });
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task DeleteNonExistentItem_WithPreTrigger_ThrowsNotFound()
+    {
+        var container = new InMemoryContainer("trig-nexist2", "/pk");
+        container.RegisterTrigger("pre", TriggerType.Pre, TriggerOperation.Delete,
+            (Func<JObject, JObject>)(doc => doc));
+
+        var act = () => container.DeleteItemAsync<JObject>("1", new PartitionKey("a"),
+            new ItemRequestOptions { PreTriggers = new List<string> { "pre" } });
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+}

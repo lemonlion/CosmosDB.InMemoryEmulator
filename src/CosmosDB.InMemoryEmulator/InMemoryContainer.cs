@@ -747,7 +747,6 @@ public class InMemoryContainer : Container
                 _timestamps[key] = DateTimeOffset.UtcNow;
                 _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
             }
-            RecordChangeFeed(itemId, pk, _items[key]);
 
             try
             {
@@ -759,6 +758,7 @@ public class InMemoryContainer : Container
                     ValidateDocumentSize(postTriggerJson);
                     _items[key] = postTriggerJson;
                 }
+                RecordChangeFeed(itemId, pk, _items[key]);
             }
             catch
             {
@@ -853,7 +853,6 @@ public class InMemoryContainer : Container
                 _timestamps[key] = DateTimeOffset.UtcNow;
                 _items[key] = EnrichWithSystemProperties(json, etag, _timestamps[key]);
             }
-            RecordChangeFeed(id, pk, _items[key]);
 
             try
             {
@@ -865,6 +864,7 @@ public class InMemoryContainer : Container
                     ValidateDocumentSize(postTriggerJson);
                     _items[key] = postTriggerJson;
                 }
+                RecordChangeFeed(id, pk, _items[key]);
             }
             catch
             {
@@ -912,11 +912,11 @@ public class InMemoryContainer : Container
             _items.TryRemove(key, out _);
             _etags.TryRemove(key, out _);
             _timestamps.TryRemove(key, out _);
-            RecordDeleteTombstone(id, pk, partitionKey);
 
             try
             {
                 ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
+                RecordDeleteTombstone(id, pk, partitionKey);
             }
             catch
             {
@@ -1029,9 +1029,9 @@ public class InMemoryContainer : Container
             _items[key] = enriched;
         }
         var enrichedJson = _items[key];
-        RecordChangeFeed(id, pk, enrichedJson);
 
         ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Replace");
+        RecordChangeFeed(id, pk, _items[key]);
 
         var suppressContent = requestOptions?.EnableContentResponseOnWrite == false;
         var result = JsonConvert.DeserializeObject<T>(enrichedJson, JsonSettings);
@@ -1092,11 +1092,11 @@ public class InMemoryContainer : Container
             _timestamps[key] = DateTimeOffset.UtcNow;
             var enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
             _items[key] = enrichedJson;
-            RecordChangeFeed(itemId, pk, enrichedJson);
 
             try
             {
                 ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Create");
+                RecordChangeFeed(itemId, pk, _items[key]);
             }
             catch
             {
@@ -1202,11 +1202,11 @@ public class InMemoryContainer : Container
                 enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
                 _items[key] = enrichedJson;
             }
-            RecordChangeFeed(itemId, pk, enrichedJson);
 
             try
             {
                 ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Upsert");
+                RecordChangeFeed(itemId, pk, _items[key]);
             }
             catch
             {
@@ -1305,11 +1305,11 @@ public class InMemoryContainer : Container
                 enrichedJson = EnrichWithSystemProperties(json, etag, _timestamps[key]);
                 _items[key] = enrichedJson;
             }
-            RecordChangeFeed(id, pk, enrichedJson);
 
             try
             {
                 ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Replace");
+                RecordChangeFeed(id, pk, _items[key]);
             }
             catch
             {
@@ -1359,11 +1359,11 @@ public class InMemoryContainer : Container
             _items.TryRemove(key, out _);
             _etags.TryRemove(key, out _);
             _timestamps.TryRemove(key, out _);
-            RecordDeleteTombstone(id, pk, partitionKey);
 
             try
             {
                 ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
+                RecordDeleteTombstone(id, pk, partitionKey);
             }
             catch
             {
@@ -1488,11 +1488,11 @@ public class InMemoryContainer : Container
             _items[key] = enriched;
         }
         var enrichedJson = _items[key];
-        RecordChangeFeed(id, pk, enrichedJson);
 
         try
         {
             ExecutePostTriggers(requestOptions, JsonParseHelpers.ParseJson(enrichedJson), "Replace");
+            RecordChangeFeed(id, pk, _items[key]);
         }
         catch
         {
