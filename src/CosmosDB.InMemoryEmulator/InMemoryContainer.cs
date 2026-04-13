@@ -2048,9 +2048,12 @@ public class InMemoryContainer : Container
             var pkStr = pkToken.ToString();
             var pkArray = JArray.Parse(pkStr);
             if (pkArray.Count == 0) return null;
-            // For null PK values (PartitionKey.Null), JTokenToTypedKey returns null.
-            // Return "" to match what ExtractPartitionKeyValueFromJson returns for null-PK items.
-            return JTokenToTypedKey(pkArray[0]) ?? "";
+            // For multi-component (hierarchical) partition keys, join all parts with "|"
+            // to match the format used by ExtractPartitionKeyValueCore.
+            if (pkArray.Count == 1)
+                return JTokenToTypedKey(pkArray[0]) ?? "";
+            var parts = pkArray.Select(t => JTokenToTypedKey(t) ?? "").ToList();
+            return string.Join("|", parts);
         }
         catch
         {
@@ -8235,7 +8238,7 @@ public class InMemoryContainer : Container
     /// Converts path segments to a Newtonsoft.Json SelectToken-compatible path.
     /// Numeric segments become array indexers (e.g., ["runs","0"] → "runs[0]").
     /// </summary>
-    private static string BuildSelectTokenPath(IEnumerable<string> segments)
+    internal static string BuildSelectTokenPath(IEnumerable<string> segments)
     {
         var sb = new System.Text.StringBuilder();
         foreach (var segment in segments)
