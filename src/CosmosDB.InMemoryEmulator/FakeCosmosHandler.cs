@@ -8,6 +8,7 @@ using Microsoft.Azure.Cosmos.Serialization.HybridRow;
 using Microsoft.Azure.Cosmos.Serialization.HybridRow.IO;
 using Microsoft.Azure.Cosmos.Serialization.HybridRow.Layouts;
 using Microsoft.Azure.Cosmos.Serialization.HybridRow.RecordIO;
+using HybridRowSchemas = Microsoft.Azure.Cosmos.Serialization.HybridRow.Schemas;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -355,26 +356,123 @@ public class FakeCosmosHandler : HttpMessageHandler
     }
 
     /// <summary>
-    /// Lazily resolved HybridRow schema objects from the Cosmos SDK internals.
-    /// BatchSchemaProvider is internal, so we access it via reflection.
+    /// Lazily resolved HybridRow schema objects for batch request/response serialization.
+    /// Constructs schemas from scratch using public HybridRow APIs to eliminate fragile
+    /// reflection into SDK internals (BatchSchemaProvider). Falls back to reflection
+    /// if the self-built approach fails, with clear error messages.
     /// </summary>
     private static class BatchSchemas
     {
         private static readonly Lazy<(Layout OperationLayout, Layout ResultLayout, LayoutResolverNamespace Resolver)> _schemas =
-            new(() =>
-            {
-                var bspType = typeof(CosmosClient).Assembly.GetType("Microsoft.Azure.Cosmos.BatchSchemaProvider")
-                    ?? throw new InvalidOperationException("Cannot find BatchSchemaProvider in the Cosmos SDK assembly.");
-                var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
-                var opLayout = (Layout)bspType.GetProperty("BatchOperationLayout", flags)!.GetValue(null)!;
-                var resultLayout = (Layout)bspType.GetProperty("BatchResultLayout", flags)!.GetValue(null)!;
-                var resolver = (LayoutResolverNamespace)bspType.GetProperty("BatchLayoutResolver", flags)!.GetValue(null)!;
-                return (opLayout, resultLayout, resolver);
-            });
+            new(BuildSchemas);
 
         public static Layout OperationLayout => _schemas.Value.OperationLayout;
         public static Layout ResultLayout => _schemas.Value.ResultLayout;
         public static LayoutResolverNamespace Resolver => _schemas.Value.Resolver;
+
+        private static (Layout, Layout, LayoutResolverNamespace) BuildSchemas()
+        {
+            try
+            {
+                return BuildSchemasFromDefinition();
+            }
+            catch (Exception ex)
+            {
+                // Self-built schema construction failed. Fall back to reflecting into the
+                // SDK's internal BatchSchemaProvider as a last resort.
+                try
+                {
+                    return BuildSchemasFromReflection();
+                }
+                catch (Exception reflectionEx)
+                {
+                    throw new InvalidOperationException(
+                        $"Failed to initialise HybridRow batch schemas. " +
+                        $"Self-built schema error: {ex.Message}. " +
+                        $"Reflection fallback error: {reflectionEx.Message}. " +
+                        $"This may indicate an incompatible Cosmos SDK version " +
+                        $"({typeof(CosmosClient).Assembly.GetName().Version}). " +
+                        $"Batch operations will not work.", ex);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Build batch schemas from scratch using public HybridRow APIs.
+        /// This approach defines the BatchOperation and BatchResult schemas programmatically,
+        /// matching the wire format the Cosmos SDK expects, without reflecting into any internal types.
+        /// </summary>
+        private static (Layout, Layout, LayoutResolverNamespace) BuildSchemasFromDefinition()
+        {
+            var batchOperationSchema = new HybridRowSchemas.Schema
+            {
+                Name = "BatchOperation",
+                SchemaId = new SchemaId(2145473648),
+                Type = HybridRowSchemas.TypeKind.Schema,
+                Properties =
+                {
+                    new HybridRowSchemas.Property { Path = "operationType", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Int32) { Storage = HybridRowSchemas.StorageKind.Fixed, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "resourceType", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Int32) { Storage = HybridRowSchemas.StorageKind.Fixed, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "partitionKey", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Utf8) { Storage = HybridRowSchemas.StorageKind.Variable, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "effectivePartitionKey", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Binary) { Storage = HybridRowSchemas.StorageKind.Variable, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "id", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Utf8) { Storage = HybridRowSchemas.StorageKind.Variable, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "binaryId", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Binary) { Storage = HybridRowSchemas.StorageKind.Variable, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "resourceBody", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Binary) { Storage = HybridRowSchemas.StorageKind.Variable, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "indexingDirective", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Utf8) { Storage = HybridRowSchemas.StorageKind.Sparse, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "ifMatch", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Utf8) { Storage = HybridRowSchemas.StorageKind.Sparse, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "ifNoneMatch", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Utf8) { Storage = HybridRowSchemas.StorageKind.Sparse, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "timeToLiveInSeconds", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Int32) { Storage = HybridRowSchemas.StorageKind.Sparse, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "minimalReturnPreference", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Boolean) { Storage = HybridRowSchemas.StorageKind.Sparse, Nullable = true } },
+                },
+            };
+
+            var batchResultSchema = new HybridRowSchemas.Schema
+            {
+                Name = "BatchResult",
+                SchemaId = new SchemaId(2145473649),
+                Type = HybridRowSchemas.TypeKind.Schema,
+                Properties =
+                {
+                    new HybridRowSchemas.Property { Path = "statusCode", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Int32) { Storage = HybridRowSchemas.StorageKind.Fixed, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "subStatusCode", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Int32) { Storage = HybridRowSchemas.StorageKind.Fixed, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "eTag", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Utf8) { Storage = HybridRowSchemas.StorageKind.Variable, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "resourceBody", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Binary) { Storage = HybridRowSchemas.StorageKind.Variable, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "retryAfterMilliseconds", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.UInt32) { Storage = HybridRowSchemas.StorageKind.Sparse, Nullable = true } },
+                    new HybridRowSchemas.Property { Path = "requestCharge", PropertyType = new HybridRowSchemas.PrimitivePropertyType(HybridRowSchemas.TypeKind.Float64) { Storage = HybridRowSchemas.StorageKind.Sparse, Nullable = true } },
+                },
+            };
+
+            var ns = new HybridRowSchemas.Namespace
+            {
+                Name = "Microsoft.Azure.Cosmos.BatchApi",
+                Version = HybridRowSchemas.SchemaLanguageVersion.V2,
+                Schemas = { batchOperationSchema, batchResultSchema },
+            };
+
+            var resolver = new LayoutResolverNamespace(ns, SystemSchema.LayoutResolver);
+            var opLayout = resolver.Resolve(batchOperationSchema.SchemaId);
+            var resultLayout = resolver.Resolve(batchResultSchema.SchemaId);
+            return (opLayout, resultLayout, resolver);
+        }
+
+        /// <summary>
+        /// Fallback: resolve batch schemas via reflection into the SDK's internal BatchSchemaProvider.
+        /// </summary>
+        private static (Layout, Layout, LayoutResolverNamespace) BuildSchemasFromReflection()
+        {
+            var bspType = typeof(CosmosClient).Assembly.GetType("Microsoft.Azure.Cosmos.BatchSchemaProvider")
+                ?? throw new InvalidOperationException(
+                    "Cannot find BatchSchemaProvider in the Cosmos SDK assembly. " +
+                    "The SDK may have reorganised its internal types.");
+            var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
+            var opLayout = (Layout)(bspType.GetProperty("BatchOperationLayout", flags)?.GetValue(null)
+                ?? throw new InvalidOperationException("BatchSchemaProvider.BatchOperationLayout not found."));
+            var resultLayout = (Layout)(bspType.GetProperty("BatchResultLayout", flags)?.GetValue(null)
+                ?? throw new InvalidOperationException("BatchSchemaProvider.BatchResultLayout not found."));
+            var resolver = (LayoutResolverNamespace)(bspType.GetProperty("BatchLayoutResolver", flags)?.GetValue(null)
+                ?? throw new InvalidOperationException("BatchSchemaProvider.BatchLayoutResolver not found."));
+            return (opLayout, resultLayout, resolver);
+        }
     }
 
     private record struct BatchOperation(int OperationType, string? Id, byte[]? ResourceBody, string? IfMatch, string? IfNoneMatch);

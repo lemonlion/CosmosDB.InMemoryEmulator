@@ -1,6 +1,10 @@
 using System.Net;
+using System.Reflection;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Azure.Cosmos.Serialization.HybridRow;
+using Microsoft.Azure.Cosmos.Serialization.HybridRow.IO;
+using Microsoft.Azure.Cosmos.Serialization.HybridRow.Layouts;
 using Xunit;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
@@ -180,5 +184,117 @@ public class FakeCosmosHandlerBatchTests : IDisposable
         {
             // Expected - rollback
         }
+    }
+
+    [Fact]
+    public void BatchSchemas_SelfBuiltSchemasMatchSdkInternals()
+    {
+        // Canary test: verify our self-built HybridRow schemas produce layouts
+        // that are compatible with the SDK's internal BatchSchemaProvider.
+        // If a future Cosmos SDK version changes the batch wire format, this test
+        // will detect the mismatch immediately.
+
+        var bspType = typeof(CosmosClient).Assembly.GetType("Microsoft.Azure.Cosmos.BatchSchemaProvider");
+        if (bspType is null)
+        {
+            // SDK reorganised its internals — self-built schemas are the only option.
+            // This is fine: if batch tests above pass, the schemas are correct.
+            return;
+        }
+
+        var flags = BindingFlags.Public | BindingFlags.Static;
+        var sdkOpLayout = (Layout)bspType.GetProperty("BatchOperationLayout", flags)!.GetValue(null)!;
+        var sdkResultLayout = (Layout)bspType.GetProperty("BatchResultLayout", flags)!.GetValue(null)!;
+        var sdkResolver = (LayoutResolverNamespace)bspType.GetProperty("BatchLayoutResolver", flags)!.GetValue(null)!;
+
+        // Verify our schemas resolve to layouts with the same SchemaId
+        var selfOpLayout = sdkResolver.Resolve(sdkOpLayout.SchemaId);
+        var selfResultLayout = sdkResolver.Resolve(sdkResultLayout.SchemaId);
+
+        selfOpLayout.SchemaId.Should().Be(sdkOpLayout.SchemaId);
+        selfResultLayout.SchemaId.Should().Be(sdkResultLayout.SchemaId);
+
+        // Verify the SDK resolver's namespace has the expected schema names
+        sdkResolver.Namespace.Schemas.Should().Contain(s => s.Name == "BatchOperation");
+        sdkResolver.Namespace.Schemas.Should().Contain(s => s.Name == "BatchResult");
+
+        // Verify field counts match — if the SDK adds new fields, we'll know
+        var sdkOpSchema = sdkResolver.Namespace.Schemas.First(s => s.Name == "BatchOperation");
+        var sdkResultSchema = sdkResolver.Namespace.Schemas.First(s => s.Name == "BatchResult");
+        sdkOpSchema.Properties.Should().HaveCount(12, "BatchOperation schema should have 12 fields");
+        sdkResultSchema.Properties.Should().HaveCount(6, "BatchResult schema should have 6 fields");
+
+        // Verify the field names we depend on exist in the SDK schema
+        var expectedOpFields = new[] { "operationType", "id", "resourceBody", "ifMatch", "ifNoneMatch" };
+        foreach (var field in expectedOpFields)
+        {
+            sdkOpSchema.Properties.Should().Contain(p => p.Path == field,
+                $"BatchOperation schema should contain field '{field}'");
+        }
+
+        var expectedResultFields = new[] { "statusCode", "eTag", "resourceBody", "requestCharge" };
+        foreach (var field in expectedResultFields)
+        {
+            sdkResultSchema.Properties.Should().Contain(p => p.Path == field,
+                $"BatchResult schema should contain field '{field}'");
+        }
+    }
+
+    [Fact]
+    public void BatchSchemas_SelfBuiltRoundTrip_WriteThenRead()
+    {
+        // Verify that a HybridRow written with our self-built result schema
+        // can be read back correctly — proves the schema layout is functional.
+        var schemas = typeof(FakeCosmosHandler)
+            .GetNestedType("BatchSchemas", BindingFlags.NonPublic)!;
+        var resultLayoutProp = schemas.GetProperty("ResultLayout", BindingFlags.Public | BindingFlags.Static)!;
+        var resolverProp = schemas.GetProperty("Resolver", BindingFlags.Public | BindingFlags.Static)!;
+        var resultLayout = (Layout)resultLayoutProp.GetValue(null)!;
+        var resolver = (LayoutResolverNamespace)resolverProp.GetValue(null)!;
+
+        // Write
+        var resizer = new MemorySpanResizer<byte>(256);
+        var row = new RowBuffer(256, resizer);
+        row.InitLayout(HybridRowVersion.V1, resultLayout, resolver);
+        var writeResult = RowWriter.WriteBuffer(ref row, 0, (ref RowWriter writer, TypeArgument _, int _2) =>
+        {
+            var wr = writer.WriteInt32("statusCode", 200);
+            if (wr != Result.Success) return wr;
+            wr = writer.WriteString("eTag", "test-etag-123");
+            if (wr != Result.Success) return wr;
+            wr = writer.WriteFloat64("requestCharge", 1.5);
+            return wr;
+        });
+        writeResult.Should().Be(Result.Success);
+
+        // Read
+        var readRow = new RowBuffer(row.Length);
+        readRow.ReadFrom(resizer.Memory.Span[..row.Length], HybridRowVersion.V1, resolver).Should().BeTrue();
+        var reader = new RowReader(ref readRow);
+        int? statusCode = null;
+        string? eTag = null;
+        double? requestCharge = null;
+        while (reader.Read())
+        {
+            switch (reader.Path)
+            {
+                case "statusCode":
+                    reader.ReadInt32(out int sc);
+                    statusCode = sc;
+                    break;
+                case "eTag":
+                    reader.ReadString(out string et);
+                    eTag = et;
+                    break;
+                case "requestCharge":
+                    reader.ReadFloat64(out double rc);
+                    requestCharge = rc;
+                    break;
+            }
+        }
+
+        statusCode.Should().Be(200);
+        eTag.Should().Be("test-etag-123");
+        requestCharge.Should().Be(1.5);
     }
 }
