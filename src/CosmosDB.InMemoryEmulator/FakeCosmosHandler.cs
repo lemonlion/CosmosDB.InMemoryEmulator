@@ -4,6 +4,10 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
+using Microsoft.Azure.Cosmos.Serialization.HybridRow;
+using Microsoft.Azure.Cosmos.Serialization.HybridRow.IO;
+using Microsoft.Azure.Cosmos.Serialization.HybridRow.Layouts;
+using Microsoft.Azure.Cosmos.Serialization.HybridRow.RecordIO;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -218,9 +222,14 @@ public class FakeCosmosHandler : HttpMessageHandler
             }
         }
 
-        // POST /docs (overloaded: query plan, query, upsert, create)
+        // POST /docs (overloaded: batch, query plan, query, upsert, create)
         if (method == "POST" && path.Contains("/docs"))
         {
+            if (IsBatchRequest(request))
+            {
+                return await HandleBatchAsync(request, cancellationToken);
+            }
+
             if (request.Headers.TryGetValues("x-ms-cosmos-is-query-plan-request", out var qpValues) &&
                 qpValues.Any(v => v.Equals("True", StringComparison.OrdinalIgnoreCase)))
             {
@@ -328,6 +337,257 @@ public class FakeCosmosHandler : HttpMessageHandler
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    //  Transactional Batch handler
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Cosmos OperationType enum values used in the HybridRow batch wire protocol.
+    /// Values from Microsoft.Azure.Documents.OperationType (in Microsoft.Azure.Cosmos.Direct assembly).
+    /// </summary>
+    private static class BatchOperationTypes
+    {
+        public const int Create = 0;
+        public const int Patch = 1;
+        public const int Read = 2;
+        public const int Delete = 4;
+        public const int Replace = 5;
+        public const int Upsert = 20;
+    }
+
+    /// <summary>
+    /// Lazily resolved HybridRow schema objects from the Cosmos SDK internals.
+    /// BatchSchemaProvider is internal, so we access it via reflection.
+    /// </summary>
+    private static class BatchSchemas
+    {
+        private static readonly Lazy<(Layout OperationLayout, Layout ResultLayout, LayoutResolverNamespace Resolver)> _schemas =
+            new(() =>
+            {
+                var bspType = typeof(CosmosClient).Assembly.GetType("Microsoft.Azure.Cosmos.BatchSchemaProvider")
+                    ?? throw new InvalidOperationException("Cannot find BatchSchemaProvider in the Cosmos SDK assembly.");
+                var flags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
+                var opLayout = (Layout)bspType.GetProperty("BatchOperationLayout", flags)!.GetValue(null)!;
+                var resultLayout = (Layout)bspType.GetProperty("BatchResultLayout", flags)!.GetValue(null)!;
+                var resolver = (LayoutResolverNamespace)bspType.GetProperty("BatchLayoutResolver", flags)!.GetValue(null)!;
+                return (opLayout, resultLayout, resolver);
+            });
+
+        public static Layout OperationLayout => _schemas.Value.OperationLayout;
+        public static Layout ResultLayout => _schemas.Value.ResultLayout;
+        public static LayoutResolverNamespace Resolver => _schemas.Value.Resolver;
+    }
+
+    private record struct BatchOperation(int OperationType, string? Id, byte[]? ResourceBody, string? IfMatch, string? IfNoneMatch);
+
+    private async Task<HttpResponseMessage> HandleBatchAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var pk = ExtractPartitionKey(request) ?? PartitionKey.None;
+
+        // Parse the HybridRow/RecordIO binary request body to extract batch operations.
+        var batchOps = new List<BatchOperation>();
+        if (request.Content is not null)
+        {
+            var bodyBytes = await request.Content.ReadAsByteArrayAsync(cancellationToken);
+            if (bodyBytes.Length == 0)
+            {
+                return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                {
+                    Content = new StringContent("{\"message\":\"Empty batch request body.\"}", Encoding.UTF8, "application/json")
+                };
+            }
+
+            using var bodyStream = new MemoryStream(bodyBytes);
+            var batchLayoutResolver = BatchSchemas.Resolver;
+
+            Func<ReadOnlyMemory<byte>, Result> recordVisitor = (ReadOnlyMemory<byte> record) =>
+            {
+                var row = new RowBuffer(record.Length);
+                if (!row.ReadFrom(record.Span, HybridRowVersion.V1, batchLayoutResolver))
+                    return Result.Failure;
+
+                var reader = new RowReader(ref row);
+                int opType = -1;
+                string? id = null;
+                byte[]? resourceBody = null;
+                string? ifMatch = null;
+                string? ifNoneMatch = null;
+
+                while (reader.Read())
+                {
+                    switch (reader.Path)
+                    {
+                        case "operationType":
+                            reader.ReadInt32(out int ot);
+                            opType = ot;
+                            break;
+                        case "id":
+                            reader.ReadString(out string idVal);
+                            id = idVal;
+                            break;
+                        case "resourceBody":
+                            reader.ReadBinary(out byte[] rb);
+                            resourceBody = rb;
+                            break;
+                        case "ifMatch":
+                            reader.ReadString(out string im);
+                            ifMatch = im;
+                            break;
+                        case "ifNoneMatch":
+                            reader.ReadString(out string inm);
+                            ifNoneMatch = inm;
+                            break;
+                    }
+                }
+
+                batchOps.Add(new BatchOperation(opType, id, resourceBody, ifMatch, ifNoneMatch));
+                return Result.Success;
+            };
+
+            var parseResult = await bodyStream.ReadRecordIOAsync(
+                recordVisitor, resizer: new MemorySpanResizer<byte>(1024));
+
+            if (parseResult != Result.Success)
+            {
+                return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                {
+                    Content = new StringContent(
+                        $"{{\"message\":\"Failed to parse batch request body.\"}}",
+                        Encoding.UTF8, "application/json")
+                };
+            }
+        }
+
+        if (batchOps.Count == 0)
+        {
+            return new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent("{\"message\":\"Empty batch request.\"}", Encoding.UTF8, "application/json")
+            };
+        }
+
+        // Execute the batch operations atomically using InMemoryTransactionalBatch.
+        var batch = _container.CreateTransactionalBatch(pk);
+        foreach (var op in batchOps)
+        {
+            switch (op.OperationType)
+            {
+                case BatchOperationTypes.Create:
+                    if (op.ResourceBody is not null)
+                        batch.CreateItemStream(new MemoryStream(op.ResourceBody), BuildBatchItemRequestOptions(op));
+                    break;
+                case BatchOperationTypes.Upsert:
+                    if (op.ResourceBody is not null)
+                        batch.UpsertItemStream(new MemoryStream(op.ResourceBody), BuildBatchItemRequestOptions(op));
+                    break;
+                case BatchOperationTypes.Replace:
+                    if (op.Id is not null && op.ResourceBody is not null)
+                        batch.ReplaceItemStream(op.Id, new MemoryStream(op.ResourceBody), BuildBatchItemRequestOptions(op));
+                    break;
+                case BatchOperationTypes.Delete:
+                    if (op.Id is not null)
+                        batch.DeleteItem(op.Id, BuildBatchItemRequestOptions(op));
+                    break;
+                case BatchOperationTypes.Read:
+                    if (op.Id is not null)
+                        batch.ReadItem(op.Id, BuildBatchItemRequestOptions(op));
+                    break;
+                case BatchOperationTypes.Patch:
+                    if (op.Id is not null && op.ResourceBody is not null)
+                    {
+                        var patchJson = Encoding.UTF8.GetString(op.ResourceBody);
+                        var (patchOps, condition) = ParsePatchBody(patchJson);
+                        var patchOptions = new TransactionalBatchPatchItemRequestOptions();
+                        if (condition is not null) patchOptions.FilterPredicate = condition;
+                        if (op.IfMatch is not null) patchOptions.IfMatchEtag = op.IfMatch;
+                        batch.PatchItem(op.Id, patchOps, patchOptions);
+                    }
+                    break;
+            }
+        }
+
+        var batchResponse = await batch.ExecuteAsync(cancellationToken);
+
+        // Build the HybridRow/RecordIO binary response.
+        var batchResultLayout = BatchSchemas.ResultLayout;
+        var batchLayoutResolverForResponse = BatchSchemas.Resolver;
+
+        using var responseStream = new MemoryStream();
+        var resizer = new MemorySpanResizer<byte>(256);
+
+        await RecordIOStream.WriteRecordIOAsync(
+            responseStream,
+            default(Segment),
+            (long index, out ReadOnlyMemory<byte> buffer) =>
+            {
+                if (index >= batchResponse.Count)
+                {
+                    buffer = default;
+                    return Result.Success;
+                }
+
+                var opResult = batchResponse[(int)index];
+                var row = new RowBuffer(256, resizer);
+                row.InitLayout(HybridRowVersion.V1, batchResultLayout, batchLayoutResolverForResponse);
+                var r = RowWriter.WriteBuffer(ref row, opResult, (ref RowWriter writer, TypeArgument _, TransactionalBatchOperationResult result) =>
+                {
+                    Result wr;
+                    wr = writer.WriteInt32("statusCode", (int)result.StatusCode);
+                    if (wr != Result.Success) return wr;
+
+                    if (result.ETag is not null)
+                    {
+                        wr = writer.WriteString("eTag", result.ETag);
+                        if (wr != Result.Success) return wr;
+                    }
+
+                    if (result.ResourceStream is not null)
+                    {
+                        using var ms = new MemoryStream();
+                        result.ResourceStream.CopyTo(ms);
+                        result.ResourceStream.Position = 0;
+                        wr = writer.WriteBinary("resourceBody", ms.ToArray());
+                        if (wr != Result.Success) return wr;
+                    }
+
+                    wr = writer.WriteFloat64("requestCharge", 1.0);
+                    if (wr != Result.Success) return wr;
+
+                    return Result.Success;
+                });
+
+                if (r != Result.Success)
+                {
+                    buffer = default;
+                    return r;
+                }
+
+                buffer = resizer.Memory.Slice(0, row.Length);
+                return Result.Success;
+            },
+            new MemorySpanResizer<byte>(128));
+
+        var httpResponse = new HttpResponseMessage(batchResponse.StatusCode);
+        httpResponse.Content = new ByteArrayContent(responseStream.ToArray());
+        httpResponse.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        httpResponse.Headers.Add("x-ms-request-charge", "1");
+        httpResponse.Headers.Add("x-ms-activity-id", Guid.NewGuid().ToString());
+        httpResponse.Headers.Add("x-ms-session-token", _container.CurrentSessionToken);
+        return httpResponse;
+    }
+
+    private static TransactionalBatchItemRequestOptions? BuildBatchItemRequestOptions(BatchOperation op)
+    {
+        if (op.IfMatch is null && op.IfNoneMatch is null)
+            return null;
+        return new TransactionalBatchItemRequestOptions
+        {
+            IfMatchEtag = op.IfMatch,
+            IfNoneMatchEtag = op.IfNoneMatch
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     //  CRUD helpers
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -405,6 +665,12 @@ public class FakeCosmosHandler : HttpMessageHandler
     private static bool IsUpsertRequest(HttpRequestMessage request)
     {
         return request.Headers.TryGetValues("x-ms-documentdb-is-upsert", out var values) &&
+               values.Any(v => v.Equals("True", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsBatchRequest(HttpRequestMessage request)
+    {
+        return request.Headers.TryGetValues("x-ms-cosmos-is-batch-request", out var values) &&
                values.Any(v => v.Equals("True", StringComparison.OrdinalIgnoreCase));
     }
 
