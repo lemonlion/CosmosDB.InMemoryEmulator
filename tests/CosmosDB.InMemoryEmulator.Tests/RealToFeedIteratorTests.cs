@@ -1189,6 +1189,7 @@ public class HashBasedPartitionRoutingTests : IAsyncLifetime
     }
 }
 
+[Collection("FeedIteratorSetup")]
 public class ReflectionBasedRegistrationTests
 {
     [Fact]

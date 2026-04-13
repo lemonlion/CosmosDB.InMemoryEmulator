@@ -1178,6 +1178,7 @@ public class LinqEdgeCaseTests
 //  Group E: Divergent Behavior Tests (Skipped + Sister)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Collection("FeedIteratorSetup")]
 public class LinqDivergentBehaviorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");

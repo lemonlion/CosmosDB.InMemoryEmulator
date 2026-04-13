@@ -1500,6 +1500,7 @@ public class SdkCompatibilityDivergentBehaviorTests : IDisposable
 //  Plan 35 — Phase A: Additional Reflection Canary Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Collection("FeedIteratorSetup")]
 public class FeedIteratorSetupIntegrationTests
 {
     [Fact]
