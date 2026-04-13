@@ -1,6 +1,7 @@
 using System.Net;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
+using Newtonsoft.Json.Linq;
 using Xunit;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
@@ -297,5 +298,89 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
         await processor.StopAsync();
 
         received.Should().Contain(r => r.Name == "ProcessorItem");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  All Versions and Deletes (via checkpoint-based API)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ChangeFeed_AllVersions_ShowsCreateAndUpdate()
+    {
+        var checkpoint = _inMemoryContainer.GetChangeFeedCheckpoint();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "v1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "v1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"));
+
+        var changes = new List<JObject>();
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<JObject>(checkpoint);
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            changes.AddRange(page);
+        }
+
+        // Should see both the create and the update as separate entries
+        changes.Should().HaveCount(2);
+        changes[0]["name"]!.Value<string>().Should().Be("Original");
+        changes[1]["name"]!.Value<string>().Should().Be("Updated");
+    }
+
+    [Fact]
+    public async Task ChangeFeed_AllVersions_ShowsDeleteTombstone()
+    {
+        var checkpoint = _inMemoryContainer.GetChangeFeedCheckpoint();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "d1", PartitionKey = "pk1", Name = "WillBeDeleted" },
+            new PartitionKey("pk1"));
+        await _container.DeleteItemAsync<TestDocument>("d1", new PartitionKey("pk1"));
+
+        var changes = new List<JObject>();
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<JObject>(checkpoint);
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            changes.AddRange(page);
+        }
+
+        changes.Should().HaveCount(2);
+        changes[0]["name"]!.Value<string>().Should().Be("WillBeDeleted");
+        changes[1]["_deleted"]!.Value<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ChangeFeed_AllVersions_MultipleOps_OrderIsPreserved()
+    {
+        var checkpoint = _inMemoryContainer.GetChangeFeedCheckpoint();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "m1", PartitionKey = "pk1", Name = "V1" },
+            new PartitionKey("pk1"));
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "m1", PartitionKey = "pk1", Name = "V2" },
+            new PartitionKey("pk1"));
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "m1", PartitionKey = "pk1", Name = "V3" },
+            new PartitionKey("pk1"));
+        await _container.DeleteItemAsync<TestDocument>("m1", new PartitionKey("pk1"));
+
+        var changes = new List<JObject>();
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<JObject>(checkpoint);
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            changes.AddRange(page);
+        }
+
+        changes.Should().HaveCount(4);
+        changes[0]["name"]!.Value<string>().Should().Be("V1");
+        changes[1]["name"]!.Value<string>().Should().Be("V2");
+        changes[2]["name"]!.Value<string>().Should().Be("V3");
+        changes[3]["_deleted"]!.Value<bool>().Should().BeTrue();
     }
 }

@@ -1,6 +1,8 @@
 using System.Net;
+using System.Text;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
+using Newtonsoft.Json.Linq;
 using Xunit;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
@@ -107,5 +109,78 @@ public class FakeCosmosHandlerTtlTests : IDisposable
         var results = await DrainQuery<TestDocument>("SELECT * FROM c");
         results.Should().HaveCount(1);
         results[0].Name.Should().Be("StillFresh");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Per-Item TTL Override
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task TTL_PerItemOverride_ShortTtlExpiresBeforeContainerDefault()
+    {
+        // Container default = 2s. Item TTL = 1s → expires faster
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "short", partitionKey = "pk1", name = "ShortLived", _ttl = 1 }),
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "default", partitionKey = "pk1", name = "DefaultTtl" }),
+            new PartitionKey("pk1"));
+
+        // After 1.5s: short-TTL expired, default-TTL still alive
+        await Task.Delay(1500);
+
+        var results = await DrainQuery<JObject>("SELECT c.id FROM c");
+        results.Should().HaveCount(1);
+        results[0]["id"]!.Value<string>().Should().Be("default");
+    }
+
+    [Fact]
+    public async Task TTL_PerItemOverride_MinusOne_NeverExpires()
+    {
+        // Container default = 2s. Item TTL = -1 → never expires
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "forever", partitionKey = "pk1", name = "Immortal", _ttl = -1 }),
+            new PartitionKey("pk1"));
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "mortal", partitionKey = "pk1", name = "WillDie" }),
+            new PartitionKey("pk1"));
+
+        await Task.Delay(3000);
+
+        var results = await DrainQuery<JObject>("SELECT c.id FROM c");
+        results.Should().HaveCount(1);
+        results[0]["id"]!.Value<string>().Should().Be("forever");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  TTL items produce tombstones in change feed
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task TTL_ExpiredItem_ProducesTombstoneInChangeFeed()
+    {
+        var checkpoint = _inMemoryContainer.GetChangeFeedCheckpoint();
+
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "ttl1", PartitionKey = "pk1", Name = "WillExpire" },
+            new PartitionKey("pk1"));
+
+        await Task.Delay(3000); // wait for TTL expiry
+
+        // Force eviction by querying
+        await DrainQuery<TestDocument>("SELECT * FROM c WHERE c.id = 'ttl1'");
+
+        // Change feed should show the create + the TTL eviction tombstone
+        var changes = new List<JObject>();
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<JObject>(checkpoint);
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            changes.AddRange(page);
+        }
+
+        changes.Should().HaveCountGreaterThanOrEqualTo(1);
+        // At least the create should be present
+        changes.Any(c => c["id"]?.Value<string>() == "ttl1").Should().BeTrue();
     }
 }

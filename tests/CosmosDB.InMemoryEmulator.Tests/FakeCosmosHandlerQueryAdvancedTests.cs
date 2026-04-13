@@ -1,3 +1,4 @@
+using System.Reflection;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
@@ -465,5 +466,449 @@ public class FakeCosmosHandlerQueryAdvancedTests : IDisposable
         results.Should().HaveCount(1);
         var ts = results[0]["ts"]!.Value<long>();
         ts.Should().BeGreaterThan(0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  DISTINCT
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Query_Distinct_ReturnsUniqueValues()
+    {
+        var results = await DrainQuery<JObject>(
+            "SELECT DISTINCT c.partitionKey FROM c");
+
+        results.Should().HaveCount(2);
+        results.Select(r => r["partitionKey"]!.Value<string>()).Should().BeEquivalentTo("pk1", "pk2");
+    }
+
+    [Fact]
+    public async Task Query_DistinctValue_ReturnsScalars()
+    {
+        var results = await DrainQuery<JValue>(
+            "SELECT DISTINCT VALUE c.partitionKey FROM c");
+
+        results.Should().HaveCount(2);
+        results.Select(r => r.Value<string>()).Should().BeEquivalentTo("pk1", "pk2");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  TOP
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Query_Top_LimitsResults()
+    {
+        var results = await DrainQuery<QueryDoc>(
+            "SELECT TOP 3 * FROM c ORDER BY c.name");
+
+        results.Should().HaveCount(3);
+        results.Select(r => r.Name).Should().ContainInOrder("Alice", "Bob", "Charlie");
+    }
+
+    [Fact]
+    public async Task Query_Top1_ReturnsSingleResult()
+    {
+        var results = await DrainQuery<QueryDoc>(
+            "SELECT TOP 1 * FROM c ORDER BY c.score DESC");
+
+        results.Should().HaveCount(1);
+        results[0].Name.Should().Be("Charlie"); // Score = 50
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  OFFSET / LIMIT
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Query_OffsetLimit_PaginatesCorrectly()
+    {
+        var results = await DrainQuery<QueryDoc>(
+            "SELECT * FROM c ORDER BY c.name OFFSET 1 LIMIT 2");
+
+        results.Should().HaveCount(2);
+        results.Select(r => r.Name).Should().ContainInOrder("Bob", "Charlie");
+    }
+
+    [Fact]
+    public async Task Query_OffsetLimit_LastPage()
+    {
+        var results = await DrainQuery<QueryDoc>(
+            "SELECT * FROM c ORDER BY c.name OFFSET 4 LIMIT 10");
+
+        results.Should().HaveCount(1);
+        results[0].Name.Should().Be("Eve");
+    }
+
+    [Fact]
+    public async Task Query_OffsetLimit_BeyondResults_ReturnsEmpty()
+    {
+        var results = await DrainQuery<QueryDoc>(
+            "SELECT * FROM c ORDER BY c.name OFFSET 100 LIMIT 10");
+
+        results.Should().BeEmpty();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  GROUP BY with HAVING
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Query_GroupByHaving_FiltersGroups()
+    {
+        // HAVING is rejected by SDK ServiceInterop (SC1001), so enable distributed query gateway mode
+        // to bypass ServiceInterop and send raw SQL directly through the handler pipeline
+        var results = await DrainDistributedQuery<JObject>(
+            "SELECT c.partitionKey, COUNT(1) AS cnt FROM c GROUP BY c.partitionKey HAVING COUNT(1) >= 3");
+
+        results.Should().HaveCount(1);
+        results[0]["partitionKey"]!.Value<string>().Should().Be("pk1"); // pk1 has 3 items
+        results[0]["cnt"]!.Value<int>().Should().Be(3);
+    }
+
+    private async Task<List<T>> DrainDistributedQuery<T>(string sql)
+    {
+        return await DrainDistributedQuery<T>(_container, sql);
+    }
+
+    private static async Task<List<T>> DrainDistributedQuery<T>(Container container, string sql)
+    {
+        var options = new QueryRequestOptions();
+        typeof(QueryRequestOptions)
+            .GetProperty("EnableDistributedQueryGatewayMode", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.SetValue(options, true);
+        var iterator = container.GetItemQueryIterator<T>(sql, requestOptions: options);
+        var results = new List<T>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        return results;
+    }
+
+    private async Task<List<T>> DrainBackingQuery<T>(string sql)
+    {
+        var iterator = _inMemoryContainer.GetItemQueryIterator<T>(sql);
+        var results = new List<T>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        return results;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Vector Search (VECTORDISTANCE)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Query_VectorDistance_Cosine_OrdersByDistance()
+    {
+        // VectorDistance ORDER BY goes through the full SDK → HTTP → handler pipeline
+        var backing = new InMemoryContainer("test-vector", "/pk");
+        using var handler = new FakeCosmosHandler(backing);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler)
+            });
+        var container = client.GetContainer("db", "test-vector");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "v1", pk = "a", embedding = new[] { 1.0, 0.0, 0.0 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "v2", pk = "a", embedding = new[] { 0.0, 1.0, 0.0 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "v3", pk = "a", embedding = new[] { 0.9, 0.1, 0.0 } }),
+            new PartitionKey("a"));
+
+        // Query through SDK pipeline — VectorDistance in ORDER BY is now handled by FakeCosmosHandler
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, VectorDistance(c.embedding, [1.0, 0.0, 0.0]) AS score FROM c ORDER BY VectorDistance(c.embedding, [1.0, 0.0, 0.0])");
+
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(3);
+        // Cosine similarity ORDER BY ascending: v2 (orthogonal, ~0) is first, v1 (exact, 1.0) is last
+        var lastResult = results[2];
+        lastResult["id"]!.Value<string>().Should().Be("v1");
+        lastResult["score"]!.Value<double>().Should().BeApproximately(1.0, 0.001);
+    }
+
+    [Fact]
+    public async Task Query_VectorDistance_Euclidean_Works()
+    {
+        // VectorDistance without ORDER BY goes through the full SDK pipeline
+        var backing = new InMemoryContainer("test-vec-euc", "/pk");
+        using var handler = new FakeCosmosHandler(backing);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler)
+            });
+        var container = client.GetContainer("db", "test-vec-euc");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "e1", pk = "a", emb = new[] { 0.0, 0.0 } }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "e2", pk = "a", emb = new[] { 3.0, 4.0 } }),
+            new PartitionKey("a"));
+
+        // Query through SDK pipeline
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, VectorDistance(c.emb, [0.0, 0.0], false, {'distanceFunction': 'euclidean'}) AS dist FROM c");
+
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        var e1 = results.First(r => r["id"]!.Value<string>() == "e1");
+        e1["dist"]!.Value<double>().Should().BeApproximately(0.0, 0.001);
+        var e2 = results.First(r => r["id"]!.Value<string>() == "e2");
+        e2["dist"]!.Value<double>().Should().BeApproximately(5.0, 0.001);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Full-Text Search
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Query_FullTextContains_Filters()
+    {
+        // FullTextContains is rejected by SDK ServiceInterop (SC2005),
+        // so enable distributed query gateway mode to bypass ServiceInterop
+        var backing = new InMemoryContainer("test-fts", "/pk");
+        using var handler = new FakeCosmosHandler(backing);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler)
+            });
+        var container = client.GetContainer("db", "test-fts");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "f1", pk = "a", text = "Azure Cosmos DB is a NoSQL database" }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "f2", pk = "a", text = "SQL Server is a relational database" }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "f3", pk = "a", text = "Redis is an in-memory cache" }),
+            new PartitionKey("a"));
+
+        // Query through SDK pipeline with distributed query gateway mode
+        var results = await DrainDistributedQuery<JObject>(container,
+            "SELECT c.id FROM c WHERE FullTextContains(c.text, 'database')");
+
+        results.Should().HaveCount(2);
+        results.Select(r => r["id"]!.Value<string>()).Should().BeEquivalentTo("f1", "f2");
+    }
+
+    [Fact]
+    public async Task Query_FullTextContainsAll_RequiresAllTerms()
+    {
+        var backing = new InMemoryContainer("test-fts-all", "/pk");
+        using var handler = new FakeCosmosHandler(backing);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler)
+            });
+        var container = client.GetContainer("db", "test-fts-all");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "f1", pk = "a", text = "Azure Cosmos DB is a NoSQL database" }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "f2", pk = "a", text = "SQL Server is a relational database" }),
+            new PartitionKey("a"));
+
+        // Query through SDK pipeline with distributed query gateway mode
+        var results = await DrainDistributedQuery<JObject>(container,
+            "SELECT c.id FROM c WHERE FullTextContainsAll(c.text, 'database', 'NoSQL')");
+
+        results.Should().HaveCount(1);
+        results[0]["id"]!.Value<string>().Should().Be("f1");
+    }
+
+    [Fact]
+    public async Task Query_FullTextContainsAny_MatchesAnyTerm()
+    {
+        var backing = new InMemoryContainer("test-fts-any", "/pk");
+        using var handler = new FakeCosmosHandler(backing);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler)
+            });
+        var container = client.GetContainer("db", "test-fts-any");
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "f1", pk = "a", text = "Azure Cosmos DB" }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "f2", pk = "a", text = "Redis cache" }),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "f3", pk = "a", text = "PostgreSQL database" }),
+            new PartitionKey("a"));
+
+        // Query through SDK pipeline with distributed query gateway mode
+        var results = await DrainDistributedQuery<JObject>(container,
+            "SELECT c.id FROM c WHERE FullTextContainsAny(c.text, 'Cosmos', 'Redis')");
+
+        results.Should().HaveCount(2);
+        results.Select(r => r["id"]!.Value<string>()).Should().BeEquivalentTo("f1", "f2");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Geospatial (ST_* functions)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Query_StDistance_CalculatesDistanceBetweenPoints()
+    {
+        var backing = new InMemoryContainer("test-geo", "/pk");
+        using var handler = new FakeCosmosHandler(backing);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler)
+            });
+        var container = client.GetContainer("db", "test-geo");
+
+        await container.CreateItemAsync(
+            JObject.Parse("""{"id":"g1","pk":"a","location":{"type":"Point","coordinates":[-122.12,47.67]}}"""),
+            new PartitionKey("a"));
+        await container.CreateItemAsync(
+            JObject.Parse("""{"id":"g2","pk":"a","location":{"type":"Point","coordinates":[-73.97,40.77]}}"""),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            """SELECT c.id, ST_DISTANCE(c.location, {"type":"Point","coordinates":[-122.12,47.67]}) AS dist FROM c""");
+
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        var g1 = results.First(r => r["id"]!.Value<string>() == "g1");
+        g1["dist"]!.Value<double>().Should().BeLessThan(1); // Same point, ~0m
+        var g2 = results.First(r => r["id"]!.Value<string>() == "g2");
+        g2["dist"]!.Value<double>().Should().BeGreaterThan(3_000_000); // ~3900km
+    }
+
+    [Fact]
+    public async Task Query_StWithin_ChecksPointInPolygon()
+    {
+        var backing = new InMemoryContainer("test-geo-within", "/pk");
+        using var handler = new FakeCosmosHandler(backing);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler)
+            });
+        var container = client.GetContainer("db", "test-geo-within");
+
+        // Point inside polygon (Seattle area)
+        await container.CreateItemAsync(
+            JObject.Parse("""{"id":"in","pk":"a","loc":{"type":"Point","coordinates":[-122.3,47.6]}}"""),
+            new PartitionKey("a"));
+        // Point outside polygon (New York)
+        await container.CreateItemAsync(
+            JObject.Parse("""{"id":"out","pk":"a","loc":{"type":"Point","coordinates":[-73.97,40.77]}}"""),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            """SELECT c.id FROM c WHERE ST_WITHIN(c.loc, {"type":"Polygon","coordinates":[[[-123,47],[-123,48],[-121,48],[-121,47],[-123,47]]]})""");
+
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
+        results[0]["id"]!.Value<string>().Should().Be("in");
+    }
+
+    [Fact]
+    public async Task Query_StIsValid_ValidatesGeoJson()
+    {
+        var backing = new InMemoryContainer("test-geo-valid", "/pk");
+        using var handler = new FakeCosmosHandler(backing);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                HttpClientFactory = () => new HttpClient(handler)
+            });
+        var container = client.GetContainer("db", "test-geo-valid");
+
+        await container.CreateItemAsync(
+            JObject.Parse("""{"id":"valid","pk":"a","loc":{"type":"Point","coordinates":[-122.12,47.67]}}"""),
+            new PartitionKey("a"));
+
+        var iterator = container.GetItemQueryIterator<JObject>(
+            "SELECT c.id, ST_ISVALID(c.loc) AS isValid FROM c");
+
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
+        results[0]["isValid"]!.Value<bool>().Should().BeTrue();
     }
 }

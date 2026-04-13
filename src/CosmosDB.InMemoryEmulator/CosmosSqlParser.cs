@@ -1158,7 +1158,7 @@ public static class CosmosSqlParser
         if (parsed.OrderByFields is { Length: > 0 })
         {
             var orderByStr = string.Join(", ", parsed.OrderByFields.Select(field =>
-                $"{field.Field} {(field.Ascending ? "ASC" : "DESC")}"));
+                $"{field.Field ?? ExprToString(field.Expression)} {(field.Ascending ? "ASC" : "DESC")}"));
             sb.Append($" ORDER BY {orderByStr}");
         }
         else if (parsed.RankExpression is not null)

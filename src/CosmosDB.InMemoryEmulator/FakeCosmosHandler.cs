@@ -1121,10 +1121,25 @@ public class FakeCosmosHandler : HttpMessageHandler
         CosmosSqlQuery parsed, JObject queryBody, PartitionKey? partitionKey,
         string orderByAlias, string payloadAlias, CancellationToken cancellationToken)
     {
+        // Check if any ORDER BY expression is a function call (not a simple property path).
+        // When this happens (e.g. ORDER BY VectorDistance(...)), the simplified SQL is
+        // SELECT VALUE c FROM c ORDER BY <expr>. The raw documents won't contain the
+        // computed expression value, so we need to include it in the query.
+        var hasComplexOrderBy = parsed.OrderByFields?.Any(f => f.Field is null) ?? false;
+
         string simplifiedSql;
+        List<string> complexOrderByAliases = [];
         try
         {
-            simplifiedSql = CosmosSqlParser.SimplifySdkQuery(parsed);
+            if (hasComplexOrderBy)
+            {
+                // Build a query that includes both the document and the computed ORDER BY values
+                simplifiedSql = BuildComplexOrderBySql(parsed, payloadAlias, out complexOrderByAliases);
+            }
+            else
+            {
+                simplifiedSql = CosmosSqlParser.SimplifySdkQuery(parsed);
+            }
         }
         catch
         {
@@ -1146,15 +1161,25 @@ public class FakeCosmosHandler : HttpMessageHandler
         }
 
         List<string> orderByPaths;
-        try
+        if (hasComplexOrderBy && complexOrderByAliases.Count > 0)
         {
-            orderByPaths = ExtractOrderByItemPaths(parsed);
+            // For complex ORDER BY, the paths are the aliases we injected into the query
+            orderByPaths = complexOrderByAliases;
         }
-        catch
+        else
         {
-            // Fallback: derive from ORDER BY fields if AST walking fails
-            orderByPaths = parsed.OrderByFields?.Select(field =>
-                StripFromAlias(field.Field, parsed.FromAlias)).ToList() ?? [];
+            try
+            {
+                orderByPaths = ExtractOrderByItemPaths(parsed);
+            }
+            catch
+            {
+                // Fallback: derive from ORDER BY fields if AST walking fails
+                orderByPaths = parsed.OrderByFields?.Select(field =>
+                    StripFromAlias(
+                        field.Field ?? CosmosSqlParser.ExprToString(field.Expression),
+                        parsed.FromAlias)).ToList() ?? [];
+            }
         }
 
         var documents = new List<JToken>();
@@ -1174,11 +1199,28 @@ public class FakeCosmosHandler : HttpMessageHandler
                 orderByItems.Add(new JObject { ["item"] = value });
             }
 
+            JToken payloadValue;
+            if (hasComplexOrderBy)
+            {
+                // For complex ORDER BY queries, the doc contains _doc + _ob0/_ob1/... aliases.
+                // Extract the _doc field as the payload.
+                payloadValue = doc["_doc"]?.DeepClone() ?? doc.DeepClone();
+                // Remove the ORDER BY alias properties from the payload if they leaked in
+                foreach (var alias in complexOrderByAliases)
+                    ((JObject)payloadValue).Remove(alias);
+            }
+            else
+            {
+                payloadValue = BuildPayloadValue(doc, payloadField, fromAlias);
+            }
+
             var wrapped = new JObject
             {
-                ["_rid"] = doc["_rid"]?.ToString() ?? Guid.NewGuid().ToString("N")[..8],
+                ["_rid"] = (hasComplexOrderBy
+                    ? doc["_doc"]?["_rid"]?.ToString()
+                    : doc["_rid"]?.ToString()) ?? Guid.NewGuid().ToString("N")[..8],
                 [orderByAlias] = orderByItems,
-                [payloadAlias] = BuildPayloadValue(doc, payloadField, fromAlias)
+                [payloadAlias] = payloadValue
             };
             documents.Add(wrapped);
         }
@@ -1416,6 +1458,53 @@ public class FakeCosmosHandler : HttpMessageHandler
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Builds a SQL query that includes both the full document and computed ORDER BY
+    /// expression values. Used when ORDER BY contains function calls (e.g. VectorDistance)
+    /// that aren't simple property paths.
+    /// Example output: SELECT c AS _doc, VectorDistance(c.emb, [1,0,0]) AS _ob0 FROM c
+    ///                 ORDER BY VectorDistance(c.emb, [1,0,0]) ASC
+    /// </summary>
+    private static string BuildComplexOrderBySql(CosmosSqlQuery parsed, string payloadAlias, out List<string> orderByAliases)
+    {
+        var alias = parsed.FromAlias ?? "c";
+
+        // Use the original payload expression (preserves projections like {"id": c.id, "score": VectorDistance(...)})
+        // instead of just "c" which would return the full raw document.
+        var payloadField = parsed.SelectFields
+            .FirstOrDefault(f => string.Equals(f.Alias, payloadAlias, StringComparison.OrdinalIgnoreCase));
+        var docExpr = payloadField?.SqlExpr is not null
+            ? CosmosSqlParser.ExprToString(payloadField.SqlExpr)
+            : alias;
+
+        var sb = new StringBuilder($"SELECT {docExpr} AS _doc");
+
+        orderByAliases = [];
+        for (var i = 0; i < parsed.OrderByFields!.Length; i++)
+        {
+            var field = parsed.OrderByFields[i];
+            var obAlias = $"_ob{i}";
+            orderByAliases.Add(obAlias);
+            var expr = field.Field ?? CosmosSqlParser.ExprToString(field.Expression);
+            sb.Append($", {expr} AS {obAlias}");
+        }
+
+        sb.Append($" FROM {alias}");
+
+        if (parsed.WhereExpr is not null)
+        {
+            var simplifiedWhere = CosmosSqlParser.SimplifySdkWhereExpression(parsed.WhereExpr, alias);
+            if (simplifiedWhere is not null)
+                sb.Append($" WHERE {CosmosSqlParser.ExprToString(simplifiedWhere)}");
+        }
+
+        var orderByStr = string.Join(", ", parsed.OrderByFields.Select(field =>
+            $"{field.Field ?? CosmosSqlParser.ExprToString(field.Expression)} {(field.Ascending ? "ASC" : "DESC")}"));
+        sb.Append($" ORDER BY {orderByStr}");
+
+        return sb.ToString();
+    }
+
     private static string BuildFallbackOrderBySql(CosmosSqlQuery parsed)
     {
         var sb = new StringBuilder("SELECT ");
@@ -1435,7 +1524,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         if (parsed.OrderByFields is { Length: > 0 })
         {
             var orderByStr = string.Join(", ", parsed.OrderByFields.Select(field =>
-                $"{field.Field} {(field.Ascending ? "ASC" : "DESC")}"));
+                $"{field.Field ?? CosmosSqlParser.ExprToString(field.Expression)} {(field.Ascending ? "ASC" : "DESC")}"));
             sb.Append($" ORDER BY {orderByStr}");
         }
 
@@ -1460,6 +1549,16 @@ public class FakeCosmosHandler : HttpMessageHandler
                     {
                         paths.Add(StripFromAlias(ident.Name, parsed.FromAlias));
                     }
+                    else if (itemProp.Value is not null)
+                    {
+                        // Non-identifier expression (e.g. VectorDistance(...)) — use the
+                        // corresponding ORDER BY field expression to reconstruct a path.
+                        // The value will be looked up by evaluating the expression on the
+                        // raw document, which won't produce a valid JPath. Instead, we
+                        // return the expression string so the caller can handle it.
+                        var exprStr = CosmosSqlParser.ExprToString(itemProp.Value);
+                        paths.Add(StripFromAlias(exprStr, parsed.FromAlias));
+                    }
                 }
             }
 
@@ -1472,7 +1571,9 @@ public class FakeCosmosHandler : HttpMessageHandler
         if (parsed.OrderByFields is { Length: > 0 })
         {
             return parsed.OrderByFields
-                .Select(field => StripFromAlias(field.Field, parsed.FromAlias))
+                .Select(field => StripFromAlias(
+                    field.Field ?? CosmosSqlParser.ExprToString(field.Expression),
+                    parsed.FromAlias))
                 .ToList();
         }
 
