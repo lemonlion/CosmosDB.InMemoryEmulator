@@ -1301,11 +1301,19 @@ public class FakeCosmosHandler : HttpMessageHandler
             if (hasComplexOrderBy)
             {
                 // For complex ORDER BY queries, the doc contains _doc + _ob0/_ob1/... aliases.
-                // Extract the _doc field as the payload.
-                payloadValue = doc["_doc"]?.DeepClone() ?? doc.DeepClone();
+                // Extract the _doc field as the full document, then apply payload projection.
+                var fullDoc = doc["_doc"]?.DeepClone() ?? doc.DeepClone();
                 // Remove the ORDER BY alias properties from the payload if they leaked in
-                foreach (var alias in complexOrderByAliases)
-                    ((JObject)payloadValue).Remove(alias);
+                if (fullDoc is JObject fullDocObj)
+                    foreach (var alias in complexOrderByAliases)
+                        fullDocObj.Remove(alias);
+
+                // Apply payload projection if the rewritten query specified a projected payload
+                // (e.g. {"id": c.id, "score": VectorDistance(...)} AS payload)
+                if (payloadField?.SqlExpr is ObjectLiteralExpression objLit)
+                    payloadValue = BuildComplexPayloadValue((JObject)fullDoc, objLit, fromAlias, parsed, doc, complexOrderByAliases);
+                else
+                    payloadValue = fullDoc;
             }
             else
             {
@@ -1360,6 +1368,54 @@ public class FakeCosmosHandler : HttpMessageHandler
         }
 
         return doc.DeepClone();
+    }
+
+    /// <summary>
+    /// Builds the payload for a complex ORDER BY query where the payload was projected
+    /// as an ObjectLiteral (e.g. {"id": c.id, "score": VectorDistance(...)}).
+    /// Simple property references are resolved from the full document; function call
+    /// expressions are resolved from the computed ORDER BY aliases (_ob0, _ob1, ...).
+    /// </summary>
+    private static JToken BuildComplexPayloadValue(
+        JObject fullDoc, ObjectLiteralExpression objLiteral, string fromAlias,
+        CosmosSqlQuery parsed, JObject rawDoc, List<string> orderByAliases)
+    {
+        var projected = new JObject();
+        foreach (var prop in objLiteral.Properties)
+        {
+            var exprStr = CosmosSqlParser.ExprToString(prop.Value);
+
+            // Check if this expression matches one of the ORDER BY expressions —
+            // if so, use the pre-computed _ob alias value from the raw result.
+            JToken? resolved = null;
+            if (parsed.OrderByFields is not null)
+            {
+                for (var i = 0; i < parsed.OrderByFields.Length && i < orderByAliases.Count; i++)
+                {
+                    var obExpr = parsed.OrderByFields[i].Field
+                        ?? CosmosSqlParser.ExprToString(parsed.OrderByFields[i].Expression);
+                    if (string.Equals(exprStr, obExpr, StringComparison.OrdinalIgnoreCase))
+                    {
+                        resolved = rawDoc[orderByAliases[i]]?.DeepClone();
+                        break;
+                    }
+                }
+            }
+
+            if (resolved is not null)
+            {
+                projected[prop.Key] = resolved;
+            }
+            else
+            {
+                // Simple property path — resolve from the full document
+                var path = exprStr;
+                if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
+                    path = path[(fromAlias.Length + 1)..];
+                projected[prop.Key] = fullDoc.SelectToken(path)?.DeepClone() ?? JValue.CreateNull();
+            }
+        }
+        return projected;
     }
 
     /// <summary>
@@ -1518,17 +1574,28 @@ public class FakeCosmosHandler : HttpMessageHandler
         sb.Append(orderByItemsArray);
         sb.Append(" AS orderByItems, ");
 
-        // For DISTINCT+ORDER BY, the payload must be the projected SELECT fields
-        // (not the full document), so the SDK's DistinctQueryPipelineStage can
-        // correctly deduplicate by projected value.
-        // Skip when SELECT * (fields have null SqlExpr) — use full document instead.
-        if (parsed.IsDistinct && parsed.SelectFields.Length > 0
+        // For ORDER BY queries with explicit projections, the payload must be the
+        // projected SELECT fields (not the full document), so the SDK returns the
+        // correct shape to the caller. This applies to:
+        // 1. DISTINCT queries — for SDK deduplication
+        // 2. Queries with computed expressions (e.g. VectorDistance(...) AS score) —
+        //    the computed value doesn't exist in the document and must be projected.
+        // All other cases (SELECT VALUE c, SELECT *, SELECT VALUE {obj}) use the full
+        // document as payload — the SDK or caller handles field extraction.
+        var hasComputedSelectField = parsed.SelectFields
+            .Any(f => f.SqlExpr is FunctionCallExpression);
+        if ((parsed.IsDistinct || hasComputedSelectField)
+            && parsed.SelectFields.Length > 0
             && parsed.SelectFields.All(f => f.SqlExpr is not null))
         {
             var payloadParts = parsed.SelectFields.Select(f =>
             {
                 var expr = CosmosSqlParser.ExprToString(f.SqlExpr);
                 var key = f.Alias ?? f.Expression ?? expr;
+                // Strip FROM alias prefix from the key (e.g. "c.id" → "id")
+                // because Cosmos DB results use the property name without the alias.
+                if (key.StartsWith(alias + ".", StringComparison.OrdinalIgnoreCase))
+                    key = key[(alias.Length + 1)..];
                 return $"\"{key}\": {expr}";
             });
             sb.Append($"{{{string.Join(", ", payloadParts)}}} AS payload");
@@ -1567,15 +1634,12 @@ public class FakeCosmosHandler : HttpMessageHandler
     {
         var alias = parsed.FromAlias ?? "c";
 
-        // Use the original payload expression (preserves projections like {"id": c.id, "score": VectorDistance(...)})
-        // instead of just "c" which would return the full raw document.
-        var payloadField = parsed.SelectFields
-            .FirstOrDefault(f => string.Equals(f.Alias, payloadAlias, StringComparison.OrdinalIgnoreCase));
-        var docExpr = payloadField?.SqlExpr is not null
-            ? CosmosSqlParser.ExprToString(payloadField.SqlExpr)
-            : alias;
-
-        var sb = new StringBuilder($"SELECT {docExpr} AS _doc");
+        // Always select the full document as _doc. The payload projection (if any)
+        // is applied in post-processing via BuildPayloadValue, just like non-complex
+        // ORDER BY. This avoids inlining object literal expressions (e.g.
+        // {"id": c.id, "score": VectorDistance(...)}) into SELECT, which the parser
+        // cannot handle on re-parse.
+        var sb = new StringBuilder($"SELECT {alias} AS _doc");
 
         orderByAliases = [];
         for (var i = 0; i < parsed.OrderByFields!.Length; i++)
