@@ -6198,7 +6198,7 @@ public class InMemoryContainer : Container
                         bool => "boolean",
                         long or int or double or float or decimal => "number",
                         string => "string",
-                        _ => "Undefined"
+                        _ => "undefined"
                     };
                 }
 
@@ -7901,12 +7901,17 @@ public class InMemoryContainer : Container
             return UndefinedValue.Instance;
         }
 
+        var isIntegerInput = value is long or int;
+
         if (double.TryParse(value.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var n))
         {
             var result = op(n);
             // Cosmos DB treats NaN and Infinity as undefined
             if (double.IsNaN(result) || double.IsInfinity(result))
                 return UndefinedValue.Instance;
+            // Preserve integer type when input was integer and result is a whole number
+            if (isIntegerInput && result == Math.Floor(result) && result is >= long.MinValue and <= long.MaxValue)
+                return (long)result;
             return result;
         }
 
