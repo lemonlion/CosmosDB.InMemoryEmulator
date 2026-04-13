@@ -1833,7 +1833,7 @@ public class FakeCosmosHandler : HttpMessageHandler
             ["partitionKey"] = new JObject
             {
                 ["paths"] = paths,
-                ["kind"] = "Hash",
+                ["kind"] = paths.Count > 1 ? "MultiHash" : "Hash",
                 ["version"] = 2
             },
             ["indexingPolicy"] = indexingPolicyObj,

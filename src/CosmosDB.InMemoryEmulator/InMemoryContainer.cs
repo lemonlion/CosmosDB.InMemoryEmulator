@@ -8052,7 +8052,7 @@ public class InMemoryContainer : Container
 
             var segments = path.TrimStart('/').Split('/');
             var propertyName = segments.Last();
-            var parentPath = string.Join(".", segments.Take(segments.Length - 1));
+            var parentPath = BuildSelectTokenPath(segments.Take(segments.Length - 1));
             var rawParent = segments.Length > 1 ? jObj.SelectToken(parentPath) : (JToken)jObj;
 
             switch (operation.OperationType)
@@ -8166,7 +8166,7 @@ public class InMemoryContainer : Container
 
                             var sourceSegments = sourcePath.TrimStart('/').Split('/');
                             var sourcePropertyName = sourceSegments.Last();
-                            var sourceParentPath = string.Join(".", sourceSegments.Take(sourceSegments.Length - 1));
+                            var sourceParentPath = BuildSelectTokenPath(sourceSegments.Take(sourceSegments.Length - 1));
                             var sourceParent = sourceSegments.Length > 1
                                 ? jObj.SelectToken(sourceParentPath) as JObject ?? jObj
                                 : jObj;
@@ -8230,6 +8230,28 @@ public class InMemoryContainer : Container
     }
 
     private static string GetPatchPath(PatchOperation operation) => operation.Path;
+
+    /// <summary>
+    /// Converts path segments to a Newtonsoft.Json SelectToken-compatible path.
+    /// Numeric segments become array indexers (e.g., ["runs","0"] → "runs[0]").
+    /// </summary>
+    private static string BuildSelectTokenPath(IEnumerable<string> segments)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var segment in segments)
+        {
+            if (int.TryParse(segment, out _))
+            {
+                sb.Append('[').Append(segment).Append(']');
+            }
+            else
+            {
+                if (sb.Length > 0) sb.Append('.');
+                sb.Append(segment);
+            }
+        }
+        return sb.ToString();
+    }
 
     private static string GetPatchSourcePath(PatchOperation operation)
     {
