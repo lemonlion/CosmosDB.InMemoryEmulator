@@ -4064,13 +4064,13 @@ public class InMemoryContainer : Container
             items = items.Take(parsed.TopCount.Value);
         }
 
-        // OFFSET / LIMIT
-        if (parsed.Offset.HasValue)
+        // OFFSET / LIMIT — when DISTINCT is active, defer until after dedup
+        if (!parsed.IsDistinct && parsed.Offset.HasValue)
         {
             items = items.Skip(parsed.Offset.Value);
         }
 
-        if (parsed.Limit.HasValue)
+        if (!parsed.IsDistinct && parsed.Limit.HasValue)
         {
             items = items.Take(parsed.Limit.Value);
         }
@@ -4091,6 +4091,17 @@ public class InMemoryContainer : Container
         if (parsed.IsDistinct)
         {
             items = items.Distinct(JsonStructuralStringComparer.Instance);
+        }
+
+        // OFFSET / LIMIT — deferred application after DISTINCT
+        if (parsed.IsDistinct && parsed.Offset.HasValue)
+        {
+            items = items.Skip(parsed.Offset.Value);
+        }
+
+        if (parsed.IsDistinct && parsed.Limit.HasValue)
+        {
+            items = items.Take(parsed.Limit.Value);
         }
 
         // TOP — deferred application after DISTINCT
@@ -4691,7 +4702,7 @@ public class InMemoryContainer : Container
                 return (double)groupItems.Count(json =>
                 {
                     var jObj = JsonParseHelpers.ParseJson(json);
-                    return jObj.SelectToken(countPath) != null;
+                    return jObj.SelectToken(countPath) is JToken t && t.Type != JTokenType.Null;
                 });
             }
             case "SUM":
@@ -6199,11 +6210,8 @@ public class InMemoryContainer : Container
                         return false;
                     }
 
-                    var s = args[0]?.ToString(); var p = args[1]?.ToString();
-                    if (s is null || p is null)
-                    {
-                        return UndefinedValue.Instance;
-                    }
+                    if (args[0] is not string s || args[1] is UndefinedValue) return UndefinedValue.Instance;
+                    if (args[1] is not string p) return UndefinedValue.Instance;
 
                     var ic = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                     return s.StartsWith(p, ic ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
@@ -6215,11 +6223,8 @@ public class InMemoryContainer : Container
                         return false;
                     }
 
-                    var s = args[0]?.ToString(); var p = args[1]?.ToString();
-                    if (s is null || p is null)
-                    {
-                        return UndefinedValue.Instance;
-                    }
+                    if (args[0] is not string s || args[1] is UndefinedValue) return UndefinedValue.Instance;
+                    if (args[1] is not string p) return UndefinedValue.Instance;
 
                     var ic = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                     return s.EndsWith(p, ic ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
@@ -6231,20 +6236,18 @@ public class InMemoryContainer : Container
                         return false;
                     }
 
-                    var s = args[0]?.ToString(); var p = args[1]?.ToString();
-                    if (s is null || p is null)
-                    {
-                        return UndefinedValue.Instance;
-                    }
+                    if (args[0] is not string s || args[1] is UndefinedValue) return UndefinedValue.Instance;
+                    if (args[1] is not string p) return UndefinedValue.Instance;
 
                     var ic = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                     return s.Contains(p, ic ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
                 }
             case "CONCAT":
                 {
-                    // Cosmos DB: if any arg is null or undefined, CONCAT returns undefined
+                    // Cosmos DB: if any arg is null, undefined, or not a string, CONCAT returns undefined
                     if (args.Any(a => a is null or UndefinedValue)) return UndefinedValue.Instance;
-                    return string.Concat(args.Select(a => a.ToString()));
+                    if (args.Any(a => a is not string)) return UndefinedValue.Instance;
+                    return string.Concat(args.Cast<string>());
                 }
             case "LENGTH":
                 {
@@ -6253,11 +6256,11 @@ public class InMemoryContainer : Container
                     if (args[0] is not string s) return UndefinedValue.Instance;
                     return (object)(long)s.Length;
                 }
-            case "LOWER": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.ToLowerInvariant()) : null;
-            case "UPPER": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.ToUpperInvariant()) : null;
-            case "TRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.Trim()) : null;
-            case "LTRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.TrimStart()) : null;
-            case "RTRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : (object)args[0].ToString()!.TrimEnd()) : null;
+            case "LOWER": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string sl ? (object)sl.ToLowerInvariant() : UndefinedValue.Instance) : null;
+            case "UPPER": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string su ? (object)su.ToUpperInvariant() : UndefinedValue.Instance) : null;
+            case "TRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string st ? (object)st.Trim() : UndefinedValue.Instance) : null;
+            case "LTRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string slt ? (object)slt.TrimStart() : UndefinedValue.Instance) : null;
+            case "RTRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string srt ? (object)srt.TrimEnd() : UndefinedValue.Instance) : null;
             case "REVERSE": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string rs ? (object)new string(rs.Reverse().ToArray()) : UndefinedValue.Instance) : null;
             case "LEFT":
                 {
@@ -6266,9 +6269,9 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    if (args[0] is null) return UndefinedValue.Instance;
-                    var s = args[0].ToString(); var c = ToLong(args[1]);
-                    if (s is null || !c.HasValue) return UndefinedValue.Instance;
+                    if (args[0] is not string s) return UndefinedValue.Instance;
+                    var c = ToLong(args[1]);
+                    if (!c.HasValue) return UndefinedValue.Instance;
                     if (c.Value < 0) return UndefinedValue.Instance;
                     return s[..(int)Math.Min(c.Value, s.Length)];
                 }
@@ -6279,9 +6282,9 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    if (args[0] is null) return UndefinedValue.Instance;
-                    var s = args[0].ToString(); var c = ToLong(args[1]);
-                    if (s is null || !c.HasValue) return UndefinedValue.Instance;
+                    if (args[0] is not string s) return UndefinedValue.Instance;
+                    var c = ToLong(args[1]);
+                    if (!c.HasValue) return UndefinedValue.Instance;
                     if (c.Value < 0) return UndefinedValue.Instance;
                     return s[Math.Max(0, s.Length - (int)c.Value)..];
                 }
@@ -6297,8 +6300,9 @@ public class InMemoryContainer : Container
                         return UndefinedValue.Instance;
                     }
 
-                    var s = args[0]?.ToString(); var start = ToLong(args[1]); var len = ToLong(args[2]);
-                    if (s is null || !start.HasValue || !len.HasValue)
+                    if (args[0] is not string s) return UndefinedValue.Instance;
+                    var start = ToLong(args[1]); var len = ToLong(args[2]);
+                    if (!start.HasValue || !len.HasValue)
                     {
                         return UndefinedValue.Instance;
                     }
@@ -6314,8 +6318,11 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    var s = args[0]?.ToString(); var find = args[1]?.ToString(); var rep = args[2]?.ToString();
+                    var s = args[0] is string ss ? ss : null;
+                    var find = args[1] is string fs ? fs : null;
+                    var rep = args[2] is string rps ? rps : null;
                     if (s is null || find is null) return UndefinedValue.Instance;
+                    if (args[2] is not (null or UndefinedValue or string)) return UndefinedValue.Instance;
                     if (find.Length == 0) return s;
                     return s.Replace(find, rep ?? "");
                 }
@@ -6326,18 +6333,18 @@ public class InMemoryContainer : Container
                         return UndefinedValue.Instance;
                     }
 
-                    var s = args[0]?.ToString(); var sub = args[1]?.ToString();
-                    if (s != null && sub != null)
+                    if (args[0] is not string s || args[1] is not string sub)
                     {
-                        if (args.Length >= 3 && double.TryParse(args[2]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var startPos))
-                        {
-                            var sp = (int)startPos;
-                            if (sp < 0 || sp > s.Length) return UndefinedValue.Instance;
-                            return (object)(long)s.IndexOf(sub, sp, StringComparison.Ordinal);
-                        }
-                        return (object)(long)s.IndexOf(sub, StringComparison.Ordinal);
+                        return UndefinedValue.Instance;
                     }
-                    return UndefinedValue.Instance;
+
+                    if (args.Length >= 3 && double.TryParse(args[2]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var startPos))
+                    {
+                        var sp = (int)startPos;
+                        if (sp < 0 || sp > s.Length) return UndefinedValue.Instance;
+                        return (object)(long)s.IndexOf(sub, sp, StringComparison.Ordinal);
+                    }
+                    return (object)(long)s.IndexOf(sub, StringComparison.Ordinal);
                 }
             case "REGEXMATCH":
                 {
@@ -6346,8 +6353,7 @@ public class InMemoryContainer : Container
                         return false;
                     }
 
-                    var input = args[0]?.ToString(); var pattern = args[1]?.ToString();
-                    if (input is null || pattern is null)
+                    if (args[0] is not string input || args[1] is not string pattern)
                     {
                         return UndefinedValue.Instance;
                     }
@@ -6384,9 +6390,13 @@ public class InMemoryContainer : Container
                         return null;
                     }
 
-                    var s = args[0]?.ToString();
+                    if (args[0] is not string s)
+                    {
+                        return UndefinedValue.Instance;
+                    }
+
                     var count = ToLong(args[1]);
-                    if (s is null || !count.HasValue || count.Value < 0 || count.Value > 10000)
+                    if (!count.HasValue || count.Value < 0 || count.Value > 10000)
                     {
                         return UndefinedValue.Instance;
                     }
@@ -6401,9 +6411,12 @@ public class InMemoryContainer : Container
                         return UndefinedValue.Instance;
                     }
 
-                    var s1 = args[0]?.ToString();
-                    var s2 = args[1]?.ToString();
-                    if (s1 is null || s2 is null)
+                    if (args[0] is not string s1)
+                    {
+                        return UndefinedValue.Instance;
+                    }
+
+                    if (args[1] is not string s2)
                     {
                         return UndefinedValue.Instance;
                     }

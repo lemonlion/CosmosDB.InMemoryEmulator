@@ -13681,13 +13681,11 @@ public class QueryDeepDiveV8_TypeMismatchTests
     }
 
     [Fact]
-    public async Task TypeMismatch_Upper_WithNumber_ReturnsStringifiedUpper()
+    public async Task TypeMismatch_Upper_WithNumber_ReturnsUndefined()
     {
-        // UPPER on a number — toString then upper, or undefined
+        // UPPER on a number — returns undefined in real Cosmos DB (requires string arg)
         var results = await RunQuery<JToken>("SELECT VALUE UPPER(123) FROM c");
-        results.Should().ContainSingle();
-        // Implementation calls ToString()?.ToUpperInvariant() so returns "123"
-        results[0].Value<string>().Should().Be("123");
+        results.Should().BeEmpty();
     }
 
     [Fact]
@@ -16707,14 +16705,12 @@ public class QueryDeepDiveV11_FunctionEdgeCaseTests
 
     // ── A1: CONCAT with non-string args ──
     [Fact]
-    public async Task Concat_WithNonStringArgs_CoercesToString()
+    public async Task Concat_WithNonStringArgs_ReturnsUndefined()
     {
         await Seed();
-        // Cosmos DB CONCAT converts all args to their string representation
-        var results = await RunQuery<string>("SELECT VALUE CONCAT('val:', c.value) FROM c ORDER BY c.value ASC");
-        results.Should().HaveCount(2);
-        results[0].Should().Be("val:10");
-        results[1].Should().Be("val:20");
+        // Cosmos DB CONCAT requires all args to be strings; non-string args return undefined
+        var results = await RunQuery<JToken>("SELECT VALUE CONCAT('val:', c.value) FROM c ORDER BY c.value ASC");
+        results.Should().BeEmpty();
     }
 
     // ── A2: CONCAT with null arg ──
@@ -27686,5 +27682,550 @@ public class QueryDeepDiveV22_SelectEdgeCaseTests
         // Verify ordering in stream result
         docs[0]["val"]!.Value<int>().Should().Be(30);
         docs[2]["val"]!.Value<int>().Should().Be(10);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DEEP DIVE V20 — Query Engine Bug Fixes & Edge Case Coverage
+// ════════════════════════════════════════════════════════════════════════════════
+
+/// <summary>
+/// Bug #127: DISTINCT + OFFSET/LIMIT ordering is wrong.
+/// Real Cosmos applies DISTINCT before OFFSET/LIMIT.
+/// The emulator applied OFFSET/LIMIT first, then DISTINCT — giving wrong results
+/// when underlying data contains duplicates.
+/// Fixed in v2.0.164.
+/// </summary>
+public class QueryDeepDiveV20_DistinctOffsetLimitTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task Seed()
+    {
+        // Create docs with duplicate category values: A,A,B,B,C,C,D,D
+        var docs = new[]
+        {
+            new { id = "1", pk = "p", cat = "Alpha" },
+            new { id = "2", pk = "p", cat = "Alpha" },
+            new { id = "3", pk = "p", cat = "Beta" },
+            new { id = "4", pk = "p", cat = "Beta" },
+            new { id = "5", pk = "p", cat = "Gamma" },
+            new { id = "6", pk = "p", cat = "Gamma" },
+            new { id = "7", pk = "p", cat = "Delta" },
+            new { id = "8", pk = "p", cat = "Delta" },
+        };
+        foreach (var d in docs)
+            await _container.CreateItemAsync(JObject.FromObject(d), new PartitionKey("p"));
+    }
+
+    private async Task<List<T>> RunQuery<T>(string sql)
+    {
+        var iter = _container.GetItemQueryIterator<T>(new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("p") });
+        var results = new List<T>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task DistinctOffset_WithDuplicates_AppliesDistinctFirst()
+    {
+        // DISTINCT should yield [Alpha, Beta, Gamma, Delta], then OFFSET 2 → [Gamma, Delta]
+        await Seed();
+        var results = await RunQuery<string>(
+            "SELECT DISTINCT VALUE c.cat FROM c ORDER BY c.cat OFFSET 2 LIMIT 10");
+        results.Should().BeEquivalentTo(["Gamma", "Delta"]);
+    }
+
+    [Fact]
+    public async Task DistinctOffsetLimit_WithDuplicates_CorrectSubset()
+    {
+        // DISTINCT → [Alpha, Beta, Delta, Gamma] (sorted), then OFFSET 1 LIMIT 2 → [Beta, Delta]
+        await Seed();
+        var results = await RunQuery<string>(
+            "SELECT DISTINCT VALUE c.cat FROM c ORDER BY c.cat OFFSET 1 LIMIT 2");
+        results.Should().BeEquivalentTo(["Beta", "Delta"]);
+    }
+
+    [Fact]
+    public async Task DistinctOffset_BeyondDistinctCount_ReturnsEmpty()
+    {
+        // DISTINCT → 4 items, OFFSET 10 → empty
+        await Seed();
+        var results = await RunQuery<string>(
+            "SELECT DISTINCT VALUE c.cat FROM c ORDER BY c.cat OFFSET 10 LIMIT 5");
+        results.Should().BeEmpty();
+    }
+}
+
+/// <summary>
+/// Bug #128: HAVING COUNT(c.field) counts null-valued fields.
+/// In Cosmos DB, COUNT(c.field) should only count items where the field is defined AND not null.
+/// The emulator's EvaluateHavingAggregate used `SelectToken(path) != null` which returns true for JSON null.
+/// Fixed in v2.0.164.
+/// </summary>
+public class QueryDeepDiveV20_HavingCountNullTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task Seed()
+    {
+        var docs = new[]
+        {
+            new { id = "1", pk = "p", cat = "A", opt = (int?)10 },
+            new { id = "2", pk = "p", cat = "A", opt = (int?)null },
+            new { id = "3", pk = "p", cat = "A", opt = (int?)30 },
+            new { id = "4", pk = "p", cat = "B", opt = (int?)null },
+            new { id = "5", pk = "p", cat = "B", opt = (int?)null },
+            new { id = "6", pk = "p", cat = "C", opt = (int?)10 },
+        };
+        foreach (var d in docs)
+            await _container.CreateItemAsync(JObject.FromObject(d), new PartitionKey("p"));
+    }
+
+    private async Task<List<JObject>> RunQuery(string sql)
+    {
+        var iter = _container.GetItemQueryIterator<JObject>(new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("p") });
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Having_CountField_ExcludesNullValues()
+    {
+        // cat A: opt defined & not null in 2 items (id=1,3). opt=null in id=2 should not count.
+        // cat B: opt is null for both → COUNT(c.opt) = 0
+        // cat C: opt defined in 1 item → COUNT(c.opt) = 1
+        // HAVING COUNT(c.opt) >= 2 should return only cat A
+        await Seed();
+        var results = await RunQuery(
+            "SELECT c.cat, COUNT(c.opt) as cnt FROM c GROUP BY c.cat HAVING COUNT(c.opt) >= 2");
+        results.Should().HaveCount(1);
+        results[0]["cat"]!.Value<string>().Should().Be("A");
+        results[0]["cnt"]!.Value<int>().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Having_CountField_NullVsUndefined_BothExcluded()
+    {
+        // Add a doc where the field is entirely missing (undefined)
+        await Seed();
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "7", pk = "p", cat = "A" }),  // opt is undefined
+            new PartitionKey("p"));
+
+        // cat A now has: opt=10, opt=null, opt=30, opt=undefined → COUNT(c.opt) should be 2
+        var results = await RunQuery(
+            "SELECT c.cat, COUNT(c.opt) as cnt FROM c GROUP BY c.cat HAVING COUNT(c.opt) >= 2");
+        results.Should().HaveCount(1);
+        results[0]["cat"]!.Value<string>().Should().Be("A");
+        results[0]["cnt"]!.Value<int>().Should().Be(2);
+    }
+}
+
+/// <summary>
+/// Bug #129: String functions LOWER, UPPER, TRIM, LTRIM, RTRIM accept non-string arguments.
+/// Real Cosmos returns undefined for non-string arguments.
+/// The emulator called .ToString() without a type check.
+/// Fixed in v2.0.164.
+/// </summary>
+public class QueryDeepDiveV20_StringFunctionTypeSafetyTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "p", num = 42, str = "Hello", flag = true, arr = new[] { 1, 2 } }),
+            new PartitionKey("p"));
+    }
+
+    private async Task<List<JObject>> RunQuery(string sql)
+    {
+        var iter = _container.GetItemQueryIterator<JObject>(new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("p") });
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Lower_NumberArg_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT LOWER(c.num) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("LOWER of a number should produce undefined (omitted from output)");
+    }
+
+    [Fact]
+    public async Task Upper_BoolArg_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT UPPER(c.flag) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("UPPER of a boolean should produce undefined (omitted from output)");
+    }
+
+    [Fact]
+    public async Task Trim_NumberArg_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT TRIM(c.num) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("TRIM of a number should produce undefined (omitted from output)");
+    }
+
+    [Fact]
+    public async Task Ltrim_ArrayArg_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT LTRIM(c.arr) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("LTRIM of an array should produce undefined (omitted from output)");
+    }
+
+    [Fact]
+    public async Task Rtrim_BoolArg_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT RTRIM(c.flag) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("RTRIM of a boolean should produce undefined (omitted from output)");
+    }
+
+    [Fact]
+    public async Task Lower_StringArg_StillWorks()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT LOWER(c.str) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"]!.Value<string>().Should().Be("hello");
+    }
+}
+
+/// <summary>
+/// Bug #130: CONCAT accepts non-string arguments, converting them via .ToString().
+/// Real Cosmos requires all CONCAT arguments to be strings; non-string args return undefined.
+/// Fixed in v2.0.164.
+/// </summary>
+public class QueryDeepDiveV20_ConcatTypeSafetyTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "p", name = "item", num = 42, flag = true }),
+            new PartitionKey("p"));
+    }
+
+    private async Task<List<JObject>> RunQuery(string sql)
+    {
+        var iter = _container.GetItemQueryIterator<JObject>(new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("p") });
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Concat_WithNumber_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT CONCAT(c.name, '-', c.num) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("CONCAT with a numeric arg should return undefined");
+    }
+
+    [Fact]
+    public async Task Concat_WithBoolean_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT CONCAT(c.name, '-', c.flag) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("CONCAT with a boolean arg should return undefined");
+    }
+
+    [Fact]
+    public async Task Concat_AllStrings_Works()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT CONCAT(c.name, '-', 'suffix') as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"]!.Value<string>().Should().Be("item-suffix");
+    }
+}
+
+/// <summary>
+/// Bug #131: STARTSWITH, ENDSWITH, CONTAINS accept non-string arguments.
+/// Real Cosmos requires both the input and the search string to be strings.
+/// Non-string args return undefined.
+/// Fixed in v2.0.164.
+/// </summary>
+public class QueryDeepDiveV20_StringComparisonTypeSafetyTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "p", num = 123, str = "Hello World" }),
+            new PartitionKey("p"));
+    }
+
+    private async Task<List<JObject>> RunQuery(string sql)
+    {
+        var iter = _container.GetItemQueryIterator<JObject>(new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("p") });
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task StartsWith_NumberTarget_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT STARTSWITH(c.num, '1') as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("STARTSWITH with numeric target should return undefined");
+    }
+
+    [Fact]
+    public async Task EndsWith_NumberTarget_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT ENDSWITH(c.num, '3') as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("ENDSWITH with numeric target should return undefined");
+    }
+
+    [Fact]
+    public async Task Contains_NumberTarget_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT CONTAINS(c.num, '2') as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("CONTAINS with numeric target should return undefined");
+    }
+
+    [Fact]
+    public async Task StartsWith_NumberSearch_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT STARTSWITH(c.str, c.num) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("STARTSWITH with numeric search arg should return undefined");
+    }
+
+    [Fact]
+    public async Task Contains_StringArgs_StillWorks()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT CONTAINS(c.str, 'World') as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"]!.Value<bool>().Should().BeTrue();
+    }
+}
+
+/// <summary>
+/// Bug #132: SUBSTRING, REPLACE, INDEX_OF accept non-string first argument.
+/// Real Cosmos requires string arguments; non-string args return undefined.
+/// Fixed in v2.0.164.
+/// </summary>
+public class QueryDeepDiveV20_SubstringReplaceTypeSafetyTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "p", num = 12345, str = "Hello" }),
+            new PartitionKey("p"));
+    }
+
+    private async Task<List<JObject>> RunQuery(string sql)
+    {
+        var iter = _container.GetItemQueryIterator<JObject>(new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("p") });
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Substring_NumberTarget_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT SUBSTRING(c.num, 0, 2) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("SUBSTRING with numeric arg should return undefined");
+    }
+
+    [Fact]
+    public async Task Replace_NumberTarget_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT REPLACE(c.num, '1', '9') as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("REPLACE with numeric target should return undefined");
+    }
+
+    [Fact]
+    public async Task IndexOf_NumberTarget_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT INDEX_OF(c.num, '2') as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("INDEX_OF with numeric target should return undefined");
+    }
+
+    [Fact]
+    public async Task Substring_StringArg_StillWorks()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT SUBSTRING(c.str, 1, 3) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"]!.Value<string>().Should().Be("ell");
+    }
+}
+
+/// <summary>
+/// Bug #133: REPLICATE, STRING_EQUALS, REGEXMATCH accept non-string arguments.
+/// Fixed in v2.0.164.
+/// </summary>
+public class QueryDeepDiveV20_ReplicateStringEqualsTypeSafetyTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task Seed()
+    {
+        await _container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "p", num = 42, str = "abc" }),
+            new PartitionKey("p"));
+    }
+
+    private async Task<List<JObject>> RunQuery(string sql)
+    {
+        var iter = _container.GetItemQueryIterator<JObject>(new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("p") });
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Replicate_NumberTarget_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT REPLICATE(c.num, 3) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("REPLICATE with numeric target should return undefined");
+    }
+
+    [Fact]
+    public async Task StringEquals_NumberArgs_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT STRING_EQUALS(c.num, '42') as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("STRING_EQUALS with numeric arg should return undefined");
+    }
+
+    [Fact]
+    public async Task RegexMatch_NumberInput_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT RegexMatch(c.num, '\\\\d+') as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("RegexMatch with numeric input should return undefined");
+    }
+
+    [Fact]
+    public async Task Replicate_ExactlyAtLimit_Works()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT REPLICATE('x', 10000) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"]!.Value<string>().Should().HaveLength(10000);
+    }
+
+    [Fact]
+    public async Task Replicate_Over10000_ReturnsUndefined()
+    {
+        await Seed();
+        var results = await RunQuery("SELECT REPLICATE('x', 10001) as v FROM c");
+        results.Should().HaveCount(1);
+        results[0]["v"].Should().BeNull("REPLICATE count > 10000 should return undefined");
+    }
+}
+
+/// <summary>
+/// Test Group: Complex feature interactions not previously tested together.
+/// </summary>
+public class QueryDeepDiveV20_ComplexInteractionTests
+{
+    private readonly InMemoryContainer _container = new("test", "/pk");
+
+    private async Task Seed()
+    {
+        var docs = new[]
+        {
+            new { id = "1", pk = "p", cat = "fruit", name = "apple", tags = new[] { "red", "sweet" }, price = 1.5 },
+            new { id = "2", pk = "p", cat = "fruit", name = "banana", tags = new[] { "yellow", "sweet" }, price = 0.8 },
+            new { id = "3", pk = "p", cat = "fruit", name = "cherry", tags = new[] { "red", "sour" }, price = 3.0 },
+            new { id = "4", pk = "p", cat = "veggie", name = "carrot", tags = new[] { "orange" }, price = 1.2 },
+            new { id = "5", pk = "p", cat = "veggie", name = "broccoli", tags = new[] { "green" }, price = 2.5 },
+            new { id = "6", pk = "p", cat = "veggie", name = "pepper", tags = new[] { "red", "green" }, price = 1.8 },
+        };
+        foreach (var d in docs)
+            await _container.CreateItemAsync(JObject.FromObject(d), new PartitionKey("p"));
+    }
+
+    private async Task<List<JObject>> RunQuery(string sql)
+    {
+        var iter = _container.GetItemQueryIterator<JObject>(new QueryDefinition(sql),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("p") });
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+        return results;
+    }
+
+    [Fact]
+    public async Task Join_GroupBy_Having_OrderBy_Combined()
+    {
+        await Seed();
+        // JOIN tags, GROUP BY tag, HAVING count > 1, ORDER BY count DESC
+        var results = await RunQuery(
+            "SELECT t as tag, COUNT(1) as cnt FROM c JOIN t IN c.tags GROUP BY t HAVING COUNT(1) > 1 ORDER BY COUNT(1) DESC");
+        results.Should().HaveCountGreaterThanOrEqualTo(2);
+        // "red" appears in 3 docs (apple, cherry, pepper), "sweet" in 2 (apple, banana), "green" in 2 (broccoli, pepper)
+        results[0]["tag"]!.Value<string>().Should().Be("red");
+        results[0]["cnt"]!.Value<int>().Should().Be(3);
+    }
+
+    [Fact]
+    public async Task OrderBy_ArrayField_TypeRanking()
+    {
+        // Insert docs with different value types for the same field
+        var container = new InMemoryContainer("test2", "/pk");
+        await container.CreateItemAsync(JObject.FromObject(new { id = "1", pk = "p", val = 42 }), new PartitionKey("p"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "2", pk = "p", val = "hello" }), new PartitionKey("p"));
+        await container.CreateItemAsync(JObject.FromObject(new { id = "3", pk = "p", val = true }), new PartitionKey("p"));
+        await container.CreateItemAsync(JObject.Parse("{\"id\":\"4\",\"pk\":\"p\",\"val\":null}"), new PartitionKey("p"));
+
+        var iter = container.GetItemQueryIterator<JObject>(new QueryDefinition("SELECT c.id, c.val FROM c ORDER BY c.val ASC"),
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey("p") });
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        // Type ranking: null < bool < number < string
+        results[0]["id"]!.Value<string>().Should().Be("4"); // null
+        results[1]["id"]!.Value<string>().Should().Be("3"); // bool
+        results[2]["id"]!.Value<string>().Should().Be("1"); // number
+        results[3]["id"]!.Value<string>().Should().Be("2"); // string
     }
 }
