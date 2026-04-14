@@ -83,6 +83,7 @@ public class InMemoryContainer : Container
     private long _sessionSequence;
     private readonly object _uniqueKeyWriteLock = new();
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), SemaphoreSlim> _itemLocks = new();
+    private static readonly AsyncLocal<HashSet<(string Id, string PartitionKey)>> BatchWriteTracker = new();
     private int _throughput = 400;
     private bool _isDeleted;
 
@@ -620,6 +621,7 @@ public class InMemoryContainer : Container
         ValidatePerItemTtl(jObj);
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
+        TrackBatchWrite(key);
 
         var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
@@ -731,6 +733,7 @@ public class InMemoryContainer : Container
         ValidatePerItemTtl(jObj);
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
+        TrackBatchWrite(key);
 
         var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
@@ -841,6 +844,7 @@ public class InMemoryContainer : Container
 
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(id, pk);
+        TrackBatchWrite(key);
 
         var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
@@ -924,6 +928,7 @@ public class InMemoryContainer : Container
         cancellationToken.ThrowIfCancellationRequested();
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
+        TrackBatchWrite(key);
 
         var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
@@ -991,6 +996,7 @@ public class InMemoryContainer : Container
 
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
+        TrackBatchWrite(key);
 
         var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
@@ -1105,6 +1111,7 @@ public class InMemoryContainer : Container
 
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
+        TrackBatchWrite(key);
 
         var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
@@ -1202,6 +1209,7 @@ public class InMemoryContainer : Container
             return CreateResponseMessage(HttpStatusCode.BadRequest);
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
+        TrackBatchWrite(key);
 
         var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
@@ -1294,6 +1302,7 @@ public class InMemoryContainer : Container
         if (sizeError is not null) return sizeError;
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
+        TrackBatchWrite(key);
 
         JObject jObj;
         try { jObj = JsonParseHelpers.ParseJson(json); }
@@ -1387,6 +1396,7 @@ public class InMemoryContainer : Container
         cancellationToken.ThrowIfCancellationRequested();
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
+        TrackBatchWrite(key);
 
         var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
@@ -1461,6 +1471,7 @@ public class InMemoryContainer : Container
 
         var pk = PartitionKeyToString(partitionKey);
         var key = ItemKey(id, pk);
+        TrackBatchWrite(key);
 
         var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
@@ -3266,28 +3277,44 @@ public class InMemoryContainer : Container
         }
     }
 
+    internal void BeginBatchTracking()
+    {
+        BatchWriteTracker.Value = new HashSet<(string Id, string PartitionKey)>();
+    }
+
+    internal HashSet<(string Id, string PartitionKey)> EndBatchTracking()
+    {
+        var keys = BatchWriteTracker.Value ?? new HashSet<(string Id, string PartitionKey)>();
+        BatchWriteTracker.Value = null;
+        return keys;
+    }
+
+    private void TrackBatchWrite((string Id, string PartitionKey) key)
+    {
+        BatchWriteTracker.Value?.Add(key);
+    }
+
     internal void RestoreSnapshot(
         Dictionary<(string Id, string PartitionKey), string> itemsSnapshot,
         Dictionary<(string Id, string PartitionKey), string> etagsSnapshot,
         Dictionary<(string Id, string PartitionKey), DateTimeOffset> timestampsSnapshot,
-        int changeFeedCount)
+        int changeFeedCount,
+        IReadOnlySet<(string Id, string PartitionKey)> touchedKeys)
     {
-        _items.Clear();
-        foreach (var kvp in itemsSnapshot)
+        foreach (var key in touchedKeys)
         {
-            _items[kvp.Key] = kvp.Value;
-        }
-
-        _etags.Clear();
-        foreach (var kvp in etagsSnapshot)
-        {
-            _etags[kvp.Key] = kvp.Value;
-        }
-
-        _timestamps.Clear();
-        foreach (var kvp in timestampsSnapshot)
-        {
-            _timestamps[kvp.Key] = kvp.Value;
+            if (itemsSnapshot.TryGetValue(key, out var snapshotItem))
+            {
+                _items[key] = snapshotItem;
+                _etags[key] = etagsSnapshot[key];
+                _timestamps[key] = timestampsSnapshot[key];
+            }
+            else
+            {
+                _items.TryRemove(key, out _);
+                _etags.TryRemove(key, out _);
+                _timestamps.TryRemove(key, out _);
+            }
         }
 
         lock (_changeFeedLock)

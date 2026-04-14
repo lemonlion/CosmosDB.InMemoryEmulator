@@ -164,6 +164,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
         var etagsSnapshot = _container.SnapshotEtags();
         var timestampsSnapshot = _container.SnapshotTimestamps();
         var changeFeedCount = _container.GetChangeFeedCount();
+        _container.BeginBatchTracking();
 
         var operationResults = new List<(HttpStatusCode status, bool isSuccess)>();
         var failedIndex = -1;
@@ -197,7 +198,8 @@ public class InMemoryTransactionalBatch : TransactionalBatch
 
         if (failedIndex >= 0)
         {
-            _container.RestoreSnapshot(itemsSnapshot, etagsSnapshot, timestampsSnapshot, changeFeedCount);
+            var touchedKeys = _container.EndBatchTracking();
+            _container.RestoreSnapshot(itemsSnapshot, etagsSnapshot, timestampsSnapshot, changeFeedCount, touchedKeys);
             for (var i = 0; i < failedIndex; i++)
             {
                 operationResults[i] = (HttpStatusCode.FailedDependency, false);
@@ -212,6 +214,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
                 $"Batch operation at index {failedIndex} failed with status code {(int)failedStatusCode}.", _container.CurrentSessionToken);
         }
 
+        _container.EndBatchTracking();
         return new InMemoryBatchResponse(HttpStatusCode.OK, true, operationResults, _readResults, _writeEtags, sessionToken: _container.CurrentSessionToken);
     }
 
