@@ -30,12 +30,37 @@ serviceCollection.UseInMemoryCosmosContainers(); // Replaces only Cosmos Contain
 
 ### Direct Instantiation
 
+Ideal with highest fidelity:
+
 ```csharp
-var cosmosClient = new InMemoryCosmosClient(); // Fully functional In-Memory Cosmos Client Emulator
+// 1. Create an InMemoryContainer as the backing store
+var container = new InMemoryContainer("my-container", "/partitionKey");
+
+// 2. Wire up FakeCosmosHandler → CosmosClient
+using var handler = new FakeCosmosHandler(container);
+using var client = new CosmosClient(
+    "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+    new CosmosClientOptions
+    {
+        ConnectionMode = ConnectionMode.Gateway,
+        LimitToEndpoint = true,
+        HttpClientFactory = () => new HttpClient(handler)
+    });
+
+// 3. Use the real SDK — all calls are intercepted by the handler
+var cosmosContainer = client.GetContainer("db", "my-container");
+```
+
+Alternatively - the following to are slightly more limited usages, but still fully functional.
+They require the use of `.ToFeedIteratorOverrideable()` wherever `.ToFeedIterator()` is used, 
+and have some minor differences (e.g. use of LINQ to objects for querying) - [see here for more details](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Integration-Approaches).
+
+```csharp
+var cosmosClient = new InMemoryCosmosClient();
 ```
 OR
 ```csharp
-var cosmosClient = new InMemoryContainer(); // Fully functional In-Memory Cosmos Container Emulator
+var cosmosContainer = new InMemoryContainer();
 ```
 
 ## Motivation
