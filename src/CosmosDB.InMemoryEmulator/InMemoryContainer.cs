@@ -4652,7 +4652,7 @@ public class InMemoryContainer : Container
         return expr switch
         {
             FunctionCallExpression func when AggregateFunctions.Contains(func.FunctionName) =>
-                EvaluateHavingAggregate(func, groupItems, fromAlias),
+                EvaluateHavingAggregate(func, groupItems, fromAlias, parameters),
             BinaryExpression bin => EvaluateHavingBinaryExpression(bin, groupItems, resultObj, fromAlias, parameters),
             LiteralExpression lit => lit.Value,
             IdentifierExpression ident => ResolveValue(ident.Name, resultObj, fromAlias, parameters),
@@ -4686,7 +4686,8 @@ public class InMemoryContainer : Container
     }
 
     private static object EvaluateHavingAggregate(
-        FunctionCallExpression func, List<string> groupItems, string fromAlias)
+        FunctionCallExpression func, List<string> groupItems, string fromAlias,
+        IDictionary<string, object> parameters = null)
     {
         switch (func.FunctionName)
         {
@@ -4719,10 +4720,10 @@ public class InMemoryContainer : Container
                     }
 
                     var innerArg = func.Arguments[0] is IdentifierExpression ident ? ident.Name : "1";
-                    var values = ExtractNumericValues(groupItems, innerArg, fromAlias, parameters: null);
+                    var values = ExtractNumericValues(groupItems, innerArg, fromAlias, parameters);
                     if (func.FunctionName is "MIN" or "MAX")
                     {
-                        var tokens = ExtractTokenValues(groupItems, innerArg, fromAlias, parameters: null);
+                        var tokens = ExtractTokenValues(groupItems, innerArg, fromAlias, parameters);
                         return AggregateMinMax(tokens, func.FunctionName == "MIN");
                     }
                     return func.FunctionName switch
@@ -4748,7 +4749,7 @@ public class InMemoryContainer : Container
         return expr switch
         {
             FunctionCallExpression func when AggregateFunctions.Contains(func.FunctionName)
-                => EvaluateHavingAggregate(func, groupItems, fromAlias),
+                => EvaluateHavingAggregate(func, groupItems, fromAlias, parameters),
             ObjectLiteralExpression obj => EvaluateGroupByObjectLiteral(obj, groupItems, sampleItem, fromAlias, parameters),
             ArrayLiteralExpression arr => arr.Elements
                 .Select(e => EvaluateGroupByProjectionExpression(e, groupItems, sampleItem, fromAlias, parameters))
@@ -5796,6 +5797,12 @@ public class InMemoryContainer : Container
                     }
 
                     var path = func.Arguments[0].Trim();
+
+                    // Resolve parameterized values (e.g. IS_DEFINED(@param))
+                    // A resolved parameter is always "defined" (even if null).
+                    if (path.StartsWith("@"))
+                        return parameters.ContainsKey(path);
+
                     if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
                     {
                         path = path[(fromAlias.Length + 1)..];
@@ -6123,6 +6130,10 @@ public class InMemoryContainer : Container
 
                         return item.SelectToken(path) != null;
                     }
+                    // A parameter is always "defined" if it exists in the dictionary
+                    // (even when its value is null).
+                    if (func.Arguments[0] is ParameterExpression param)
+                        return parameters.ContainsKey(param.Name);
                     return args[0] != null;
                 }
             case "IS_NULL": return args.Length > 0 && args[0] is null;
