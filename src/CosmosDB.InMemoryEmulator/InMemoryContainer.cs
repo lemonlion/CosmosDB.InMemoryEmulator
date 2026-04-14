@@ -5781,7 +5781,7 @@ public class InMemoryContainer : Container
                     var searchValue = ResolveValue(func.Arguments[1], item, fromAlias, parameters);
                     if (searchValue is null)
                     {
-                        return false;
+                        return jArray.Any(t => t.Type == JTokenType.Null);
                     }
 
                     var searchStr = searchValue.ToString();
