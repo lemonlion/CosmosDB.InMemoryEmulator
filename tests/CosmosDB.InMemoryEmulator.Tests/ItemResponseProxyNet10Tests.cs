@@ -7,15 +7,13 @@ using Xunit;
 namespace CosmosDB.InMemoryEmulator.Tests;
 
 /// <summary>
-/// Validates that <c>ItemResponse&lt;T&gt;</c> proxy creation works correctly on both
-/// .NET 8 and .NET 10. This was reported as a potential bug but is NOT reproducible —
-/// the NSubstitute/Castle.DynamicProxy approach works fine on both frameworks when T is
-/// a public type. Using private/internal types for T will fail due to Castle proxy
-/// accessibility requirements (not framework-specific).
+/// Validates that <c>ItemResponse&lt;T&gt;</c> works correctly with private/internal types.
+/// Previously NSubstitute/Castle.DynamicProxy was used to create ItemResponse proxies,
+/// which failed when T was not publicly accessible. Now uses a concrete subclass instead.
 /// </summary>
 public class ItemResponseProxyNet10Tests
 {
-    public class SimpleDocument
+    private class SimpleDocument
     {
         [JsonProperty("id")]
         public string Id { get; set; } = default!;

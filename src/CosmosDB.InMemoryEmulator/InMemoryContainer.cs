@@ -3072,9 +3072,6 @@ public class InMemoryContainer : Container
 
     private ItemResponse<T> CreateItemResponse<T>(T item, HttpStatusCode statusCode, string etag = null, bool suppressContent = false)
     {
-        var r = Substitute.For<ItemResponse<T>>();
-        r.StatusCode.Returns(statusCode);
-        r.Resource.Returns(suppressContent ? default : item);
         var activityId = Guid.NewGuid().ToString();
         var headers = new Headers
         {
@@ -3082,12 +3079,41 @@ public class InMemoryContainer : Container
             ["x-ms-activity-id"] = activityId,
             ["x-ms-request-charge"] = SyntheticRequestCharge.ToString(CultureInfo.InvariantCulture)
         };
-        r.Headers.Returns(headers);
-        r.ActivityId.Returns(activityId);
-        r.Diagnostics.Returns(FakeDiagnostics);
-        r.RequestCharge.Returns(SyntheticRequestCharge);
-        r.ETag.Returns(etag);
-        return r;
+        return new InMemoryItemResponse<T>(
+            statusCode, headers, suppressContent ? default : item, FakeDiagnostics,
+            SyntheticRequestCharge, activityId, etag);
+    }
+
+    private sealed class InMemoryItemResponse<T> : ItemResponse<T>
+    {
+        private readonly HttpStatusCode _statusCode;
+        private readonly Headers _headers;
+        private readonly T _resource;
+        private readonly CosmosDiagnostics _diagnostics;
+        private readonly double _requestCharge;
+        private readonly string _activityId;
+        private readonly string _etag;
+
+        public InMemoryItemResponse(
+            HttpStatusCode statusCode, Headers headers, T resource, CosmosDiagnostics diagnostics,
+            double requestCharge, string activityId, string etag)
+        {
+            _statusCode = statusCode;
+            _headers = headers;
+            _resource = resource;
+            _diagnostics = diagnostics;
+            _requestCharge = requestCharge;
+            _activityId = activityId;
+            _etag = etag;
+        }
+
+        public override HttpStatusCode StatusCode => _statusCode;
+        public override Headers Headers => _headers;
+        public override T Resource => _resource;
+        public override CosmosDiagnostics Diagnostics => _diagnostics;
+        public override double RequestCharge => _requestCharge;
+        public override string ActivityId => _activityId;
+        public override string ETag => _etag;
     }
 
     private ResponseMessage CreateResponseMessage(HttpStatusCode statusCode, string json = null, string etag = null)
