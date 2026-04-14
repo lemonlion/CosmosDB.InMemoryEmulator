@@ -823,12 +823,22 @@ public static class CosmosSqlParser
         from value_ in Token.EqualTo(CosmosSqlToken.Value).OptionalOrDefault()
         from fields in SingleSelectField.ManyDelimitedBy(Token.EqualTo(CosmosSqlToken.Comma))
         from fromKw in Token.EqualTo(CosmosSqlToken.From)
-        from fromAlias in AnyIdentifierOrKeyword
-        from fromSource in (
+        from fromFirstIdent in AnyIdentifierOrKeyword
+        from fromClause in (
+            // FROM alias IN source.path
             from in_ in Token.EqualTo(CosmosSqlToken.In)
             from source in DottedPath
-            select source
-        ).OptionalOrDefault(null)
+            select (Alias: fromFirstIdent, Source: (string)source)
+        ).Try().Or(
+            // FROM source AS alias
+            from as_ in Token.EqualTo(CosmosSqlToken.As)
+            from alias in AnyIdentifierOrKeyword
+            select (Alias: alias, Source: (string)null)
+        ).Try().Or(
+            // FROM source alias  (implicit alias without AS keyword — only plain identifiers)
+            from alias in Token.EqualTo(CosmosSqlToken.Identifier).Select(TokenSpanToString)
+            select (Alias: alias, Source: (string)null)
+        ).Try().OptionalOrDefault((Alias: fromFirstIdent, Source: (string)null))
         from joins in JoinParser.Many()
         from where_ in (
             from whereKw in Token.EqualTo(CosmosSqlToken.Where)
@@ -872,7 +882,7 @@ public static class CosmosSqlParser
         ).OptionalOrDefault(null)
         select BuildQuery(
             distinct.HasValue, top, value_.HasValue, fields,
-            fromAlias, fromSource, joins, where_,
+            fromClause.Alias, fromClause.Source, joins, where_,
             groupBy?.Select(ExprToString).ToArray(),
             groupBy?.ToArray(),
             having, orderByResult.Fields, offset, limit, orderByResult.RankExpr);
