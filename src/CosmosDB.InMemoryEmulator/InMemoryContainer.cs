@@ -4390,7 +4390,7 @@ public class InMemoryContainer : Container
                 }
                 else if (funcName is "SUM" or "AVG" && innerArg != null)
                 {
-                    var values = ExtractNumericValues(groupItems, innerArg, fromAlias);
+                    var values = ExtractNumericValues(groupItems, innerArg, fromAlias, parameters);
                     if (funcName == "SUM")
                     {
                         if (values.Count > 0)
@@ -4405,7 +4405,7 @@ public class InMemoryContainer : Container
                 }
                 else if (funcName is "MIN" or "MAX" && innerArg != null)
                 {
-                    var tokens = ExtractTokenValues(groupItems, innerArg, fromAlias);
+                    var tokens = ExtractTokenValues(groupItems, innerArg, fromAlias, parameters);
                     var minMaxResult = AggregateMinMax(tokens, funcName == "MIN");
                     if (minMaxResult is not UndefinedValue)
                         resultObj[outputName] = JToken.FromObject(minMaxResult);
@@ -4454,7 +4454,7 @@ public class InMemoryContainer : Container
            arg.Contains('/') || arg.Contains('%') ||
            (arg.Contains('-') && !arg.StartsWith("-") && arg.IndexOf('-') != arg.IndexOf(".") + 1);
 
-    private static List<double> ExtractNumericValues(IEnumerable<string> items, string innerArg, string fromAlias)
+    private static List<double> ExtractNumericValues(IEnumerable<string> items, string innerArg, string fromAlias, IDictionary<string, object> parameters = null)
     {
         var values = new List<double>();
 
@@ -4482,7 +4482,7 @@ public class InMemoryContainer : Container
             if (parsedInnerExpr is not null)
             {
                 var result = EvaluateSqlExpression(parsedInnerExpr, jObj, fromAlias,
-                    new Dictionary<string, object>());
+                    parameters ?? new Dictionary<string, object>());
                 if (result is double d)
                     val = d;
                 else if (result is long l)
@@ -4506,7 +4506,7 @@ public class InMemoryContainer : Container
         return values;
     }
 
-    private static List<JToken> ExtractTokenValues(IEnumerable<string> items, string innerArg, string fromAlias)
+    private static List<JToken> ExtractTokenValues(IEnumerable<string> items, string innerArg, string fromAlias, IDictionary<string, object> parameters = null)
     {
         var tokens = new List<JToken>();
 
@@ -4534,7 +4534,7 @@ public class InMemoryContainer : Container
             if (parsedInnerExpr is not null)
             {
                 var result = EvaluateSqlExpression(parsedInnerExpr, jObj, fromAlias,
-                    new Dictionary<string, object>());
+                    parameters ?? new Dictionary<string, object>());
                 if (result is not null and not UndefinedValue)
                     tokens.Add(JToken.FromObject(result));
             }
@@ -4719,10 +4719,10 @@ public class InMemoryContainer : Container
                     }
 
                     var innerArg = func.Arguments[0] is IdentifierExpression ident ? ident.Name : "1";
-                    var values = ExtractNumericValues(groupItems, innerArg, fromAlias);
+                    var values = ExtractNumericValues(groupItems, innerArg, fromAlias, parameters: null);
                     if (func.FunctionName is "MIN" or "MAX")
                     {
-                        var tokens = ExtractTokenValues(groupItems, innerArg, fromAlias);
+                        var tokens = ExtractTokenValues(groupItems, innerArg, fromAlias, parameters: null);
                         return AggregateMinMax(tokens, func.FunctionName == "MIN");
                     }
                     return func.FunctionName switch
@@ -5048,7 +5048,7 @@ public class InMemoryContainer : Container
             }
             else if (funcName is "SUM" or "AVG" && innerArg != null)
             {
-                var values = ExtractNumericValues(items, innerArg, parsed.FromAlias);
+                var values = ExtractNumericValues(items, innerArg, parsed.FromAlias, parameters);
                 if (funcName == "SUM")
                 {
                     if (values.Count > 0)
@@ -5064,7 +5064,7 @@ public class InMemoryContainer : Container
             }
             else if (funcName is "MIN" or "MAX" && innerArg != null)
             {
-                var tokens = ExtractTokenValues(items, innerArg, parsed.FromAlias);
+                var tokens = ExtractTokenValues(items, innerArg, parsed.FromAlias, parameters);
                 var minMaxResult = AggregateMinMax(tokens, funcName == "MIN");
                 if (minMaxResult is not UndefinedValue)
                     resultObj[outputName] = JToken.FromObject(minMaxResult);
@@ -5118,10 +5118,10 @@ public class InMemoryContainer : Container
                         var path = StripAliasPrefix(innerArg, fromAlias);
                         return jObj.SelectToken(path) is JToken t && t.Type != JTokenType.Null;
                     }),
-                    "SUM" => ExtractNumericValues(items, innerArg, fromAlias) is var sv && sv.Count > 0 ? sv.Sum() : UndefinedValue.Instance,
-                    "AVG" => ExtractNumericValues(items, innerArg, fromAlias) is var av && av.Count > 0 ? av.Average() : UndefinedValue.Instance,
-                    "MIN" => AggregateMinMax(ExtractTokenValues(items, innerArg, fromAlias), true),
-                    "MAX" => AggregateMinMax(ExtractTokenValues(items, innerArg, fromAlias), false),
+                    "SUM" => ExtractNumericValues(items, innerArg, fromAlias, parameters) is var sv && sv.Count > 0 ? sv.Sum() : UndefinedValue.Instance,
+                    "AVG" => ExtractNumericValues(items, innerArg, fromAlias, parameters) is var av && av.Count > 0 ? av.Average() : UndefinedValue.Instance,
+                    "MIN" => AggregateMinMax(ExtractTokenValues(items, innerArg, fromAlias, parameters), true),
+                    "MAX" => AggregateMinMax(ExtractTokenValues(items, innerArg, fromAlias, parameters), false),
                     _ => null
                 };
             }
@@ -5812,6 +5812,15 @@ public class InMemoryContainer : Container
                     }
 
                     var path = func.Arguments[0].Trim();
+
+                    // Resolve parameterized values (e.g. IS_NULL(@param))
+                    if (path.StartsWith("@"))
+                    {
+                        if (parameters.TryGetValue(path, out var paramVal))
+                            return paramVal is null || (paramVal is JToken jt && jt.Type == JTokenType.Null);
+                        return true; // Unresolved parameter treated as null
+                    }
+
                     if (path.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
                     {
                         path = path[(fromAlias.Length + 1)..];
