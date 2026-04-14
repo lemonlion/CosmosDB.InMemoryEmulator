@@ -23,6 +23,7 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
     private readonly Func<IReadOnlyList<T>> _factory;
     private readonly int? _maxItemCount;
     private int _offset;
+    private bool _hasReadFirstPage;
 
     /// <summary>
     /// Creates a feed iterator from a pre-computed list of items.
@@ -82,10 +83,17 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
     /// </summary>
     public bool PopulateIndexMetrics { get; set; }
 
-    public override bool HasMoreResults => _offset < EnsureItems().Count;
+    /// <summary>
+    /// When true, <see cref="HasMoreResults"/> returns true before the first page is read,
+    /// even when the result set is empty. This matches real Cosmos DB query iterator behavior.
+    /// </summary>
+    public bool GuaranteeFirstPage { get; set; }
+
+    public override bool HasMoreResults => (GuaranteeFirstPage && !_hasReadFirstPage) || _offset < EnsureItems().Count;
 
     public override Task<FeedResponse<T>> ReadNextAsync(CancellationToken cancellationToken = default)
     {
+        _hasReadFirstPage = true;
         var items = EnsureItems();
         var page = items.Skip(_offset).Take(PageSize).ToList();
         _offset += page.Count;

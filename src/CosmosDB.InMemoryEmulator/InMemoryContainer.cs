@@ -1655,7 +1655,8 @@ public class InMemoryContainer : Container
         var initialOffset = ParseContinuationToken(continuationToken);
         return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, initialOffset)
         {
-            PopulateIndexMetrics = requestOptions?.PopulateIndexMetrics ?? false
+            PopulateIndexMetrics = requestOptions?.PopulateIndexMetrics ?? false,
+            GuaranteeFirstPage = true
         };
     }
 
@@ -1678,7 +1679,8 @@ public class InMemoryContainer : Container
         var initialOffset = ParseContinuationToken(continuationToken);
         return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, initialOffset)
         {
-            PopulateIndexMetrics = requestOptions?.PopulateIndexMetrics ?? false
+            PopulateIndexMetrics = requestOptions?.PopulateIndexMetrics ?? false,
+            GuaranteeFirstPage = true
         };
     }
 
@@ -1694,7 +1696,8 @@ public class InMemoryContainer : Container
         var initialOffset = ParseContinuationToken(continuationToken);
         return new InMemoryFeedIterator<T>(items, requestOptions?.MaxItemCount, initialOffset)
         {
-            PopulateIndexMetrics = requestOptions?.PopulateIndexMetrics ?? false
+            PopulateIndexMetrics = requestOptions?.PopulateIndexMetrics ?? false,
+            GuaranteeFirstPage = true
         };
     }
 

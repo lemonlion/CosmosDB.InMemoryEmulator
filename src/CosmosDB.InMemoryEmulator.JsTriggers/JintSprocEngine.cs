@@ -93,12 +93,12 @@ public class JintSprocEngine : ISprocEngine
 
         try
         {
-            // Check if the body defines a named function
-            var matches = System.Text.RegularExpressions.Regex.Matches(jsBody, @"\bfunction\s+(\w+)\s*\(");
-            if (matches.Count > 0)
+            // Check if the body starts with a named function declaration
+            var match = System.Text.RegularExpressions.Regex.Match(jsBody.TrimStart(), @"^function\s+(\w+)\s*\(");
+            if (match.Success)
             {
                 engine.Execute(jsBody);
-                engine.Invoke(matches[0].Groups[1].Value, jsArgs);
+                engine.Invoke(match.Groups[1].Value, jsArgs);
             }
             else
             {
@@ -175,8 +175,9 @@ public class JintSprocEngine : ISprocEngine
                 },
                 queryDocuments: function(link, query, opts, cb) {
                     var results = JSON.parse(__queryDocuments(query));
-                    if (typeof opts === 'function') { opts(null, results); }
-                    else if (cb) { cb(null, results); }
+                    var responseOptions = { continuation: null };
+                    if (typeof opts === 'function') { opts(null, results, responseOptions); }
+                    else if (cb) { cb(null, results, responseOptions); }
                     return true;
                 },
                 replaceDocument: function(link, doc, opts, cb) {

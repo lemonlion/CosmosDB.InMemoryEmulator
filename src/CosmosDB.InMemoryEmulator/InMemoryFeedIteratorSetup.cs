@@ -97,6 +97,6 @@ public static class InMemoryFeedIteratorSetup
     {
         var maxItemCount = MaxItemCountLocal.Value;
         MaxItemCountLocal.Value = null;
-        return new InMemoryFeedIterator<T>(queryable.AsEnumerable(), maxItemCount);
+        return new InMemoryFeedIterator<T>(queryable.AsEnumerable(), maxItemCount) { GuaranteeFirstPage = true };
     }
 }
