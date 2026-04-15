@@ -41,6 +41,7 @@ public class FakeCosmosHandlerDatabaseRoutesBugReproduction
             new CosmosClientOptions
             {
                 ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
                 HttpClientFactory = () => new HttpClient(handler)
             });
 
@@ -61,6 +62,7 @@ public class FakeCosmosHandlerDatabaseRoutesBugReproduction
             new CosmosClientOptions
             {
                 ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
                 HttpClientFactory = () => new HttpClient(handler)
             });
 
