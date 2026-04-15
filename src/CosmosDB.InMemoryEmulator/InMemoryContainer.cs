@@ -39,10 +39,7 @@ public class InMemoryContainer : Container, IContainerTestSetup
     {
         TypeNameHandling = TypeNameHandling.None,
         DateParseHandling = DateParseHandling.None,
-        ContractResolver = new DefaultContractResolver
-        {
-            NamingStrategy = new CamelCaseNamingStrategy()
-        },
+        ContractResolver = new DefaultContractResolver(),
         Converters = { new StringEnumConverter { AllowIntegerValues = true } }
     };
 
