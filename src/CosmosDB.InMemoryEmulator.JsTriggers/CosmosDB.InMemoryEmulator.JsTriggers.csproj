@@ -7,7 +7,7 @@
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 		<IsPackable>true</IsPackable>
 		<PackageId>CosmosDB.InMemoryEmulator.JsTriggers</PackageId>
-		<Version>2.0.183</Version>
+		<Version>2.0.185</Version>
 		<Authors>lemonlion</Authors>
 		<Description>JavaScript trigger body interpretation for CosmosDB.InMemoryEmulator. Uses Jint to execute real Cosmos DB trigger JavaScript (getContext, getRequest, getResponse, getBody, setBody) inside your in-memory tests.</Description>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>

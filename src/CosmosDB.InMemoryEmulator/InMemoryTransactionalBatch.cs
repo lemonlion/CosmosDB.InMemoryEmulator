@@ -147,7 +147,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
 
         if (_operations.Count > MaxBatchOperations)
         {
-            throw new InMemoryCosmosException("Batch request has more operations than what is supported.",
+            throw InMemoryCosmosException.Create("Batch request has more operations than what is supported.",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
 
@@ -235,7 +235,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
             var response = await _container.CreateItemStreamAsync(stream, _partitionKey, ToItemRequestOptions(requestOptions));
             if (!response.IsSuccessStatusCode)
-                throw new InMemoryCosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
+                throw InMemoryCosmosException.Create(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
             _writeEtags[opIndex] = response.Headers.ETag;
             if (response.Content != null)
             {
@@ -260,7 +260,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
             var response = await _container.UpsertItemStreamAsync(stream, _partitionKey, ToItemRequestOptions(requestOptions));
             if (!response.IsSuccessStatusCode)
-                throw new InMemoryCosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
+                throw InMemoryCosmosException.Create(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
             _writeEtags[opIndex] = response.Headers.ETag;
             _opStatusCodes[opIndex] = response.StatusCode;
             if (response.Content != null)
@@ -286,7 +286,7 @@ public class InMemoryTransactionalBatch : TransactionalBatch
             var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
             var response = await _container.ReplaceItemStreamAsync(stream, id, _partitionKey, ToItemRequestOptions(requestOptions));
             if (!response.IsSuccessStatusCode)
-                throw new InMemoryCosmosException(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
+                throw InMemoryCosmosException.Create(response.ErrorMessage ?? "Stream operation failed.", response.StatusCode, 0, string.Empty, 0);
             _writeEtags[opIndex] = response.Headers.ETag;
             if (response.Content != null)
             {
