@@ -3297,17 +3297,22 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         foreach (var uniqueKey in policy.UniqueKeys)
         {
-            var newValues = uniqueKey.Paths.Select(p => jObj.SelectToken(CosmosPathToSelectTokenPath(p))?.ToString()).ToList();
+            var newTokens = uniqueKey.Paths.Select(p => jObj.SelectToken(CosmosPathToSelectTokenPath(p))).ToList();
+
+            // Cosmos DB allows multiple items where ALL unique key paths are null/missing
+            if (newTokens.All(t => t is null || t.Type == JTokenType.Null))
+                continue;
 
             foreach (var (existingKey, existingJson) in _items)
             {
                 if (existingKey.PartitionKey != partitionKey) continue;
                 if (excludeItemId != null && existingKey.Id == excludeItemId) continue;
+                if (IsExpired(existingKey)) continue;
 
                 var existingObj = JsonParseHelpers.ParseJson(existingJson);
-                var existingValues = uniqueKey.Paths.Select(p => existingObj.SelectToken(CosmosPathToSelectTokenPath(p))?.ToString()).ToList();
+                var existingTokens = uniqueKey.Paths.Select(p => existingObj.SelectToken(CosmosPathToSelectTokenPath(p))).ToList();
 
-                if (newValues.SequenceEqual(existingValues))
+                if (UniqueKeyTokensMatch(newTokens, existingTokens))
                 {
                     throw new InMemoryCosmosException(
                         "Unique index constraint violation.",
@@ -3315,6 +3320,44 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Compares two lists of JTokens for unique key equality, preserving JSON type information.
+    /// Null/missing tokens are treated as equal to each other. Different JSON types (e.g. integer 42 vs string "42")
+    /// are treated as distinct values. Numeric types (Integer/Float) are compared by value so that 1 and 1.0 conflict.
+    /// This matches real Cosmos DB behavior.
+    /// </summary>
+    private static bool UniqueKeyTokensMatch(List<JToken> newTokens, List<JToken> existingTokens)
+    {
+        if (newTokens.Count != existingTokens.Count) return false;
+
+        for (int i = 0; i < newTokens.Count; i++)
+        {
+            var a = newTokens[i];
+            var b = existingTokens[i];
+
+            bool aNull = a is null || a.Type == JTokenType.Null;
+            bool bNull = b is null || b.Type == JTokenType.Null;
+
+            if (aNull && bNull) continue;
+            if (aNull || bNull) return false;
+
+            bool aNumeric = a.Type == JTokenType.Integer || a.Type == JTokenType.Float;
+            bool bNumeric = b.Type == JTokenType.Integer || b.Type == JTokenType.Float;
+
+            if (aNumeric && bNumeric)
+            {
+                // Compare numeric values regardless of Integer/Float distinction
+                if ((double)a != (double)b) return false;
+            }
+            else
+            {
+                if (a.Type != b.Type) return false;
+                if (!JToken.DeepEquals(a, b)) return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>
@@ -8454,6 +8497,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     /// <summary>
     /// Converts path segments to a Newtonsoft.Json SelectToken-compatible path.
     /// Numeric segments become array indexers (e.g., ["runs","0"] → "runs[0]").
+    /// Segments containing special characters (spaces, dots, etc.) use bracket notation.
     /// </summary>
     internal static string BuildSelectTokenPath(IEnumerable<string> segments)
     {
@@ -8463,6 +8507,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             if (int.TryParse(segment, out _))
             {
                 sb.Append('[').Append(segment).Append(']');
+            }
+            else if (segment.IndexOfAny(new[] { '.', ' ', '[', ']', '\'', '"' }) >= 0)
+            {
+                sb.Append("['").Append(segment).Append("']");
             }
             else
             {
