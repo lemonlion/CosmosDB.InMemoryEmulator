@@ -3195,7 +3195,7 @@ public class InMemoryContainer : Container
 
         foreach (var uniqueKey in policy.UniqueKeys)
         {
-            var newValues = uniqueKey.Paths.Select(p => jObj.SelectToken(p.TrimStart('/'))?.ToString()).ToList();
+            var newValues = uniqueKey.Paths.Select(p => jObj.SelectToken(CosmosPathToSelectTokenPath(p))?.ToString()).ToList();
 
             foreach (var (existingKey, existingJson) in _items)
             {
@@ -3203,7 +3203,7 @@ public class InMemoryContainer : Container
                 if (excludeItemId != null && existingKey.Id == excludeItemId) continue;
 
                 var existingObj = JsonParseHelpers.ParseJson(existingJson);
-                var existingValues = uniqueKey.Paths.Select(p => existingObj.SelectToken(p.TrimStart('/'))?.ToString()).ToList();
+                var existingValues = uniqueKey.Paths.Select(p => existingObj.SelectToken(CosmosPathToSelectTokenPath(p))?.ToString()).ToList();
 
                 if (newValues.SequenceEqual(existingValues))
                 {
@@ -3213,6 +3213,15 @@ public class InMemoryContainer : Container
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Converts a Cosmos DB path (e.g. "/value/code") to a Newtonsoft.Json SelectToken path (e.g. "value.code").
+    /// </summary>
+    private static string CosmosPathToSelectTokenPath(string cosmosPath)
+    {
+        var segments = cosmosPath.TrimStart('/').Split('/');
+        return BuildSelectTokenPath(segments);
     }
 
     private bool ValidateUniqueKeysStream(JObject jObj, string partitionKey, string excludeItemId = null)
