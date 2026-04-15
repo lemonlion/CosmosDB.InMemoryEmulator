@@ -1062,7 +1062,15 @@ public class FakeCosmosHandler : HttpMessageHandler
         if (countDistinctMatch.Success)
         {
             var distinctExpr = countDistinctMatch.Groups[1].Value.Trim();
-            var aliasMatch = Regex.Match(sqlQuery, @"\bFROM\s+(\w+)", RegexOptions.IgnoreCase);
+
+            // Extract the FROM alias. Handles:
+            //   FROM c              → alias "c"
+            //   FROM root c         → alias "c"  (EF Core style)
+            //   FROM root AS c      → alias "c"
+            var aliasMatch = Regex.Match(sqlQuery,
+                @"\bFROM\s+\w+\s+(?:AS\s+)?(\w+)", RegexOptions.IgnoreCase);
+            if (!aliasMatch.Success)
+                aliasMatch = Regex.Match(sqlQuery, @"\bFROM\s+(\w+)", RegexOptions.IgnoreCase);
             var fromAlias = aliasMatch.Success ? aliasMatch.Groups[1].Value : "c";
 
             // Try to extract a simple property path; for complex expressions use the expression as-is

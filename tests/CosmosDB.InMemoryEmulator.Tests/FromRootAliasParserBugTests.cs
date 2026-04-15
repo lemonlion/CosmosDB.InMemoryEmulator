@@ -1,3 +1,4 @@
+using System.Text;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
@@ -11,9 +12,26 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// when using <c>FROM root c</c> syntax. EF Core Cosmos provider generates all
 /// queries in this form: <c>SELECT VALUE {...} FROM root c WHERE c.xxx = @p</c>
 /// </summary>
-public class FromRootAliasParserBugTests
+public class FromRootAliasParserBugTests : IDisposable
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+    private readonly FakeCosmosHandler _handler;
+    private readonly HttpClient _httpClient;
+
+    public FromRootAliasParserBugTests()
+    {
+        _handler = new FakeCosmosHandler(_container);
+        _httpClient = new HttpClient(_handler)
+        {
+            BaseAddress = new Uri("https://localhost:9999/")
+        };
+    }
+
+    public void Dispose()
+    {
+        _httpClient.Dispose();
+        _handler.Dispose();
+    }
 
     [Fact]
     public async Task SelectFieldWithFromRootAlias_ReturnsCorrectValue()
@@ -129,5 +147,32 @@ public class FromRootAliasParserBugTests
 
         results.Should().HaveCount(1);
         results[0]["name"]!.Value<string>().Should().Be("Grace");
+    }
+
+    [Fact]
+    public async Task QueryPlan_CountDistinct_FromRootAlias_ExtractsCorrectPropertyPath()
+    {
+        // The regex in HandleQueryPlanAsync captures the first word after FROM,
+        // which is "root" for "FROM root c" — but the alias is "c".
+        // The distinctExpr is "c.status", so stripping the alias should yield "status".
+        var sql = "SELECT COUNT(DISTINCT c.status) FROM root c";
+        var body = new JObject { ["query"] = sql }.ToString();
+        var request = new HttpRequestMessage(HttpMethod.Post,
+            "dbs/fakeDb/colls/test-container/docs")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        };
+        request.Headers.Add("x-ms-cosmos-is-query-plan-request", "True");
+        request.Headers.Add("x-ms-documentdb-query-enablecrosspartition", "True");
+
+        var response = await _httpClient.SendAsync(request);
+        var json = await response.Content.ReadAsStringAsync();
+        var plan = JObject.Parse(json);
+
+        var dCountInfo = plan["queryInfo"]!["dCountInfo"] as JObject;
+        dCountInfo.Should().NotBeNull();
+        // With the bug, fromAlias is "root", so "c.status" doesn't start with "root."
+        // and the propertyPath would be "c.status" instead of "status"
+        dCountInfo!["dCountExpressionBase"]!["propertyPath"]!.ToString().Should().Be("status");
     }
 }
