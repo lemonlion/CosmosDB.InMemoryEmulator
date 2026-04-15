@@ -193,9 +193,74 @@ public class FakeCosmosHandler : HttpMessageHandler
             return HandlePartitionKeyRanges(request);
         }
 
-        if (method == "GET" && path.Contains("/colls/") && !path.Contains("/docs"))
+        if (path.Contains("/colls/") && !path.Contains("/docs"))
         {
-            return CreateJsonResponse(GetCollectionMetadata());
+            if (method == "GET")
+            {
+                return CreateJsonResponse(GetCollectionMetadata());
+            }
+
+            // PUT/DELETE only for container-level paths (not sub-resources like /sprocs, /triggers)
+            if (Regex.IsMatch(path, @"/colls/[^/]+/?$"))
+            {
+                if (method == "PUT")
+                    return CreateJsonResponse(GetCollectionMetadata());
+                if (method == "DELETE")
+                    return CreateNoContentResponse();
+            }
+        }
+
+        // Database management: /dbs (list/create)
+        if (Regex.IsMatch(path, @"^/dbs/?$"))
+        {
+            if (method == "POST")
+            {
+                var body = request.Content is not null
+                    ? await request.Content.ReadAsStringAsync(cancellationToken)
+                    : "{}";
+                var dbName = JObject.Parse(body)["id"]?.ToString() ?? "fake-db";
+                return CreateJsonResponse(GetDatabaseMetadata(dbName), HttpStatusCode.Created);
+            }
+
+            // GET /dbs → list databases
+            var dbList = new JObject
+            {
+                ["_rid"] = "",
+                ["Databases"] = new JArray(JObject.Parse(GetDatabaseMetadata("fake-db"))),
+                ["_count"] = 1
+            };
+            return CreateJsonResponse(dbList.ToString(Formatting.None));
+        }
+
+        // Database CRUD: /dbs/{id} (read/replace/delete)
+        if (Regex.IsMatch(path, @"^/dbs/[^/]+/?$"))
+        {
+            var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var dbName = segments.Length > 1 ? Uri.UnescapeDataString(segments[1]) : "fake-db";
+            return method switch
+            {
+                "GET" or "PUT" => CreateJsonResponse(GetDatabaseMetadata(dbName)),
+                "DELETE" => CreateNoContentResponse(),
+                _ => new HttpResponseMessage(HttpStatusCode.MethodNotAllowed)
+            };
+        }
+
+        // Container management: /dbs/{id}/colls (list/create containers)
+        if (Regex.IsMatch(path, @"^/dbs/[^/]+/colls/?$"))
+        {
+            if (method == "POST")
+            {
+                return CreateJsonResponse(GetCollectionMetadata(), HttpStatusCode.Created);
+            }
+
+            // GET /dbs/{id}/colls → list containers
+            var containerList = new JObject
+            {
+                ["_rid"] = _databaseRid,
+                ["DocumentCollections"] = new JArray(JObject.Parse(GetCollectionMetadata())),
+                ["_count"] = 1
+            };
+            return CreateJsonResponse(containerList.ToString(Formatting.None));
         }
 
         if (!FaultInjectorIncludesMetadata && FaultInjector is not null)
@@ -2016,8 +2081,11 @@ public class FakeCosmosHandler : HttpMessageHandler
     }
 
     private HttpResponseMessage CreateJsonResponse(string json)
+        => CreateJsonResponse(json, HttpStatusCode.OK);
+
+    private HttpResponseMessage CreateJsonResponse(string json, HttpStatusCode statusCode)
     {
-        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        var response = new HttpResponseMessage(statusCode)
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
@@ -2025,6 +2093,29 @@ public class FakeCosmosHandler : HttpMessageHandler
         response.Headers.Add("x-ms-activity-id", Guid.NewGuid().ToString());
         response.Headers.Add("x-ms-session-token", _container.CurrentSessionToken);
         return response;
+    }
+
+    private HttpResponseMessage CreateNoContentResponse()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.NoContent);
+        response.Headers.Add("x-ms-request-charge", "0");
+        response.Headers.Add("x-ms-activity-id", Guid.NewGuid().ToString());
+        return response;
+    }
+
+    private string GetDatabaseMetadata(string databaseName)
+    {
+        var metadata = new JObject
+        {
+            ["id"] = databaseName,
+            ["_rid"] = _databaseRid,
+            ["_self"] = $"dbs/{_databaseRid}/",
+            ["_etag"] = "\"00000000-0000-0000-0000-000000000000\"",
+            ["_colls"] = "colls/",
+            ["_users"] = "users/",
+            ["_ts"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+        };
+        return metadata.ToString(Formatting.None);
     }
 
     private const string AccountMetadata = """
