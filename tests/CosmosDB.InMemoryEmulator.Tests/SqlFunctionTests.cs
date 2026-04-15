@@ -3054,8 +3054,6 @@ public class SqlFunctionDeepDiveTests
         results[0]["r"].Should().BeNull("REVERSE of non-string → undefined");
     }
 
-    // ── Nested function calls in WHERE clause (GitHub Issue #11) ──
-
     [Fact]
     public async Task Contains_Lower_InWhere_MatchesCaseInsensitively()
     {
@@ -3119,5 +3117,173 @@ public class SqlFunctionDeepDiveTests
 
         results.Should().HaveCount(1);
         results[0]["name"]!.Value<string>().Should().Be("Bob Brown");
+    }
+
+    // ── Deeper nesting ──
+
+    [Fact]
+    public async Task Contains_Lower_Trim_InWhere_ThreeLevelsDeep()
+    {
+        await Seed();
+        // Item 4 in main SqlFunctionTests has "  diana  " but our Seed doesn't have it — use existing data
+        // "Alice Anderson" → TRIM is no-op → LOWER → "alice anderson" → CONTAINS 'alice'
+        var results = await Query("SELECT * FROM c WHERE CONTAINS(LOWER(TRIM(c.name)), 'alice')");
+
+        results.Should().HaveCount(1);
+        results[0]["name"]!.Value<string>().Should().Be("Alice Anderson");
+    }
+
+    [Fact]
+    public async Task StartsWith_ConcatLower_InWhere_NestedInsideNested()
+    {
+        await Seed();
+        // CONCAT(LOWER("Alice Anderson"), "-suffix") → "alice anderson-suffix" → STARTSWITH "alice"
+        var results = await Query("SELECT * FROM c WHERE STARTSWITH(CONCAT(LOWER(c.name), '-suffix'), 'alice')");
+
+        results.Should().HaveCount(1);
+        results[0]["name"]!.Value<string>().Should().Be("Alice Anderson");
+    }
+
+    // ── Both arguments are function calls ──
+
+    [Fact]
+    public async Task Contains_BothArgsAreFunctions()
+    {
+        await Seed();
+        var query = new QueryDefinition("SELECT * FROM c WHERE CONTAINS(LOWER(c.name), LOWER(@val))")
+            .WithParameter("@val", "ALICE");
+        var iter = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["name"]!.Value<string>().Should().Be("Alice Anderson");
+    }
+
+    // ── CONTAINS 3-arg form with nested function ──
+
+    [Fact]
+    public async Task Contains_Lower_WithCaseInsensitiveFlag()
+    {
+        await Seed();
+        // LOWER(c.name) → "alice anderson", search for "ALICE" case-insensitively → should match
+        var results = await Query("SELECT * FROM c WHERE CONTAINS(LOWER(c.name), 'ALICE', true)");
+
+        results.Should().HaveCount(1);
+        results[0]["name"]!.Value<string>().Should().Be("Alice Anderson");
+    }
+
+    // ── Other legacy functions with nested args ──
+
+    [Fact]
+    public async Task IsDefined_WithNestedFunction()
+    {
+        await Seed();
+        var results = await Query("SELECT * FROM c WHERE IS_DEFINED(LOWER(c.name))");
+
+        results.Should().HaveCount(3, "all 3 seeded items have a name");
+    }
+
+    [Fact]
+    public async Task IsNull_WithNestedFunction()
+    {
+        await Seed();
+        var results = await Query("SELECT * FROM c WHERE IS_NULL(LOWER(c.name))");
+
+        results.Should().BeEmpty("no seeded items have null name");
+    }
+
+    [Fact]
+    public async Task ArrayContains_WithNestedFunctionInSearchValue()
+    {
+        await Seed();
+        var query = new QueryDefinition("SELECT * FROM c WHERE ARRAY_CONTAINS(c.tags, LOWER(@val))")
+            .WithParameter("@val", "DOT");
+        var iter = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().HaveCount(2, "items 1 and 3 have 'dot' in tags");
+    }
+
+    // ── Negation ──
+
+    [Fact]
+    public async Task Not_Contains_Lower_InWhere()
+    {
+        await Seed();
+        var results = await Query("SELECT * FROM c WHERE NOT CONTAINS(LOWER(c.name), 'alice')");
+
+        results.Should().HaveCount(2);
+        results.Select(r => r["name"]!.Value<string>()).Should().BeEquivalentTo("Bob Brown", "Charlie");
+    }
+
+    // ── Combined in AND/OR ──
+
+    [Fact]
+    public async Task And_MultipleNestedFunctionPredicates()
+    {
+        await Seed();
+        var results = await Query(
+            "SELECT * FROM c WHERE CONTAINS(LOWER(c.name), 'ali') AND STARTSWITH(UPPER(c.name), 'ALI')");
+
+        results.Should().HaveCount(1);
+        results[0]["name"]!.Value<string>().Should().Be("Alice Anderson");
+    }
+
+    // ── Undefined property ──
+
+    [Fact]
+    public async Task Contains_Lower_UndefinedProperty_NoMatch()
+    {
+        await Seed();
+        var results = await Query("SELECT * FROM c WHERE CONTAINS(LOWER(c.nonexistent), 'val')");
+
+        results.Should().BeEmpty("LOWER of undefined → undefined, CONTAINS should not match");
+    }
+
+    // ── Null value flowing through nested function ──
+
+    [Fact]
+    public async Task Contains_Lower_NullProperty_NoMatch()
+    {
+        await Seed();
+        // Add item with null name
+        await _container.CreateItemAsync(
+            new { id = "null-name", partitionKey = "pk1", name = (string?)null, value = 0, tags = Array.Empty<string>() },
+            new PartitionKey("pk1"));
+
+        var results = await Query("SELECT * FROM c WHERE CONTAINS(LOWER(c.name), 'val')");
+
+        results.Should().NotContain(r => r["id"]!.Value<string>() == "null-name",
+            "null name → LOWER(null) → undefined → CONTAINS should not match");
+    }
+
+    // ── Nested function in second argument only ──
+
+    [Fact]
+    public async Task Contains_NestedFunctionInSecondArgOnly()
+    {
+        await Seed();
+        // c.name is "Alice Anderson", LOWER(@val) → "alice anderson" — won't match because c.name has uppercase
+        var query = new QueryDefinition("SELECT * FROM c WHERE CONTAINS(c.name, LOWER(@val))")
+            .WithParameter("@val", "Alice");
+        var iter = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().BeEmpty("c.name has uppercase but LOWER(@val) is all lowercase — no substring match");
+    }
+
+    // ── Type conversion through nested function ──
+
+    [Fact]
+    public async Task Contains_ToString_InWhere_TypeConversion()
+    {
+        await Seed();
+        var results = await Query("SELECT * FROM c WHERE CONTAINS(ToString(c[\"value\"]), '10')");
+
+        results.Should().HaveCount(1);
+        results[0]["name"]!.Value<string>().Should().Be("Alice Anderson");
     }
 }
