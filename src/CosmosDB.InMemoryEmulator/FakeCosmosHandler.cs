@@ -105,6 +105,47 @@ public class FakeCosmosHandler : HttpMessageHandler
     private static int _ridCounter;
     private const string PkRangesEtag = "\"pk-etag-1\"";
 
+    /// <summary>
+    /// AsyncLocal override for partition key. When set, <see cref="HandleQueryAsync"/>
+    /// and <see cref="HandleReadFeedAsync"/> use this value when the standard
+    /// <c>x-ms-documentdb-partitionkey</c> header is absent. This is necessary because
+    /// the Cosmos SDK does not send the partition key header for prefix (hierarchical)
+    /// partition key queries — it routes by partition key range ID instead.
+    /// Use <see cref="WithPartitionKey"/> for a scoped, disposable lifetime.
+    /// </summary>
+    private readonly AsyncLocal<PartitionKey?> _partitionKeyOverride = new();
+
+    /// <summary>
+    /// Sets a partition key override that will be used for queries within the returned
+    /// scope. This is needed when querying with a prefix (hierarchical) partition key
+    /// via <see cref="FakeCosmosHandler"/>, because the Cosmos SDK does not forward
+    /// prefix partition keys to the HTTP transport layer.
+    /// <para>
+    /// <example>
+    /// <code>
+    /// using (handler.WithPartitionKey(prefixPk))
+    /// {
+    ///     var iterator = container.GetItemQueryIterator&lt;T&gt;(query,
+    ///         requestOptions: new QueryRequestOptions { PartitionKey = prefixPk });
+    ///     // ...
+    /// }
+    /// </code>
+    /// </example>
+    /// </para>
+    /// </summary>
+    /// <param name="partitionKey">The partition key (full or prefix) to apply.</param>
+    /// <returns>An <see cref="IDisposable"/> that clears the override when disposed.</returns>
+    public IDisposable WithPartitionKey(PartitionKey partitionKey)
+    {
+        _partitionKeyOverride.Value = partitionKey;
+        return new PartitionKeyScope(_partitionKeyOverride);
+    }
+
+    private sealed class PartitionKeyScope(AsyncLocal<PartitionKey?> asyncLocal) : IDisposable
+    {
+        public void Dispose() => asyncLocal.Value = null;
+    }
+
     /// <summary>Recorded HTTP requests in the form "METHOD /path".</summary>
     public IReadOnlyCollection<string> RequestLog => _requestLog;
 
@@ -1206,7 +1247,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         var sqlQuery = queryBody["query"]?.ToString() ?? "SELECT * FROM c";
         _queryLog.Add(sqlQuery);
 
-        var partitionKey = ExtractPartitionKey(request);
+        var partitionKey = ExtractPartitionKey(request) ?? _partitionKeyOverride.Value;
         var maxItemCount = ExtractMaxItemCount(request);
         var continuation = DecodeContinuation(request);
         var rangeId = ExtractPartitionKeyRangeId(request);
@@ -1885,7 +1926,7 @@ public class FakeCosmosHandler : HttpMessageHandler
             cacheKey = Guid.NewGuid().ToString("N");
 
             var requestOptions = new QueryRequestOptions();
-            var partitionKey = ExtractPartitionKey(request);
+            var partitionKey = ExtractPartitionKey(request) ?? _partitionKeyOverride.Value;
             if (partitionKey is not null)
             {
                 requestOptions.PartitionKey = partitionKey;
