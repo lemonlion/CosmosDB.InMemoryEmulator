@@ -2989,12 +2989,7 @@ public class InMemoryContainer : Container
             return;
         }
 
-        if (!_etags.TryGetValue(key, out var currentEtag))
-        {
-            return;
-        }
-
-        if (requestOptions.IfMatchEtag != currentEtag)
+        if (!_etags.TryGetValue(key, out var currentEtag) || requestOptions.IfMatchEtag != currentEtag)
         {
             throw new InMemoryCosmosException("Precondition Failed", HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
@@ -3052,7 +3047,7 @@ public class InMemoryContainer : Container
             return true;
         }
 
-        if (_etags.TryGetValue(key, out var currentEtag) && requestOptions.IfMatchEtag != currentEtag)
+        if (!_etags.TryGetValue(key, out var currentEtag) || requestOptions.IfMatchEtag != currentEtag)
         {
             return false;
         }
