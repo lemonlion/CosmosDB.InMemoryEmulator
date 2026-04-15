@@ -3053,4 +3053,71 @@ public class SqlFunctionDeepDiveTests
         var results = await Query("SELECT REVERSE(42) AS r FROM c WHERE c.id = '1'");
         results[0]["r"].Should().BeNull("REVERSE of non-string → undefined");
     }
+
+    // ── Nested function calls in WHERE clause (GitHub Issue #11) ──
+
+    [Fact]
+    public async Task Contains_Lower_InWhere_MatchesCaseInsensitively()
+    {
+        await Seed();
+        var query = new QueryDefinition("SELECT * FROM c WHERE CONTAINS(LOWER(c.name), @val)")
+            .WithParameter("@val", "alice");
+        var iter = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["name"]!.Value<string>().Should().Be("Alice Anderson");
+    }
+
+    [Fact]
+    public async Task StartsWith_Upper_InWhere_MatchesCaseInsensitively()
+    {
+        await Seed();
+        var query = new QueryDefinition("SELECT * FROM c WHERE STARTSWITH(UPPER(c.name), @prefix)")
+            .WithParameter("@prefix", "BOB");
+        var iter = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["name"]!.Value<string>().Should().Be("Bob Brown");
+    }
+
+    [Fact]
+    public async Task EndsWith_Lower_InWhere_MatchesSuffix()
+    {
+        await Seed();
+        var query = new QueryDefinition("SELECT * FROM c WHERE ENDSWITH(LOWER(c.name), @suffix)")
+            .WithParameter("@suffix", "brown");
+        var iter = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["name"]!.Value<string>().Should().Be("Bob Brown");
+    }
+
+    [Fact]
+    public async Task Contains_Lower_InWhere_NoMatch_ReturnsEmpty()
+    {
+        await Seed();
+        var query = new QueryDefinition("SELECT * FROM c WHERE CONTAINS(LOWER(c.name), @val)")
+            .WithParameter("@val", "ALICE");
+        var iter = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().BeEmpty("LOWER produces lowercase, 'ALICE' won't match");
+    }
+
+    [Fact]
+    public async Task Contains_Lower_InWhere_MultipleMatches()
+    {
+        await Seed();
+        var results = await Query("SELECT * FROM c WHERE CONTAINS(LOWER(c.name), 'b')");
+
+        results.Should().HaveCount(1);
+        results[0]["name"]!.Value<string>().Should().Be("Bob Brown");
+    }
 }
