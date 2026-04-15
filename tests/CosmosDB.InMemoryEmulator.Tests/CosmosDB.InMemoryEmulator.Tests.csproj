@@ -4,7 +4,7 @@
 		<TargetFrameworks>net8.0;net10.0</TargetFrameworks>
 		<Nullable>enable</Nullable>
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-		<NoWarn>xUnit1051</NoWarn>
+		<NoWarn>xUnit1051;CS1998</NoWarn>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<IsPackable>false</IsPackable>
 	</PropertyGroup>
