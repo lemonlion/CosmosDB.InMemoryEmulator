@@ -3286,4 +3286,57 @@ public class SqlFunctionDeepDiveTests
         results.Should().HaveCount(1);
         results[0]["name"]!.Value<string>().Should().Be("Alice Anderson");
     }
+
+    // ── IS_DEFINED / IS_NULL with undefined flowing through nested function ──
+
+    [Fact]
+    public async Task IsDefined_Lower_UndefinedProperty_ReturnsFalse()
+    {
+        await Seed();
+        // LOWER(c.nonexistent) → undefined, IS_DEFINED(undefined) → false
+        var results = await Query("SELECT * FROM c WHERE IS_DEFINED(LOWER(c.nonexistent))");
+
+        results.Should().BeEmpty("LOWER of undefined → undefined → IS_DEFINED should be false");
+    }
+
+    [Fact]
+    public async Task IsNull_Lower_UndefinedProperty_ReturnsFalse()
+    {
+        await Seed();
+        // LOWER(c.nonexistent) → undefined, IS_NULL(undefined) → false (undefined ≠ null)
+        var results = await Query("SELECT * FROM c WHERE IS_NULL(LOWER(c.nonexistent))");
+
+        results.Should().BeEmpty("LOWER of undefined → undefined → IS_NULL should be false");
+    }
+
+    // ── Non-string input flowing through nested function ──
+
+    [Fact]
+    public async Task Contains_Lower_NonStringInput_NoMatch()
+    {
+        await Seed();
+        // LOWER(42) → undefined, CONTAINS(undefined, ...) → undefined → excluded
+        var results = await Query("SELECT * FROM c WHERE CONTAINS(LOWER(c[\"value\"]), 'x')");
+
+        results.Should().BeEmpty("LOWER(number) → undefined → CONTAINS should not match");
+    }
+
+    // ── ARRAY_CONTAINS partial match with nested function ──
+
+    [Fact]
+    public async Task ArrayContains_WithNestedFunction_InSelectValueFilter()
+    {
+        await Seed();
+        // Use ARRAY_CONTAINS with a simple nested function — LOWER(@val) resolves to "dot"
+        // then checks if "dot" is in the tags array
+        var query = new QueryDefinition(
+            "SELECT * FROM c WHERE ARRAY_CONTAINS(c.tags, LOWER(@val)) AND STARTSWITH(LOWER(c.name), 'alice')")
+            .WithParameter("@val", "DOT");
+        var iter = _container.GetItemQueryIterator<JObject>(query);
+        var results = new List<JObject>();
+        while (iter.HasMoreResults) results.AddRange(await iter.ReadNextAsync());
+
+        results.Should().HaveCount(1);
+        results[0]["name"]!.Value<string>().Should().Be("Alice Anderson");
+    }
 }

@@ -6210,7 +6210,7 @@ public class InMemoryContainer : Container
                     // (even when its value is null).
                     if (func.Arguments[0] is ParameterExpression param)
                         return parameters.ContainsKey(param.Name);
-                    return args[0] != null;
+                    return args[0] is not null and not UndefinedValue;
                 }
             case "IS_NULL": return args.Length > 0 && args[0] is null;
             case "IS_ARRAY":
