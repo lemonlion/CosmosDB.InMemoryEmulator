@@ -960,3 +960,280 @@ public class ETagBatchReadTests
 }
 
 #endregion
+
+#region Issue-24: IfMatchEtag Precondition Enforcement
+
+/// <summary>
+/// Regression tests for GitHub issue #24:
+/// ReplaceItemAsync and UpsertItemAsync must enforce IfMatchEtag preconditions.
+/// When IfMatchEtag doesn't match the document's current _etag, the emulator should
+/// throw CosmosException with HttpStatusCode.PreconditionFailed (412).
+/// </summary>
+public class ETagIfMatchPreconditionTests
+{
+    private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
+
+    [Fact]
+    public async Task ReplaceItemAsync_WithStaleETag_Throws412()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        var create = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+        var originalEtag = create.ETag;
+
+        // Concurrent update invalidates the ETag
+        await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Concurrent update" },
+            "1", new PartitionKey("pk1"));
+
+        // Replace with stale ETag should throw 412
+        var act = () => _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Should fail" },
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = originalEtag });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task ReplaceItemAsync_WithCurrentETag_Succeeds()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        var create = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var response = await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = create.ETag });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task UpsertItemAsync_WithStaleETag_Throws412()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        var create = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+        var originalEtag = create.ETag;
+
+        // Concurrent update invalidates the ETag
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Concurrent update" },
+            new PartitionKey("pk1"));
+
+        // Upsert with stale ETag should throw 412
+        var act = () => _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Should fail" },
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = originalEtag });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task UpsertItemAsync_WithCurrentETag_Succeeds()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        var create = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+
+        var response = await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = create.ETag });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task DeleteItemAsync_WithStaleETag_Throws412()
+    {
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        var create = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+        var originalEtag = create.ETag;
+
+        // Update to change the ETag
+        await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            "1", new PartitionKey("pk1"));
+
+        // Delete with stale ETag should throw 412
+        var act = () => _container.DeleteItemAsync<TestDocument>(
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = originalEtag });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task ReplaceItemAsync_WithBogusETag_Throws412()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var act = () => _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Should fail" },
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"completely-bogus\"" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task UpsertItemAsync_WithBogusETag_Throws412()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+
+        var act = () => _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Should fail" },
+            new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"completely-bogus\"" });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task StreamReplace_WithStaleETag_Returns412()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+        var originalEtag = create.ETag;
+
+        // Concurrent update
+        await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            "1", new PartitionKey("pk1"));
+
+        // Stream replace with stale ETag
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(
+            "{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Should fail\"}"));
+        var response = await _container.ReplaceItemStreamAsync(
+            stream, "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = originalEtag });
+
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task StreamUpsert_WithStaleETag_Returns412()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+        var originalEtag = create.ETag;
+
+        // Concurrent update
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"));
+
+        // Stream upsert with stale ETag
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(
+            "{\"id\":\"1\",\"partitionKey\":\"pk1\",\"name\":\"Should fail\"}"));
+        var response = await _container.UpsertItemStreamAsync(
+            stream, new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = originalEtag });
+
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task StreamDelete_WithStaleETag_Returns412()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+        var originalEtag = create.ETag;
+
+        // Concurrent update
+        await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            "1", new PartitionKey("pk1"));
+
+        var response = await _container.DeleteItemStreamAsync(
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = originalEtag });
+
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task OptimisticConcurrency_ReplaceReplace_SecondWriterFails()
+    {
+        // Exact reproduction from issue #24
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
+        var createResponse = await _container.CreateItemAsync(item, new PartitionKey("pk1"));
+        var validEtag = createResponse.ETag;
+
+        // First writer succeeds
+        var firstWrite = await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "First writer" },
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = validEtag });
+        firstWrite.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Second writer with same (now stale) ETag fails
+        var act = () => _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Second writer" },
+            "1", new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = validEtag });
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task Batch_Replace_WithStaleETag_FailsBatch()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+        var staleEtag = create.ETag;
+
+        // Update to invalidate ETag
+        await _container.ReplaceItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            "1", new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.ReplaceItem("1",
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Batch replace" },
+            new TransactionalBatchItemRequestOptions { IfMatchEtag = staleEtag });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+
+    [Fact]
+    public async Task Batch_Upsert_WithStaleETag_FailsBatch()
+    {
+        var create = await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" },
+            new PartitionKey("pk1"));
+        var staleEtag = create.ETag;
+
+        // Update to invalidate ETag
+        await _container.UpsertItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Updated" },
+            new PartitionKey("pk1"));
+
+        var batch = _container.CreateTransactionalBatch(new PartitionKey("pk1"));
+        batch.UpsertItem(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Batch upsert" },
+            new TransactionalBatchItemRequestOptions { IfMatchEtag = staleEtag });
+
+        using var response = await batch.ExecuteAsync();
+        response.IsSuccessStatusCode.Should().BeFalse();
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+    }
+}
+
+#endregion
