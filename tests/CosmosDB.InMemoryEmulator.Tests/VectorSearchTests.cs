@@ -2627,22 +2627,16 @@ public class VectorDistanceFakeHandlerTests
             JObject.FromObject(new { id = "1", pk = "a", embedding = new[] { 1.0, 0.0 } }),
             new PartitionKey("a"));
 
-        var callCount = 0;
         using var handler = new FakeCosmosHandler(container)
         {
-            FaultInjector = _ =>
-            {
-                callCount++;
-                if (callCount <= 1) // Fault on first call only
-                    return new HttpResponseMessage((HttpStatusCode)429)
-                    { Content = new StringContent("{}") };
-                return null; // Let subsequent calls through
-            }
+            // Always return 429 — this ensures both query plan and query requests are faulted
+            FaultInjector = _ => new HttpResponseMessage((HttpStatusCode)429)
+                { Content = new StringContent("{}") }
         };
         using var client = CreateClient(handler);
 
         var sdkContainer = client.GetContainer("db", "test");
-        // The SDK should get a 429 on the first attempt
+        // The SDK should get a 429 on every attempt
         var act = () => sdkContainer.GetItemQueryIterator<JObject>(
             "SELECT VectorDistance(c.embedding, [1.0, 0.0]) AS score FROM c")
             .ReadNextAsync();
