@@ -23,6 +23,7 @@ internal sealed class InMemoryStreamFeedIterator : FeedIterator
 
     public override Task<ResponseMessage> ReadNextAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _hasMoreResults = false;
 
         var items = _itemsFactory();

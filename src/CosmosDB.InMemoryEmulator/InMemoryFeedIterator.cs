@@ -93,6 +93,7 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
 
     public override Task<FeedResponse<T>> ReadNextAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _hasReadFirstPage = true;
         var items = EnsureItems();
         var page = items.Skip(_offset).Take(PageSize).ToList();

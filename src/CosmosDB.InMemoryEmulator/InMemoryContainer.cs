@@ -503,13 +503,33 @@ public class InMemoryContainer : Container
     /// <summary>
     /// The indexing policy for this container. Accepted and stored but does not affect
     /// query performance — all queries scan all items regardless of indexing settings.
+    /// When set, automatically ensures <c>/_etag/?</c> is present in ExcludedPaths
+    /// to match real Cosmos DB behaviour.
     /// </summary>
-    public IndexingPolicy IndexingPolicy { get; set; } = new()
+    public IndexingPolicy IndexingPolicy
+    {
+        get => _indexingPolicy;
+        set
+        {
+            _indexingPolicy = value;
+            EnsureEtagExcludedPath(_indexingPolicy);
+        }
+    }
+
+    private IndexingPolicy _indexingPolicy = new()
     {
         Automatic = true,
         IndexingMode = IndexingMode.Consistent,
         IncludedPaths = { new IncludedPath { Path = "/*" } },
+        ExcludedPaths = { new ExcludedPath { Path = "/\"_etag\"/?" } },
     };
+
+    private static void EnsureEtagExcludedPath(IndexingPolicy policy)
+    {
+        const string etagPath = "/\"_etag\"/?";
+        if (!policy.ExcludedPaths.Any(p => p.Path == etagPath))
+            policy.ExcludedPaths.Add(new ExcludedPath { Path = etagPath });
+    }
 
     /// <summary>
     /// Registers a user-defined function that can be called in SQL queries as <c>udf.name(args)</c>.
@@ -2565,18 +2585,18 @@ public class InMemoryContainer : Container
 
     private void ValidatePerItemTtl(JObject jObj)
     {
-        var ttlToken = jObj["_ttl"];
+        var ttlToken = jObj["ttl"] ?? jObj["_ttl"];
         if (ttlToken is not null && int.TryParse(ttlToken.ToString(), out var ttlValue) && ttlValue == 0)
         {
             throw new InMemoryCosmosException(
-                "The value of _ttl must be either -1 or a positive integer.",
+                "The value of ttl must be either -1 or a positive integer.",
                 HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
     }
 
     private ResponseMessage ValidatePerItemTtlStream(JObject jObj)
     {
-        var ttlToken = jObj["_ttl"];
+        var ttlToken = jObj["ttl"] ?? jObj["_ttl"];
         if (ttlToken is not null && int.TryParse(ttlToken.ToString(), out var ttlValue) && ttlValue == 0)
         {
             return CreateResponseMessage(HttpStatusCode.BadRequest);
@@ -3227,16 +3247,16 @@ public class InMemoryContainer : Container
         if (_items.TryGetValue(key, out var json))
         {
             var jObj = JsonParseHelpers.ParseJson(json);
-            var itemTtl = jObj["_ttl"];
+            var itemTtl = jObj["ttl"] ?? jObj["_ttl"];
             if (itemTtl is not null && int.TryParse(itemTtl.ToString(), out var perItemTtl))
             {
-                // _ttl = -1 means "never expire" even if container has a default TTL
+                // ttl = -1 means "never expire" even if container has a default TTL
                 if (perItemTtl == -1) return false;
                 return elapsed >= perItemTtl;
             }
         }
 
-        // DefaultTimeToLive = -1 means TTL is ON but items without per-item _ttl don't expire
+        // DefaultTimeToLive = -1 means TTL is ON but items without per-item ttl don't expire
         if (DefaultTimeToLive.Value <= 0)
         {
             return false;
@@ -8367,8 +8387,10 @@ public class InMemoryContainer : Container
 
         var feedIterator = Substitute.For<FeedIterator>();
         feedIterator.HasMoreResults.Returns(_ => !done);
-        feedIterator.ReadNextAsync(Arg.Any<CancellationToken>()).Returns(_ =>
+        feedIterator.ReadNextAsync(Arg.Any<CancellationToken>()).Returns(callInfo =>
         {
+            var ct = callInfo.Arg<CancellationToken>();
+            ct.ThrowIfCancellationRequested();
             var items = itemsFactory();
             var pageSize = maxItemCount ?? items.Count;
             if (pageSize <= 0) pageSize = items.Count;

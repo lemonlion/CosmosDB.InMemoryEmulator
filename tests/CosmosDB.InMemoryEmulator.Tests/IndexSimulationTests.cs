@@ -295,8 +295,9 @@ public class IndexPolicyRoundtripTests
     {
         var container = new InMemoryContainer("test", "/partitionKey");
 
-        // Default emulator has no excluded paths (real Cosmos defaults to /_etag/?)
-        container.IndexingPolicy.ExcludedPaths.Should().BeEmpty();
+        // Real Cosmos defaults to /_etag/? in excluded paths
+        container.IndexingPolicy.ExcludedPaths.Should().ContainSingle()
+            .Which.Path.Should().Be("/\"_etag\"/?");
     }
 
     [Fact]
@@ -547,8 +548,8 @@ public class IndexPathEdgeCaseTests
         var container = new InMemoryContainer("test", "/partitionKey");
         container.IndexingPolicy.ExcludedPaths.Add(new ExcludedPath { Path = "/name/*" });
         container.IndexingPolicy.ExcludedPaths.Add(new ExcludedPath { Path = "/tags/*" });
-        container.IndexingPolicy.ExcludedPaths.Add(new ExcludedPath { Path = "/_etag/?" });
 
+        // /_etag/? is auto-added, so total is 3 (auto + 2 user-added)
         container.IndexingPolicy.ExcludedPaths.Should().HaveCount(3);
     }
 
@@ -560,7 +561,8 @@ public class IndexPathEdgeCaseTests
         container.IndexingPolicy.ExcludedPaths.Add(new ExcludedPath { Path = "/name/?" });
         container.IndexingPolicy.ExcludedPaths.Add(new ExcludedPath { Path = "/name/*" });
 
-        container.IndexingPolicy.ExcludedPaths.Should().HaveCount(3);
+        // /_etag/? auto-added + 3 user-added = 4
+        container.IndexingPolicy.ExcludedPaths.Should().HaveCount(4);
     }
 
     [Fact]
