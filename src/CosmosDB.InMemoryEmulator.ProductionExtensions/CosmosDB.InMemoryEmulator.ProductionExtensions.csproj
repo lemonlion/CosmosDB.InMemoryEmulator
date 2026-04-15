@@ -1,11 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
+		<TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<IsPackable>true</IsPackable>
 		<PackageId>CosmosDB.InMemoryEmulator.ProductionExtensions</PackageId>
-		<Description>DEPRECATED — No longer needed since 4.0. All approaches now use FakeCosmosHandler which handles .ToFeedIterator() natively.</Description>
-		<PackageTags>cosmosdb;cosmos;azure;testing;in-memory;emulator;production;extensions;feed-iterator;deprecated</PackageTags>
+		<Version>2.0.184</Version>
+		<Description>Production-safe extension methods for Azure Cosmos DB that enable seamless in-memory testing via CosmosDB.InMemoryEmulator.</Description>
 		<AzureCosmosDisableNewtonsoftJsonCheck>true</AzureCosmosDisableNewtonsoftJsonCheck>
-		<IsPackable>false</IsPackable>
 	</PropertyGroup>
 
 	<ItemGroup>
