@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Azure.Cosmos;
@@ -1284,6 +1285,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         }
 
         allDocuments = FilterDocumentsByRange(allDocuments, rangeId, payloadPropertyName);
+        allDocuments = FilterDocumentsByEpkRange(request, allDocuments, payloadPropertyName);
 
         return BuildPagedResponse(allDocuments, offset, maxItemCount, cacheKey);
     }
@@ -1862,6 +1864,115 @@ public class FakeCosmosHandler : HttpMessageHandler
         return PartitionKeyHash.GetRangeIndex(pkValue, _partitionKeyRangeCount);
     }
 
+    /// <summary>
+    /// Filters documents by the effective partition key (EPK) range specified in
+    /// <c>x-ms-start-epk</c> / <c>x-ms-end-epk</c> headers. The SDK sends these
+    /// headers when the user provides a prefix partition key (fewer components than
+    /// the container's full hierarchical key depth) in <see cref="QueryRequestOptions"/>.
+    /// </summary>
+    private List<JToken> FilterDocumentsByEpkRange(
+        HttpRequestMessage request, List<JToken> documents, string? payloadPropertyName = null)
+    {
+        if (_container.PartitionKeyPaths.Count <= 1)
+            return documents;
+
+        if (!request.Headers.TryGetValues("x-ms-start-epk", out var startValues) ||
+            !request.Headers.TryGetValues("x-ms-end-epk", out var endValues))
+            return documents;
+
+        var startEpk = startValues.FirstOrDefault();
+        var endEpk = endValues.FirstOrDefault();
+        if (startEpk is null || endEpk is null)
+            return documents;
+
+        return documents.Where(doc =>
+        {
+            var targetDoc = doc;
+            if (payloadPropertyName is not null && doc is JObject wrapper && wrapper[payloadPropertyName] is JObject payload)
+                targetDoc = payload;
+
+            var docPk = BuildDocumentPartitionKey(targetDoc);
+            var docEpk = ComputeMultiHashEpk(docPk);
+            if (docEpk is null)
+                return true;
+
+            return string.Compare(docEpk, startEpk, StringComparison.OrdinalIgnoreCase) >= 0
+                && string.Compare(docEpk, endEpk, StringComparison.OrdinalIgnoreCase) < 0;
+        }).ToList();
+    }
+
+    private PartitionKey BuildDocumentPartitionKey(JToken document)
+    {
+        if (document is not JObject obj)
+            return PartitionKey.None;
+
+        var paths = _container.PartitionKeyPaths;
+        if (paths.Count == 1)
+        {
+            var path = paths[0].TrimStart('/');
+            var token = obj.SelectToken(path);
+            return token?.Type switch
+            {
+                JTokenType.String => new PartitionKey(token.Value<string>()),
+                JTokenType.Integer or JTokenType.Float => new PartitionKey(token.Value<double>()),
+                JTokenType.Boolean => new PartitionKey(token.Value<bool>()),
+                JTokenType.Null => PartitionKey.Null,
+                _ => PartitionKey.None
+            };
+        }
+
+        var builder = new PartitionKeyBuilder();
+        foreach (var pkPath in paths)
+        {
+            var path = pkPath.TrimStart('/');
+            var token = obj.SelectToken(path);
+            switch (token?.Type)
+            {
+                case JTokenType.String:
+                    builder.Add(token.Value<string>()!);
+                    break;
+                case JTokenType.Integer or JTokenType.Float:
+                    builder.Add(token.Value<double>());
+                    break;
+                case JTokenType.Boolean:
+                    builder.Add(token.Value<bool>());
+                    break;
+                case JTokenType.Null:
+                    builder.AddNullValue();
+                    break;
+                default:
+                    builder.AddNoneType();
+                    break;
+            }
+        }
+        return builder.Build();
+    }
+
+    private static readonly PropertyInfo? InternalKeyProperty =
+        typeof(PartitionKey).GetProperty("InternalKey", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    private static readonly MethodInfo? GetMultiHashEpkMethod =
+        InternalKeyProperty?.PropertyType.GetMethod(
+            "GetEffectivePartitionKeyForMultiHashPartitioningV2",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+    private static string? ComputeMultiHashEpk(PartitionKey pk)
+    {
+        if (InternalKeyProperty is null || GetMultiHashEpkMethod is null)
+            return null;
+
+        try
+        {
+            var internalKey = InternalKeyProperty.GetValue(pk);
+            if (internalKey is null) return null;
+            return (string?)GetMultiHashEpkMethod.Invoke(internalKey, null);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private async Task<HttpResponseMessage> HandleReadFeedAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -1897,6 +2008,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         }
 
         allDocuments = FilterDocumentsByRange(allDocuments, rangeId);
+        allDocuments = FilterDocumentsByEpkRange(request, allDocuments);
 
         return BuildPagedResponse(allDocuments, offset, maxItemCount, cacheKey);
     }
