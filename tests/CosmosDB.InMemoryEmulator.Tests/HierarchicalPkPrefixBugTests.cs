@@ -8,7 +8,7 @@ using AwesomeAssertions;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
-public class HierarchicalPkPrefixBugTests
+public class HierarchicalPkPrefixBugTests(ITestOutputHelper output)
 {
     public class HierarchicalDoc
     {
@@ -17,6 +17,104 @@ public class HierarchicalPkPrefixBugTests
         [JsonProperty("level2")] public string Level2 { get; set; } = "";
         [JsonProperty("level3")] public string Level3 { get; set; } = "";
         [JsonProperty("data")] public string Data { get; set; } = "";
+    }
+
+    private class LoggingHandler(HttpMessageHandler inner, ITestOutputHelper output) : DelegatingHandler(inner)
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var line = $"{request.Method} {request.RequestUri?.PathAndQuery}";
+            foreach (var h in request.Headers)
+            {
+                if (h.Key.StartsWith("x-ms-documentdb-partition"))
+                    line += $"  [{h.Key}={string.Join(",", h.Value)}]";
+            }
+            if (request.Content is not null)
+            {
+                var body = await request.Content.ReadAsStringAsync(cancellationToken);
+                if (body.Contains("query"))
+                    line += $"  BODY={body}";
+            }
+            output.WriteLine(line);
+            return await base.SendAsync(request, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Diagnostic: see which range IDs the SDK targets for prefix PK queries
+    /// when the handler exposes multiple partition key ranges.
+    /// </summary>
+    [Theory]
+    [InlineData(4)]
+    [InlineData(8)]
+    [InlineData(16)]
+    public async Task Diagnostic_MultiRange_PrefixPK_Routing(int rangeCount)
+    {
+        var inMemoryContainer = new InMemoryContainer("items", new[] { "/tenantId", "/category", "/region" });
+        var options = new FakeCosmosHandlerOptions { PartitionKeyRangeCount = rangeCount };
+        var fakeHandler = new FakeCosmosHandler(inMemoryContainer, options);
+        using var client = fakeHandler.CreateClient();
+
+        var container = client.GetContainer("test-db", "items");
+
+        // Seed documents with different tenants
+        await container.CreateItemAsync(
+            new { id = "id-1", tenantId = "tenant-A", category = "CatA", region = "eu" },
+            new PartitionKeyBuilder().Add("tenant-A").Add("CatA").Add("eu").Build());
+        await container.CreateItemAsync(
+            new { id = "id-2", tenantId = "tenant-A", category = "CatB", region = "us" },
+            new PartitionKeyBuilder().Add("tenant-A").Add("CatB").Add("us").Build());
+        await container.CreateItemAsync(
+            new { id = "id-3", tenantId = "tenant-B", category = "CatA", region = "eu" },
+            new PartitionKeyBuilder().Add("tenant-B").Add("CatA").Add("eu").Build());
+
+        // Check which range tenant-A and tenant-B hash to
+        var hashA = PartitionKeyHash.MurmurHash3("tenant-A");
+        var hashB = PartitionKeyHash.MurmurHash3("tenant-B");
+        var rangeA = PartitionKeyHash.GetRangeIndex("tenant-A", rangeCount);
+        var rangeB = PartitionKeyHash.GetRangeIndex("tenant-B", rangeCount);
+        output.WriteLine($"\n=== Range count: {rangeCount} ===");
+        output.WriteLine($"tenant-A hash=0x{hashA:X8} range={rangeA}");
+        output.WriteLine($"tenant-B hash=0x{hashB:X8} range={rangeB}");
+
+        output.WriteLine("\n=== Query with 1-component prefix PK (tenant-A) ===");
+        var prefixPk = new PartitionKeyBuilder().Add("tenant-A").Build();
+        var results = new List<JObject>();
+        var iterator = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c"),
+            requestOptions: new QueryRequestOptions { PartitionKey = prefixPk });
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        output.WriteLine($"Results: {results.Count} items: {string.Join(", ", results.Select(r => r["id"]))}");
+
+        output.WriteLine("\n=== Query with 2-component prefix PK (tenant-A, CatA) ===");
+        prefixPk = new PartitionKeyBuilder().Add("tenant-A").Add("CatA").Build();
+        results.Clear();
+        iterator = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c"),
+            requestOptions: new QueryRequestOptions { PartitionKey = prefixPk });
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        output.WriteLine($"Results: {results.Count} items: {string.Join(", ", results.Select(r => r["id"]))}");
+
+        output.WriteLine("\n=== Query with full 3-component PK (tenant-A, CatA, eu) ===");
+        var fullPk = new PartitionKeyBuilder().Add("tenant-A").Add("CatA").Add("eu").Build();
+        results.Clear();
+        iterator = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c"),
+            requestOptions: new QueryRequestOptions { PartitionKey = fullPk });
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+        output.WriteLine($"Results: {results.Count} items: {string.Join(", ", results.Select(r => r["id"]))}");
     }
 
     [Fact]
@@ -84,16 +182,7 @@ public class HierarchicalPkPrefixBugTests
     {
         var inMemoryContainer = new InMemoryContainer("test", new[] { "/level1", "/level2", "/level3" });
         var handler = new FakeCosmosHandler(inMemoryContainer);
-
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler)
-            });
+        using var client = handler.CreateClient();
 
         var container = client.GetContainer("db", "test");
 
@@ -105,11 +194,11 @@ public class HierarchicalPkPrefixBugTests
         await container.CreateItemAsync(new HierarchicalDoc { Id = "2", Level1 = "a", Level2 = "x", Level3 = "y", Data = "match2" }, fullPk2);
         await container.CreateItemAsync(new HierarchicalDoc { Id = "3", Level1 = "z", Level2 = "b", Level3 = "c", Data = "nomatch" }, fullPk3);
 
-        // Query with prefix PK through FakeCosmosHandler
+        // Query with prefix PK through FakeCosmosHandler — no WHERE clause needed,
+        // the prefix PK scoping should filter by partition key alone
         var prefixPk = new PartitionKeyBuilder().Add("a").Build();
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.level1 = @l1").WithParameter("@l1", "a");
         var iterator = container.GetItemQueryIterator<HierarchicalDoc>(
-            query,
+            new QueryDefinition("SELECT * FROM c"),
             requestOptions: new QueryRequestOptions { PartitionKey = prefixPk });
 
         var results = new List<HierarchicalDoc>();
@@ -132,15 +221,7 @@ public class HierarchicalPkPrefixBugTests
     {
         var inMemoryContainer = new InMemoryContainer("items", new[] { "/tenantId", "/category", "/region" });
         var handler = new FakeCosmosHandler(inMemoryContainer);
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler)
-            });
+        using var client = handler.CreateClient();
 
         var container = client.GetContainer("test-db", "items");
 
@@ -159,17 +240,13 @@ public class HierarchicalPkPrefixBugTests
         var prefixPk = new PartitionKeyBuilder().Add(tenantId).Add("CategoryA").Build();
         var requestOptions = new QueryRequestOptions { PartitionKey = prefixPk };
 
-        List<JObject> results;
-        using (handler.WithPartitionKey(prefixPk))
+        var results = new List<JObject>();
+        var iterator = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c"), requestOptions: requestOptions);
+        while (iterator.HasMoreResults)
         {
-            results = new List<JObject>();
-            var iterator = container.GetItemQueryIterator<JObject>(
-                new QueryDefinition("SELECT * FROM c"), requestOptions: requestOptions);
-            while (iterator.HasMoreResults)
-            {
-                var page = await iterator.ReadNextAsync();
-                results.AddRange(page);
-            }
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
         }
 
         results.Should().HaveCount(1);
@@ -181,15 +258,7 @@ public class HierarchicalPkPrefixBugTests
     {
         var inMemoryContainer = new InMemoryContainer("items", new[] { "/tenantId", "/category", "/region" });
         var handler = new FakeCosmosHandler(inMemoryContainer);
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler)
-            });
+        using var client = handler.CreateClient();
 
         var container = client.GetContainer("test-db", "items");
 
@@ -207,21 +276,16 @@ public class HierarchicalPkPrefixBugTests
         var prefixPk = new PartitionKeyBuilder().Add("tenant-A").Build();
         var requestOptions = new QueryRequestOptions { PartitionKey = prefixPk };
 
-        List<JObject> results;
-        using (handler.WithPartitionKey(prefixPk))
+        var results = new List<JObject>();
+        var iterator = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c"), requestOptions: requestOptions);
+        while (iterator.HasMoreResults)
         {
-            results = new List<JObject>();
-            var iterator = container.GetItemQueryIterator<JObject>(
-                new QueryDefinition("SELECT * FROM c"), requestOptions: requestOptions);
-            while (iterator.HasMoreResults)
-            {
-                var page = await iterator.ReadNextAsync();
-                results.AddRange(page);
-            }
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
         }
 
         results.Should().HaveCount(1);
-        results[0]["tenantId"]!.Value<string>().Should().Be("tenant-A");
         results[0]["tenantId"]!.Value<string>().Should().Be("tenant-A");
     }
 }

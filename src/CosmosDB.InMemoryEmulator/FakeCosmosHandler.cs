@@ -2292,6 +2292,49 @@ public class FakeCosmosHandler : HttpMessageHandler
         return new RoutingHandler(handlers);
     }
 
+    private const string FakeConnectionString = "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;";
+
+    /// <summary>
+    /// Creates a <see cref="CosmosClient"/> backed by this handler that automatically
+    /// captures prefix partition keys for hierarchical PK queries. Use this instead of
+    /// manually constructing a <c>CosmosClient</c> with <c>HttpClientFactory</c>.
+    /// <para>
+    /// Containers returned by <see cref="CosmosClient.GetContainer"/> will transparently
+    /// set the partition key override before each query, so prefix (hierarchical) partition
+    /// key scoping works without any production code changes.
+    /// </para>
+    /// </summary>
+    public CosmosClient CreateClient()
+        => CreateClient(new Dictionary<string, FakeCosmosHandler> { [_container.Id] = this });
+
+    /// <summary>
+    /// Creates a <see cref="CosmosClient"/> with a routing handler that dispatches
+    /// to multiple <see cref="FakeCosmosHandler"/> instances, with automatic prefix
+    /// partition key capturing for hierarchical PK queries.
+    /// <para>
+    /// Equivalent to using <see cref="CreateRouter"/> plus manually constructing the
+    /// <see cref="CosmosClient"/>, but returns a client whose containers automatically
+    /// handle prefix partition key scoping.
+    /// </para>
+    /// </summary>
+    public static CosmosClient CreateClient(
+        Dictionary<string, FakeCosmosHandler> handlers)
+    {
+        HttpMessageHandler httpHandler = handlers.Count == 1
+            ? handlers.Values.First()
+            : CreateRouter(handlers);
+
+        var innerClient = new CosmosClient(
+            FakeConnectionString,
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                HttpClientFactory = () => new HttpClient(httpHandler)
+            });
+
+        return new PkAwareCosmosClient(innerClient, handlers);
+    }
+
     /// <summary>
     /// Runs a self-test to verify that the current Cosmos SDK version still uses the
     /// HTTP contract this handler expects (URL patterns, header names, response formats,
