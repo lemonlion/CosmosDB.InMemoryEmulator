@@ -5860,6 +5860,11 @@ public class InMemoryContainer : Container
                         return jArray.Any(t => t.Type == JTokenType.Null);
                     }
 
+                    if (searchValue is UndefinedValue)
+                    {
+                        return false;
+                    }
+
                     var searchStr = searchValue.ToString();
                     var partial = func.Arguments.Length >= 3 &&
                         string.Equals(func.Arguments[2].Trim(), "true", StringComparison.OrdinalIgnoreCase);
@@ -6210,7 +6215,7 @@ public class InMemoryContainer : Container
                     // (even when its value is null).
                     if (func.Arguments[0] is ParameterExpression param)
                         return parameters.ContainsKey(param.Name);
-                    return args[0] != null;
+                    return args[0] is not null and not UndefinedValue;
                 }
             case "IS_NULL": return args.Length > 0 && args[0] is null;
             case "IS_ARRAY":
@@ -6718,6 +6723,11 @@ public class InMemoryContainer : Container
                         if (searchValue is null)
                         {
                             return jArray.Any(t => t.Type == JTokenType.Null);
+                        }
+
+                        if (searchValue is UndefinedValue)
+                        {
+                            return false;
                         }
 
                         var searchStr = searchValue.ToString();
