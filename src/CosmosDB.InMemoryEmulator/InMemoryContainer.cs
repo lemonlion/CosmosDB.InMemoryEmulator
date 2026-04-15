@@ -5962,6 +5962,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         return jArray.Any(t => t.Type == JTokenType.Null);
                     }
 
+                    if (searchValue is UndefinedValue)
+                    {
+                        return false;
+                    }
+
                     var searchStr = searchValue.ToString();
                     var partial = func.Arguments.Length >= 3 &&
                         string.Equals(func.Arguments[2].Trim(), "true", StringComparison.OrdinalIgnoreCase);
@@ -6820,6 +6825,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         if (searchValue is null)
                         {
                             return jArray.Any(t => t.Type == JTokenType.Null);
+                        }
+
+                        if (searchValue is UndefinedValue)
+                        {
+                            return false;
                         }
 
                         var searchStr = searchValue.ToString();
