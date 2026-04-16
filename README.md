@@ -122,19 +122,30 @@ Full documentation is available on the **[Wiki](https://github.com/lemonlion/Cos
 
 ## Emulator Parity Validation
 
-The test suite includes infrastructure to validate that the in-memory implementation produces identical results to the real Cosmos DB emulator. 332 FakeCosmosHandler tests use the same SDK HTTP pipeline as a real emulator, making comparison meaningful.
+The test suite includes infrastructure to validate that the in-memory implementation produces identical results to the real Cosmos DB emulator. Integration tests use the same SDK HTTP pipeline as a real emulator, making comparison meaningful.
+
+### Test Project Structure
+
+| Project | Description |
+|---------|-------------|
+| `Tests.Unit` | Direct `InMemoryContainer`/`InMemoryCosmosClient` tests — fast, in-memory only |
+| `Tests.Integration` | `FakeCosmosHandler` tests via `ITestContainerFixture` — run against in-memory, Linux emulator, or Windows emulator |
+| `Tests.Shared` | Shared infrastructure (fixtures, traits, models) used by both projects |
 
 ### Quick Start
 
 ```powershell
-# Run full parity validation (starts emulator, runs both suites, compares)
+# Run full parity validation (starts emulator, runs integration tests, compares)
 .\scripts\validate-parity.ps1
 
 # Run only CRUD tests
 .\scripts\validate-parity.ps1 -Filter "FullyQualifiedName~Crud"
 
-# Skip build if already built
-.\scripts\validate-parity.ps1 -SkipBuild
+# Run unit tests only
+.\scripts\run-tests.ps1 -Target inmemory -Project unit
+
+# Run integration tests against emulator
+.\scripts\run-tests.ps1 -Target emulator-linux -Project integration
 ```
 
 ### Environment Variable
@@ -162,12 +173,13 @@ Tests are categorized with xUnit traits:
 |--------|---------|
 | `scripts/validate-parity.ps1` | One-command orchestrator |
 | `scripts/start-emulator.ps1` | Start Docker emulator |
-| `scripts/run-tests.ps1` | Run tests with a given target |
+| `scripts/run-tests.ps1` | Run tests with a given target and project |
 | `scripts/compare-trx.ps1` | Compare TRX files and output parity report |
+| `scripts/check-test-classification.ps1` | Verify integration tests don't use internal APIs |
 
 ### CI
 
-The `emulator-parity.yml` workflow runs weekly (Monday 6am UTC) or on manual trigger, executing both test suites and producing a parity report in the GitHub Actions step summary.
+The `emulator-parity.yml` workflow runs weekly (Monday 6am UTC) or on manual trigger, executing integration tests against all backends and producing a parity report in the GitHub Actions step summary.
 
 ## Dependencies
 
