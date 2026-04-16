@@ -2317,13 +2317,55 @@ public class FakeCosmosHandler : HttpMessageHandler
     private const string FakeConnectionString = "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;";
 
     /// <summary>
-    /// Creates a <see cref="CosmosClient"/> backed by this handler that automatically
-    /// captures prefix partition keys for hierarchical PK queries. Use this instead of
-    /// manually constructing a <c>CosmosClient</c> with <c>HttpClientFactory</c>.
+    /// Wraps an existing <see cref="CosmosClient"/> so that containers returned by
+    /// <see cref="CosmosClient.GetContainer"/> automatically capture prefix partition
+    /// keys for hierarchical PK queries. Use this when you have already constructed
+    /// a <see cref="CosmosClient"/> with a custom HTTP pipeline (e.g. tracking handlers)
+    /// and want to add prefix PK support on top.
     /// <para>
-    /// Containers returned by <see cref="CosmosClient.GetContainer"/> will transparently
-    /// set the partition key override before each query, so prefix (hierarchical) partition
-    /// key scoping works without any production code changes.
+    /// <example>
+    /// <code>
+    /// var trackingHandler = new CosmosTrackingMessageHandler(opts, fakeHandler);
+    /// var innerClient = new CosmosClient(connStr, new CosmosClientOptions
+    /// {
+    ///     ConnectionMode = ConnectionMode.Gateway,
+    ///     HttpClientFactory = () => new HttpClient(trackingHandler)
+    /// });
+    /// var client = handler.WrapClient(innerClient);
+    /// </code>
+    /// </example>
+    /// </para>
+    /// </summary>
+    /// <param name="innerClient">The <see cref="CosmosClient"/> to wrap.</param>
+    /// <returns>
+    /// A <see cref="CosmosClient"/> whose <see cref="CosmosClient.GetContainer"/>
+    /// returns containers with automatic prefix PK capturing.
+    /// </returns>
+    public CosmosClient WrapClient(CosmosClient innerClient)
+        => WrapClient(innerClient, new Dictionary<string, FakeCosmosHandler> { [_container.Id] = this });
+
+    /// <summary>
+    /// Wraps an existing <see cref="CosmosClient"/> with prefix partition key capturing
+    /// for multiple containers. Each container returned by <see cref="CosmosClient.GetContainer"/>
+    /// will be matched against the <paramref name="handlers"/> dictionary to find the
+    /// correct <see cref="FakeCosmosHandler"/> for PK capture.
+    /// </summary>
+    /// <param name="innerClient">The <see cref="CosmosClient"/> to wrap.</param>
+    /// <param name="handlers">
+    /// A dictionary mapping container names (or "database/container" keys) to their handlers.
+    /// </param>
+    public static CosmosClient WrapClient(
+        CosmosClient innerClient,
+        IReadOnlyDictionary<string, FakeCosmosHandler> handlers)
+        => new PkAwareCosmosClient(innerClient, handlers);
+
+    /// <summary>
+    /// Creates a <see cref="CosmosClient"/> backed by this handler that automatically
+    /// captures prefix partition keys for hierarchical PK queries. This is a convenience
+    /// method that builds the <see cref="CosmosClient"/> and wraps it in a single call.
+    /// <para>
+    /// For custom HTTP pipelines (e.g. tracking or logging handlers), construct the
+    /// <see cref="CosmosClient"/> yourself and use <see cref="WrapClient(CosmosClient)"/> instead.
     /// </para>
     /// </summary>
     public CosmosClient CreateClient()
@@ -2334,9 +2376,9 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// to multiple <see cref="FakeCosmosHandler"/> instances, with automatic prefix
     /// partition key capturing for hierarchical PK queries.
     /// <para>
-    /// Equivalent to using <see cref="CreateRouter"/> plus manually constructing the
-    /// <see cref="CosmosClient"/>, but returns a client whose containers automatically
-    /// handle prefix partition key scoping.
+    /// For custom HTTP pipelines, construct the <see cref="CosmosClient"/> yourself
+    /// with <see cref="CreateRouter"/> and use
+    /// <see cref="WrapClient(CosmosClient, IReadOnlyDictionary{string, FakeCosmosHandler})"/> instead.
     /// </para>
     /// </summary>
     public static CosmosClient CreateClient(
@@ -2354,7 +2396,7 @@ public class FakeCosmosHandler : HttpMessageHandler
                 HttpClientFactory = () => new HttpClient(httpHandler)
             });
 
-        return new PkAwareCosmosClient(innerClient, handlers);
+        return WrapClient(innerClient, handlers);
     }
 
     /// <summary>

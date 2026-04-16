@@ -107,7 +107,7 @@ public static class ServiceCollectionExtensions
                 ConnectionMode = ConnectionMode.Gateway,
                 HttpClientFactory = () => new HttpClient(finalHandler)
             });
-        var client = new PkAwareCosmosClient(innerClient, handlers);
+        var client = FakeCosmosHandler.WrapClient(innerClient, handlers);
 
         options.OnClientCreated?.Invoke(client);
 

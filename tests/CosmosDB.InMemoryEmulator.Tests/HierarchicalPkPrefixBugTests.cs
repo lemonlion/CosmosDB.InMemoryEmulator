@@ -327,4 +327,57 @@ public class HierarchicalPkPrefixBugTests(ITestOutputHelper output)
         results.Should().HaveCount(2);
         results.Select(r => r["tenantId"]!.Value<string>()).Should().AllBe("tenant-A");
     }
+
+    [Fact]
+    public async Task WrapClient_WithCustomPipeline_PrefixPKStillWorks()
+    {
+        var inMemoryContainer = new InMemoryContainer("items", new[] { "/tenantId", "/category", "/region" });
+        var handler = new FakeCosmosHandler(inMemoryContainer);
+
+        // Simulate a custom HTTP pipeline (e.g. tracking handler) by wrapping the handler
+        var delegatingHandler = new PassThroughHandler(handler);
+
+        var innerClient = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                HttpClientFactory = () => new HttpClient(delegatingHandler)
+            });
+
+        // WrapClient adds prefix PK support on top of the user's custom pipeline
+        using var client = handler.WrapClient(innerClient);
+
+        var container = client.GetContainer("test-db", "items");
+
+        await container.CreateItemAsync(
+            new { id = "id-1", tenantId = "tenant-A", category = "CatA", region = "eu" },
+            new PartitionKeyBuilder().Add("tenant-A").Add("CatA").Add("eu").Build());
+
+        await container.CreateItemAsync(
+            new { id = "id-2", tenantId = "tenant-B", category = "CatA", region = "eu" },
+            new PartitionKeyBuilder().Add("tenant-B").Add("CatA").Add("eu").Build());
+
+        var prefixPk = new PartitionKeyBuilder().Add("tenant-A").Build();
+        var iterator = container.GetItemQueryIterator<JObject>(
+            new QueryDefinition("SELECT * FROM c"),
+            requestOptions: new QueryRequestOptions { PartitionKey = prefixPk });
+
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(1);
+        results[0]["tenantId"]!.Value<string>().Should().Be("tenant-A");
+    }
+
+    private class PassThroughHandler(HttpMessageHandler inner) : DelegatingHandler(inner)
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+            => base.SendAsync(request, cancellationToken);
+    }
 }
