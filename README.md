@@ -175,7 +175,7 @@ Tests are categorized with xUnit traits:
 | `scripts/start-emulator.ps1` | Start Docker emulator |
 | `scripts/run-tests.ps1` | Run tests with a given target and project |
 | `scripts/compare-trx.ps1` | Compare TRX files and output parity report |
-| `scripts/check-test-classification.ps1` | Verify integration tests don't use internal APIs |
+
 
 ### CI
 
