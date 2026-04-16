@@ -44,7 +44,14 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          if [[ "$VERSION" == *-* ]]; then
+            echo "PRERELEASE=true" >> $GITHUB_OUTPUT
+          else
+            echo "PRERELEASE=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release -p:Version=${{ steps.version.outputs.VERSION }}
@@ -59,4 +66,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          prerelease: ${{ steps.version.outputs.PRERELEASE == 'true' }}
+          make_latest: ${{ steps.version.outputs.PRERELEASE != 'true' }}
           files: ./nupkgs/*.nupkg
