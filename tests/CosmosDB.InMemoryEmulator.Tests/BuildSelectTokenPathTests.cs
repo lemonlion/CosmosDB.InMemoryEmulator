@@ -60,4 +60,25 @@ public class BuildSelectTokenPathTests
         InMemoryContainer.BuildSelectTokenPath(new[] { "items", "0" })
             .Should().Be("items[0]");
     }
+
+    [Fact]
+    public void SegmentWithSpace_UsesBracketNotation()
+    {
+        InMemoryContainer.BuildSelectTokenPath(new[] { "my field" })
+            .Should().Be("['my field']");
+    }
+
+    [Fact]
+    public void SegmentWithDot_UsesBracketNotation()
+    {
+        InMemoryContainer.BuildSelectTokenPath(new[] { "my.field" })
+            .Should().Be("['my.field']");
+    }
+
+    [Fact]
+    public void MixedNormalAndSpecialSegments_CorrectNotation()
+    {
+        InMemoryContainer.BuildSelectTokenPath(new[] { "parent", "my field", "child" })
+            .Should().Be("parent['my field'].child");
+    }
 }
