@@ -8,6 +8,7 @@ on:
 jobs:
   test-inmemory:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v5
@@ -15,7 +16,9 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
@@ -33,6 +36,7 @@ jobs:
 
   test-emulator-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     services:
       cosmosdb:
@@ -51,7 +55,9 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       - name: Wait for Cosmos DB Emulator
         run: |
@@ -91,6 +97,7 @@ jobs:
 
   test-windows:
     runs-on: windows-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v5
@@ -98,7 +105,9 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       - name: Install & Start Cosmos DB Windows Emulator
         shell: pwsh
@@ -144,6 +153,7 @@ jobs:
     needs: [test-inmemory, test-emulator-linux, test-windows]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v5
