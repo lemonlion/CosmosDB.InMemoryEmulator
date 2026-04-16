@@ -116,6 +116,28 @@ public class FakeCosmosHandler : HttpMessageHandler
     private readonly AsyncLocal<PartitionKey?> _partitionKeyOverride = new();
 
     /// <summary>
+    /// Separate AsyncLocal for the LINQ <c>.ToFeedIterator()</c> path.
+    /// Set eagerly by <see cref="PartitionKeyCapturingContainer"/> when
+    /// <c>GetItemLinqQueryable</c> is called with a prefix partition key,
+    /// because the <see cref="FeedIterator{T}"/> produced by <c>.ToFeedIterator()</c> is
+    /// SDK-internal and cannot be wrapped. Uses a lower priority than
+    /// <see cref="_partitionKeyOverride"/> so that <see cref="PkCapturingFeedIterator{T}"/>
+    /// (used by <c>GetItemQueryIterator</c>) takes precedence when both are set.
+    /// </summary>
+    private readonly AsyncLocal<PartitionKey?> _partitionKeyHint = new();
+
+    /// <summary>
+    /// Sets a partition key hint for the LINQ <c>.ToFeedIterator()</c> path.
+    /// Unlike <see cref="WithPartitionKey"/>, this value persists until overwritten
+    /// or the async context ends. It is used as a fallback when neither the HTTP
+    /// partition key header nor the scoped override is present.
+    /// </summary>
+    internal void SetPartitionKeyHint(PartitionKey? partitionKey)
+    {
+        _partitionKeyHint.Value = partitionKey;
+    }
+
+    /// <summary>
     /// Sets a partition key override that will be used for queries within the returned
     /// scope. This is needed when querying with a prefix (hierarchical) partition key
     /// via <see cref="FakeCosmosHandler"/>, because the Cosmos SDK does not forward
@@ -1247,7 +1269,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         var sqlQuery = queryBody["query"]?.ToString() ?? "SELECT * FROM c";
         _queryLog.Add(sqlQuery);
 
-        var partitionKey = ExtractPartitionKey(request) ?? _partitionKeyOverride.Value;
+        var partitionKey = ExtractPartitionKey(request) ?? _partitionKeyOverride.Value ?? _partitionKeyHint.Value;
         var maxItemCount = ExtractMaxItemCount(request);
         var continuation = DecodeContinuation(request);
         var rangeId = ExtractPartitionKeyRangeId(request);
@@ -1926,7 +1948,7 @@ public class FakeCosmosHandler : HttpMessageHandler
             cacheKey = Guid.NewGuid().ToString("N");
 
             var requestOptions = new QueryRequestOptions();
-            var partitionKey = ExtractPartitionKey(request) ?? _partitionKeyOverride.Value;
+            var partitionKey = ExtractPartitionKey(request) ?? _partitionKeyOverride.Value ?? _partitionKeyHint.Value;
             if (partitionKey is not null)
             {
                 requestOptions.PartitionKey = partitionKey;

@@ -141,13 +141,17 @@ internal sealed class PartitionKeyCapturingContainer : Container
         => MaybeWrap(_inner.GetItemQueryStreamIterator(feedRange, queryDefinition, continuationToken, requestOptions), requestOptions);
 
     // ── LINQ ────────────────────────────────────────────────────────
-    // Note: prefix PK scoping for LINQ requires using WithPartitionKey manually,
-    // because .ToFeedIterator() creates an SDK-internal FeedIterator that cannot be wrapped.
+    // Sets a partition key hint on the handler so that prefix PK scoping
+    // works even through .ToFeedIterator() (which creates an SDK-internal
+    // FeedIterator we cannot wrap).
 
     public override IOrderedQueryable<T> GetItemLinqQueryable<T>(
         bool allowSynchronousQueryExecution = false, string? continuationToken = null,
         QueryRequestOptions? requestOptions = null, CosmosLinqSerializerOptions? linqSerializerOptions = null)
-        => _inner.GetItemLinqQueryable<T>(allowSynchronousQueryExecution, continuationToken, requestOptions, linqSerializerOptions);
+    {
+        _handler.SetPartitionKeyHint(requestOptions?.PartitionKey);
+        return _inner.GetItemLinqQueryable<T>(allowSynchronousQueryExecution, continuationToken, requestOptions, linqSerializerOptions);
+    }
 
     // ── Container management ────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 using System.Net;
 using CosmosDB.InMemoryEmulator;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Azure.Cosmos.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
@@ -287,5 +288,43 @@ public class HierarchicalPkPrefixBugTests(ITestOutputHelper output)
 
         results.Should().HaveCount(1);
         results[0]["tenantId"]!.Value<string>().Should().Be("tenant-A");
+    }
+
+    [Fact]
+    public async Task LinqPrefixPK_ViaFakeCosmosHandler_ScopesCorrectly()
+    {
+        var inMemoryContainer = new InMemoryContainer("items", new[] { "/tenantId", "/category", "/region" });
+        var handler = new FakeCosmosHandler(inMemoryContainer);
+        using var client = handler.CreateClient();
+
+        var container = client.GetContainer("test-db", "items");
+
+        await container.CreateItemAsync(
+            new { id = "id-1", tenantId = "tenant-A", category = "CatA", region = "eu", data = "A1" },
+            new PartitionKeyBuilder().Add("tenant-A").Add("CatA").Add("eu").Build());
+
+        await container.CreateItemAsync(
+            new { id = "id-2", tenantId = "tenant-A", category = "CatB", region = "us", data = "A2" },
+            new PartitionKeyBuilder().Add("tenant-A").Add("CatB").Add("us").Build());
+
+        await container.CreateItemAsync(
+            new { id = "id-3", tenantId = "tenant-B", category = "CatA", region = "eu", data = "B1" },
+            new PartitionKeyBuilder().Add("tenant-B").Add("CatA").Add("eu").Build());
+
+        // LINQ query with 1-component prefix PK — no WithPartitionKey wrapper needed
+        var prefixPk = new PartitionKeyBuilder().Add("tenant-A").Build();
+        var iterator = container.GetItemLinqQueryable<JObject>(
+                requestOptions: new QueryRequestOptions { PartitionKey = prefixPk })
+            .ToFeedIterator();
+
+        var results = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().HaveCount(2);
+        results.Select(r => r["tenantId"]!.Value<string>()).Should().AllBe("tenant-A");
     }
 }
