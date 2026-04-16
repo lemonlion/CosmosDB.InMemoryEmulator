@@ -6,14 +6,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  test-ubuntu:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         target: [inmemory, emulator-linux]
 
-    # Emulator service starts for both matrix entries (harmless for inmemory)
     services:
       cosmosdb:
         image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
@@ -70,8 +69,59 @@ jobs:
           name: trx-${{ matrix.target }}
           path: test-results/
 
+  test-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install & Start Cosmos DB Windows Emulator
+        shell: pwsh
+        run: |
+          Write-Host "Installing Azure Cosmos DB Emulator..."
+          choco install azure-cosmosdb-emulator -y --no-progress
+          Write-Host "Starting emulator..."
+          $emulatorExe = "C:\Program Files\Azure Cosmos DB Emulator\Microsoft.Azure.Cosmos.Emulator.exe"
+          if (-not (Test-Path $emulatorExe)) {
+            $emulatorExe = "C:\Program Files\Azure Cosmos DB Emulator\CosmosDB.Emulator.exe"
+          }
+          Start-Process -FilePath $emulatorExe -ArgumentList "/NoExplorer /NoFirewall /PartitionCount=3"
+          # Wait for readiness
+          $timeout = 300; $elapsed = 0
+          while ($elapsed -lt $timeout) {
+            try {
+              $r = Invoke-WebRequest -Uri "https://localhost:8081/" -SkipCertificateCheck -SkipHttpErrorCheck -TimeoutSec 5 -ErrorAction Stop
+              if ($r.StatusCode -in 200, 401) {
+                Write-Host "Emulator ready after ${elapsed}s"
+                break
+              }
+            } catch {}
+            Start-Sleep 5; $elapsed += 5
+            Write-Host "  Waiting... (${elapsed}s)"
+          }
+          if ($elapsed -ge $timeout) { Write-Error "Emulator did not start"; exit 1 }
+
+      - name: Build
+        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
+
+      - name: Run Tests (emulator-windows)
+        shell: pwsh
+        run: ./scripts/run-tests.ps1 -Target emulator-windows
+
+      - name: Upload TRX
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trx-emulator-windows
+          path: test-results/
+
   compare:
-    needs: test
+    needs: [test-ubuntu, test-windows]
     if: always()
     runs-on: ubuntu-latest
 
