@@ -4,6 +4,7 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -31,6 +32,7 @@ public class MetadataDocument
     public Dictionary<string, object> Metadata { get; set; } = default!;
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateHandlingTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -158,6 +160,7 @@ public class DateHandlingTests
 
 // ─── DateTimeDiff ────────────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeDiffTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -210,6 +213,7 @@ public class DateTimeDiffTests
 
 // ─── DateTimeFromParts ──────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeFromPartsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -236,6 +240,7 @@ public class DateTimeFromPartsTests
 
 // ─── DateTimeBin ────────────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeBinTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -284,6 +289,7 @@ public class DateTimeBinTests
 
 // ─── DateTime/Ticks Conversion Functions ────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeTicksConversionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -383,6 +389,7 @@ public class DateTimeTicksConversionTests
 
 // ─── Static DateTime Functions ──────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StaticDateTimeFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -448,6 +455,7 @@ public class StaticDateTimeFunctionTests
 
 // ─── DateTimeBin Year/Month Support ─────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeBinYearMonthTests
 {
     [Fact]
@@ -511,6 +519,7 @@ public class DateTimeBinYearMonthTests
 
 // ─── DateTimeAdd Tests ──────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeAddTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -691,6 +700,7 @@ public class DateTimeAddTests
 
 // ─── DateTimePart Tests ─────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimePartTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -768,6 +778,7 @@ public class DateTimePartTests
 
 // ─── DateTimeBin Extended Tests ─────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeBinExtendedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -854,6 +865,7 @@ public class DateTimeBinExtendedTests
 
 // ─── DateTimeFromParts Extended Tests ───────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeFromPartsExtendedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -912,6 +924,7 @@ public class DateTimeFromPartsExtendedTests
 
 // ─── DateTimeDiff Extended Tests ────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeDiffExtendedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1014,6 +1027,7 @@ public class DateTimeDiffExtendedTests
 
 // ─── DateTimeDiff Boundary-Crossing Divergence ──────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeDiffBoundaryCrossingTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1062,6 +1076,7 @@ public class DateTimeDiffBoundaryCrossingTests
 
 // ─── Conversion Round-Trip and Edge Case Tests ──────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeConversionExtendedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1129,6 +1144,7 @@ public class DateTimeConversionExtendedTests
 
 // ─── GetCurrentDateTime / GetCurrentTimestamp Value Tests ───────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GetCurrentDateTimeFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1167,6 +1183,7 @@ public class GetCurrentDateTimeFunctionTests
 
 // ─── Composed / Integration Date Query Tests ────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateComposedQueryTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1233,6 +1250,7 @@ public class DateComposedQueryTests
 //  Date Handling Deep Dive — Phase 1: Bug Fix Verification Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeFromPartsInvalidArgsTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -1291,6 +1309,7 @@ public class DateTimeFromPartsInvalidArgsTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeAddInvalidPartTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -1317,6 +1336,7 @@ public class DateTimeAddInvalidPartTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeBinBugFixTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -1418,6 +1438,7 @@ public class DateTimeBinBugFixTests
 //  Date Handling Deep Dive — Phase 2: DateTimeAdd Extended
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeAddExtendedTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -1525,6 +1546,7 @@ public class DateTimeAddExtendedTests
 //  Date Handling Deep Dive — Phase 3: DateTimePart Alias Coverage
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimePartAliasTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -1613,6 +1635,7 @@ public class DateTimePartAliasTests
 //  Date Handling Deep Dive — Phase 4: DateTimeDiff Extended
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeDiffExtendedDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -1744,6 +1767,7 @@ public class DateTimeDiffExtendedDeepDiveTests
 //  Date Handling Deep Dive — Phase 5: DateTimeBin Extended
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeBinExtendedDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -1818,6 +1842,7 @@ public class DateTimeBinExtendedDeepDiveTests
 //  Date Handling Deep Dive — Phase 6: DateTimeFromParts Extended
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeFromPartsExtendedDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -1893,6 +1918,7 @@ public class DateTimeFromPartsExtendedDeepDiveTests
 //  Date Handling Deep Dive — Phase 7: Conversion Functions
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateConversionDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -1988,6 +2014,7 @@ public class DateConversionDeepDiveTests
 //  Date Handling Deep Dive — Phase 8: GetCurrentDateTime
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GetCurrentDateTimeDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -2027,6 +2054,7 @@ public class GetCurrentDateTimeDeepDiveTests
 //  Date Handling Deep Dive — Phase 9: Composed/Integration Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateFunctionIntegrationDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -2122,6 +2150,7 @@ public class DateFunctionIntegrationDeepDiveTests
 //  Date Handling Deep Dive — Phase 10: DateTimeOffset Round-trip Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeOffsetRoundTripDeepDiveTests
 {
     [Fact]

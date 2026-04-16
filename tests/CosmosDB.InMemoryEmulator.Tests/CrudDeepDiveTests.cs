@@ -4,6 +4,7 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -11,6 +12,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Phase A: ReadManyItems Coverage
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyItemsDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -175,6 +177,7 @@ public class ReadManyItemsDeepDiveTests
 //  Phase B: Patch CRUD Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchItemCrudEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -344,6 +347,7 @@ public class PatchItemCrudEdgeCaseTests
 //  Phase C: Replace Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceItemExtendedEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -423,6 +427,7 @@ public class ReplaceItemExtendedEdgeCaseTests
 //  Phase D: Upsert Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UpsertItemExtendedEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -469,6 +474,7 @@ public class UpsertItemExtendedEdgeCaseTests
 //  Phase E: Create Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateItemExtendedEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -539,6 +545,7 @@ public class CreateItemExtendedEdgeCaseTests
 //  Phase F: Delete Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteItemExtendedEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -583,6 +590,7 @@ public class DeleteItemExtendedEdgeCaseTests
 //  Phase G: Read Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadItemExtendedEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -636,6 +644,7 @@ public class ReadItemExtendedEdgeCaseTests
 //  Phase H: DeleteAllByPK Extended
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteAllByPKDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -699,6 +708,7 @@ public class DeleteAllByPKDeepDiveTests
 //  Phase I: Cross-Cutting / Interaction Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrudInteractionTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");

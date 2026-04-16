@@ -5,6 +5,7 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -12,6 +13,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 // Phase 1: ReadMany Stream Variant Parity (Tests #1-17)
 // ══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyStreamDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -276,6 +278,7 @@ public class ReadManyStreamDeepDiveTests
 // Phase 2: Edge Cases & Gaps (Tests #18-30)
 // ══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyPartitionKeyDeepDiveV2Tests
 {
     [Fact]
@@ -310,6 +313,7 @@ public class ReadManyPartitionKeyDeepDiveV2Tests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyOptionsDeepDiveV2Tests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -361,6 +365,7 @@ public class ReadManyOptionsDeepDiveV2Tests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyMutationDeepDiveV2Tests
 {
     [Fact]
@@ -377,6 +382,7 @@ public class ReadManyMutationDeepDiveV2Tests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyDeserializationDeepDiveV2Tests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -416,6 +422,7 @@ public class ReadManyDeserializationDeepDiveV2Tests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyResponseDeepDiveV2Tests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -463,6 +470,7 @@ public class ReadManyResponseDeepDiveV2Tests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyConcurrencyDeepDiveTests
 {
     [Fact]
@@ -485,6 +493,7 @@ public class ReadManyConcurrencyDeepDiveTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyEmptyIdDeepDiveTests
 {
     [Fact]

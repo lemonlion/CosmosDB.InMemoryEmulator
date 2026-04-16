@@ -6,6 +6,7 @@ using Microsoft.Azure.Cosmos.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -13,6 +14,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 // Section A: FakeCosmosHandler Pagination + Q: ReadFeed
 // ══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorPaginationDeepDiveTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _backing = new("test-container", "/partitionKey");
@@ -154,6 +156,7 @@ public class RealToFeedIteratorPaginationDeepDiveTests : IAsyncLifetime
 // Section B: SQL Query via GetItemQueryIterator
 // ══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorSqlQueryDeepDiveTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _backing = new("test-container", "/partitionKey");
@@ -253,6 +256,7 @@ public class RealToFeedIteratorSqlQueryDeepDiveTests : IAsyncLifetime
 // Section C: Stream API
 // ══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorStreamDeepDiveTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _backing = new("test-container", "/partitionKey");
@@ -340,6 +344,7 @@ public class RealToFeedIteratorStreamDeepDiveTests : IAsyncLifetime
 // Section D-F, O-P: LINQ Deep Dive Additions
 // ══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorLinqDeepDiveV2Tests : IAsyncLifetime
 {
     private readonly InMemoryContainer _backing = new("test-container", "/partitionKey");
@@ -519,6 +524,7 @@ public class RealToFeedIteratorLinqDeepDiveV2Tests : IAsyncLifetime
 // Section G-K, N: Handler Route Deep Dive Additions
 // ══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorHandlerDeepDiveV2Tests : IAsyncLifetime
 {
     private readonly InMemoryContainer _backing = new("test-container", "/partitionKey");
@@ -806,6 +812,7 @@ public class RealToFeedIteratorHandlerDeepDiveV2Tests : IAsyncLifetime
 // Section L: InMemoryStreamFeedIterator Direct (internal, via InMemoryContainer)
 // ══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryStreamFeedIteratorDirectDeepDiveTests
 {
     [Fact]
@@ -846,6 +853,7 @@ public class InMemoryStreamFeedIteratorDirectDeepDiveTests
 // Section M: InMemoryFeedIterator Additional Edge Cases
 // ══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryFeedIteratorEdgeCaseDeepDiveTests
 {
     [Fact]

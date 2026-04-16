@@ -5,10 +5,12 @@ using System.Collections.ObjectModel;
 using System.Net;
 using System.Text;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrencyGapTests3
 {
     [Fact]
@@ -64,6 +66,7 @@ public class ConcurrencyGapTests3
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrencyGapTests
 {
     [Fact]
@@ -146,6 +149,7 @@ public class ConcurrencyGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrencyGapTests2
 {
     [Fact]
@@ -215,6 +219,7 @@ public class ConcurrencyGapTests2
 //  Category 1: Concurrent Delete Scenarios
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentDeleteTests
 {
     [Fact]
@@ -330,6 +335,7 @@ public class ConcurrentDeleteTests
 //  Category 2: Concurrent Patch Scenarios
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentPatchTests
 {
     [Fact]
@@ -449,6 +455,7 @@ public class ConcurrentPatchTests
 //  Category 3: Concurrent Replace Scenarios
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentReplaceTests
 {
     [Fact]
@@ -529,6 +536,7 @@ public class ConcurrentReplaceTests
 //  Category 4: Concurrent Upsert Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentUpsertTests
 {
     [Fact]
@@ -603,6 +611,7 @@ public class ConcurrentUpsertTests
 //  Category 5: Transactional Batch Under Concurrency
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentBatchTests
 {
     [Fact]
@@ -669,6 +678,7 @@ public class ConcurrentBatchTests
 //  Category 6: Concurrent Change Feed Operations
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentChangeFeedTests
 {
     [Fact]
@@ -715,6 +725,7 @@ public class ConcurrentChangeFeedTests
 //  Category 7: Concurrent Operations Across Partitions
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentCrossPartitionTests
 {
     [Fact]
@@ -781,6 +792,7 @@ public class ConcurrentCrossPartitionTests
 //  Category 8: Unique Key Constraint Under Concurrency
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentUniqueKeyTests
 {
     [Fact]
@@ -824,6 +836,7 @@ public class ConcurrentUniqueKeyTests
 //  Category 9: Concurrent Stream API Operations
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentStreamTests
 {
     [Fact]
@@ -888,6 +901,7 @@ public class ConcurrentStreamTests
 //  Category 10: ReadMany Under Concurrency
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentReadManyTests
 {
     [Fact]
@@ -922,6 +936,7 @@ public class ConcurrentReadManyTests
 //  Category 11: Container/Database Level Concurrency
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentContainerDatabaseTests
 {
     [Fact]
@@ -955,6 +970,7 @@ public class ConcurrentContainerDatabaseTests
 //  Category 12: Stress / Chaos Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrencyStressTests
 {
     [Fact]
@@ -1026,6 +1042,7 @@ public class ConcurrencyStressTests
 //  Phase 2: Stream & ETag concurrency tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentStreamExtendedTests
 {
     [Fact]
@@ -1085,6 +1102,7 @@ public class ConcurrentStreamExtendedTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentETagExtendedTests
 {
     [Fact]
@@ -1169,6 +1187,7 @@ public class ConcurrentETagExtendedTests
 //  Phase 3: Medium difficulty tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentDeleteSerializationTests
 {
     [Fact]
@@ -1223,6 +1242,7 @@ public class ConcurrentDeleteSerializationTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentChangeFeedExtendedTests
 {
     [Fact]
@@ -1354,6 +1374,7 @@ public class ConcurrentChangeFeedExtendedTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentUniqueKeyExtendedTests
 {
     [Fact]
@@ -1394,6 +1415,7 @@ public class ConcurrentUniqueKeyExtendedTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentPatchExtendedTests
 {
     [Fact]
@@ -1431,6 +1453,7 @@ public class ConcurrentPatchExtendedTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentHierarchicalPkTests
 {
     [Fact]
@@ -1464,6 +1487,7 @@ public class ConcurrentHierarchicalPkTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentTTLTests
 {
     [Fact]
@@ -1496,6 +1520,7 @@ public class ConcurrentTTLTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentStatePersistenceTests
 {
     [Fact]
@@ -1528,6 +1553,7 @@ public class ConcurrentStatePersistenceTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentContainerLifecycleTests
 {
     [Fact]
@@ -1560,6 +1586,7 @@ public class ConcurrentContainerLifecycleTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentBulkExtendedTests
 {
     [Fact]
@@ -1590,6 +1617,7 @@ public class ConcurrentBulkExtendedTests
 //  Phase 4: Hard tests — Batch isolation (skip+sister)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentBatchIsolationTests
 {
     [Fact(Skip = "Emulator batch execution is not globally isolated from non-batch operations. " +
@@ -1674,6 +1702,7 @@ public class ConcurrentBatchIsolationTests
 //  Phase 5: Stress tests with unique keys
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrencyStressWithUniqueKeysTests
 {
     [Fact]

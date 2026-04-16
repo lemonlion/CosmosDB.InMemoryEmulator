@@ -3,9 +3,11 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using System.Net;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IndexSimulationTests
 {
     // ── Basic index policy support ──────────────────────────────────────────
@@ -213,6 +215,7 @@ public class IndexSimulationTests
 //  Category A: Index Policy Roundtrip & Persistence
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IndexPolicyRoundtripTests
 {
     [Fact]
@@ -351,6 +354,7 @@ public class IndexPolicyRoundtripTests
 //  Category B: IndexingMode Behavioral Differences
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IndexingModeBehaviorTests
 {
     [Fact(Skip = "In real Cosmos DB, IndexingMode.None means queries fail unless " +
@@ -454,6 +458,7 @@ public class IndexingModeBehaviorTests
 //  Category C: Included/Excluded Path Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IndexPathEdgeCaseTests
 {
     [Fact]
@@ -589,6 +594,7 @@ public class IndexPathEdgeCaseTests
 //  Category D: Composite Index Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CompositeIndexEdgeCaseTests
 {
     [Fact]
@@ -731,6 +737,7 @@ public class CompositeIndexEdgeCaseTests
 //  Category E: Spatial Index Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SpatialIndexEdgeCaseTests
 {
     [Fact]
@@ -762,6 +769,7 @@ public class SpatialIndexEdgeCaseTests
 //  Category F: Unique Key Policy Interaction
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UniqueKeyPolicyDatabaseCreationTests
 {
     [Fact]
@@ -830,6 +838,7 @@ public class UniqueKeyPolicyDatabaseCreationTests
 //  Category G: FakeCosmosHandler Index Metadata
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerIndexMetadataTests
 {
     [Fact]
@@ -866,6 +875,7 @@ public class FakeCosmosHandlerIndexMetadataTests
 //  Category I — ORDER BY Mixed Type Sorting
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class OrderByMixedTypeSortingTests
 {
     [Fact]
@@ -966,6 +976,7 @@ public class OrderByMixedTypeSortingTests
 //  Category J — ORDER BY Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class OrderByEdgeCaseTests
 {
     [Fact]
@@ -1170,6 +1181,7 @@ public class OrderByEdgeCaseTests
 //  Category K — IndexingPolicy Through Client Creation
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IndexPolicyClientCreationTests
 {
     [Fact]
@@ -1246,6 +1258,7 @@ public class IndexPolicyClientCreationTests
 //  Category L — IndexMetrics
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IndexMetricsTests
 {
     [Fact]
@@ -1284,6 +1297,7 @@ public class IndexMetricsTests
 //  Category N — EnableScanInQuery
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class EnableScanInQueryTests
 {
     [Fact(Skip = "Real Cosmos DB requires EnableScanInQuery=true to query paths not covered " +
@@ -1335,6 +1349,7 @@ public class EnableScanInQueryTests
 //  Category O — Index Types (Range, Hash, Spatial)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IndexTypeTests
 {
     [Fact]

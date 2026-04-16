@@ -4,9 +4,11 @@ using Microsoft.Azure.Cosmos;
 using Xunit;
 using System.Text;
 using Newtonsoft.Json.Linq;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerManagementTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -95,6 +97,7 @@ public class ContainerManagementTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerManagementEdgeCaseTests
 {
     [Fact]
@@ -215,6 +218,7 @@ public class ContainerManagementEdgeCaseTests
 /// ReplaceContainerStreamAsync should persist property changes so that
 /// subsequent ReadContainerAsync calls return the updated values.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerStreamReplacePersistenceTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -234,6 +238,7 @@ public class ContainerStreamReplacePersistenceTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerManagementGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -281,6 +286,7 @@ public class ContainerManagementGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerManagementGapTests4
 {
     [Fact]
@@ -298,6 +304,7 @@ public class ContainerManagementGapTests4
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerThroughputTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -341,6 +348,7 @@ public class ContainerThroughputTests
 /// non-null instance. InMemoryContainer returns an NSubstitute mock.
 /// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.conflicts
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerConflictsPropertyTests5
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -353,6 +361,7 @@ public class ContainerConflictsPropertyTests5
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerManagementGapTests2
 {
     [Fact]
@@ -368,6 +377,7 @@ public class ContainerManagementGapTests2
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerDatabaseBacklinkTests
 {
     [Fact]
@@ -391,6 +401,7 @@ public class ContainerDatabaseBacklinkTests
 
 // ─── Unique Key Policy Enforcement ──────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UniqueKeyPolicyTests
 {
     [Fact]
@@ -541,6 +552,7 @@ public class UniqueKeyPolicyTests
 
 // ─── ConflictResolutionPolicy Stored But Not Enforced ───────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConflictResolutionPolicyTests
 {
     /// <summary>
@@ -606,6 +618,7 @@ public class ConflictResolutionPolicyTests
 //  Phase 1 — Bug Fix Tests: Change Feed Clearing on Delete (A-series)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteContainerChangeFeedTests
 {
     [Fact]
@@ -656,6 +669,7 @@ public class DeleteContainerChangeFeedTests
 //  Phase 1 — Bug Fix Tests: Property Preservation on Create (B-series)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseContainerCreationPropertyTests
 {
     [Fact]
@@ -769,6 +783,7 @@ public class DatabaseContainerCreationPropertyTests
 //  Phase 2 — Container Lifecycle & Database Integration (D-series)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerLifecycleTests
 {
     [Fact]
@@ -862,6 +877,7 @@ public class ContainerLifecycleTests
 //  Phase 3 — Container Querying (E-series)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerQueryingTests
 {
     [Fact]
@@ -947,6 +963,7 @@ public class ContainerQueryingTests
 //  Phase 4 — Replace Container Edge Cases (C-series)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceContainerPropertyTests
 {
     [Fact]
@@ -1015,6 +1032,7 @@ public class ReplaceContainerPropertyTests
 //  Phase 5 — Container Creation Edge Cases (B5-B7)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerCreationEdgeCaseTests2
 {
     [Fact]
@@ -1063,6 +1081,7 @@ public class ContainerCreationEdgeCaseTests2
 //  Phase 6 — Throughput Edge Cases (F-series)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerThroughputEdgeCaseTests
 {
     [Fact]
@@ -1115,6 +1134,7 @@ public class ContainerThroughputEdgeCaseTests
 //  Phase 7 — DeleteAllByPartitionKey Edge Cases (G-series)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteAllByPartitionKeyEdgeCaseTests
 {
     [Fact]
@@ -1208,6 +1228,7 @@ public class DeleteAllByPartitionKeyEdgeCaseTests
 //  Phase 8 — Container Properties & Metadata (H, I series)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerPropertiesMetadataTests
 {
     [Fact]
@@ -1258,6 +1279,7 @@ public class ContainerPropertiesMetadataTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DefineContainerBuilderTests2
 {
     [Fact]
@@ -1276,6 +1298,7 @@ public class DefineContainerBuilderTests2
 //  Phase A — Bug Fix Tests: Throughput Persistence & Id Validation
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ThroughputPersistenceTests
 {
     [Fact]
@@ -1333,6 +1356,7 @@ public class ThroughputPersistenceTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceContainerIdValidationTests
 {
     [Fact]
@@ -1385,6 +1409,7 @@ public class ReplaceContainerIdValidationTests
 //  Phase B — Constructor & Properties Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerConstructorDefaultsTests
 {
     [Fact]
@@ -1443,6 +1468,7 @@ public class ContainerConstructorDefaultsTests
 //  Phase C — Replace Container Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceContainerPreservationTests
 {
     [Fact]
@@ -1527,6 +1553,7 @@ public class ReplaceContainerPreservationTests
 //  Phase D — Container Creation Extended
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerCreationValidationTests
 {
     [Fact]
@@ -1615,6 +1642,7 @@ public class ContainerCreationValidationTests
 //  Phase E — Delete Operations Extended
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteContainerRegistrationTests
 {
     [Fact]
@@ -1639,6 +1667,7 @@ public class DeleteContainerRegistrationTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteAllByPartitionKeyExtendedTests
 {
     [Fact]
@@ -1659,6 +1688,7 @@ public class DeleteAllByPartitionKeyExtendedTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteContainerIdempotencyTests
 {
     [Fact]
@@ -1694,6 +1724,7 @@ public class DeleteContainerIdempotencyTests
 //  Phase F — FeedRange Configuration Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeConfigurationTests
 {
     [Fact]
@@ -1731,6 +1762,7 @@ public class FeedRangeConfigurationTests
 //  Phase G — Container Query Iterator Extended
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerQueryIteratorExtendedTests
 {
     [Fact]
@@ -1770,6 +1802,7 @@ public class ContainerQueryIteratorExtendedTests
 //  Phase H — Database Lifecycle Integration
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseDeletionContainerTests
 {
     [Fact]
@@ -1820,6 +1853,7 @@ public class DatabaseDeletionContainerTests
 //  Phase I — ClearItems Public Method
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerClearItemsTests
 {
     [Fact]
@@ -1853,6 +1887,7 @@ public class ContainerClearItemsTests
 //  Phase J — Container Special Characters
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerSpecialCharacterTests
 {
     [Fact]
@@ -1886,6 +1921,7 @@ public class ContainerSpecialCharacterTests
 //  Phase K — CancellationToken Support
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerCancellationTokenTests
 {
     [Fact]
@@ -1904,6 +1940,7 @@ public class ContainerCancellationTokenTests
 //  Phase L — ReadContainerStreamAsync JSON Round-Trip
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadContainerStreamRoundTripTests
 {
     [Fact]
@@ -1928,6 +1965,7 @@ public class ReadContainerStreamRoundTripTests
 //  SKIP-4 — Container.Database.Id Returns Null
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerDatabaseIdTests
 {
     [Fact]

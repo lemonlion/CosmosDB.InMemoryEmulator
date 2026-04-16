@@ -5,6 +5,7 @@ using Newtonsoft.Json.Linq;
 using System.Net;
 using System.Text;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -12,6 +13,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 // Phase H — FeedRange.FromPartitionKey Interaction
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeFromPartitionKeyTests
 {
     private static async Task<InMemoryContainer> CreateTestContainer(int count = 20, int feedRangeCount = 4)
@@ -167,6 +169,7 @@ public class FeedRangeFromPartitionKeyTests
 // Phase I — AllVersionsAndDeletes + FeedRange
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeAllVersionsAndDeletesTests
 {
     private const string AllVersionsSkipReason =
@@ -235,6 +238,7 @@ public class FeedRangeAllVersionsAndDeletesTests
 // Phase J — Boundary Math Edge Cases
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeBoundaryMathTests
 {
     [Fact]
@@ -376,6 +380,7 @@ public class FeedRangeBoundaryMathTests
 // Phase K — ExtractPartitionKeyValueFromJson Edge Cases
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangePartitionKeyExtractionTests
 {
     [Fact]
@@ -479,6 +484,7 @@ public class FeedRangePartitionKeyExtractionTests
 // Phase L — FakeCosmosHandler + FeedRange Advanced
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerFeedRangeAdvancedTests
 {
     [Fact]
@@ -613,6 +619,7 @@ public class FakeCosmosHandlerFeedRangeAdvancedTests
 // Phase M — TTL / Delete + FeedRange
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeTTLAndDeleteTests
 {
     [Fact]
@@ -695,6 +702,7 @@ public class FeedRangeTTLAndDeleteTests
 // Phase N — Exact Boundary Verification
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeExactBoundaryTests
 {
     [Fact]
@@ -757,6 +765,7 @@ public class FeedRangeExactBoundaryTests
 // Phase O — Continuation Token + FeedRange
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeContinuationTokenTests
 {
     [Fact]
@@ -846,6 +855,7 @@ public class FeedRangeContinuationTokenTests
 // Phase P — Patch/Replace/Upsert + FeedRange
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeMutationEdgeCaseTests
 {
     [Fact]

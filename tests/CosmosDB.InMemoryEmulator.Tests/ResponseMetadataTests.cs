@@ -4,6 +4,7 @@ using Newtonsoft.Json.Linq;
 using System.Net;
 using System.Text;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -11,6 +12,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Typed Response Status Codes
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TypedResponseStatusCodeTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -98,6 +100,7 @@ public class TypedResponseStatusCodeTests
 //  Typed Response Metadata
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TypedResponseMetadataTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -229,6 +232,7 @@ public class TypedResponseMetadataTests
 //  Stream Response Status Codes
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamResponseStatusCodeTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -319,6 +323,7 @@ public class StreamResponseStatusCodeTests
 //  Stream Response Headers
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamResponseHeaderTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -398,6 +403,7 @@ public class StreamResponseHeaderTests
 //  Error Response Status Codes
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ErrorResponseStatusCodeTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -492,6 +498,7 @@ public class ErrorResponseStatusCodeTests
 //  Feed Response Metadata
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedResponseMetadataTests
 {
     [Fact]
@@ -570,6 +577,7 @@ public class FeedResponseMetadataTests
 //  Batch Response Metadata
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class BatchResponseMetadataTests
 {
     [Fact]
@@ -635,6 +643,7 @@ public class BatchResponseMetadataTests
 //  Database/Container Response Metadata
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseContainerResponseMetadataTests
 {
     [Fact]
@@ -671,6 +680,7 @@ public class DatabaseContainerResponseMetadataTests
 //  Divergent Behavior Documentation
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ResponseMetadataDivergentBehaviorTests
 {
     [Fact(Skip = "Real Cosmos DB: writes ~6-10 RU, reads ~1 RU, queries vary by complexity. " +
@@ -752,6 +762,7 @@ public class ResponseMetadataDivergentBehaviorTests
 //  Plan 34 — Stream Patch Headers
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamPatchHeaderTests
 {
     [Fact]
@@ -775,6 +786,7 @@ public class StreamPatchHeaderTests
 //  Plan 34 — Stream Error Response Status Codes
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamErrorResponseTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -860,6 +872,7 @@ public class StreamErrorResponseTests
 //  Plan 34 — Stream Error Response Headers
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamErrorResponseHeaderTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -917,6 +930,7 @@ public class StreamErrorResponseHeaderTests
 //  Plan 34 — Content Suppression Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContentSuppressionTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -1004,6 +1018,7 @@ public class ContentSuppressionTests
 //  Plan 34 — ETag Lifecycle Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagLifecycleDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -1083,6 +1098,7 @@ public class ETagLifecycleDeepDiveTests
 //  Plan 34 — CosmosException Metadata Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ExceptionMetadataTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -1162,6 +1178,7 @@ public class ExceptionMetadataTests
 //  Plan 34 — Feed Response Headers (BUG-2 fix verification)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedResponseHeadersDeepDiveTests
 {
     [Fact]
@@ -1219,6 +1236,7 @@ public class FeedResponseHeadersDeepDiveTests
 //  Plan 34 — Stream Feed Iterator Headers (BUG-1 fix verification)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamFeedIteratorMetadataTests
 {
     [Fact]
@@ -1265,6 +1283,7 @@ public class StreamFeedIteratorMetadataTests
 //  Plan 34 — Typed Response Headers Completeness (BUG-6 fix verification)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TypedResponseHeadersDeepDiveTests
 {
     [Fact]
@@ -1302,6 +1321,7 @@ public class TypedResponseHeadersDeepDiveTests
 //  Plan 34 — ReadMany Response Metadata
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyMetadataDeepDiveTests
 {
     [Fact]
@@ -1365,6 +1385,7 @@ public class ReadManyMetadataDeepDiveTests
 //  Plan 34 — Database/Container Lifecycle Status Codes
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseContainerLifecycleDeepDiveTests
 {
     [Fact]
@@ -1459,6 +1480,7 @@ public class DatabaseContainerLifecycleDeepDiveTests
 //  Plan 34 — Database/Container Stream Operations (BUG-5 fix verification)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseContainerStreamDeepDiveTests
 {
     [Fact]
@@ -1528,6 +1550,7 @@ public class DatabaseContainerStreamDeepDiveTests
 //  Plan 34 — Database/Container Typed Metadata (SKIP + sisters — BUG-4)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseContainerMetadataSkipTests
 {
     [Fact(Skip = "DatabaseResponse from NSubstitute mock only has StatusCode and Resource. Would require significant refactoring to populate Headers, RequestCharge, ActivityId, Diagnostics.")]
@@ -1572,6 +1595,7 @@ public class DatabaseContainerMetadataSkipTests
 //  Plan 34 — Batch Response Additional Metadata
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class BatchResponseAdditionalTests
 {
     [Fact]
@@ -1606,6 +1630,7 @@ public class BatchResponseAdditionalTests
 //  Plan 34 — Session Token Format Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SessionTokenFormatTests
 {
     [Fact]
@@ -1638,6 +1663,7 @@ public class SessionTokenFormatTests
 //  Plan 34 — Typed IfNoneMatch 304
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TypedIfNoneMatchTests
 {
     [Fact]
@@ -1673,6 +1699,7 @@ public class TypedIfNoneMatchTests
 //  Plan 34 — Additional Divergent Behavior Documentation
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ResponseMetadataDivergentBehaviorDeepDiveTests
 {
     [Fact]
@@ -1769,6 +1796,7 @@ public class ResponseMetadataDivergentBehaviorDeepDiveTests
 //  Plan 33 — Group 1: Batch Metadata Gaps
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class BatchMetadataGapsDeepDiveTests
 {
     [Fact]
@@ -1837,6 +1865,7 @@ public class BatchMetadataGapsDeepDiveTests
 //  Plan 33 — Group 2: Session Token Consistency
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SessionTokenConsistencyDeepDiveTests
 {
     [Fact]
@@ -1918,6 +1947,7 @@ public class SessionTokenConsistencyDeepDiveTests
 //  Plan 33 — Group 3: CosmosException Deep Dive
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CosmosExceptionDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -2009,6 +2039,7 @@ public class CosmosExceptionDeepDiveTests
 //  Plan 33 — Group 4: Stream Error Body Content
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamErrorBodyContentDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -2050,6 +2081,7 @@ public class StreamErrorBodyContentDeepDiveTests
 //  Plan 33 — Group 5: Delete Metadata Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteMetadataEdgeCaseDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -2086,6 +2118,7 @@ public class DeleteMetadataEdgeCaseDeepDiveTests
 //  Plan 33 — Group 6: Typed IfMatch/IfNoneMatch Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TypedETagEdgeCaseDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -2150,6 +2183,7 @@ public class TypedETagEdgeCaseDeepDiveTests
 //  Plan 33 — Group 7: Content Suppression Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContentSuppressionEdgeCaseDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -2200,6 +2234,7 @@ public class ContentSuppressionEdgeCaseDeepDiveTests
 //  Plan 33 — Group 8: FeedResponse Count & Pagination
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedResponsePaginationDeepDiveTests
 {
     [Fact]
@@ -2269,6 +2304,7 @@ public class FeedResponsePaginationDeepDiveTests
 //  Plan 33 — Group 9: Diagnostics Deep Dive
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DiagnosticsDeepDiveTests
 {
     [Fact]
@@ -2307,6 +2343,7 @@ public class DiagnosticsDeepDiveTests
 //  Plan 33 — Group 10: DeleteAllItemsByPartitionKey Headers
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteAllByPartitionKeyHeadersDeepDiveTests
 {
     [Fact]
@@ -2336,6 +2373,7 @@ public class DeleteAllByPartitionKeyHeadersDeepDiveTests
 //  Plan 33 — Group 11: ReadMany Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyEdgeCaseDeepDiveTests
 {
     [Fact]
@@ -2368,6 +2406,7 @@ public class ReadManyEdgeCaseDeepDiveTests
 //  Plan 33 — Group 12: Cross-API Consistency Checks
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrossApiConsistencyDeepDiveTests
 {
     [Fact]
@@ -2427,6 +2466,7 @@ public class CrossApiConsistencyDeepDiveTests
 //  Plan 33 — Group 13: FakeCosmosHandler Metadata Consistency
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerResponseMetadataDeepDiveTests : IDisposable
 {
     private readonly FakeCosmosHandler _handler;

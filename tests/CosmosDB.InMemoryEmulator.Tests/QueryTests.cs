@@ -4,9 +4,11 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using Xunit;
 using System.Text;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1103,6 +1105,7 @@ public class QueryTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryOrderByGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1183,6 +1186,7 @@ public class QueryOrderByGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1571,6 +1575,7 @@ public class QueryGapTests
 /// Tests edge cases for continuation tokens in GetItemQueryIterator.
 /// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.getitemqueryiterator
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryContinuationTokenEdgeCaseTests5
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1623,6 +1628,7 @@ public class QueryContinuationTokenEdgeCaseTests5
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryFeedRangeAndQueryDefinitionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1730,6 +1736,7 @@ public class QueryFeedRangeAndQueryDefinitionTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryGapTests2
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2093,6 +2100,7 @@ public class QueryGapTests2
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryOrderByGapTests4
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2158,6 +2166,7 @@ public class QueryOrderByGapTests4
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryWhereGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2206,6 +2215,7 @@ public class QueryWhereGapTests3
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryFeedRangeDivergentBehaviorTests4
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey") { FeedRangeCount = 4 };
@@ -2242,6 +2252,7 @@ public class QueryFeedRangeDivergentBehaviorTests4
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryIteratorGapTests4
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey") { FeedRangeCount = 4 };
@@ -2288,6 +2299,7 @@ public class QueryIteratorGapTests4
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryIteratorGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2369,6 +2381,7 @@ public class QueryIteratorGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryBitwiseGapTests4
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2403,6 +2416,7 @@ public class QueryBitwiseGapTests4
 
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryJoinGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2429,6 +2443,7 @@ public class QueryJoinGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryGroupByGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2478,6 +2493,7 @@ public class QueryGroupByGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryParserGapTests4
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2506,6 +2522,7 @@ public class QueryParserGapTests4
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryFunctionGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2589,6 +2606,7 @@ public class QueryFunctionGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QuerySelectGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2633,6 +2651,7 @@ public class QuerySelectGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryFunctionGapTests4
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2711,6 +2730,7 @@ public class QueryFunctionGapTests4
 //  FROM alias IN c.field — top-level array iteration tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FromSourceArrayIterationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2885,6 +2905,7 @@ public class FromSourceArrayIterationTests
 
 // ─── Aggregate without GROUP BY ─────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class AggregateWithoutGroupByTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -2932,6 +2953,7 @@ public class AggregateWithoutGroupByTests
 
 // ─── LIKE with ESCAPE ───────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LikeWithEscapeTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -2963,6 +2985,7 @@ public class LikeWithEscapeTests
 
 // ─── COT (Cotangent) ────────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CotFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -2988,6 +3011,7 @@ public class CotFunctionTests
 
 // ─── CHOOSE ─────────────────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChooseFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -3034,6 +3058,7 @@ public class ChooseFunctionTests
 
 // ─── OBJECTTOARRAY ──────────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ObjectToArrayFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -3063,6 +3088,7 @@ public class ObjectToArrayFunctionTests
 
 // ─── STRINGJOIN ─────────────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringJoinFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -3087,6 +3113,7 @@ public class StringJoinFunctionTests
 
 // ─── STRINGSPLIT ────────────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringSplitFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -3112,6 +3139,7 @@ public class StringSplitFunctionTests
 
 // ─── DOCUMENTID ─────────────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DocumentIdFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -3137,6 +3165,7 @@ public class DocumentIdFunctionTests
 
 // ─── ST_AREA ────────────────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StAreaFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -3171,6 +3200,7 @@ public class StAreaFunctionTests
 
 // ─── NOT LIKE ───────────────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class NotLikeTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -3202,6 +3232,7 @@ public class NotLikeTests
 
 // ─── Stream Iterator Continuation Token ─────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamIteratorContinuationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -3245,6 +3276,7 @@ public class StreamIteratorContinuationTests
 
 // ─── Continuation Token Format ──────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContinuationTokenFormatTests
 {
     /// <summary>
@@ -3310,6 +3342,7 @@ public class ContinuationTokenFormatTests
 
 // ─── VECTORDISTANCE ─────────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistanceTests
 {
     /// <summary>
@@ -3345,6 +3378,7 @@ public class VectorDistanceTests
 
 // ─── ObjectToArray k/v format ───────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ObjectToArray_KV_Tests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -3375,6 +3409,7 @@ public class ObjectToArray_KV_Tests
 
 // ─── COUNT(c.field) excludes undefined ──────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CountFieldTests
 {
     [Fact]
@@ -3426,6 +3461,7 @@ public class CountFieldTests
 
 // ─── MIN/MAX on strings ─────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class MinMaxStringTests
 {
     [Fact]
@@ -3479,6 +3515,7 @@ public class MinMaxStringTests
 
 // ─── AVG empty set returns undefined ────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class AvgEmptySetTests
 {
     [Fact]
@@ -3505,6 +3542,7 @@ public class AvgEmptySetTests
 
 // ─── REGEXMATCH modifiers ───────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RegexMatchModifierTests
 {
     [Fact]
@@ -3565,6 +3603,7 @@ public class RegexMatchModifierTests
 
 // ─── EXISTS catch-all ───────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ExistsCatchAllTests
 {
     [Fact]
@@ -3592,6 +3631,7 @@ public class ExistsCatchAllTests
 
 // ─── ArrayToObject function ─────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ArrayToObjectTests
 {
     [Fact]
@@ -3638,6 +3678,7 @@ public class ArrayToObjectTests
 
 // ─── StringTo* functions — invalid input returns undefined ──────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringToUndefinedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -3728,6 +3769,7 @@ public class StringToUndefinedTests
 
 // ─── GROUP BY without aggregates ────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GroupByNoAggregateTests
 {
     [Fact]
@@ -3765,6 +3807,7 @@ public class GroupByNoAggregateTests
 //  Deep Dive: WHERE Clause Hardening
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryWhereDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -3954,6 +3997,7 @@ public class QueryWhereDeepDiveTests
 //  Deep Dive: ORDER BY Hardening
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryOrderByDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -4036,6 +4080,7 @@ public class QueryOrderByDeepDiveTests
 //  Deep Dive: SELECT / Projection Hardening
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QuerySelectDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -4148,6 +4193,7 @@ public class QuerySelectDeepDiveTests
 //  Deep Dive: Aggregation Hardening
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryAggregationDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -4263,6 +4309,7 @@ public class QueryAggregationDeepDiveTests
 //  Deep Dive: JOIN Hardening
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryJoinDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -4320,6 +4367,7 @@ public class QueryJoinDeepDiveTests
 //  Deep Dive: Subquery Hardening
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QuerySubqueryDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -4355,6 +4403,7 @@ public class QuerySubqueryDeepDiveTests
 //  Deep Dive: Pagination & Continuation Token Hardening
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryPaginationDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -4426,6 +4475,7 @@ public class QueryPaginationDeepDiveTests
 //  Deep Dive: Data Type Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDataTypeDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -4496,6 +4546,7 @@ public class QueryDataTypeDeepDiveTests
 //  Deep Dive: Error Handling
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryErrorHandlingDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -4538,6 +4589,7 @@ public class QueryErrorHandlingDeepDiveTests
 //  Deep Dive: Divergent Behavior Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDivergentBehaviorDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -4593,6 +4645,7 @@ public class QueryDivergentBehaviorDeepDiveTests
 //  Phase 1: Bug Fix TDD Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryBugFixTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -4862,6 +4915,7 @@ public class QueryBugFixTests
 //  Phase 2: Core Query Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryCoreEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -5066,6 +5120,7 @@ public class QueryCoreEdgeCaseTests
 //  Phase 2: Aggregate Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryAggregateEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -5208,6 +5263,7 @@ public class QueryAggregateEdgeCaseTests
 //  Phase 2: WHERE Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryWhereEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -5364,6 +5420,7 @@ public class QueryWhereEdgeCaseTests
 //  Phase 2: GROUP BY Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryGroupByEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -5476,6 +5533,7 @@ public class QueryGroupByEdgeCaseTests
 //  Phase 2: JOIN Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryJoinEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -5547,6 +5605,7 @@ public class QueryJoinEdgeCaseTests
 //  Phase 2: Subquery Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QuerySubqueryEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -5608,6 +5667,7 @@ public class QuerySubqueryEdgeCaseTests
 //  Phase 2: Projection Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryProjectionEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -5692,6 +5752,7 @@ public class QueryProjectionEdgeCaseTests
 //  Phase 2: Cross-Partition Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryCrossPartitionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -5763,6 +5824,7 @@ public class QueryCrossPartitionTests
 //  Phase 3: Built-in Function Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryBuiltInFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -5991,6 +6053,7 @@ public class QueryBuiltInFunctionTests
 //  Phase 3: Numeric Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryNumericEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -6062,6 +6125,7 @@ public class QueryNumericEdgeCaseTests
 //  Phase 4: Parser Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryParserEdgeCaseTests
 {
     [Fact]
@@ -6120,6 +6184,7 @@ public class QueryParserEdgeCaseTests
 //  Deep Dive v2 — Phase 1: Bug Investigation Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV2_Phase1_BugTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -6442,6 +6507,7 @@ public class QueryDeepDiveV2_Phase1_BugTests
 //  Deep Dive v2 — Phase 2: Feature Interaction Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV2_Phase2_FeatureInteractionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -6832,6 +6898,7 @@ public class QueryDeepDiveV2_Phase2_FeatureInteractionTests
 //  Deep Dive v2 — Phase 3: Edge Case Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV2_Phase3_LikeEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -6904,6 +6971,7 @@ public class QueryDeepDiveV2_Phase3_LikeEdgeCases
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV2_Phase3_BetweenEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -6982,6 +7050,7 @@ public class QueryDeepDiveV2_Phase3_BetweenEdgeCases
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV2_Phase3_InEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -7026,6 +7095,7 @@ public class QueryDeepDiveV2_Phase3_InEdgeCases
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV2_Phase3_AggregateEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -7096,6 +7166,7 @@ public class QueryDeepDiveV2_Phase3_AggregateEdgeCases
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV2_Phase3_FromAliasTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -7149,6 +7220,7 @@ public class QueryDeepDiveV2_Phase3_FromAliasTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV2_Phase3_ConcurrencyTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -7226,6 +7298,7 @@ public class QueryDeepDiveV2_Phase3_ConcurrencyTests
 //  Deep Dive v2 — Phase 4: Parser Validation Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV2_Phase4_ParserTests
 {
     [Fact]
@@ -7300,6 +7373,7 @@ public class QueryDeepDiveV2_Phase4_ParserTests
 //  Deep Dive v3 — Phase 1: Untested Function Coverage
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV3_UntestedFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -7851,6 +7925,7 @@ public class QueryDeepDiveV3_UntestedFunctionTests
 //  Deep Dive v3 — Phase 2: Missing Edge Case Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV3_EdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -8132,6 +8207,7 @@ public class QueryDeepDiveV3_EdgeCaseTests
 // Deep Dive V3 — Phase 1A: Bug 19 – COUNT(c.field) Null Semantics
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryCountFieldNullSemanticsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -8297,6 +8373,7 @@ public class QueryCountFieldNullSemanticsTests
 // Deep Dive V3 — Phase 1B: Bug 20 – Subquery TOP applied before ORDER BY
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QuerySubqueryTopOrderByTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -8372,6 +8449,7 @@ public class QuerySubqueryTopOrderByTests
 // Deep Dive V3 — Phase 1C: Bug 21 – Cross-Type Equality
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryCrossTypeEqualityTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -8465,6 +8543,7 @@ public class QueryCrossTypeEqualityTests
 // Deep Dive V3 — Phase 1D: Bug 22 – LIKE with undefined field
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryLikeUndefinedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -8520,6 +8599,7 @@ public class QueryLikeUndefinedTests
 // Deep Dive V3 — Phase 1E: Bug 23 – String concat (||) with undefined
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryStringConcatUndefinedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -8600,6 +8680,7 @@ public class QueryStringConcatUndefinedTests
 // Deep Dive V3 — Phase 1F: Undefined Comparison Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryUndefinedComparisonTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -8698,6 +8779,7 @@ public class QueryUndefinedComparisonTests
 // Deep Dive V3 — Phase 2: Function Coverage Tests
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV3_FunctionCoverageTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -9020,6 +9102,7 @@ public class QueryDeepDiveV3_FunctionCoverageTests
 // Deep Dive V3 — Phase 3: Parser & Error Handling Tests
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV3_ParserTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -9089,6 +9172,7 @@ public class QueryDeepDiveV3_ParserTests
 // Deep Dive V3 — Phase 4: Interaction / Regression Tests
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV3_InteractionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -9228,6 +9312,7 @@ public class QueryDeepDiveV3_InteractionTests
 // Deep Dive V4 — Phase 1: Untested Built-in Function Coverage
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV4_UntestedFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -9713,6 +9798,7 @@ public class QueryDeepDiveV4_UntestedFunctionTests
 // Deep Dive V4 — Phase 2: SQL Syntax Coverage
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV4_SyntaxCoverageTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -9873,6 +9959,7 @@ public class QueryDeepDiveV4_SyntaxCoverageTests
 // Deep Dive V4 — Phase 3: Cross-Feature Interaction Tests
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV4_CrossFeatureInteractionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -9992,6 +10079,7 @@ public class QueryDeepDiveV4_CrossFeatureInteractionTests
 // Deep Dive V4 — Phase 4: Bug Fix Tests
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV4_BugFixTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -10067,6 +10155,7 @@ public class QueryDeepDiveV4_BugFixTests
 // Deep Dive V4 — Phase 5a: NULL / Undefined Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV4_NullUndefinedEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -10171,6 +10260,7 @@ public class QueryDeepDiveV4_NullUndefinedEdgeCases
 // Deep Dive V4 — Phase 5b: Numeric Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV4_NumericEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -10273,6 +10363,7 @@ public class QueryDeepDiveV4_NumericEdgeCases
 // Deep Dive V4 — Phase 5c: String Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV4_StringEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -10356,6 +10447,7 @@ public class QueryDeepDiveV4_StringEdgeCases
 // Deep Dive V4 — Phase 5d: Array Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV4_ArrayEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -10442,6 +10534,7 @@ public class QueryDeepDiveV4_ArrayEdgeCases
 // Deep Dive V4 — Phase 5e: Date/Time Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV4_DateTimeEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -10517,6 +10610,7 @@ public class QueryDeepDiveV4_DateTimeEdgeCases
 // Deep Dive V4 — Phase 5f: Subquery Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV4_SubqueryEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -10572,6 +10666,7 @@ public class QueryDeepDiveV4_SubqueryEdgeCases
 // Deep Dive V4 — Phase 5g: Pagination Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV4_PaginationEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -10620,6 +10715,7 @@ public class QueryDeepDiveV4_PaginationEdgeCases
 // Deep Dive V4 — Phase 6: Divergent Behavior (Skip + Sister Tests)
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV4_DivergentBehaviorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -10700,6 +10796,7 @@ public class QueryDeepDiveV4_DivergentBehaviorTests
 // Deep Dive V5 — Final Coverage Tests
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV5_FinalCoverageTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -11053,6 +11150,7 @@ public class QueryDeepDiveV5_FinalCoverageTests
 // Deep Dive V6 — Phase 1: Bug Investigation Tests
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV6_BugTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -11167,6 +11265,7 @@ public class QueryDeepDiveV6_BugTests
 // Deep Dive V6 — Phase 2: Missing Test Coverage
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV6_CoverageTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -11688,6 +11787,7 @@ public class QueryDeepDiveV6_CoverageTests
 // Deep Dive V6 — Phase 3: Edge Cases & Boundary Conditions
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV6_EdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -11794,6 +11894,7 @@ public class QueryDeepDiveV6_EdgeCaseTests
 // Deep Dive V6 — Phase 4: Parser Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV6_ParserTests
 {
     // ── P1: Complex query round-trip through SimplifySdkQuery ──
@@ -11838,6 +11939,7 @@ public class QueryDeepDiveV6_ParserTests
 // Deep Dive V7 — Phase 1: GROUP BY null vs undefined key collision (Bug B1)
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_GroupByNullUndefinedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -11944,6 +12046,7 @@ public class QueryDeepDiveV7_GroupByNullUndefinedTests
 // Deep Dive V7 — Phase 1.2: Subquery depth tests (Bug B5)
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_SubqueryDepthTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -11980,6 +12083,7 @@ public class QueryDeepDiveV7_SubqueryDepthTests
 // Deep Dive V7 — Phase 2: Date/Time Function Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_DateTimeFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -12211,6 +12315,7 @@ public class QueryDeepDiveV7_DateTimeFunctionTests
 // Deep Dive V7 — Phase 3: Math Function Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_MathEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -12355,6 +12460,7 @@ public class QueryDeepDiveV7_MathEdgeCaseTests
 // Deep Dive V7 — Phase 4: String Function Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_StringEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -12534,6 +12640,7 @@ public class QueryDeepDiveV7_StringEdgeCaseTests
 // Deep Dive V7 — Phase 5: WHERE Clause Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_WhereEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -12712,6 +12819,7 @@ public class QueryDeepDiveV7_WhereEdgeCaseTests
 // Deep Dive V7 — Phase 6: Aggregate Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_AggregateEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -12850,6 +12958,7 @@ public class QueryDeepDiveV7_AggregateEdgeCaseTests
 // Deep Dive V7 — Phase 7: ORDER BY Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_OrderByEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -12933,6 +13042,7 @@ public class QueryDeepDiveV7_OrderByEdgeCaseTests
 // Deep Dive V7 — Phase 8: JOIN Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_JoinEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -13028,6 +13138,7 @@ public class QueryDeepDiveV7_JoinEdgeCaseTests
 // Deep Dive V7 — Phase 9: Parameter Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_ParameterEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -13096,6 +13207,7 @@ public class QueryDeepDiveV7_ParameterEdgeCaseTests
 // Deep Dive V7 — Phase 10: Unicode Tests
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_UnicodeTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -13172,6 +13284,7 @@ public class QueryDeepDiveV7_UnicodeTests
 // Deep Dive V7 — Phase 11: Error Handling
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_ErrorHandlingTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -13221,6 +13334,7 @@ public class QueryDeepDiveV7_ErrorHandlingTests
 // Deep Dive V7 — Phase 12: GROUP BY Complex Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_GroupByComplexTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -13312,6 +13426,7 @@ public class QueryDeepDiveV7_GroupByComplexTests
 // Deep Dive V7 — Phase 13: SELECT Projection Edge Cases
 // ════════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV7_SelectProjectionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -13383,6 +13498,7 @@ public class QueryDeepDiveV7_SelectProjectionTests
 // ════════════════════════════════════════════════════════════════════════════════
 
 // ── Phase 1: NULL Input to Functions ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_NullInputTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -13487,6 +13603,7 @@ public class QueryDeepDiveV8_NullInputTests
 }
 
 // ── Phase 2: Undefined (Missing Field) Input to Functions ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_UndefinedInputTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -13592,6 +13709,7 @@ public class QueryDeepDiveV8_UndefinedInputTests
 }
 
 // ── Phase 3: Empty String Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_EmptyStringTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -13665,6 +13783,7 @@ public class QueryDeepDiveV8_EmptyStringTests
 }
 
 // ── Phase 4: Type Mismatch Inputs ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_TypeMismatchTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -13729,6 +13848,7 @@ public class QueryDeepDiveV8_TypeMismatchTests
 }
 
 // ── Phase 5: Negative Index/Count Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_NegativeIndexTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -13789,6 +13909,7 @@ public class QueryDeepDiveV8_NegativeIndexTests
 }
 
 // ── Phase 6: WHERE Clause Boundary Conditions ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_WhereBoundaryTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -13847,6 +13968,7 @@ public class QueryDeepDiveV8_WhereBoundaryTests
 }
 
 // ── Phase 7: IN Operator Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_InOperatorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -13909,6 +14031,7 @@ public class QueryDeepDiveV8_InOperatorTests
 }
 
 // ── Phase 8: BETWEEN Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_BetweenTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -13977,6 +14100,7 @@ public class QueryDeepDiveV8_BetweenTests
 }
 
 // ── Phase 9: LIKE Special Characters ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_LikeSpecialCharsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14038,6 +14162,7 @@ public class QueryDeepDiveV8_LikeSpecialCharsTests
 }
 
 // ── Phase 10: Nested Function Calls ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_NestedFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14085,6 +14210,7 @@ public class QueryDeepDiveV8_NestedFunctionTests
 }
 
 // ── Phase 11: Multiple Aggregates in SELECT ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_MultipleAggregatesTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14141,6 +14267,7 @@ public class QueryDeepDiveV8_MultipleAggregatesTests
 }
 
 // ── Phase 12: SELECT VALUE with Aggregates ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_SelectValueAggregateTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14184,6 +14311,7 @@ public class QueryDeepDiveV8_SelectValueAggregateTests
 }
 
 // ── Phase 13: Arithmetic Overflow/Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_ArithmeticEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14236,6 +14364,7 @@ public class QueryDeepDiveV8_ArithmeticEdgeCaseTests
 }
 
 // ── Phase 14: String Concatenation (||) Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_StringConcatTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14277,6 +14406,7 @@ public class QueryDeepDiveV8_StringConcatTests
 }
 
 // ── Phase 15: ARRAY_CONTAINS & ARRAY_LENGTH Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_ArrayFunctionEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14334,6 +14464,7 @@ public class QueryDeepDiveV8_ArrayFunctionEdgeCaseTests
 }
 
 // ── Phase 16: Type-Check Function Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_TypeCheckTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14390,6 +14521,7 @@ public class QueryDeepDiveV8_TypeCheckTests
 }
 
 // ── Phase 17: ORDER BY + GROUP BY Interaction ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV8_GroupByOrderByTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14453,6 +14585,7 @@ public class QueryDeepDiveV8_GroupByOrderByTests
 // ═══════════════════════════════════════════════════════════════════
 
 // ── Batch 1: Operator Coverage Gaps ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_OperatorCoverageTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14537,6 +14670,7 @@ public class QueryDeepDiveV9_OperatorCoverageTests
 }
 
 // ── Batch 2: Null Coalescing & Ternary Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_CoalesceTernaryTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14646,6 +14780,7 @@ public class QueryDeepDiveV9_CoalesceTernaryTests
 }
 
 // ── Batch 3: String Function Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_StringFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14745,6 +14880,7 @@ public class QueryDeepDiveV9_StringFunctionTests
 }
 
 // ── Batch 4: Aggregate Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_AggregateTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14865,6 +15001,7 @@ public class QueryDeepDiveV9_AggregateTests
 }
 
 // ── Batch 5: GROUP BY Advanced Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_GroupByAdvancedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -14968,6 +15105,7 @@ public class QueryDeepDiveV9_GroupByAdvancedTests
 }
 
 // ── Batch 6: JOIN Advanced Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_JoinAdvancedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -15052,6 +15190,7 @@ public class QueryDeepDiveV9_JoinAdvancedTests
 }
 
 // ── Batch 7: Subquery & EXISTS Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_SubqueryExistsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -15127,6 +15266,7 @@ public class QueryDeepDiveV9_SubqueryExistsTests
 }
 
 // ── Batch 8: ORDER BY Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_OrderByTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -15219,6 +15359,7 @@ public class QueryDeepDiveV9_OrderByTests
 }
 
 // ── Batch 9: OFFSET/LIMIT & TOP Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_PaginationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -15303,6 +15444,7 @@ public class QueryDeepDiveV9_PaginationTests
 }
 
 // ── Batch 10: Complex Cross-Feature Interactions ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_CrossFeatureTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -15404,6 +15546,7 @@ public class QueryDeepDiveV9_CrossFeatureTests
 }
 
 // ── Batch 11: Type Checking Function Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_TypeCheckTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -15466,6 +15609,7 @@ public class QueryDeepDiveV9_TypeCheckTests
 }
 
 // ── Batch 12: Date/Time Function Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_DateTimeFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -15544,6 +15688,7 @@ public class QueryDeepDiveV9_DateTimeFunctionTests
 }
 
 // ── Batch 13: Array Function Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_ArrayFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -15617,6 +15762,7 @@ public class QueryDeepDiveV9_ArrayFunctionTests
 }
 
 // ── Batch 14: Parameterized Query Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_ParameterTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -15694,6 +15840,7 @@ public class QueryDeepDiveV9_ParameterTests
 }
 
 // ── Batch 15: Math Function Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV9_MathEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -15764,6 +15911,7 @@ public class QueryDeepDiveV9_MathEdgeCaseTests
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ── Phase 1: IS_NAN Function (Bug Fix) ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV10_IsNanTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -15819,6 +15967,7 @@ public class QueryDeepDiveV10_IsNanTests
 }
 
 // ── Phase 2: TYPE() Function ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV10_TypeFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -15898,6 +16047,7 @@ public class QueryDeepDiveV10_TypeFunctionTests
 }
 
 // ── Phase 3: STARTSWITH/ENDSWITH/CONTAINS null arg behaviour ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV10_StringFunctionNullTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -16020,6 +16170,7 @@ public class QueryDeepDiveV10_StringFunctionNullTests
 }
 
 // ── Phase 4: Math Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV10_MathEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -16093,6 +16244,7 @@ public class QueryDeepDiveV10_MathEdgeCaseTests
 }
 
 // ── Phase 5: String Function Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV10_StringEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -16193,6 +16345,7 @@ public class QueryDeepDiveV10_StringEdgeCaseTests
 }
 
 // ── Phase 6: Array Function Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV10_ArrayEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -16267,6 +16420,7 @@ public class QueryDeepDiveV10_ArrayEdgeCaseTests
 }
 
 // ── Phase 7: Aggregate Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV10_AggregateEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -16317,6 +16471,7 @@ public class QueryDeepDiveV10_AggregateEdgeCaseTests
 }
 
 // ── Phase 8: Date/Time Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV10_DateTimeEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -16364,6 +16519,7 @@ public class QueryDeepDiveV10_DateTimeEdgeCaseTests
 }
 
 // ── Phase 9: WHERE/Conditional Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV10_WhereConditionalTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -16455,6 +16611,7 @@ public class QueryDeepDiveV10_WhereConditionalTests
 }
 
 // ── Phase 10: ORDER BY / GROUP BY / LIKE / BETWEEN / IN Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV10_ClauseEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -16554,6 +16711,7 @@ public class QueryDeepDiveV10_ClauseEdgeCaseTests
 }
 
 // ── Phase 11: StringToNull function ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV10_StringToNullTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -16595,6 +16753,7 @@ public class QueryDeepDiveV10_StringToNullTests
 }
 
 // ── Phase 12: Cross-Feature Interactions ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV10_CrossFeatureTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -16671,6 +16830,7 @@ public class QueryDeepDiveV10_CrossFeatureTests
 // ══════════════════════════════════════════════════════════════════════════════
 
 // ── Category A: Function/Operator Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV11_FunctionEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -16862,6 +17022,7 @@ public class QueryDeepDiveV11_FunctionEdgeCaseTests
 }
 
 // ── Category B: Clause/Operator Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV11_ClauseEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -17021,6 +17182,7 @@ public class QueryDeepDiveV11_ClauseEdgeCaseTests
 }
 
 // ── Category C: Cross-Feature Interactions ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV11_CrossFeatureTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -17148,6 +17310,7 @@ public class QueryDeepDiveV11_CrossFeatureTests
 }
 
 // ── Category D: DateTime Function Gap Coverage ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV11_DateTimeFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -17213,6 +17376,7 @@ public class QueryDeepDiveV11_DateTimeFunctionTests
 }
 
 // ── Category E: Parameter Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV11_ParameterTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -17266,6 +17430,7 @@ public class QueryDeepDiveV11_ParameterTests
 // Deep Dive V12: Edge Case Tests – Arithmetic, String, Math, DateTime, etc.
 // TDD: Tests written first, then fixes applied to InMemoryContainer.cs
 // ══════════════════════════════════════════════════════════════════════════════
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV12_EdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("edge-case-test", "/pk");
@@ -18061,6 +18226,7 @@ public class QueryDeepDiveV12_EdgeCaseTests
 //  edge cases, operators, subqueries, type coercion, error handling
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV12_DateTimeFunctionEdgeCases
 {
     private readonly InMemoryContainer _container = new("dt-edge", "/pk");
@@ -18327,6 +18493,7 @@ public class QueryDeepDiveV12_DateTimeFunctionEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV12_NumberBinEdgeCases
 {
     private readonly InMemoryContainer _container = new("nb-edge", "/pk");
@@ -18412,6 +18579,7 @@ public class QueryDeepDiveV12_NumberBinEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV12_LikeEscapeEdgeCases
 {
     private readonly InMemoryContainer _container = new("like-edge", "/pk");
@@ -18473,6 +18641,7 @@ public class QueryDeepDiveV12_LikeEscapeEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV12_StringFunctionEdgeCases
 {
     private readonly InMemoryContainer _container = new("str-edge", "/pk");
@@ -18598,6 +18767,7 @@ public class QueryDeepDiveV12_StringFunctionEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV12_MathFunctionEdgeCases
 {
     private readonly InMemoryContainer _container = new("math-edge", "/pk");
@@ -18679,6 +18849,7 @@ public class QueryDeepDiveV12_MathFunctionEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV12_AggregateEdgeCases
 {
     private readonly InMemoryContainer _container = new("agg-edge", "/pk");
@@ -18767,6 +18938,7 @@ public class QueryDeepDiveV12_AggregateEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV12_OperatorEdgeCases
 {
     private readonly InMemoryContainer _container = new("op-edge", "/pk");
@@ -18879,6 +19051,7 @@ public class QueryDeepDiveV12_OperatorEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV12_SelectJoinEdgeCases
 {
     private readonly InMemoryContainer _container = new("sj-edge", "/pk");
@@ -18959,6 +19132,7 @@ public class QueryDeepDiveV12_SelectJoinEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV12_SubqueryEdgeCases
 {
     private readonly InMemoryContainer _container = new("sq-edge", "/pk");
@@ -19017,6 +19191,7 @@ public class QueryDeepDiveV12_SubqueryEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV12_TypeCoercionEdgeCases
 {
     private readonly InMemoryContainer _container = new("tc-edge", "/pk");
@@ -19091,6 +19266,7 @@ public class QueryDeepDiveV12_TypeCoercionEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV12_ErrorHandling
 {
     private readonly InMemoryContainer _container = new("err-edge", "/pk");
@@ -19135,6 +19311,7 @@ public class QueryDeepDiveV12_ErrorHandling
 // Deep Dive V13 — Comprehensive Edge Case Coverage
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV13_StringEdgeCases
 {
     private readonly InMemoryContainer _container = new("v13-str", "/pk");
@@ -19243,6 +19420,7 @@ public class QueryDeepDiveV13_StringEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV13_MathEdgeCases
 {
     private readonly InMemoryContainer _container = new("v13-math", "/pk");
@@ -19330,6 +19508,7 @@ public class QueryDeepDiveV13_MathEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV13_ArrayEdgeCases
 {
     private readonly InMemoryContainer _container = new("v13-arr", "/pk");
@@ -19421,6 +19600,7 @@ public class QueryDeepDiveV13_ArrayEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV13_DateTimeEdgeCases
 {
     private readonly InMemoryContainer _container = new("v13-dt", "/pk");
@@ -19495,6 +19675,7 @@ public class QueryDeepDiveV13_DateTimeEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV13_OperatorEdgeCases
 {
     private readonly InMemoryContainer _container = new("v13-ops", "/pk");
@@ -19608,6 +19789,7 @@ public class QueryDeepDiveV13_OperatorEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV13_CrossFeature
 {
     private readonly InMemoryContainer _container = new("v13-cross", "/pk");
@@ -19747,6 +19929,7 @@ public class QueryDeepDiveV13_CrossFeature
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV13_ParameterEdgeCases
 {
     private readonly InMemoryContainer _container = new("v13-param", "/pk");
@@ -19849,6 +20032,7 @@ public class QueryDeepDiveV13_ParameterEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV13_ProjectionEdgeCases
 {
     private readonly InMemoryContainer _container = new("v13-proj", "/pk");
@@ -19936,6 +20120,7 @@ public class QueryDeepDiveV13_ProjectionEdgeCases
 //  Deep-Dive V14 — GROUP BY Advanced Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV14_GroupByAdvanced
 {
     private readonly InMemoryContainer _container = new("v14-grp", "/pk");
@@ -20079,6 +20264,7 @@ public class QueryDeepDiveV14_GroupByAdvanced
 //  Deep-Dive V14 — Undefined/Null Propagation Deep Dive
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV14_UndefinedNullPropagation
 {
     private readonly InMemoryContainer _container = new("v14-undef", "/pk");
@@ -20221,6 +20407,7 @@ public class QueryDeepDiveV14_UndefinedNullPropagation
 //  Deep-Dive V14 — Bitwise & Integer Function Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV14_BitwiseIntEdgeCases
 {
     private readonly InMemoryContainer _container = new("v14-bit", "/pk");
@@ -20309,6 +20496,7 @@ public class QueryDeepDiveV14_BitwiseIntEdgeCases
 //  Deep-Dive V14 — String Function Null/Type Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV14_StringNullEdgeCases
 {
     private readonly InMemoryContainer _container = new("v14-strnull", "/pk");
@@ -20397,6 +20585,7 @@ public class QueryDeepDiveV14_StringNullEdgeCases
 //  Deep-Dive V14 — Advanced Subquery & EXISTS Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV14_SubqueryAdvanced
 {
     private readonly InMemoryContainer _container = new("v14-sub", "/pk");
@@ -20505,6 +20694,7 @@ public class QueryDeepDiveV14_SubqueryAdvanced
 //  Deep-Dive V14 — ORDER BY Complex Expressions
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV14_OrderByComplex
 {
     private readonly InMemoryContainer _container = new("v14-ord", "/pk");
@@ -20654,6 +20844,7 @@ public class QueryDeepDiveV14_OrderByComplex
 //  Deep-Dive V14 — SELECT Projection Complex Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV14_ProjectionComplex
 {
     private readonly InMemoryContainer _container = new("v14-proj", "/pk");
@@ -20771,6 +20962,7 @@ public class QueryDeepDiveV14_ProjectionComplex
 //  Deep-Dive V14 — Cross-Platform Sensitive Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV14_CrossPlatform
 {
     private readonly InMemoryContainer _container = new("v14-xplat", "/pk");
@@ -20856,6 +21048,7 @@ public class QueryDeepDiveV14_CrossPlatform
 // V15 Deep Dive: Comprehensive Function & Edge Case Coverage
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryMathFunctionTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -21109,6 +21302,7 @@ public class QueryMathFunctionTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryStringFunctionTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -21299,6 +21493,7 @@ public class QueryStringFunctionTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryIntegerBitwiseFunctionTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -21419,6 +21614,7 @@ public class QueryIntegerBitwiseFunctionTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDateTimeFunctionTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -21575,6 +21771,7 @@ public class QueryDateTimeFunctionTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryTypeCheckFunctionTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -21634,6 +21831,7 @@ public class QueryTypeCheckFunctionTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryArrayFunctionTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -21732,6 +21930,7 @@ public class QueryArrayFunctionTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryConditionalFunctionTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -21774,6 +21973,7 @@ public class QueryConditionalFunctionTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryGeoSpatialFunctionTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -21845,6 +22045,7 @@ public class QueryGeoSpatialFunctionTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryFullTextSearchFunctionTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -21913,6 +22114,7 @@ public class QueryFullTextSearchFunctionTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryArithmeticEdgeCaseTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -21948,6 +22150,7 @@ public class QueryArithmeticEdgeCaseTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryOrderByEdgeCaseTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -21978,6 +22181,7 @@ public class QueryOrderByEdgeCaseTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryGroupByEdgeCaseTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22016,6 +22220,7 @@ public class QueryGroupByEdgeCaseTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryJoinEdgeCaseTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22049,6 +22254,7 @@ public class QueryJoinEdgeCaseTests_V15
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QuerySubqueryEdgeCaseTests_V15
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22082,6 +22288,7 @@ public class QuerySubqueryEdgeCaseTests_V15
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── V16 Phase 1: TOBOOLEAN bug fix tests ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_ToBooleanTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22153,6 +22360,7 @@ public class QueryDeepDiveV16_ToBooleanTests
 }
 
 // ── V16 Phase 2: LEFT/RIGHT negative count bug fix tests ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_LeftRightEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22223,6 +22431,7 @@ public class QueryDeepDiveV16_LeftRightEdgeCases
 }
 
 // ── V16 Phase 3: INTBITLEFTSHIFT/INTBITRIGHTSHIFT edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_IntBitShiftEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22309,6 +22518,7 @@ public class QueryDeepDiveV16_IntBitShiftEdgeCases
 }
 
 // ── V16 Phase 4: WHERE three-value logic ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_WhereThreeValueLogicTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22387,6 +22597,7 @@ public class QueryDeepDiveV16_WhereThreeValueLogicTests
 }
 
 // ── V16 Phase 5: Mixed-type ORDER BY ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_OrderByMixedTypeTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22436,6 +22647,7 @@ public class QueryDeepDiveV16_OrderByMixedTypeTests
 }
 
 // ── V16 Phase 6: GROUP BY edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_GroupByEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22492,6 +22704,7 @@ public class QueryDeepDiveV16_GroupByEdgeCases
 }
 
 // ── V16 Phase 7: SELECT VALUE aggregate + empty set ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_AggregateEmptySetTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22553,6 +22766,7 @@ public class QueryDeepDiveV16_AggregateEmptySetTests
 }
 
 // ── V16 Phase 8: DISTINCT + TOP combined ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_DistinctTopCombinedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22595,6 +22809,7 @@ public class QueryDeepDiveV16_DistinctTopCombinedTests
 }
 
 // ── V16 Phase 9: JOIN with empty/null/missing arrays ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_JoinWithEmptyArrayTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22643,6 +22858,7 @@ public class QueryDeepDiveV16_JoinWithEmptyArrayTests
 }
 
 // ── V16 Phase 10: Subquery edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_SubqueryEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22687,6 +22903,7 @@ public class QueryDeepDiveV16_SubqueryEdgeCases
 }
 
 // ── V16 Phase 11: COALESCE edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_CoalesceEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22747,6 +22964,7 @@ public class QueryDeepDiveV16_CoalesceEdgeCases
 }
 
 // ── V16 Phase 12: Ternary (IIF/?) expression edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_TernaryEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22800,6 +23018,7 @@ public class QueryDeepDiveV16_TernaryEdgeCases
 }
 
 // ── V16 Phase 13: LIKE / BETWEEN / IN edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_LikeBetweenInEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22886,6 +23105,7 @@ public class QueryDeepDiveV16_LikeBetweenInEdgeCases
 }
 
 // ── V16 Phase 14: String concatenation operator ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_StringConcatOperatorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22922,6 +23142,7 @@ public class QueryDeepDiveV16_StringConcatOperatorTests
 }
 
 // ── V16 Phase 15: Object/Array literal in SELECT ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_ObjectArrayLiteralTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -22961,6 +23182,7 @@ public class QueryDeepDiveV16_ObjectArrayLiteralTests
 }
 
 // ── V16 Phase 16: OFFSET/LIMIT without ORDER BY ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV16_OffsetLimitTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23010,6 +23232,7 @@ public class QueryDeepDiveV16_OffsetLimitTests
 // ════════════════════════════════════════════════════════════════════════════════
 
 // ── V17 Phase 1: Negate null/undefined/non-numeric → undefined (Bug #121) ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_NegateUndefinedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23084,6 +23307,7 @@ public class QueryDeepDiveV17_NegateUndefinedTests
 }
 
 // ── V17 Phase 2: BitwiseNot null/undefined/non-long → undefined (Bug #122) ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_BitwiseNotUndefinedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23146,6 +23370,7 @@ public class QueryDeepDiveV17_BitwiseNotUndefinedTests
 }
 
 // ── V17 Phase 3: LIKE with null → undefined (Bug #123) ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_LikeNullTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23212,6 +23437,7 @@ public class QueryDeepDiveV17_LikeNullTests
 }
 
 // ── V17 Phase 4: COALESCE function all-undefined → undefined (Bug #124) ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_CoalesceFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23268,6 +23494,7 @@ public class QueryDeepDiveV17_CoalesceFunctionTests
 }
 
 // ── V17 Phase 5: Nested subqueries ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_NestedSubqueryTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23314,6 +23541,7 @@ public class QueryDeepDiveV17_NestedSubqueryTests
 }
 
 // ── V17 Phase 6: Aggregate on empty container ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_EmptyContainerAggregateTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23361,6 +23589,7 @@ public class QueryDeepDiveV17_EmptyContainerAggregateTests
 }
 
 // ── V17 Phase 7: LIKE with non-string types ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_LikeNonStringTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23412,6 +23641,7 @@ public class QueryDeepDiveV17_LikeNonStringTests
 }
 
 // ── V17 Phase 8: BETWEEN with null ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_BetweenNullTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23463,6 +23693,7 @@ public class QueryDeepDiveV17_BetweenNullTests
 }
 
 // ── V17 Phase 9: IN with null edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_InNullEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23508,6 +23739,7 @@ public class QueryDeepDiveV17_InNullEdgeCaseTests
 }
 
 // ── V17 Phase 10: Ternary with null/zero condition ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_TernaryEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23564,6 +23796,7 @@ public class QueryDeepDiveV17_TernaryEdgeCaseTests
 }
 
 // ── V17 Phase 11: DISTINCT VALUE edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_DistinctValueTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23616,6 +23849,7 @@ public class QueryDeepDiveV17_DistinctValueTests
 }
 
 // ── V17 Phase 12: ORDER BY with LIMIT 0 and OFFSET 0 ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_LimitOffsetEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23663,6 +23897,7 @@ public class QueryDeepDiveV17_LimitOffsetEdgeCaseTests
 }
 
 // ── V17 Phase 13: LIKE with field that is numeric ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_LikeFieldTypeTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23701,6 +23936,7 @@ public class QueryDeepDiveV17_LikeFieldTypeTests
 }
 
 // ── V17 Phase 14: Multiple aggregates in SELECT VALUE object literal ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_MultiAggregateTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23745,6 +23981,7 @@ public class QueryDeepDiveV17_MultiAggregateTests
 }
 
 // ── V17 Phase 15: Complex HAVING with AND/OR ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_ComplexHavingTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23789,6 +24026,7 @@ public class QueryDeepDiveV17_ComplexHavingTests
 }
 
 // ── V17 Phase 16: NOT BETWEEN ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_NotBetweenTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23820,6 +24058,7 @@ public class QueryDeepDiveV17_NotBetweenTests
 }
 
 // ── V17 Phase 17: NOT LIKE with various values ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV17_NotLikeTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23865,6 +24104,7 @@ public class QueryDeepDiveV17_NotLikeTests
 
 // ── V18 Phase 1: TOSTRING edge cases ──
 // BUG-125: TOSTRING with arrays/objects should return JSON string, not undefined
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV18_ToStringTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -23961,6 +24201,7 @@ public class QueryDeepDiveV18_ToStringTests
 }
 
 // ── V18 Phase 2: TONUMBER edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV18_ToNumberTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24039,6 +24280,7 @@ public class QueryDeepDiveV18_ToNumberTests
 }
 
 // ── V18 Phase 3: TOBOOLEAN edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV18_ToBooleanTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24108,6 +24350,7 @@ public class QueryDeepDiveV18_ToBooleanTests
 }
 
 // ── V18 Phase 4: STRING_EQUALS ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV18_StringEqualsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24168,6 +24411,7 @@ public class QueryDeepDiveV18_StringEqualsTests
 }
 
 // ── V18 Phase 5: BETWEEN edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV18_BetweenEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24226,6 +24470,7 @@ public class QueryDeepDiveV18_BetweenEdgeCaseTests
 }
 
 // ── V18 Phase 6: COALESCE function ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV18_CoalesceFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24282,6 +24527,7 @@ public class QueryDeepDiveV18_CoalesceFunctionTests
 }
 
 // ── V18 Phase 7: Aggregate null/undefined edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV18_AggregateEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24349,6 +24595,7 @@ public class QueryDeepDiveV18_AggregateEdgeCaseTests
 }
 
 // ── V18 Phase 8: Complex query combinations ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV18_ComplexQueryTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24430,6 +24677,7 @@ public class QueryDeepDiveV18_ComplexQueryTests
 }
 
 // ── V18 Phase 9: IS_DEFINED edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV18_IsDefinedEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24496,6 +24744,7 @@ public class QueryDeepDiveV18_IsDefinedEdgeCaseTests
 }
 
 // ── V18 Phase 10: Misc function edge cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV18_FunctionEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24609,6 +24858,7 @@ public class QueryDeepDiveV18_FunctionEdgeCaseTests
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── V19 Phase 1: System Properties in Queries ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV19_SystemPropertyTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24697,6 +24947,7 @@ public class QueryDeepDiveV19_SystemPropertyTests
 }
 
 // ── V19 Phase 2: Direct Bitwise Operators ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV19_BitwiseOperatorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24785,6 +25036,7 @@ public class QueryDeepDiveV19_BitwiseOperatorTests
 }
 
 // ── V19 Phase 3: LIKE Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV19_LikeEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24878,6 +25130,7 @@ public class QueryDeepDiveV19_LikeEdgeCaseTests
 }
 
 // ── V19 Phase 4: Parameter Advanced Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV19_ParameterEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -24963,6 +25216,7 @@ public class QueryDeepDiveV19_ParameterEdgeCaseTests
 }
 
 // ── V19 Phase 5: Error Handling ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV19_ErrorHandlingTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25028,6 +25282,7 @@ public class QueryDeepDiveV19_ErrorHandlingTests
 }
 
 // ── V19 Phase 6: REGEXMATCH Modifier Tests ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV19_RegexMatchTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25098,6 +25353,7 @@ public class QueryDeepDiveV19_RegexMatchTests
 }
 
 // ── V19 Phase 7: SELECT Advanced Patterns ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV19_SelectAdvancedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25168,6 +25424,7 @@ public class QueryDeepDiveV19_SelectAdvancedTests
 }
 
 // ── V19 Phase 8: Unicode/Special Characters ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV19_UnicodeTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25230,6 +25487,7 @@ public class QueryDeepDiveV19_UnicodeTests
 }
 
 // ── V19 Phase 9: ORDER BY Advanced ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV19_OrderByAdvancedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25308,6 +25566,7 @@ public class QueryDeepDiveV19_OrderByAdvancedTests
 }
 
 // ── V19 Phase 10: Cross-Feature Interactions ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV19_CrossFeatureTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25385,6 +25644,7 @@ public class QueryDeepDiveV19_CrossFeatureTests
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── V20 Phase 1a: DOCUMENTID Function ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_DocumentIdTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25447,6 +25707,7 @@ public class QueryDeepDiveV20_DocumentIdTests
 }
 
 // ── V20 Phase 1b: TOSTRING Function Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_ToStringTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25523,6 +25784,7 @@ public class QueryDeepDiveV20_ToStringTests
 }
 
 // ── V20 Phase 1c: STRINGJOIN Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_StringJoinTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25574,6 +25836,7 @@ public class QueryDeepDiveV20_StringJoinTests
 }
 
 // ── V20 Phase 1d: Bracket Notation c["property"] ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_BracketNotationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25639,6 +25902,7 @@ public class QueryDeepDiveV20_BracketNotationTests
 }
 
 // ── V20 Phase 1e: CHOOSE Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_ChooseEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25693,6 +25957,7 @@ public class QueryDeepDiveV20_ChooseEdgeCaseTests
 }
 
 // ── V20 Phase 1f: STRINGSPLIT Edge Cases ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_StringSplitEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25743,6 +26008,7 @@ public class QueryDeepDiveV20_StringSplitEdgeCaseTests
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── V20 Phase 2a: SELECT VALUE with OFFSET/LIMIT ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_SelectValuePaginationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25783,6 +26049,7 @@ public class QueryDeepDiveV20_SelectValuePaginationTests
 }
 
 // ── V20 Phase 2b: IS NULL on Function Results ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_IsNullOnFunctionResultTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25821,6 +26088,7 @@ public class QueryDeepDiveV20_IsNullOnFunctionResultTests
 }
 
 // ── V20 Phase 2c: ORDER BY Aggregate Expression (Not Alias) ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_OrderByAggregateDirectTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25877,6 +26145,7 @@ public class QueryDeepDiveV20_OrderByAggregateDirectTests
 }
 
 // ── V20 Phase 2d: NOT EXISTS with Complex Subqueries ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_NotExistsComplexTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25931,6 +26200,7 @@ public class QueryDeepDiveV20_NotExistsComplexTests
 }
 
 // ── V20 Phase 2e: Deeply Nested Object/Array Literals in SELECT ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_NestedLiteralTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -25985,6 +26255,7 @@ public class QueryDeepDiveV20_NestedLiteralTests
 }
 
 // ── V20 Phase 2f: Multiple JOINs with GROUP BY ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_MultiJoinGroupByTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26031,6 +26302,7 @@ public class QueryDeepDiveV20_MultiJoinGroupByTests
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── V20 Phase 3a: GROUP BY Key Encoding with Special Characters ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_GroupByKeyEncodingTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26073,6 +26345,7 @@ public class QueryDeepDiveV20_GroupByKeyEncodingTests
 }
 
 // ── V20 Phase 3b: ORDER BY after GROUP BY — Whitespace Sensitivity ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_OrderByGroupByWhitespaceTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26107,6 +26380,7 @@ public class QueryDeepDiveV20_OrderByGroupByWhitespaceTests
 }
 
 // ── V20 Phase 3c: COALESCE Null vs Undefined Distinction ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_CoalesceNullUndefinedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26175,6 +26449,7 @@ public class QueryDeepDiveV20_CoalesceNullUndefinedTests
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── V20 Phase 4a: Culture-Sensitive Formatting ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_CultureSensitiveTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26213,6 +26488,7 @@ public class QueryDeepDiveV20_CultureSensitiveTests
 }
 
 // ── V20 Phase 4b: Unicode LIKE and CONTAINS ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_UnicodeSearchTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26273,6 +26549,7 @@ public class QueryDeepDiveV20_UnicodeSearchTests
 //  Deep Dive V21: Comprehensive Coverage Gaps
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_StringToNullInputTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26351,6 +26628,7 @@ public class QueryDeepDiveV21_StringToNullInputTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_NumberBinEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26393,6 +26671,7 @@ public class QueryDeepDiveV21_NumberBinEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_ArrayContainsPartialMatch
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26435,6 +26714,7 @@ public class QueryDeepDiveV21_ArrayContainsPartialMatch
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_ArraySliceEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26476,6 +26756,7 @@ public class QueryDeepDiveV21_ArraySliceEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_AggregateMixedTypes
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26522,6 +26803,7 @@ public class QueryDeepDiveV21_AggregateMixedTypes
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_CountNullSemantics
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26551,6 +26833,7 @@ public class QueryDeepDiveV21_CountNullSemantics
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_SelectComputedProperties
 {
     private static InMemoryContainer CreateContainerWithComputedProps(
@@ -26599,6 +26882,7 @@ public class QueryDeepDiveV21_SelectComputedProperties
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_OrderByComplexExpression
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26630,6 +26914,7 @@ public class QueryDeepDiveV21_OrderByComplexExpression
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_ReplicateEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26655,6 +26940,7 @@ public class QueryDeepDiveV21_ReplicateEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_DateTimeAddInvalidPart
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26676,6 +26962,7 @@ public class QueryDeepDiveV21_DateTimeAddInvalidPart
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_NestedTernary
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26697,6 +26984,7 @@ public class QueryDeepDiveV21_NestedTernary
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_MaxItemCountMinusOne
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26719,6 +27007,7 @@ public class QueryDeepDiveV21_MaxItemCountMinusOne
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_StreamIteratorEnvelope
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26744,6 +27033,7 @@ public class QueryDeepDiveV21_StreamIteratorEnvelope
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_ReplaceEdgeCases
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26782,6 +27072,7 @@ public class QueryDeepDiveV21_ReplaceEdgeCases
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_ConcatVariadic
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26803,6 +27094,7 @@ public class QueryDeepDiveV21_ConcatVariadic
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_SelectArrayIndex
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26826,6 +27118,7 @@ public class QueryDeepDiveV21_SelectArrayIndex
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_OrderByRankError
 {
     [Fact]
@@ -26849,6 +27142,7 @@ public class QueryDeepDiveV21_OrderByRankError
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_DistinctPropertyOrderTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26920,6 +27214,7 @@ public class QueryDeepDiveV21_DistinctPropertyOrderTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_WhereChainedFunctions
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26945,6 +27240,7 @@ public class QueryDeepDiveV21_WhereChainedFunctions
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV21_IsNotNullVsIsDefined
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -26979,6 +27275,7 @@ public class QueryDeepDiveV21_IsNotNullVsIsDefined
 //  Deep Dive V22 — Query Coverage Gaps & Bug Verification
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV22_OrderByGroupByInteractionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -27051,6 +27348,7 @@ public class QueryDeepDiveV22_OrderByGroupByInteractionTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV22_LikeEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -27121,6 +27419,7 @@ public class QueryDeepDiveV22_LikeEdgeCaseTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV22_AggregateEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -27211,6 +27510,7 @@ public class QueryDeepDiveV22_AggregateEdgeCaseTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV22_ThreeValueLogicTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -27267,6 +27567,7 @@ public class QueryDeepDiveV22_ThreeValueLogicTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV22_DistinctComputedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -27306,6 +27607,7 @@ public class QueryDeepDiveV22_DistinctComputedTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV22_JoinGroupByTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -27353,6 +27655,7 @@ public class QueryDeepDiveV22_JoinGroupByTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV22_SubqueryEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -27395,6 +27698,7 @@ public class QueryDeepDiveV22_SubqueryEdgeCaseTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV22_OrderByExpressionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -27468,6 +27772,7 @@ public class QueryDeepDiveV22_OrderByExpressionTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV22_PaginationWithComplexQueriesTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -27531,6 +27836,7 @@ public class QueryDeepDiveV22_PaginationWithComplexQueriesTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV22_GroupByKeyEdgeTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -27606,6 +27912,7 @@ public class QueryDeepDiveV22_GroupByKeyEdgeTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV22_SelectEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -27696,6 +28003,7 @@ public class QueryDeepDiveV22_SelectEdgeCaseTests
 /// when underlying data contains duplicates.
 /// Fixed in v2.0.164.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_DistinctOffsetLimitTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -27764,6 +28072,7 @@ public class QueryDeepDiveV20_DistinctOffsetLimitTests
 /// The emulator's EvaluateHavingAggregate used `SelectToken(path) != null` which returns true for JSON null.
 /// Fixed in v2.0.164.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_HavingCountNullTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -27831,6 +28140,7 @@ public class QueryDeepDiveV20_HavingCountNullTests
 /// The emulator called .ToString() without a type check.
 /// Fixed in v2.0.164.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_StringFunctionTypeSafetyTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -27911,6 +28221,7 @@ public class QueryDeepDiveV20_StringFunctionTypeSafetyTests
 /// Real Cosmos requires all CONCAT arguments to be strings; non-string args return undefined.
 /// Fixed in v2.0.164.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_ConcatTypeSafetyTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -27965,6 +28276,7 @@ public class QueryDeepDiveV20_ConcatTypeSafetyTests
 /// Non-string args return undefined.
 /// Fixed in v2.0.164.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_StringComparisonTypeSafetyTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -28036,6 +28348,7 @@ public class QueryDeepDiveV20_StringComparisonTypeSafetyTests
 /// Real Cosmos requires string arguments; non-string args return undefined.
 /// Fixed in v2.0.164.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_SubstringReplaceTypeSafetyTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -28097,6 +28410,7 @@ public class QueryDeepDiveV20_SubstringReplaceTypeSafetyTests
 /// Bug #133: REPLICATE, STRING_EQUALS, REGEXMATCH accept non-string arguments.
 /// Fixed in v2.0.164.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_ReplicateStringEqualsTypeSafetyTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -28166,6 +28480,7 @@ public class QueryDeepDiveV20_ReplicateStringEqualsTypeSafetyTests
 /// <summary>
 /// Test Group: Complex feature interactions not previously tested together.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV20_ComplexInteractionTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -28234,6 +28549,7 @@ public class QueryDeepDiveV20_ComplexInteractionTests
 // V23 Deep Dive — Bug Fixes & Coverage Gaps
 // ═══════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV23_TypeFunctionBugTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -28304,6 +28620,7 @@ public class QueryDeepDiveV23_TypeFunctionBugTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV23_GetCurrentDateTimeBugTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -28399,6 +28716,7 @@ public class QueryDeepDiveV23_GetCurrentDateTimeBugTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV23_MathOpIntegerPreservationBugTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -28497,6 +28815,7 @@ public class QueryDeepDiveV23_MathOpIntegerPreservationBugTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV23_ThreeLevelJoinTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -28546,6 +28865,7 @@ public class QueryDeepDiveV23_ThreeLevelJoinTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV23_GroupByOffsetLimitTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -28600,6 +28920,7 @@ public class QueryDeepDiveV23_GroupByOffsetLimitTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV23_MultipleArraySubqueryTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -28635,6 +28956,7 @@ public class QueryDeepDiveV23_MultipleArraySubqueryTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV23_DateTimePartEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -28709,6 +29031,7 @@ public class QueryDeepDiveV23_DateTimePartEdgeCaseTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV23_LogWithBaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -28758,6 +29081,7 @@ public class QueryDeepDiveV23_LogWithBaseTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDeepDiveV23_OrderByMixedTypeEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");

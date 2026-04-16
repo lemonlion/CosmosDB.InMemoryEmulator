@@ -4,6 +4,7 @@ using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -14,6 +15,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 
 // ── Category A: ETag Edge Cases ──────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchEtagEdgeCaseTests
 {
     [Fact]
@@ -69,6 +71,7 @@ public class PatchEtagEdgeCaseTests
 
 // ── Category B: Stream Variant Path Validation (BUG-3) ──────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchStreamPathValidationTests
 {
     [Fact]
@@ -105,6 +108,7 @@ public class PatchStreamPathValidationTests
 
 // ── Category C: Deeply Nested Path Edge Cases ────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchDeepNestedPathTests
 {
     [Fact]
@@ -161,6 +165,7 @@ public class PatchDeepNestedPathTests
 
 // ── Category D: TTL Interaction ──────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchTtlInteractionTests
 {
     [Fact]
@@ -205,6 +210,7 @@ public class PatchTtlInteractionTests
 
 // ── Category E: Increment Edge Cases ─────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchIncrementEdgeCaseTests
 {
     [Fact]
@@ -273,6 +279,7 @@ public class PatchIncrementEdgeCaseTests
 
 // ── Category F: Array Operation Edge Cases ───────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchArrayOperationTests
 {
     [Fact]
@@ -324,6 +331,7 @@ public class PatchArrayOperationTests
 
 // ── Category G: Move Operation Edge Cases ────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchMoveEdgeCaseDeepTests
 {
     [Fact]
@@ -396,6 +404,7 @@ public class PatchMoveEdgeCaseDeepTests
 
 // ── Category H: Replace Type Coercion ────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchReplaceTypeCoercionTests
 {
     [Fact]
@@ -448,6 +457,7 @@ public class PatchReplaceTypeCoercionTests
 
 // ── Category I: Combined/Compound Operations ─────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchCombinedOperationTests
 {
     [Fact]
@@ -517,6 +527,7 @@ public class PatchCombinedOperationTests
 
 // ── Category J: Partition Key Variants ───────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchPartitionKeyVariantTests
 {
     [Fact]
@@ -553,6 +564,7 @@ public class PatchPartitionKeyVariantTests
 
 // ── Category K: Filter Predicate Edge Cases ──────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchFilterPredicateEdgeTests
 {
     [Fact]
@@ -596,6 +608,7 @@ public class PatchFilterPredicateEdgeTests
 
 // ── Category L: FakeCosmosHandler Patch Bugs ─────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerPatchBugTests
 {
     [Fact]
@@ -679,6 +692,7 @@ public class FakeCosmosHandlerPatchBugTests
 
 // ── Category M: Atomicity & Rollback ─────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchAtomicityDeepTests
 {
     [Fact]
@@ -709,6 +723,7 @@ public class PatchAtomicityDeepTests
 
 // ── Category N: Stream Variant Parity ────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchStreamVariantParityTests
 {
     [Fact]
@@ -772,6 +787,7 @@ public class PatchStreamVariantParityTests
 
 // ── Category O: Concurrent Patch Scenarios ───────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchConcurrencyDeepTests
 {
     [Fact]
@@ -824,6 +840,7 @@ public class PatchConcurrencyDeepTests
 
 // ── Category P: Miscellaneous Edge Cases ─────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchMiscEdgeCaseTests
 {
     [Fact]

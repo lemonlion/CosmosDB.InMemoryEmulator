@@ -5,6 +5,7 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -12,6 +13,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Tests for Cosmos DB computed properties — virtual top-level properties defined on
 /// a container with a Name and Query, evaluated at query time but not persisted on documents.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyTests
 {
     private static InMemoryContainer CreateContainerWithComputedProperties(
@@ -791,6 +793,7 @@ public class ComputedPropertyTests
 //  Phase 1 — Implementation bug tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyImplementationBugTests
 {
     private static InMemoryContainer CreateContainerWithComputedProperties(
@@ -872,6 +875,7 @@ public class ComputedPropertyImplementationBugTests
 //  Phase 2 — Unfinished tests from prior plan
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyUnfinishedPriorPlanTests
 {
     private static InMemoryContainer CreateContainerWithComputedProperties(
@@ -1043,6 +1047,7 @@ public class ComputedPropertyUnfinishedPriorPlanTests
 //  Phase 3 — CRUD operation & lifecycle tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyCrudLifecycleTests
 {
     private static InMemoryContainer CreateContainerWithComputedProperties(
@@ -1266,6 +1271,7 @@ public class ComputedPropertyCrudLifecycleTests
 //  Phase 4 — Expression types & query operator tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyExpressionTests
 {
     private static InMemoryContainer CreateContainerWithComputedProperties(
@@ -1530,6 +1536,7 @@ public class ComputedPropertyExpressionTests
 //  Phase 5 — Validation & constraint divergent tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyValidationDivergentTests
 {
     private static InMemoryContainer CreateContainerWithComputedProperties(
@@ -1607,6 +1614,7 @@ public class ComputedPropertyValidationDivergentTests
 //  Phase 6 — LINQ divergent tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyLinqDivergentTests
 {
     [Fact(Skip = "In real Cosmos DB, LINQ queries are translated to SQL and computed properties " +

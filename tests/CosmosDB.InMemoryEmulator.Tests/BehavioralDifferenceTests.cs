@@ -5,6 +5,7 @@ using Microsoft.Azure.Cosmos;
 using Xunit;
 using System.Text;
 using Newtonsoft.Json.Linq;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -13,6 +14,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// real Cosmos DB. Each test has a comment explaining the behavioural difference.
 /// Use these to understand the limitations of the in-memory implementation.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class BehavioralDifferenceTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");

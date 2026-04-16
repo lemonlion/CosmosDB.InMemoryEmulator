@@ -2,9 +2,11 @@ using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IifFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");

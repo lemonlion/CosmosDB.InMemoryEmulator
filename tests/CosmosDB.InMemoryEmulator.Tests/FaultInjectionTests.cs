@@ -5,10 +5,12 @@ using Newtonsoft.Json.Linq;
 using System.Net;
 using System.Text;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionGapTests4
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -92,6 +94,7 @@ public class FaultInjectionGapTests4
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -281,6 +284,7 @@ public class FaultInjectionTests
 //  Category A: Operation-specific fault injection
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionOperationTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler, int maxRetries = 0) =>
@@ -408,6 +412,7 @@ public class FaultInjectionOperationTests
 //  Category B: HTTP status code coverage
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionStatusCodeTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -476,6 +481,7 @@ public class FaultInjectionStatusCodeTests
 //  Category D: Dynamic / stateful fault injection patterns
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionDynamicTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler, int maxRetries = 0) =>
@@ -564,6 +570,7 @@ public class FaultInjectionDynamicTests
 //  Category E: Infrastructure & edge cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionInfrastructureTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -706,6 +713,7 @@ public class FaultInjectionInfrastructureTests
 //  Category A+: Operation-specific and additional status code tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionOperationDeepDiveTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler, int maxRetries = 0) =>
@@ -911,6 +919,7 @@ public class FaultInjectionOperationDeepDiveTests
 //  Category C: Fault response fidelity & headers
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionResponseFidelityTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler, int maxRetries = 0) =>
@@ -1131,6 +1140,7 @@ public class FaultInjectionResponseFidelityTests
 //  Category D+: Additional dynamic pattern tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionDynamicDeepDiveTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler, int maxRetries = 0) =>
@@ -1248,6 +1258,7 @@ public class FaultInjectionDynamicDeepDiveTests
 //  Category E+: Infrastructure deep dive
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionInfrastructureDeepDiveTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -1370,6 +1381,7 @@ public class FaultInjectionInfrastructureDeepDiveTests
 //  Category F: SDK retry behaviour verification
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionRetryTests
 {
     [Fact]
@@ -1465,6 +1477,7 @@ public class FaultInjectionRetryTests
 //  Category G: Stream API fault injection
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionStreamTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>

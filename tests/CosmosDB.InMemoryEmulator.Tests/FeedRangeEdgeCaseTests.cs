@@ -3,6 +3,7 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -10,6 +11,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Phase 1 — Hash Boundaries & RangeBoundaryToHex
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeHashBoundaryTests
 {
     [Theory]
@@ -129,6 +131,7 @@ public class FeedRangeHashBoundaryTests
 //  Phase 2 — Partition Key Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangePartitionKeyEdgeCaseTests
 {
     [Fact]
@@ -231,6 +234,7 @@ public class FeedRangePartitionKeyEdgeCaseTests
 //  Phase 3 — FeedRange Parsing & Error Handling
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeParsingTests
 {
     [Fact]
@@ -321,6 +325,7 @@ public class FeedRangeParsingTests
 //  Phase 4 — Change Feed + FeedRange Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeChangeFeedEdgeCaseTests
 {
     [Fact]
@@ -455,6 +460,7 @@ public class FeedRangeChangeFeedEdgeCaseTests
 //  Phase 5 — FakeCosmosHandler Consistency Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerConsistencyTests
 {
     [Fact]
@@ -712,6 +718,7 @@ public class FakeCosmosHandlerConsistencyTests
 //  Phase 6 — Stream & Concurrency
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeStreamAndConcurrencyTests
 {
     [Fact]
@@ -1041,6 +1048,7 @@ public class FeedRangeStreamAndConcurrencyTests
 //  Phase A — PartitionKeyHash Unit Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyHashUnitTests
 {
     [Fact]
@@ -1113,6 +1121,7 @@ public class PartitionKeyHashUnitTests
 //  Phase B — FeedRange Boundary Deep Dive
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeBoundaryDeepDiveTests
 {
     [Fact]
@@ -1326,6 +1335,7 @@ public class FeedRangeBoundaryDeepDiveTests
 //  Phase C — Partition Key Type Edge Cases (Multi-Range)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangePartitionKeyTypeDeepTests
 {
     [Fact]
@@ -1510,6 +1520,7 @@ public class FeedRangePartitionKeyTypeDeepTests
 //  Phase D — Change Feed + FeedRange Deep Dive
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeChangeFeedDeepDiveTests
 {
     [Fact]
@@ -1730,6 +1741,7 @@ public class FeedRangeChangeFeedDeepDiveTests
 //  Phase E — Query Interaction with FeedRange
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeQueryInteractionTests
 {
     [Fact]
@@ -1924,6 +1936,7 @@ public class FeedRangeQueryInteractionTests
 //  Phase F — Error Handling & Defensive Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeErrorHandlingTests
 {
     [Fact]
@@ -2076,6 +2089,7 @@ public class FeedRangeErrorHandlingTests
 //  Phase G — Concurrency Deep Dive
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeConcurrencyDeepTests
 {
     [Fact]

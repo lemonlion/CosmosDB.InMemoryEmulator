@@ -5,6 +5,7 @@ using CosmosDB.InMemoryEmulator.ProductionExtensions;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -15,6 +16,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// execution to the in-memory container.
 /// </summary>
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");
@@ -791,6 +793,7 @@ public class RealToFeedIteratorTests : IAsyncLifetime
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerOptionsTests : IAsyncLifetime
 {
     [Fact]
@@ -942,6 +945,7 @@ public class FakeCosmosHandlerOptionsTests : IAsyncLifetime
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkCompatibilityTests
 {
     [Fact]
@@ -951,6 +955,7 @@ public class SdkCompatibilityTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class MultiContainerRoutingTests : IAsyncLifetime
 {
     [Fact]
@@ -1046,6 +1051,7 @@ public class MultiContainerRoutingTests : IAsyncLifetime
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class HashBasedPartitionRoutingTests : IAsyncLifetime
 {
     [Fact]
@@ -1190,6 +1196,7 @@ public class HashBasedPartitionRoutingTests : IAsyncLifetime
 }
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReflectionBasedRegistrationTests
 {
     [Fact]
@@ -1248,6 +1255,7 @@ public class ReflectionBasedRegistrationTests
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorStringTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");
@@ -1423,6 +1431,7 @@ public class RealToFeedIteratorStringTests : IAsyncLifetime
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorCrudTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");
@@ -1591,6 +1600,7 @@ public class RealToFeedIteratorCrudTests : IAsyncLifetime
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorResponseMetadataTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");
@@ -1707,6 +1717,7 @@ public class RealToFeedIteratorResponseMetadataTests : IAsyncLifetime
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorEdgeCaseTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");
@@ -1937,6 +1948,7 @@ public class RealToFeedIteratorEdgeCaseTests : IAsyncLifetime
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorLinqDeepDiveTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");
@@ -2228,6 +2240,7 @@ public class NameProjection
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorHandlerRouteDeepDiveTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");
@@ -2451,6 +2464,7 @@ public class RealToFeedIteratorHandlerRouteDeepDiveTests : IAsyncLifetime
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorErrorHandlingDeepDiveTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");
@@ -2712,6 +2726,7 @@ public class RealToFeedIteratorErrorHandlingDeepDiveTests : IAsyncLifetime
 //  Plan 33 — InMemoryFeedIterator Direct Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryFeedIteratorDirectTests
 {
     [Fact]
@@ -2866,6 +2881,7 @@ public class InMemoryFeedIteratorDirectTests
 //  Plan 33 — InMemoryFeedIteratorSetup Deep Dive
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryFeedIteratorSetupDeepDiveTests
 {
     [Fact]
@@ -2969,6 +2985,7 @@ public class InMemoryFeedIteratorSetupDeepDiveTests
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RealToFeedIteratorResponseFidelityDeepDiveTests : IAsyncLifetime
 {
     private readonly InMemoryContainer _inMemoryContainer = new("test-container", "/partitionKey");

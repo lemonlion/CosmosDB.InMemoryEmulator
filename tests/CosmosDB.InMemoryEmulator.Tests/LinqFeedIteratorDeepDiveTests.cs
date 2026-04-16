@@ -7,6 +7,7 @@ using Newtonsoft.Json.Linq;
 using System.Net;
 using System.Text;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -15,6 +16,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 // ═══════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqPaginationDeepTests : IDisposable
 {
     private readonly InMemoryContainer _container = new("pag-container", "/partitionKey");
@@ -134,6 +136,7 @@ public class LinqPaginationDeepTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqResponseShapeTests : IDisposable
 {
     private readonly InMemoryContainer _container = new("resp-container", "/partitionKey");
@@ -184,6 +187,7 @@ public class LinqResponseShapeTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqDisposeSafetyTests : IDisposable
 {
     private readonly InMemoryContainer _container = new("disp-container", "/partitionKey");
@@ -235,6 +239,7 @@ public class LinqDisposeSafetyTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqDivergentOperatorTests : IDisposable
 {
     private readonly InMemoryContainer _container = new("div-ops", "/partitionKey");
@@ -370,6 +375,7 @@ public class LinqDivergentOperatorTests : IDisposable
 //  Group 7: Numeric & Type Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqNumericEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("num-edge", "/partitionKey");
@@ -411,6 +417,7 @@ public class LinqNumericEdgeCaseTests
 //  Group 8: Serialization Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqSerializationEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("ser-edge", "/partitionKey");
@@ -465,6 +472,7 @@ public class LinqSerializationEdgeCaseTests
 //  Group 9: Partition Key Edge Cases in LINQ
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqPartitionKeyEdgeCaseTests
 {
     [Fact]
@@ -508,6 +516,7 @@ public class LinqPartitionKeyEdgeCaseTests
 // ═══════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqStreamFeedIteratorTests : IDisposable
 {
     private readonly InMemoryContainer _container = new("stream-linq", "/partitionKey");

@@ -4,6 +4,7 @@ using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -14,6 +15,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// (ORDER BY merge sort, aggregate accumulation, DISTINCT deduplication, etc.).
 /// These tests verify that the query plan metadata is accurate for each query pattern.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryPlanTests : IDisposable
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");

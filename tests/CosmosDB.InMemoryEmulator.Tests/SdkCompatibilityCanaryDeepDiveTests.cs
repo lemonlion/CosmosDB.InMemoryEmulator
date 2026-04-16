@@ -6,6 +6,7 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -13,6 +14,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Plan 34 — Phase A1: Item ID Extraction Reflection Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ItemIdExtractionReflectionTests
 {
     [Fact]
@@ -50,6 +52,7 @@ public class ItemIdExtractionReflectionTests
 //  Plan 34 — Phase A2: FeedIterator<T> Generic Virtual Members
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedIteratorGenericReflectionTests
 {
     [Fact]
@@ -79,6 +82,7 @@ public class FeedIteratorGenericReflectionTests
 //  Plan 34 — Phase A3: QueryDefinition Parameter Tuple Structure
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDefinitionParameterTupleTests
 {
     [Fact]
@@ -105,6 +109,7 @@ public class QueryDefinitionParameterTupleTests
 //  Plan 34 — Phase A4: ChangeFeedStartFrom Full Subtype Enumeration
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedStartFromSubtypeTests
 {
     [Fact]
@@ -127,6 +132,7 @@ public class ChangeFeedStartFromSubtypeTests
 //  Plan 34 — Phase B1: Parameterized Query Through SDK Pipeline
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkPipelineQueryTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -184,6 +190,7 @@ public class SdkPipelineQueryTests : IDisposable
 //  Plan 34 — Phase B2: ETag Concurrency Through SDK Pipeline
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkPipelineETagTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -246,6 +253,7 @@ public class SdkPipelineETagTests : IDisposable
 //  Plan 34 — Phase B3: Error Responses Through SDK Pipeline
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkPipelineErrorResponseTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -300,6 +308,7 @@ public class SdkPipelineErrorResponseTests : IDisposable
 //  Plan 34 — Phase B4-B6: SDK Pipeline Expansion Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkPipelineExpansionTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -368,6 +377,7 @@ public class SdkPipelineExpansionTests : IDisposable
 //  Plan 34 — Phase C1: FaultInjector Basic Canary
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectorCanaryTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -454,6 +464,7 @@ public class FaultInjectorCanaryTests : IDisposable
 //  Plan 34 — Phase D: Query Plan Coverage (GROUP BY, TOP, OFFSET/LIMIT, Multi-ORDER BY)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryPlanExpansionCanaryTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -538,6 +549,7 @@ public class QueryPlanExpansionCanaryTests : IDisposable
 //  Plan 34 — Phase E1: Unicode/Special Characters
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkPipelineEdgeCaseTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -600,6 +612,7 @@ public class SdkPipelineEdgeCaseTests : IDisposable
 //  Plan 34 — Phase E3: Large Pagination Through SDK Pipeline
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkPipelinePaginationTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -667,6 +680,7 @@ public class SdkPipelinePaginationTests : IDisposable
 //  Plan 34 — Phase E4: Multi-Container Routing Through CreateRouter
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class MultiContainerRoutingCanaryTests : IDisposable
 {
     private readonly InMemoryContainer _container1;
@@ -742,6 +756,7 @@ public class MultiContainerRoutingCanaryTests : IDisposable
 //  Plan 34 — Phase F: Divergent Behavior Documentation Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkCompatibilityCanaryDivergentTests
 {
     [Fact(Skip = "Transactional batch operations bypass the FakeCosmosHandler HTTP route and execute directly on InMemoryContainer.")]
@@ -791,6 +806,7 @@ public class SdkCompatibilityCanaryDivergentTests
 //  Plan 34 — Phase G: Logging & Observability Canaries
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkLoggingCanaryTests : IDisposable
 {
     private readonly InMemoryContainer _container;

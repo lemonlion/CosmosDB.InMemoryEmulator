@@ -5,9 +5,11 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Scripts;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamCrudTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -157,6 +159,7 @@ public class StreamCrudTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamETagHandlingTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -257,6 +260,7 @@ public class StreamETagHandlingTests
 /// (StreamETagHandlingTests). This covers the missing Delete variant.
 /// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.deleteitemstreamasync
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamDeleteETagTests5
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -277,6 +281,7 @@ public class StreamDeleteETagTests5
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamETagGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -360,6 +365,7 @@ public class StreamETagGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ResponseMetadataGapTests2
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -392,6 +398,7 @@ public class ResponseMetadataGapTests2
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamOperationGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -458,6 +465,7 @@ public class StreamOperationGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamOperationGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -485,6 +493,7 @@ public class StreamOperationGapTests3
 //  B: Response Body Validation
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamResponseBodyTests
 {
     private readonly InMemoryContainer _container = new("body-test", "/partitionKey");
@@ -588,6 +597,7 @@ public class StreamResponseBodyTests
 //  C: System Properties in Stream Responses
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamSystemPropertyTests
 {
     private readonly InMemoryContainer _container = new("sysprop-test", "/partitionKey");
@@ -682,6 +692,7 @@ public class StreamSystemPropertyTests
 //  D: IsSuccessStatusCode
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamIsSuccessStatusCodeTests
 {
     private readonly InMemoryContainer _container = new("success-test", "/partitionKey");
@@ -729,6 +740,7 @@ public class StreamIsSuccessStatusCodeTests
 //  E: Response Headers
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamCrudResponseHeaderTests
 {
     private readonly InMemoryContainer _container = new("hdr-test", "/partitionKey");
@@ -791,6 +803,7 @@ public class StreamCrudResponseHeaderTests
 //  F: ETag Lifecycle in Stream API
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamETagLifecycleTests
 {
     private readonly InMemoryContainer _container = new("etag-life", "/partitionKey");
@@ -848,6 +861,7 @@ public class StreamETagLifecycleTests
 //  G: Data Integrity
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamDataIntegrityTests
 {
     private readonly InMemoryContainer _container = new("integrity-test", "/partitionKey");
@@ -944,6 +958,7 @@ public class StreamDataIntegrityTests
 //  H: Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamEdgeCaseTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1002,6 +1017,7 @@ public class StreamEdgeCaseTests
 //  I: Divergent Behaviors (Skip + Sister Tests)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamDivergentBehaviorTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1053,6 +1069,7 @@ public class StreamDivergentBehaviorTests
 //  BUG-1: Invalid JSON → 400 BadRequest (stream contract)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamBugFix_InvalidJsonTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1100,6 +1117,7 @@ public class StreamBugFix_InvalidJsonTests
 //  BUG-3: EnableContentResponseOnWrite in stream methods
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamBugFix_EnableContentResponseOnWriteTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1168,6 +1186,7 @@ public class StreamBugFix_EnableContentResponseOnWriteTests
 //  BUG-5: UpsertStream missing id → 400 (not exception)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamBugFix_UpsertMissingIdTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1186,6 +1205,7 @@ public class StreamBugFix_UpsertMissingIdTests
 //  EnsureSuccessStatusCode tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamEnsureSuccessStatusCodeTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1214,6 +1234,7 @@ public class StreamEnsureSuccessStatusCodeTests
 //  Error response ETag + Read ETag header tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamErrorAndReadHeaderTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1242,6 +1263,7 @@ public class StreamErrorAndReadHeaderTests
 //  ETag wildcard and IfNoneMatch edge cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamETagWildcardTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1320,6 +1342,7 @@ public class StreamETagWildcardTests
 //  Stream edge cases (PartitionKey.None, special chars, delete tombstone)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamEdgeCaseAdditionalTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1372,6 +1395,7 @@ public class StreamEdgeCaseAdditionalTests
 //  CancellationToken tests for stream methods
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamCancellationTokenTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1434,6 +1458,7 @@ public class StreamCancellationTokenTests
 //  Patch validation tests (null/empty/max operations, filter predicate)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamPatchValidationTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1502,6 +1527,7 @@ public class StreamPatchValidationTests
 //  Mixed stream/typed API tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamMixedApiTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1530,6 +1556,7 @@ public class StreamMixedApiTests
 //  IfMatch on Create (should be ignored)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamCreateEdgeCaseTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1549,6 +1576,7 @@ public class StreamCreateEdgeCaseTests
 //  DIV-3: ErrorMessage on failure ResponseMessages
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamErrorMessageDivergentTests
 {
     [Fact]
@@ -1567,6 +1595,7 @@ public class StreamErrorMessageDivergentTests
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── Bug Verification ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamBugVerificationTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1654,6 +1683,7 @@ public class StreamBugVerificationTests
 }
 
 // ── ReadMany Coverage ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamReadManyCoverageTests
 {
     [Fact]
@@ -1723,6 +1753,7 @@ public class StreamReadManyCoverageTests
 }
 
 // ── Unique Key Violations ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamUniqueKeyViolationTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1761,6 +1792,7 @@ public class StreamUniqueKeyViolationTests
 }
 
 // ── TTL in Stream Reads ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamTtlTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1794,6 +1826,7 @@ public class StreamTtlTests
 }
 
 // ── C# Triggers on Stream API ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamCSharpTriggerTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1850,6 +1883,7 @@ public class StreamCSharpTriggerTests
 }
 
 // ── ETag Header Lifecycle ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamETagHeaderLifecycleTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1885,6 +1919,7 @@ public class StreamETagHeaderLifecycleTests
 }
 
 // ── Replace Body Validation ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamReplaceValidationTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1915,6 +1950,7 @@ public class StreamReplaceValidationTests
 }
 
 // ── Session Token Header ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamSessionTokenTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));
@@ -1936,6 +1972,7 @@ public class StreamSessionTokenTests
 }
 
 // ── Post-Trigger Rollback + Change Feed (divergent behavior) ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamPostTriggerChangeFeedTests
 {
     private static MemoryStream ToStream(string json) => new(Encoding.UTF8.GetBytes(json));

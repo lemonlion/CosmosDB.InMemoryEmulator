@@ -4,6 +4,7 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Xunit;
 using AwesomeAssertions;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -23,6 +24,7 @@ public class PatchPathCollisionBugTests
         [JsonProperty("transactions")] public List<ItemValue> Transactions { get; set; } = new();
     }
 
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class ItemValue
     {
         [JsonProperty("name")] public string Name { get; set; } = "";

@@ -4,6 +4,7 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -17,6 +18,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 // ─── M7: Cross-partition aggregates multiply results when ────────────────
 //         PartitionKeyRangeCount > 1
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrossPartitionAggregateTests
 {
     private static CosmosClient CreateClient(FakeCosmosHandler handler) =>
@@ -60,6 +62,7 @@ public class CrossPartitionAggregateTests
 
 // ─── M9: Subquery ORDER BY and OFFSET/LIMIT — RESOLVED ──────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SubqueryOrderByTests
 {
     [Fact]
@@ -90,6 +93,7 @@ public class SubqueryOrderByTests
 
 // ─── L2: Array functions only accept identifiers, not literal arrays ────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ArrayFunctionLiteralTests
 {
     [Fact]
@@ -122,6 +126,7 @@ public class ArrayFunctionLiteralTests
 
 // ─── L3: GetCurrentDateTime() not consistent across rows ────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GetCurrentDateTimeConsistencyTests
 {
     // Previously divergent: Each evaluation called DateTime.UtcNow independently per row.
@@ -145,6 +150,7 @@ public class GetCurrentDateTimeConsistencyTests
 // ─── L4: linqSerializerOptions and continuationToken on ─────────────────
 //         GetItemLinqQueryable are ignored
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqQueryableOptionsTests
 {
     // APPROACH 1 PERMISSIVENESS: GetItemLinqQueryable ignores linqSerializerOptions and continuationToken.
@@ -164,6 +170,7 @@ public class LinqQueryableOptionsTests
 
 // ─── L6: Undefined vs null not distinguished in ORDER BY ────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UndefinedNullOrderByTests
 {
     // DIVERGENT: undefined and null are treated identically in ORDER BY.
@@ -200,6 +207,7 @@ public class UndefinedNullOrderByTests
 
 // ─── M7 sister: Cross-partition aggregate with default range count ───────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrossPartitionAggregateSisterTests
 {
     [Fact]
@@ -226,6 +234,7 @@ public class CrossPartitionAggregateSisterTests
 
 // ─── L2 sister: Array functions with identifiers work, literals don't ───
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ArrayFunctionLiteralSisterTests
 {
     [Fact]
@@ -247,6 +256,7 @@ public class ArrayFunctionLiteralSisterTests
 
 // ─── L3 sister: GetCurrentDateTime per-row behavior ─────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GetCurrentDateTimeSisterTests
 {
     [Fact]
@@ -272,6 +282,7 @@ public class GetCurrentDateTimeSisterTests
 
 // ─── L4 sister: LINQ queryable ignores custom options ───────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqQueryableOptionsSisterTests
 {
     [Fact]
@@ -297,6 +308,7 @@ public class LinqQueryableOptionsSisterTests
 
 // ─── D1: Consistency levels ignored ─────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConsistencyLevelDivergenceTests
 {
     [Fact(Skip = "D1: Consistency levels are ignored. Real Cosmos DB supports 5 consistency " +
@@ -329,6 +341,7 @@ public class ConsistencyLevelDivergenceTests
 
 // ─── D2: Request charge always 1.0 RU ──────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RequestChargeDivergenceTests
 {
     [Fact(Skip = "D2: Request charge always returns 1.0 RU regardless of operation complexity. " +
@@ -363,6 +376,7 @@ public class RequestChargeDivergenceTests
 
 // ─── D3: Continuation tokens are plain integers ────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContinuationTokenDivergenceTests
 {
     [Fact(Skip = "D3: Continuation tokens are plain integer offsets instead of opaque base64-encoded " +
@@ -395,6 +409,7 @@ public class ContinuationTokenDivergenceTests
 
 // ─── D4: System properties format differences ──────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SystemPropertiesDivergenceTests
 {
     [Fact]
@@ -431,6 +446,7 @@ public class SystemPropertiesDivergenceTests
 
 // ─── D5: IndexingPolicy stored but not enforced ────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IndexingPolicyDivergenceTests
 {
     [Fact(Skip = "D5: IndexingPolicy is stored but not enforced. Real Cosmos DB uses indexes " +
@@ -467,6 +483,7 @@ public class IndexingPolicyDivergenceTests
 
 // ─── D6: TTL eviction is lazy (on next read) ──────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlEvictionDivergenceTests
 {
     [Fact(Skip = "D6: TTL eviction is lazy — expired items are removed on next read/query, not " +
@@ -511,6 +528,7 @@ public class TtlEvictionDivergenceTests
 
 // ─── D7: Analytical store not simulated ────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class AnalyticalStoreDivergenceTests
 {
     [Fact(Skip = "D7: Analytical store (Azure Synapse Link) is not simulated. Real Cosmos DB " +
@@ -522,6 +540,7 @@ public class AnalyticalStoreDivergenceTests
 
 // ─── D9: LINQ accepts operations real Cosmos rejects ───────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqOperatorDivergenceTests
 {
     [Fact(Skip = "D9: LINQ accepts all LINQ-to-Objects operators that real Cosmos SQL rejects. " +
@@ -554,6 +573,7 @@ public class LinqOperatorDivergenceTests
 //  Divergent Behavior Deep Dive — D10: CosmosResponseFactory
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CosmosResponseFactoryDivergenceTests
 {
     [Fact(Skip = "D10: CosmosResponseFactory is a non-functional NSubstitute stub. " +
@@ -574,6 +594,7 @@ public class CosmosResponseFactoryDivergenceTests
 //  Divergent Behavior Deep Dive — D11: Unsupported SQL Function Error Type
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UnsupportedSqlFunctionDivergenceTests
 {
     [Fact]
@@ -595,6 +616,7 @@ public class UnsupportedSqlFunctionDivergenceTests
 //  Divergent Behavior Deep Dive — D12: SQL Parse Error Type
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlParseErrorDivergenceTests
 {
     [Fact]
@@ -616,6 +638,7 @@ public class SqlParseErrorDivergenceTests
 //  Divergent Behavior Deep Dive — D18: Invalid Continuation Token
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InvalidContinuationTokenEdgeCaseTests
 {
     [Fact]
@@ -637,6 +660,7 @@ public class InvalidContinuationTokenEdgeCaseTests
 //  Divergent Behavior Deep Dive — D23: Permission Tokens Are Synthetic
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PermissionTokenDivergenceTests
 {
     [Fact(Skip = "D23: Permission tokens are synthetic stubs. Real Cosmos DB generates " +
@@ -664,6 +688,7 @@ public class PermissionTokenDivergenceTests
 //  Divergent Behavior Deep Dive — M7: Cross-Partition Aggregate Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrossPartitionAggregateEdgeCaseTests
 {
     [Fact]
@@ -690,6 +715,7 @@ public class CrossPartitionAggregateEdgeCaseTests
 //  Divergent Behavior Deep Dive — D2: Query Request Charge Edge Case
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RequestChargeQueryDivergenceTests
 {
     [Fact]
@@ -714,6 +740,7 @@ public class RequestChargeQueryDivergenceTests
 //  Divergent Behavior Deep Dive — D5: Composite Index Not Required
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CompositeIndexDivergenceTests
 {
     [Fact]

@@ -4,6 +4,7 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -12,6 +13,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// when using <c>FROM root c</c> syntax. EF Core Cosmos provider generates all
 /// queries in this form: <c>SELECT VALUE {...} FROM root c WHERE c.xxx = @p</c>
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FromRootAliasParserBugTests : IDisposable
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");

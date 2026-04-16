@@ -9,6 +9,7 @@ using Microsoft.Azure.Cosmos.Scripts;
 using Newtonsoft.Json.Linq;
 using NSubstitute;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -17,6 +18,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// internal structure. If any of these fail after an SDK upgrade, the corresponding feature
 /// will need attention. Each test name describes the assumption being validated.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkReflectionCompatibilityTests
 {
     private static readonly Assembly _cosmosAssembly = typeof(Container).Assembly;
@@ -136,6 +138,7 @@ public class SdkReflectionCompatibilityTests
 //  Phase 1: Missing Reflection Canary Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchOperationReflectionTests
 {
     [Fact]
@@ -188,6 +191,7 @@ public class PatchOperationReflectionTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedStartFromReflectionTests
 {
     [Theory]
@@ -265,6 +269,7 @@ public class ChangeFeedStartFromReflectionTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryDefinitionReflectionTests
 {
     [Fact]
@@ -295,6 +300,7 @@ public class QueryDefinitionReflectionTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class AccountPropertiesReflectionTests
 {
     [Fact]
@@ -321,6 +327,7 @@ public class AccountPropertiesReflectionTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedInternalTypeReflectionTests
 {
     private static readonly Assembly _cosmosAssembly = typeof(Container).Assembly;
@@ -387,6 +394,7 @@ public class ChangeFeedInternalTypeReflectionTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedIteratorSetupReflectionTests
 {
     [Fact]
@@ -410,6 +418,7 @@ public class FeedIteratorSetupReflectionTests
 //  Phase 2: Missing NSubstitute Sealed-Type Canary Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkSealedTypeCanaryTests
 {
     [Theory]
@@ -433,6 +442,7 @@ public class SdkSealedTypeCanaryTests
 //  Phase 3: Edge Case & Integration Canary Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkCompatibilityIntegrationTests
 {
     [Fact]
@@ -459,6 +469,7 @@ public class SdkCompatibilityIntegrationTests
 //  Plan 35 — Phase 1: Additional Sealed-Type Canary Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class AdditionalSealedTypeCanaryTests
 {
     [Fact]
@@ -537,6 +548,7 @@ internal static class SdkTestHelper
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkRequestHeaderCanaryTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -679,6 +691,7 @@ public class SdkRequestHeaderCanaryTests : IDisposable
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkResponseHeaderContractTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -742,6 +755,7 @@ public class SdkResponseHeaderContractTests : IDisposable
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkUrlPatternCanaryTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -803,6 +817,7 @@ public class SdkUrlPatternCanaryTests : IDisposable
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkEnvelopeFormatCanaryTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -877,6 +892,7 @@ public class SdkEnvelopeFormatCanaryTests : IDisposable
 //  Plan 35 — Phase 3: Patch Operation Type String Canaries
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchOperationTypeStringTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -962,6 +978,7 @@ public class PatchOperationTypeStringTests : IDisposable
 //  Plan 35 — Phase 4: VerifySdkCompat Expansion
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkCompatExpansionTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -1079,6 +1096,7 @@ public class SdkCompatExpansionTests : IDisposable
 //  Plan 35 — Phase 5: Query Plan Response Canaries
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryPlanResponseCanaryTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -1185,6 +1203,7 @@ public class QueryPlanResponseCanaryTests : IDisposable
 //  Plan 35 — Phase 6: Account & Collection Metadata Canaries
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class AccountCollectionMetadataCanaryTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -1255,6 +1274,7 @@ public class AccountCollectionMetadataCanaryTests : IDisposable
 //  Plan 35 — Phase 7: Edge Cases & Robustness
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkEdgeCaseReflectionTests
 {
     [Fact]
@@ -1344,6 +1364,7 @@ public class SdkEdgeCaseReflectionTests
 //  Plan 35 — Bug Fix Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerBugFixTests
 {
     [Fact]
@@ -1387,6 +1408,7 @@ public class FakeCosmosHandlerBugFixTests
 //  Plan 35 — Skipped + Divergent Behavior Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkCompatibilityDivergentBehaviorTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -1501,6 +1523,7 @@ public class SdkCompatibilityDivergentBehaviorTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedIteratorSetupIntegrationTests
 {
     [Fact]
@@ -1550,6 +1573,7 @@ public class FeedIteratorSetupIntegrationTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedurePropertiesReflectionTests
 {
     [Fact]
@@ -1581,6 +1605,7 @@ public class StoredProcedurePropertiesReflectionTests
 //  Plan 35 — Phase B: ParsePatchBody Error Path Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ParsePatchBodyErrorPathTests
 {
     private static readonly MethodInfo ParsePatchBodyMethod =
@@ -1656,6 +1681,7 @@ public class ParsePatchBodyErrorPathTests
 //  Plan 35 — Phase C: ETag Header Round-Trip Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkETagHeaderRoundTripTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -1705,6 +1731,7 @@ public class SdkETagHeaderRoundTripTests : IDisposable
 //  Plan 35 — Phase D: Partition Range Distribution Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionRangeDistributionTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -1784,6 +1811,7 @@ public class PartitionRangeDistributionTests : IDisposable
 //  Plan 35 — Phase E: LINQ Through SDK Pipeline Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkLinqPipelineTests : IDisposable
 {
     private readonly InMemoryContainer _container;
@@ -1876,6 +1904,7 @@ public class SdkLinqPipelineTests : IDisposable
 //  Plan 35 — Phase F: Divergent Behavior Documentation Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SdkCompatibilityPlan35DivergentTests : IDisposable
 {
     private readonly InMemoryContainer _container;

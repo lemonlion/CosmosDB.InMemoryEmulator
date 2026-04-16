@@ -4,6 +4,7 @@ using Microsoft.Azure.Cosmos;
 using Xunit;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -11,6 +12,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Phase 1: BUG-1 — Database ThroughputProperties roundtrip
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseThroughputPropertiesRoundtripTests
 {
     // T1: ReplaceThroughputAsync(ThroughputProperties) → ReadThroughputAsync roundtrip
@@ -60,6 +62,7 @@ public class DatabaseThroughputPropertiesRoundtripTests
 //  Phase 2: BUG-2 — CreateDatabaseStreamAsync guards
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateDatabaseStreamGuardTests
 {
     // S1: Disposed client
@@ -118,6 +121,7 @@ public class CreateDatabaseStreamGuardTests
 //  Phase 3: BUG-3 — _explicitlyCreatedContainers cleanup on delete
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ExplicitlyCreatedContainersClearedOnDeleteTests
 {
     // E1: DeleteAsync clears _explicitlyCreatedContainers
@@ -176,6 +180,7 @@ public class ExplicitlyCreatedContainersClearedOnDeleteTests
 //  Phase 4: Missing edge case GREEN tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseEdgeCaseDeepDiveTests
 {
     // M1: ReadAsync on standalone database (no client)

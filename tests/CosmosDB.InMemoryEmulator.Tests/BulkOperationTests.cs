@@ -4,6 +4,7 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -13,6 +14,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// The SDK internally batches these into efficient service calls. The in-memory emulator
 /// must handle this concurrency correctly.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class BulkOperationTests
 {
     [Fact]

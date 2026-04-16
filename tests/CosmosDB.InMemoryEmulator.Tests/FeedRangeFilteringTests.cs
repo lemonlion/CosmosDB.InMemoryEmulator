@@ -3,6 +3,7 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -10,6 +11,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Phase 1 — FeedRange Count Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeCountTests
 {
     [Fact]
@@ -166,6 +168,7 @@ public class FeedRangeCountTests
 //  Phase 2 — FeedRange Query Filtering Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeQueryFilteringTests
 {
     [Fact]
@@ -600,6 +603,7 @@ public class FeedRangeQueryFilteringTests
 //  Phase 3 — FeedRange Change Feed Filtering Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeChangeFeedFilteringTests
 {
     [Fact]
@@ -946,6 +950,7 @@ public class FeedRangeChangeFeedFilteringTests
 //  Phase E — Large Document Consistency
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeLargeDocumentTests
 {
     [Fact]
@@ -990,6 +995,7 @@ public class FeedRangeLargeDocumentTests
 //  Phase G — Handler Consistency (Divergent)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeHandlerConsistencyTests
 {
     [Fact]
@@ -1043,6 +1049,7 @@ public class FeedRangeHandlerConsistencyTests
 //  Phase 4 — FeedRange Custom/Manual Boundaries
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeCustomBoundaryTests
 {
     [Fact]
@@ -1156,6 +1163,7 @@ public class FeedRangeCustomBoundaryTests
 //  Phase 5 — Partition Key Type Coverage
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangePartitionKeyTypeFilteringTests
 {
     [Fact]
@@ -1310,6 +1318,7 @@ public class FeedRangePartitionKeyTypeFilteringTests
 //  Phase 6 — Stream Iterator Parity
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeStreamFilteringParityTests
 {
     [Fact]
@@ -1396,6 +1405,7 @@ public class FeedRangeStreamFilteringParityTests
 //  Phase 7 — FeedRange.FromPartitionKey Divergent Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeQueryFilteringDivergentTests
 {
     [Fact]
@@ -1427,6 +1437,7 @@ public class FeedRangeQueryFilteringDivergentTests
 //  Phase 8 — Change Feed Stream Eager Evaluation Divergent Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeChangeFeedStreamDivergentTests
 {
     [Fact]

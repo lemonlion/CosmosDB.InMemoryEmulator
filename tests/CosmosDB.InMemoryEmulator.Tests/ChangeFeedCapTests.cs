@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -9,6 +10,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Change Feed Cap — eviction of oldest entries when MaxChangeFeedSize is hit
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedCapTests
 {
     [Fact]

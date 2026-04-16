@@ -5,6 +5,7 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Scripts;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -15,6 +16,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 
 // ── Phase 11: Stream Operation Coverage ──────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrStreamOperationTests
 {
     [Fact]
@@ -85,6 +87,7 @@ public class PitrStreamOperationTests
 
 // ── Phase 12: Stored Procedure / Trigger / UDF Interaction ───────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrSprocTriggerUdfTests
 {
     [Fact]
@@ -181,6 +184,7 @@ public class PitrSprocTriggerUdfTests
 
 // ── Phase 14: FeedRange Interaction ──────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrFeedRangeTests
 {
     [Fact]
@@ -219,6 +223,7 @@ public class PitrFeedRangeTests
 
 // ── Phase 15: Bulk Operations ────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrBulkOperationTests
 {
     [Fact]
@@ -252,6 +257,7 @@ public class PitrBulkOperationTests
 
 // ── Phase 16: Per-Item TTL ───────────────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrPerItemTtlTests
 {
     [Fact]
@@ -303,6 +309,7 @@ public class PitrPerItemTtlTests
 
 // ── Phase 17: Export After Restore ───────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrExportTests
 {
     [Fact]
@@ -364,6 +371,7 @@ public class PitrExportTests
 
 // ── Phase 18: ChangeFeedProcessor After Restore ──────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrChangeFeedProcessorTests
 {
     [Fact]
@@ -404,6 +412,7 @@ public class PitrChangeFeedProcessorTests
 
 // ── Phase 19: ItemLocks Cleanup (BUG-1 FIX) ─────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrItemLockFixTests
 {
     [Fact]
@@ -461,6 +470,7 @@ public class PitrItemLockFixTests
 
 // ── Phase 20: Additional Edge Cases ──────────────────────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrAdditionalEdgeCaseTests
 {
     [Fact]
@@ -534,6 +544,7 @@ public class PitrAdditionalEdgeCaseTests
 
 // ── Phase 21: Divergent Behavior Documentation Tests ─────────────────────────
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrDivergentDocTests
 {
     [Fact(Skip = "PITR does not restore container properties — real Cosmos PITR creates a new account")]

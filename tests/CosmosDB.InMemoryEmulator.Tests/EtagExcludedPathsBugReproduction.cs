@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -11,6 +12,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// is created with a custom IndexingPolicy. The InMemoryEmulator does not do this,
 /// causing tests that assert on ExcludedPaths.Count to fail.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class EtagExcludedPathsBugReproduction
 {
     [Fact]

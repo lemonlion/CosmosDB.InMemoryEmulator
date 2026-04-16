@@ -4,6 +4,7 @@ using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Scripts;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -13,6 +14,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Real Cosmos DB always passes <c>(err, docs, responseOptions)</c> where responseOptions
 /// has a <c>continuation</c> property for pagination.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsSprocQueryResponseOptionsBugTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");

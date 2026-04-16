@@ -5,9 +5,11 @@ using Newtonsoft.Json;
 using Xunit;
 using System.Text;
 using Newtonsoft.Json.Linq;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -285,6 +287,7 @@ public class TransactionalBatchTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchGapTests2
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -374,6 +377,7 @@ public class TransactionalBatchGapTests2
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -414,6 +418,7 @@ public class TransactionalBatchGapTests3
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -447,6 +452,7 @@ public class TransactionalBatchEdgeCaseTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -555,6 +561,7 @@ public class TransactionalBatchGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchGapTests4
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -609,6 +616,7 @@ public class TransactionalBatchGapTests4
 
 // ── Category 1: Status Code Correctness ──
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchStatusCodeTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -721,6 +729,7 @@ public class TransactionalBatchStatusCodeTests
 
 // ── Category 2: Rollback Integrity ──
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchRollbackIntegrityTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -798,6 +807,7 @@ public class TransactionalBatchRollbackIntegrityTests
 
 // ── Category 3: Request Options Passthrough ──
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchRequestOptionsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -842,6 +852,7 @@ public class TransactionalBatchRequestOptionsTests
 
 // ── Category 4: Size Limit Enforcement ──
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchSizeLimitTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -894,6 +905,7 @@ public class TransactionalBatchSizeLimitTests
 
 // ── Category 5: GetEnumerator / IEnumerable ──
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchEnumerationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -922,6 +934,7 @@ public class TransactionalBatchEnumerationTests
 
 // ── Category 6: Operation Result Metadata ──
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchResultMetadataTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -970,6 +983,7 @@ public class TransactionalBatchResultMetadataTests
 
 // ── Category 7: Intra-Batch Operation Sequences ──
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchIntraBatchSequenceTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1080,6 +1094,7 @@ public class TransactionalBatchIntraBatchSequenceTests
 
 // ── Category 8: Boundary Conditions ──
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchBoundaryTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1128,6 +1143,7 @@ public class TransactionalBatchBoundaryTests
 
 // ── Category 9: Concurrent and Re-execution ──
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchExecutionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1155,6 +1171,7 @@ public class TransactionalBatchExecutionTests
 
 // ── Category 10: Partition Key Enforcement ──
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchPartitionKeyTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1181,6 +1198,7 @@ public class TransactionalBatchPartitionKeyTests
 
 // ── Category 11: Response Properties ──
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchResponsePropertiesTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1212,6 +1230,7 @@ public class TransactionalBatchResponsePropertiesTests
 
 // ── Skipped Tests + Divergent Behaviour Tests ──
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchDivergentBehaviourTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1283,6 +1302,7 @@ public class TransactionalBatchDivergentBehaviourTests
 //  Category A: Response Property Coverage
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchResponsePropertyDeepTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1370,6 +1390,7 @@ public class TransactionalBatchResponsePropertyDeepTests
 //  Category B: Operation Result Data Coverage
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchOperationResultDataTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1555,6 +1576,7 @@ public class TransactionalBatchOperationResultDataTests
 //  Category E: Request Options Passthrough
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchRequestOptionsDeepTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1627,6 +1649,7 @@ public class TransactionalBatchRequestOptionsDeepTests
 //  Category F: Error Scenarios
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchErrorScenarioTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1677,6 +1700,7 @@ public class TransactionalBatchErrorScenarioTests
 //  Category C: Unique Key Policy Interaction
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchUniqueKeyTests
 {
     [Fact]
@@ -1731,6 +1755,7 @@ public class TransactionalBatchUniqueKeyTests
 //  Category G: Intra-Batch Complex Sequences
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchComplexSequenceTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1858,6 +1883,7 @@ public class TransactionalBatchComplexSequenceTests
 //  Category H: Stream Operations (Deeper Coverage)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchStreamDeepTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1916,6 +1942,7 @@ public class TransactionalBatchStreamDeepTests
 //  Category I: Change Feed Integration
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchChangeFeedIntegrationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1970,6 +1997,7 @@ public class TransactionalBatchChangeFeedIntegrationTests
 //  Category J: Serialization Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchSerializationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2031,6 +2059,7 @@ public class TransactionalBatchSerializationTests
 //  Category: 2MB Error Path
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatch2MBErrorPathTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2057,6 +2086,7 @@ public class TransactionalBatch2MBErrorPathTests
 //  Skipped + Divergent Behaviour Sister Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchSkippedAndDivergentTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2133,6 +2163,7 @@ public class TransactionalBatchSkippedAndDivergentTests
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── Bug Fix Verification ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchBugFixTests
 {
     private readonly InMemoryContainer _container = new("batch-bugfix", "/partitionKey");
@@ -2207,6 +2238,7 @@ public class TransactionalBatchBugFixTests
 }
 
 // ── Request Options Extended ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchRequestOptionsExtendedTests
 {
     private readonly InMemoryContainer _container = new("batch-reqopt", "/partitionKey");
@@ -2268,6 +2300,7 @@ public class TransactionalBatchRequestOptionsExtendedTests
 }
 
 // ── Edge Cases Extended ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchEdgeCaseExtendedTests
 {
     private readonly InMemoryContainer _container = new("batch-edge", "/partitionKey");
@@ -2339,6 +2372,7 @@ public class TransactionalBatchEdgeCaseExtendedTests
 }
 
 // ── TTL Tests ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchTtlExtendedTests
 {
     [Fact]
@@ -2395,6 +2429,7 @@ public class TransactionalBatchTtlExtendedTests
 }
 
 // ── Unique Key Extended ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchUniqueKeyExtendedTests
 {
     [Fact]
@@ -2455,6 +2490,7 @@ public class TransactionalBatchUniqueKeyExtendedTests
 }
 
 // ── GetOperationResultAtIndex ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchGetOperationResultTests
 {
     private readonly InMemoryContainer _container = new("batch-getop", "/partitionKey");
@@ -2530,6 +2566,7 @@ public class TransactionalBatchGetOperationResultTests
 }
 
 // ── Concurrent Batches ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchConcurrentExtendedTests
 {
     [Fact]
@@ -2570,6 +2607,7 @@ public class TransactionalBatchConcurrentExtendedTests
 }
 
 // ── Miscellaneous ──
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchMiscExtendedTests
 {
     [Fact]

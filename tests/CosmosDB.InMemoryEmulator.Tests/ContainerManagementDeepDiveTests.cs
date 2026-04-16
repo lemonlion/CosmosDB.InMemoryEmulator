@@ -5,6 +5,7 @@ using Microsoft.Azure.Cosmos.Scripts;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -12,6 +13,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Phase 1: Bug-proving tests (RED → GREEN)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerStreamValidationTests
 {
     // T01: BUG-1 — ReplaceContainerStreamAsync should reject partition key path changes
@@ -97,6 +99,7 @@ public class ContainerStreamValidationTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteContainerCleanupTests
 {
     // T05: BUG-4 — DeleteContainerAsync should clear stored procedure properties
@@ -202,6 +205,7 @@ public class DeleteContainerCleanupTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerExplicitCreationLifecycleTests
 {
     // T07: BUG-5 — After DeleteContainerAsync, lazy resolve should show container not found
@@ -258,6 +262,7 @@ public class ContainerExplicitCreationLifecycleTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ThroughputPersistenceDeepDiveTests
 {
     // T09: BUG-6 — ReplaceThroughputAsync(ThroughputProperties) should persist the value
@@ -279,6 +284,7 @@ public class ThroughputPersistenceDeepDiveTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RegistrationValidationTests
 {
     // T10: BUG-7 — RegisterUdf should validate null name
@@ -332,6 +338,7 @@ public class RegistrationValidationTests
 //  Phase 2: Coverage gap tests (GREEN expected)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerNameValidationTests
 {
     // T13: GAP-9 — Name too long
@@ -396,6 +403,7 @@ public class ContainerNameValidationTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerCreationEdgeCaseTests3
 {
     // T18: GAP-11 — CreateContainerIfNotExists with different PK returns existing
@@ -415,6 +423,7 @@ public class ContainerCreationEdgeCaseTests3
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteAllByPartitionKeyDeepDiveTests
 {
     // T19: GAP-12 — DeleteAllByPK with PartitionKey.None
@@ -444,6 +453,7 @@ public class DeleteAllByPartitionKeyDeepDiveTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerQueryFilterTests
 {
     // T20: GAP-13 — GetContainerQueryIterator with WHERE filter
@@ -517,6 +527,7 @@ public class ContainerQueryFilterTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerCancellationTokenDeepDiveTests
 {
     // T23: GAP-16 — DeleteContainerAsync with cancelled token
@@ -548,6 +559,7 @@ public class ContainerCancellationTokenDeepDiveTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceContainerEdgeCaseTests
 {
     // T25: GAP-17 — ReplaceContainerAsync with null properties
@@ -563,6 +575,7 @@ public class ReplaceContainerEdgeCaseTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteContainerIdempotencyDeepDiveTests
 {
     // T26: GAP-18 — Delete twice, database registration removed after first
@@ -589,6 +602,7 @@ public class DeleteContainerIdempotencyDeepDiveTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseDeletionContainerDeepDiveTests
 {
     // T27/S01 — Database delete cascade behavior
@@ -610,6 +624,7 @@ public class DatabaseDeletionContainerDeepDiveTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerCreationResponseTests
 {
     // T28: GAP-20 — CreateContainerStreamAsync response body
@@ -627,6 +642,7 @@ public class ContainerCreationResponseTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyValidationTests
 {
     // T29: GAP-21 — Too many computed properties via Replace
@@ -693,6 +709,7 @@ public class ComputedPropertyValidationTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeStabilityTests
 {
     // T32: GAP-22 — Feed ranges stable across item operations
@@ -728,6 +745,7 @@ public class FeedRangeStabilityTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerTtlValidationTests
 {
     // T33: GAP-23 — DefaultTimeToLive = 0 should throw
@@ -753,6 +771,7 @@ public class ContainerTtlValidationTests
 //  Phase 3: Behavioral difference tests (SKIP + SISTER)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeletedContainerBehaviorTests
 {
     // S02 — After DeleteContainerAsync, held reference returns 404

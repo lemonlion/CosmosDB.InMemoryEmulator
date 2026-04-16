@@ -4,9 +4,11 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using Xunit;
 using System.Text;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -478,6 +480,7 @@ public class ChangeFeedTests
 /// divergent behavior with a skipped ideal test and a sister documenting test.
 /// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.getchangefeedprocessorbuilder
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedStreamProcessorDivergentTests5
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -513,6 +516,7 @@ public class ChangeFeedStreamProcessorDivergentTests5
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedFeedRangeDivergentBehaviorTests4
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey") { FeedRangeCount = 4 };
@@ -552,6 +556,7 @@ public class ChangeFeedFeedRangeDivergentBehaviorTests4
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedProcessorDivergentBehaviorTests
 {
     /// <summary>
@@ -586,6 +591,7 @@ public class ChangeFeedProcessorDivergentBehaviorTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedManualCheckpointDivergentBehaviorTests4
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -628,6 +634,7 @@ public class ChangeFeedManualCheckpointDivergentBehaviorTests4
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedManualCheckpointStreamTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -704,6 +711,7 @@ public class ChangeFeedManualCheckpointStreamTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -831,6 +839,7 @@ public class ChangeFeedGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedAdvancedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -903,6 +912,7 @@ public class ChangeFeedAdvancedTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1010,6 +1020,7 @@ public class ChangeFeedGapTests3
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedGapTests4
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1108,6 +1119,7 @@ public class ChangeFeedGapTests4
 // Phase 1 — Bug fix tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedProcessorHandlerExceptionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1255,6 +1267,7 @@ public class ChangeFeedProcessorHandlerExceptionTests
 // Phase 2 — Iterator lifecycle & edge cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedIteratorLifecycleTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1394,6 +1407,7 @@ public class ChangeFeedIteratorLifecycleTests
 // Phase 3 — Stream CRUD operations record change feed
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedStreamCrudTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1518,6 +1532,7 @@ public class ChangeFeedStreamCrudTests
 // Phase 4 — Partition key edge cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedPartitionKeyTests
 {
     [Fact]
@@ -1600,6 +1615,7 @@ public class ChangeFeedPartitionKeyTests
 // Phase 5 — Delete tombstone details
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedTombstoneTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1690,6 +1706,7 @@ public class ChangeFeedTombstoneTests
 // Phase 6 — Processor advanced scenarios
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedProcessorAdvancedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1861,6 +1878,7 @@ public class ChangeFeedProcessorAdvancedTests
 // Phase 7 — Stream iterator edge cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedStreamIteratorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1981,6 +1999,7 @@ public class ChangeFeedStreamIteratorTests
 // Phase 8 — ChangeFeedStartFrom variants
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedStartFromTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2138,6 +2157,7 @@ public class ChangeFeedStartFromTests
 // Phase 9 — Concurrency
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedConcurrencyTests
 {
     [Fact]
@@ -2201,6 +2221,7 @@ public class ChangeFeedConcurrencyTests
 // Phase 10 — ClearItems interaction
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedClearItemsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2265,6 +2286,7 @@ public class ChangeFeedClearItemsTests
 // Phase 12 — Skipped tests with sister tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedSkippedWithSisterTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2307,6 +2329,7 @@ public class ChangeFeedSkippedWithSisterTests
     }
 }
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedGapTests2
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2398,6 +2421,7 @@ public class ChangeFeedGapTests2
 // Deep-dive Phase 1: Bug fix tests — Composite PK pipe-in-value tombstone
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedBug2CompositePkPipeTests
 {
     [Fact]
@@ -2485,6 +2509,7 @@ public class ChangeFeedBug2CompositePkPipeTests
 // Deep-dive Phase 2: Response metadata (Category A)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedResponseMetadataTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2563,6 +2588,7 @@ public class ChangeFeedResponseMetadataTests
 // Deep-dive Phase 3: Incremental mode semantics (Category B)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedIncrementalModeDeepTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2674,6 +2700,7 @@ public class ChangeFeedIncrementalModeDeepTests
 // Deep-dive Phase 4: All-versions mode deep dive (Category C)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedAllVersionsDeepTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2808,6 +2835,7 @@ public class ChangeFeedAllVersionsDeepTests
 // Deep-dive Phase 5: Stream iterator deep dive (Category D)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedStreamDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2928,6 +2956,7 @@ public class ChangeFeedStreamDeepDiveTests
 // Deep-dive Phase 6: Processor delivery semantics (Category E)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedProcessorDeliveryDeepTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -3116,6 +3145,7 @@ public class ChangeFeedProcessorDeliveryDeepTests
 // Deep-dive Phase 7: FeedRange combinations (Category F)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedFeedRangeCombinationTests
 {
     [Fact]
@@ -3215,6 +3245,7 @@ public class ChangeFeedFeedRangeCombinationTests
 // Deep-dive Phase 8: Edge cases (Category G)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -3345,6 +3376,7 @@ public class ChangeFeedEdgeCaseTests
 // Deep-dive Phase 9: TTL + State Persistence + Unique Keys (Categories I, J, K)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedTTLAndStatePersistenceTests
 {
     [Fact]
@@ -3468,6 +3500,7 @@ public class ChangeFeedTTLAndStatePersistenceTests
 // Deep-dive Phase 10: Conditional operations (Category L)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedConditionalOperationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -3570,6 +3603,7 @@ public class ChangeFeedConditionalOperationTests
 // Deep-dive Phase 11: Processor builder API surface (Category H)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedProcessorBuilderApiTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -3657,6 +3691,7 @@ public class ChangeFeedProcessorBuilderApiTests
 // Deep-dive Phase 12: Skipped tests + Sister tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedDeepDiveSkippedAndSisterTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");

@@ -4,6 +4,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Net;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -11,6 +12,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 // Phase 1 — FakeCosmosHandler Metadata Tests (BUG-1, BUG-2, BUG-3 fixes)
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerMetadataDeepDiveTests
 {
     private static async Task<JObject> GetCollectionMetadataViaClient(InMemoryContainer container)
@@ -130,6 +132,7 @@ public class FakeCosmosHandlerMetadataDeepDiveTests
 // Phase 2 — ExcludedPath Query Types (emulator ignores exclusions)
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ExcludedPathQueryDeepDiveTests
 {
     private readonly InMemoryContainer _container;
@@ -230,6 +233,7 @@ public class ExcludedPathQueryDeepDiveTests
 // Phase 3 — Composite/Spatial Index Roundtrip
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CompositeIndexRoundtripDeepDiveTests
 {
     [Fact]
@@ -324,6 +328,7 @@ public class CompositeIndexRoundtripDeepDiveTests
 // Phase 4 — ORDER BY Edge Cases
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class OrderByDeepDiveTests
 {
     private async Task<List<JObject>> QueryAll(InMemoryContainer container, string sql)
@@ -470,6 +475,7 @@ public class OrderByDeepDiveTests
 // Phase 5 — Policy Edge Cases
 // ═══════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IndexPolicyEdgeCaseDeepDiveTests
 {
     [Fact]

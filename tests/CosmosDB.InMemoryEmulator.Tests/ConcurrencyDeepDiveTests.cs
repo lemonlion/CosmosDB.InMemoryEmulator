@@ -6,6 +6,7 @@ using Microsoft.Azure.Cosmos.Scripts;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -13,6 +14,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  M1: Concurrent Deletes with ETag
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentDeleteWithETagTests
 {
     [Fact]
@@ -51,6 +53,7 @@ public class ConcurrentDeleteWithETagTests
 //  M2/M3: Concurrent DeleteAllByPartitionKey
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentDeleteAllByPKTests
 {
     [Fact]
@@ -118,6 +121,7 @@ public class ConcurrentDeleteAllByPKTests
 //  M4: Concurrent Replace Non-Existent
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentReplaceNonExistentTests
 {
     [Fact]
@@ -146,6 +150,7 @@ public class ConcurrentReplaceNonExistentTests
 //  M5: Concurrent Patch After Delete
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentPatchAfterDeleteTests
 {
     [Fact]
@@ -193,6 +198,7 @@ public class ConcurrentPatchAfterDeleteTests
 //  M6: Concurrent ClearItems
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentClearItemsTests
 {
     [Fact]
@@ -232,6 +238,7 @@ public class ConcurrentClearItemsTests
 //  M7: Concurrent ImportState
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentImportStateTests
 {
     [Fact]
@@ -270,6 +277,7 @@ public class ConcurrentImportStateTests
 //  M8: Concurrent operations multiple containers
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentMultiContainerTests
 {
     [Fact]
@@ -303,6 +311,7 @@ public class ConcurrentMultiContainerTests
 //  M9: Concurrent PartitionKey.None
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentPartitionKeyNoneTests
 {
     [Fact]
@@ -324,6 +333,7 @@ public class ConcurrentPartitionKeyNoneTests
 //  M10: Concurrent PITR
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentPITRTests
 {
     [Fact]
@@ -377,6 +387,7 @@ public class ConcurrentPITRTests
 //  M11: Concurrent FeedRange Query
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentFeedRangeQueryTests
 {
     [Fact]
@@ -417,6 +428,7 @@ public class ConcurrentFeedRangeQueryTests
 //  M12: Concurrent Trigger Execution
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentTriggerExecutionTests
 {
     [Fact]
@@ -460,6 +472,7 @@ public class ConcurrentTriggerExecutionTests
 //  E1: Concurrent Delete with ETag (Stream)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentDeleteStreamETagTests
 {
     [Fact]
@@ -493,6 +506,7 @@ public class ConcurrentDeleteStreamETagTests
 //  E2: Concurrent Upsert/Create Same ID
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentUpsertCreateTests
 {
     [Fact]
@@ -518,6 +532,7 @@ public class ConcurrentUpsertCreateTests
 //  E3: Concurrent Replace with ETag (Stream)
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentReplaceStreamETagTests
 {
     [Fact]
@@ -553,6 +568,7 @@ public class ConcurrentReplaceStreamETagTests
 //  E4: Concurrent Patch Multiple Operations Atomic
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentPatchAtomicTests
 {
     [Fact]
@@ -586,6 +602,7 @@ public class ConcurrentPatchAtomicTests
 //  E5: Concurrent Computed Property Query
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentComputedPropertyQueryTests
 {
     [Fact]
@@ -635,6 +652,7 @@ public class ConcurrentComputedPropertyQueryTests
 //  E6: Concurrent ChangeFeed Checkpoint Consistency
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentChangeFeedCheckpointTests
 {
     [Fact]
@@ -671,6 +689,7 @@ public class ConcurrentChangeFeedCheckpointTests
 //  E7: Concurrent Batch Same Items
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentBatchConflictTests
 {
     [Fact]
@@ -709,6 +728,7 @@ public class ConcurrentBatchConflictTests
 //  E8: Concurrent Delete and Patch Same Item
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentDeleteAndPatchTests
 {
     [Fact]
@@ -752,6 +772,7 @@ public class ConcurrentDeleteAndPatchTests
 //  H1: ETag TOCTOU Emulator Behaviour
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentETagTOCTOUTests
 {
     [Fact]
@@ -795,6 +816,7 @@ public class ConcurrentETagTOCTOUTests
 //  H2: Batch Restore Snapshot Emulator Behaviour
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentBatchRestoreTests
 {
     [Fact(Skip = "RestoreSnapshot clears dictionaries then re-populates, creating a brief window " +
@@ -834,6 +856,7 @@ public class ConcurrentBatchRestoreTests
 //  H3: Patch + Replace Lock Contention
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentPatchReplaceLockTests
 {
     [Fact]
@@ -868,6 +891,7 @@ public class ConcurrentPatchReplaceLockTests
 //  followed by a deterministic post-condition.
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentPatchAfterUpsertTests
 {
     [Fact]
@@ -975,6 +999,7 @@ public class ConcurrentPatchAfterUpsertTests
 //  Concurrent Patch During Create — proves create acquires item lock
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentPatchDuringCreateTests
 {
     [Fact]
@@ -1037,6 +1062,7 @@ public class ConcurrentPatchDuringCreateTests
 //  Concurrent Create/Upsert Stream — lock coverage for stream variants
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentCreateUpsertStreamTests
 {
     [Fact]

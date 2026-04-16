@@ -6,6 +6,7 @@ using Microsoft.Azure.Cosmos.Scripts;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -13,6 +14,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Phase 1: UDF JS Engine Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsUdfEngineTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -227,6 +229,7 @@ public class JsUdfEngineTests
 //  Phase 2: Stored Procedure JS Engine Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsSprocEngineTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -486,6 +489,7 @@ public class JsSprocEngineTests
 //  Phase 3: Collection Context Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CollectionContextEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("ctx-container", "/pk");
@@ -641,6 +645,7 @@ public class CollectionContextEdgeCaseTests
 //  Phase 4: ConvertJsResult Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsUdfConvertResultTests
 {
     private readonly InMemoryContainer _container = new("convert-container", "/pk");
@@ -711,6 +716,7 @@ public class JsUdfConvertResultTests
 //  Phase 5: Trigger Execution Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerExecutionEdgeCaseDeepTests
 {
     private readonly InMemoryContainer _container = new("trig-edge", "/pk");
@@ -857,6 +863,7 @@ public class TriggerExecutionEdgeCaseDeepTests
 //  Phase 6: WireCollectionContext Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WireCollectionContextEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("wire-ctx", "/pk");
@@ -980,6 +987,7 @@ public class WireCollectionContextEdgeCaseTests
 //  Phase 7: Trigger CRUD Stream API
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerCrudStreamApiTests
 {
     private readonly InMemoryContainer _container = new("stream-trig", "/pk");
@@ -1122,6 +1130,7 @@ public class TriggerCrudStreamApiTests
 //  Phase 8: UseJs Extension Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UseJsExtensionDeepTests
 {
     [Fact]
@@ -1179,6 +1188,7 @@ public class UseJsExtensionDeepTests
 //  Phase 9: Divergent Behavior Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsTriggerDivergentDeepTests
 {
     private readonly InMemoryContainer _container = new("div-trig", "/pk");
@@ -1263,6 +1273,7 @@ public class JsTriggerDivergentDeepTests
 //  Phase 10: Bug Fixes & Potential Issues
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsTriggerBugFixTests
 {
     private readonly InMemoryContainer _container = new("bugfix-trig", "/pk");
@@ -1371,6 +1382,7 @@ public class JsTriggerBugFixTests
 //  Phase 11: Patch Stream Trigger Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchStreamTriggerDeepTests
 {
     private readonly InMemoryContainer _container = new("patch-trig", "/pk");

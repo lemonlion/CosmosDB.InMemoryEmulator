@@ -4,9 +4,11 @@ using Newtonsoft.Json.Linq;
 using Xunit;
 using System.Net;
 using System.Text;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1661,6 +1663,7 @@ public class SqlFunctionTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1728,6 +1731,7 @@ public class SqlFunctionGapTests3
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionGapTests2
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1792,6 +1796,7 @@ public class SqlFunctionGapTests2
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1916,6 +1921,7 @@ public class SqlFunctionGapTests
 
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionGapTests4
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1991,6 +1997,7 @@ public class SqlFunctionGapTests4
 //  Deep Dive: Bug Fix Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionBugFixTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2083,6 +2090,7 @@ public class SqlFunctionBugFixTests
 //  Deep Dive: Missing Function Coverage
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionMissingCoverageTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2214,6 +2222,7 @@ public class SqlFunctionMissingCoverageTests
 //  Deep Dive: String Function Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionStringEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2327,6 +2336,7 @@ public class SqlFunctionStringEdgeCaseTests
 //  Deep Dive: Math Function Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionMathEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2381,6 +2391,7 @@ public class SqlFunctionMathEdgeCaseTests
 //  Deep Dive: Integer Math Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionIntegerEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2411,6 +2422,7 @@ public class SqlFunctionIntegerEdgeCaseTests
 //  Deep Dive: Type Checking Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionTypeCheckEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2484,6 +2496,7 @@ public class SqlFunctionTypeCheckEdgeCaseTests
 //  Deep Dive: Array Function Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionArrayEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2534,6 +2547,7 @@ public class SqlFunctionArrayEdgeCaseTests
 //  Deep Dive: Aggregate Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionAggregateEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2573,6 +2587,7 @@ public class SqlFunctionAggregateEdgeCaseTests
 //  Deep Dive: Conversion Function Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionConversionEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -2621,6 +2636,7 @@ public class SqlFunctionConversionEdgeCaseTests
 //  Plan 37 — SQL Function Deep-Dive Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SqlFunctionDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("sql-dd", "/partitionKey");

@@ -4,11 +4,13 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Xunit;
 using AwesomeAssertions;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
 public class HierarchicalPkPrefixBugTests
 {
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class HierarchicalDoc
     {
         [JsonProperty("id")] public string Id { get; set; } = "";

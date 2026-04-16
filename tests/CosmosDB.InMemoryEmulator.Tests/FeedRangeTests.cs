@@ -4,10 +4,12 @@ using Newtonsoft.Json.Linq;
 using System.Net;
 using System.Text;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeGapTests3
 {
     [Fact]
@@ -50,6 +52,7 @@ public class FeedRangeGapTests3
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeGapTests
 {
     [Fact]
@@ -63,6 +66,7 @@ public class FeedRangeGapTests
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeGapTests4
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey") { FeedRangeCount = 4 };
@@ -95,6 +99,7 @@ public class FeedRangeGapTests4
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeGapTests2
 {
     [Fact]
@@ -116,6 +121,7 @@ public class FeedRangeGapTests2
 }
 
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeDivergentBehaviorTests
 {
     /// <summary>
@@ -149,6 +155,7 @@ public class FeedRangeDivergentBehaviorTests
 //  Category 1: FeedRangeCount Validation Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeCountValidationTests
 {
     [Fact]
@@ -230,6 +237,7 @@ public class FeedRangeCountValidationTests
 //  Category 2: Partition Affinity & Hashing Consistency
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangePartitionAffinityTests
 {
     [Fact]
@@ -293,6 +301,7 @@ public class FeedRangePartitionAffinityTests
 //  Category 3: Partition Key Type Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangePartitionKeyTypeTests
 {
     [Fact]
@@ -379,6 +388,7 @@ public class FeedRangePartitionKeyTypeTests
 //  Category 4: Query Features with FeedRange
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeQueryFeatureTests
 {
     [Fact]
@@ -448,6 +458,7 @@ public class FeedRangeQueryFeatureTests
 //  Category 5: Change Feed + FeedRange Advanced
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeChangeFeedAdvancedTests
 {
     [Fact]
@@ -479,6 +490,7 @@ public class FeedRangeChangeFeedAdvancedTests
 //  Category 6: Empty Container & Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeEmptyContainerTests
 {
     [Fact]
@@ -545,6 +557,7 @@ public class FeedRangeEmptyContainerTests
 //  FeedRange Deep Dive: Query Advanced
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeQueryAdvancedTests
 {
     private static async Task<InMemoryContainer> CreatePopulatedContainer(int count = 50, int feedRangeCount = 4)
@@ -761,6 +774,7 @@ public class FeedRangeQueryAdvancedTests
 //  FeedRange Deep Dive: PK Type Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangePartitionKeyAdvancedTypeTests
 {
     [Fact]
@@ -876,6 +890,7 @@ public class FeedRangePartitionKeyAdvancedTypeTests
 //  FeedRange Deep Dive: Pagination
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangePaginationTests
 {
     [Fact]
@@ -936,6 +951,7 @@ public class FeedRangePaginationTests
 //  FeedRange Deep Dive: Change Feed Advanced
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeChangeFeedDeepTests
 {
     [Fact]
@@ -1061,6 +1077,7 @@ public class FeedRangeChangeFeedDeepTests
 //  FeedRange Deep Dive: Stream Parity
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeStreamParityTests
 {
     [Fact]
@@ -1107,6 +1124,7 @@ public class FeedRangeStreamParityTests
 //  FeedRange Deep Dive: Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeEdgeCaseAdvancedTests
 {
     [Fact]

@@ -3,6 +3,7 @@ using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -11,6 +12,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Previously NSubstitute/Castle.DynamicProxy was used to create ItemResponse proxies,
 /// which failed when T was not publicly accessible. Now uses a concrete subclass instead.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ItemResponseProxyNet10Tests
 {
     private class SimpleDocument

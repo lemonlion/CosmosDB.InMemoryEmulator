@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
 using Xunit;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -11,6 +12,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// with a pre-cancelled CancellationToken. The InMemoryEmulator completes
 /// synchronously and ignores the token entirely.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CancellationTokenBugReproduction
 {
     [Fact]

@@ -4,6 +4,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Xunit;
 using AwesomeAssertions;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
@@ -65,6 +66,7 @@ public class PatchArrayPathResolutionTests
         [JsonProperty("count")] public int Count { get; set; }
     }
 
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class RunEntry
     {
         [JsonProperty("status")] public string Status { get; set; } = "";
