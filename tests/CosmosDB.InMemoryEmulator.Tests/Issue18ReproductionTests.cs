@@ -146,7 +146,7 @@ public class Issue18ReproductionTests
         (ex is CosmosException).Should().BeTrue();
         ex.GetType().Should().Be(typeof(CosmosException), "thrown exception should be exactly CosmosException, not a subclass");
         ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
-        ex.Diagnostics.Should().NotBeNull("Diagnostics should be populated");
+        ex.Diagnostics.Should().BeNull("Diagnostics is null because the SDK does not expose a public way to set it");
     }
 
     [Fact]

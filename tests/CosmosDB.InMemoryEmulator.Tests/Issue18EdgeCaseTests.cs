@@ -1,5 +1,4 @@
 using System.Net;
-using System.Reflection;
 using System.Runtime.Serialization;
 using AwesomeAssertions;
 using Microsoft.Azure.Cosmos;
@@ -16,56 +15,15 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 public class Issue18EdgeCaseTests
 {
     // ═══════════════════════════════════════════════════════════════════════════
-    // 1. REFLECTION FRAGILITY
+    // 1. FACTORY BEHAVIOUR
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public void BackingField_Exists_On_CosmosException()
-    {
-        // If the SDK ever renames the backing field, this test will detect it
-        var field = typeof(CosmosException).GetField(
-            "<Diagnostics>k__BackingField",
-            BindingFlags.NonPublic | BindingFlags.Instance);
-
-        field.Should().NotBeNull(
-            "The factory relies on the '<Diagnostics>k__BackingField' existing. " +
-            "If this fails, the Cosmos SDK changed its auto-property layout.");
-    }
-
-    [Fact]
-    public void Factory_Sets_Diagnostics_Via_Reflection_Successfully()
+    public void Factory_Returns_CosmosException_WithNullDiagnostics()
     {
         var ex = InMemoryCosmosException.Create("test", HttpStatusCode.NotFound, 0, "act-1", 1.5);
 
-        ex.Diagnostics.Should().NotBeNull();
-        ex.Diagnostics.ToString().Should().Be("{}");
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // 2. THREAD SAFETY — shared CosmosDiagnostics instance
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task ConcurrentCreation_SharesDiagnostics_WithoutCorruption()
-    {
-        const int concurrency = 500;
-        var exceptions = new CosmosException[concurrency];
-
-        await Parallel.ForAsync(0, concurrency, async (i, _) =>
-        {
-            await Task.Yield(); // force async scheduling
-            exceptions[i] = InMemoryCosmosException.Create(
-                $"msg-{i}", HttpStatusCode.NotFound, i, $"act-{i}", i * 0.1);
-        });
-
-        // All should share the same Diagnostics instance (singleton)
-        var firstDiag = exceptions[0].Diagnostics;
-        foreach (var ex in exceptions)
-        {
-            ex.Diagnostics.Should().BeSameAs(firstDiag,
-                "All exceptions should share the singleton Diagnostics instance");
-            ex.Diagnostics.ToString().Should().Be("{}");
-        }
+        ex.Diagnostics.Should().BeNull();
     }
 
     [Fact]
@@ -110,7 +68,7 @@ public class Issue18EdgeCaseTests
         ex.ActivityId.Should().Be("activity-xyz");
         ex.RequestCharge.Should().Be(3.14);
         ex.Message.Should().Contain("Something went wrong");
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     [Fact]
@@ -251,7 +209,7 @@ public class Issue18EdgeCaseTests
 
         ex.GetType().Should().Be(typeof(CosmosException));
         ex.StatusCode.Should().Be(statusCode);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     [Fact]
@@ -314,32 +272,8 @@ public class Issue18EdgeCaseTests
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public void Diagnostics_ToString_ReturnsEmptyJson()
+    public void Diagnostics_IsNull_OnCaughtException()
     {
-        var ex = InMemoryCosmosException.Create("test", HttpStatusCode.NotFound, 0, "", 0);
-        ex.Diagnostics.ToString().Should().Be("{}");
-    }
-
-    [Fact]
-    public void Diagnostics_GetClientElapsedTime_ReturnsZero()
-    {
-        var ex = InMemoryCosmosException.Create("test", HttpStatusCode.NotFound, 0, "", 0);
-        ex.Diagnostics.GetClientElapsedTime().Should().Be(TimeSpan.Zero);
-    }
-
-    [Fact]
-    public void Diagnostics_GetContactedRegions_ReturnsEmpty()
-    {
-        var ex = InMemoryCosmosException.Create("test", HttpStatusCode.NotFound, 0, "", 0);
-        var regions = ex.Diagnostics.GetContactedRegions();
-        regions.Should().NotBeNull();
-        regions.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void Diagnostics_IsNotNull_OnCaughtException()
-    {
-        // Diagnostics was previously null which caused NREs in logging
         CosmosException? caught = null;
         try
         {
@@ -350,10 +284,7 @@ public class Issue18EdgeCaseTests
             caught = ex;
         }
 
-        caught.Diagnostics.Should().NotBeNull("Diagnostics must never be null — NRE in logging is a common issue");
-        caught.Diagnostics.ToString().Should().NotBeNull();
-        caught.Diagnostics.GetClientElapsedTime().Should().BeGreaterThanOrEqualTo(TimeSpan.Zero);
-        caught.Diagnostics.GetContactedRegions().Should().NotBeNull();
+        caught.Diagnostics.Should().BeNull();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -377,7 +308,7 @@ public class Issue18EdgeCaseTests
                 new ItemRequestOptions { IfMatchEtag = "\"wrong-etag\"" }));
 
         ex.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     [Fact]
@@ -396,7 +327,7 @@ public class Issue18EdgeCaseTests
                 new ItemRequestOptions { IfNoneMatchEtag = "*" }));
 
         ex.StatusCode.Should().Be(HttpStatusCode.NotModified);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     [Fact]
@@ -415,7 +346,7 @@ public class Issue18EdgeCaseTests
                 new ItemRequestOptions { IfNoneMatchEtag = etag }));
 
         ex.StatusCode.Should().Be(HttpStatusCode.NotModified);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     [Fact]
@@ -434,7 +365,7 @@ public class Issue18EdgeCaseTests
                 new PatchItemRequestOptions { IfMatchEtag = "\"wrong-etag\"" }));
 
         ex.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -456,7 +387,7 @@ public class Issue18EdgeCaseTests
 
         ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
         ex.SubStatusCode.Should().Be(1003);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -481,7 +412,7 @@ public class Issue18EdgeCaseTests
         catch (CosmosException ex)
         {
             errors.Add((ex.StatusCode, ex.ActivityId));
-            ex.Diagnostics.Should().NotBeNull();
+            ex.Diagnostics.Should().BeNull();
         }
 
         // Error 2: Duplicate create → 409
@@ -492,7 +423,7 @@ public class Issue18EdgeCaseTests
         catch (CosmosException ex)
         {
             errors.Add((ex.StatusCode, ex.ActivityId));
-            ex.Diagnostics.Should().NotBeNull();
+            ex.Diagnostics.Should().BeNull();
         }
 
         // Error 3: Delete non-existent → 404
@@ -503,7 +434,7 @@ public class Issue18EdgeCaseTests
         catch (CosmosException ex)
         {
             errors.Add((ex.StatusCode, ex.ActivityId));
-            ex.Diagnostics.Should().NotBeNull();
+            ex.Diagnostics.Should().BeNull();
         }
 
         errors.Should().HaveCount(3);
@@ -531,7 +462,7 @@ public class Issue18EdgeCaseTests
             await container.CreateItemAsync(new { id = "", pk = "pk1" }, new PartitionKey("pk1")));
 
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     [Fact]
@@ -551,7 +482,7 @@ public class Issue18EdgeCaseTests
             await container.PatchItemAsync<dynamic>("1", new PartitionKey("pk1"), ops));
 
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     [Fact]
@@ -567,7 +498,7 @@ public class Issue18EdgeCaseTests
                 Array.Empty<PatchOperation>()));
 
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -584,7 +515,7 @@ public class Issue18EdgeCaseTests
             await client.CreateDatabaseAsync(longName));
 
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     [Fact]
@@ -596,7 +527,7 @@ public class Issue18EdgeCaseTests
             await client.CreateDatabaseAsync("db/name"));
 
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -642,7 +573,7 @@ public class Issue18EdgeCaseTests
                 await container.ReadItemAsync<dynamic>($"nope-{i}", new PartitionKey("pk1")));
 
             ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
-            ex.Diagnostics.Should().NotBeNull();
+            ex.Diagnostics.Should().BeNull();
             return ex;
         });
 
@@ -677,7 +608,7 @@ public class Issue18EdgeCaseTests
         }
         catch (CosmosException firstEx)
         {
-            firstEx.Diagnostics.Should().NotBeNull();
+            firstEx.Diagnostics.Should().BeNull();
             firstEx.StatusCode.Should().Be(HttpStatusCode.NotFound);
         }
 
@@ -690,7 +621,7 @@ public class Issue18EdgeCaseTests
         foreach (var inner in allTask.Exception.InnerExceptions)
         {
             inner.Should().BeOfType<CosmosException>();
-            ((CosmosException)inner).Diagnostics.Should().NotBeNull();
+            ((CosmosException)inner).Diagnostics.Should().BeNull();
         }
     }
 
@@ -712,7 +643,7 @@ public class Issue18EdgeCaseTests
                 new { id = "DIFFERENT", pk = "pk1" }, "1", new PartitionKey("pk1")));
 
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -732,7 +663,7 @@ public class Issue18EdgeCaseTests
                 new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" }));
 
         ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -806,7 +737,7 @@ public class Issue18EdgeCaseTests
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task Diagnostics_SurvivesAsyncAwait()
+    public async Task Diagnostics_IsNull_AfterAsyncAwait()
     {
         var client = new InMemoryCosmosClient();
         var db = (await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
@@ -824,9 +755,7 @@ public class Issue18EdgeCaseTests
 
         caught.Should().NotBeNull();
         caught!.StatusCode.Should().Be(HttpStatusCode.NotFound);
-        caught.Diagnostics.Should().NotBeNull("Diagnostics must survive async stack unwinding");
-        caught.Diagnostics.ToString().Should().Be("{}");
-        caught.Diagnostics.GetClientElapsedTime().Should().Be(TimeSpan.Zero);
+        caught.Diagnostics.Should().BeNull();
     }
 
     private static async Task NestedAsyncCall(Container container)
@@ -850,6 +779,6 @@ public class Issue18EdgeCaseTests
             await container.ReplaceContainerAsync(new ContainerProperties("wrong-name", "/pk")));
 
         ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        ex.Diagnostics.Should().NotBeNull();
+        ex.Diagnostics.Should().BeNull();
     }
 }
