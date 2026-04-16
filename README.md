@@ -120,6 +120,55 @@ For the full feature list see [Features](https://github.com/lemonlion/CosmosDB.I
 
 Full documentation is available on the **[Wiki](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki)**.
 
+## Emulator Parity Validation
+
+The test suite includes infrastructure to validate that the in-memory implementation produces identical results to the real Cosmos DB emulator. 332 FakeCosmosHandler tests use the same SDK HTTP pipeline as a real emulator, making comparison meaningful.
+
+### Quick Start
+
+```powershell
+# Run full parity validation (starts emulator, runs both suites, compares)
+.\scripts\validate-parity.ps1
+
+# Run only CRUD tests
+.\scripts\validate-parity.ps1 -Filter "FullyQualifiedName~Crud"
+
+# Skip build if already built
+.\scripts\validate-parity.ps1 -SkipBuild
+```
+
+### Environment Variable
+
+Set `COSMOS_TEST_TARGET` to switch test backends:
+
+| Value | Backend |
+|-------|---------|
+| `inmemory` (default) | FakeCosmosHandler + InMemoryContainer |
+| `emulator-linux` | Docker legacy `azure-cosmos-emulator:latest` |
+
+### Test Traits
+
+Tests are categorized with xUnit traits:
+
+| Trait | Meaning |
+|-------|---------|
+| `Target=InMemoryOnly` | Uses in-memory-only APIs (BackingContainer, FaultInjector, etc.) — skipped on emulator |
+| `Target=KnownDivergence` | Documents known behavioral differences |
+| *(no Target trait)* | Parity test — runs against both backends |
+
+### Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/validate-parity.ps1` | One-command orchestrator |
+| `scripts/start-emulator.ps1` | Start Docker emulator |
+| `scripts/run-tests.ps1` | Run tests with a given target |
+| `scripts/compare-trx.ps1` | Compare TRX files and output parity report |
+
+### CI
+
+The `emulator-parity.yml` workflow runs weekly (Monday 6am UTC) or on manual trigger, executing both test suites and producing a parity report in the GitHub Actions step summary.
+
 ## Dependencies
 
 | Package | Purpose |

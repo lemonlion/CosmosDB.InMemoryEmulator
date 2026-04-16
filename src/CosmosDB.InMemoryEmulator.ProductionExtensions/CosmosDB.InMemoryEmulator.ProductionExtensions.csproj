@@ -7,7 +7,7 @@
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 		<IsPackable>true</IsPackable>
 		<PackageId>CosmosDB.InMemoryEmulator.ProductionExtensions</PackageId>
-		<Version>2.0.183</Version>
+		<Version>2.0.188</Version>
 		<Description>Production-safe extension methods for Azure Cosmos DB that enable seamless in-memory testing via CosmosDB.InMemoryEmulator.</Description>
 		<AzureCosmosDisableNewtonsoftJsonCheck>true</AzureCosmosDisableNewtonsoftJsonCheck>
 	</PropertyGroup>
