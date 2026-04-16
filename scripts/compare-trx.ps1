@@ -43,10 +43,10 @@ foreach ($f in $allTrxFiles | Sort-Object Name) {
     $targets[$name] = Parse-TrxFile $f.FullName
 }
 
-# Identify baseline and emulator targets
-$baselineName = 'inmemory'
-if (-not $targets.Contains($baselineName)) {
-    Write-Error "No inmemory-results.trx found in $ResultsDir (required as baseline)"
+# Identify baseline (any target starting with 'inmemory') and emulator targets
+$baselineName = $targets.Keys | Where-Object { $_ -like 'inmemory*' } | Select-Object -First 1
+if (-not $baselineName) {
+    Write-Error "No inmemory*-results.trx found in $ResultsDir (required as baseline)"
     exit 1
 }
 $baseline = $targets[$baselineName]

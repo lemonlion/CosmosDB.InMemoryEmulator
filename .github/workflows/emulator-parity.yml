@@ -22,7 +22,7 @@ jobs:
 
       - name: Run Tests (inmemory)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target inmemory
+        run: ./scripts/run-tests.ps1 -Target inmemory -Project integration
 
       - name: Upload TRX
         if: always()
@@ -80,7 +80,7 @@ jobs:
 
       - name: Run Tests (emulator-linux)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target emulator-linux
+        run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration
 
       - name: Upload TRX
         if: always()
@@ -131,7 +131,7 @@ jobs:
 
       - name: Run Tests (emulator-windows)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target emulator-windows
+        run: ./scripts/run-tests.ps1 -Target emulator-windows -Project integration
 
       - name: Upload TRX
         if: always()

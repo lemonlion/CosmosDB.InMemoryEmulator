@@ -49,7 +49,7 @@ if (-not $SkipBuild) {
 Write-Host "`n══════════════════════════════════════" -ForegroundColor Cyan
 Write-Host "  Step 1: Running in-memory tests" -ForegroundColor Cyan
 Write-Host "══════════════════════════════════════" -ForegroundColor Cyan
-$runArgs = @{ Target = 'inmemory'; Framework = $Framework; OutputDir = $resultsDir }
+$runArgs = @{ Target = 'inmemory'; Project = 'integration'; Framework = $Framework; OutputDir = $resultsDir }
 if ($Filter) { $runArgs.Filter = $Filter }
 & "$scriptsDir/run-tests.ps1" @runArgs
 $inMemoryExit = $LASTEXITCODE
