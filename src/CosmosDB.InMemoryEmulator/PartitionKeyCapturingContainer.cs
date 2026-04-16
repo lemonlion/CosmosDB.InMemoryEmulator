@@ -6,7 +6,7 @@ namespace CosmosDB.InMemoryEmulator;
 /// <summary>
 /// A <see cref="Container"/> decorator that intercepts query operations to capture
 /// the <see cref="PartitionKey"/> from <see cref="QueryRequestOptions"/> and set it
-/// on the owning <see cref="FakeCosmosHandler"/> via <see cref="FakeCosmosHandler.WithPartitionKey"/>.
+/// on the owning <see cref="FakeCosmosHandler"/> via its internal scoped override.
 /// This is necessary because the Cosmos SDK does not send the partition key header for
 /// prefix (hierarchical) partition key queries — it routes by partition key range ID instead.
 /// The wrapper transparently sets the partition key override before each
