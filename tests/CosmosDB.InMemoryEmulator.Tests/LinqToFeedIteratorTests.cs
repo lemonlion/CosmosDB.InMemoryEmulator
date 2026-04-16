@@ -1029,7 +1029,7 @@ public class LinqEdgeCaseTests
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
 
     [Fact]
-    public async Task Linq_EmptyContainer_AllOperators_ReturnEmptyOrDefaults()
+    public void Linq_EmptyContainer_AllOperators_ReturnEmptyOrDefaults()
     {
         var q = _container.GetItemLinqQueryable<TestDocument>(true);
         q.Where(d => d.IsActive).ToList().Should().BeEmpty();
