@@ -105,6 +105,54 @@ public class FakeCosmosHandler : HttpMessageHandler
     private static int _ridCounter;
     private const string PkRangesEtag = "\"pk-etag-1\"";
 
+    /// <summary>
+    /// AsyncLocal override for partition key. When set, <see cref="HandleQueryAsync"/>
+    /// and <see cref="HandleReadFeedAsync"/> use this value when the standard
+    /// <c>x-ms-documentdb-partitionkey</c> header is absent. This is necessary because
+    /// the Cosmos SDK does not send the partition key header for prefix (hierarchical)
+    /// partition key queries — it routes by partition key range ID instead.
+    /// Used internally by the <see cref="PartitionKeyCapturingContainer"/> decorator.
+    /// </summary>
+    private readonly AsyncLocal<PartitionKey?> _partitionKeyOverride = new();
+
+    /// <summary>
+    /// Separate AsyncLocal for the LINQ <c>.ToFeedIterator()</c> path.
+    /// Set eagerly by <see cref="PartitionKeyCapturingContainer"/> when
+    /// <c>GetItemLinqQueryable</c> is called with a prefix partition key,
+    /// because the <see cref="FeedIterator{T}"/> produced by <c>.ToFeedIterator()</c> is
+    /// SDK-internal and cannot be wrapped. Uses a lower priority than
+    /// <see cref="_partitionKeyOverride"/> so that <see cref="PkCapturingFeedIterator{T}"/>
+    /// (used by <c>GetItemQueryIterator</c>) takes precedence when both are set.
+    /// </summary>
+    private readonly AsyncLocal<PartitionKey?> _partitionKeyHint = new();
+
+    /// <summary>
+    /// Sets a partition key hint for the LINQ <c>.ToFeedIterator()</c> path.
+    /// Unlike the scoped override, this value persists until overwritten
+    /// or the async context ends. It is used as a fallback when neither the HTTP
+    /// partition key header nor the scoped override is present.
+    /// </summary>
+    internal void SetPartitionKeyHint(PartitionKey? partitionKey)
+    {
+        _partitionKeyHint.Value = partitionKey;
+    }
+
+    /// <summary>
+    /// Sets a scoped partition key override for the current async context.
+    /// Used internally by <see cref="PkCapturingFeedIterator{T}"/> to forward
+    /// the partition key captured at the Container API surface.
+    /// </summary>
+    internal IDisposable WithPartitionKey(PartitionKey partitionKey)
+    {
+        _partitionKeyOverride.Value = partitionKey;
+        return new PartitionKeyScope(_partitionKeyOverride);
+    }
+
+    private sealed class PartitionKeyScope(AsyncLocal<PartitionKey?> asyncLocal) : IDisposable
+    {
+        public void Dispose() => asyncLocal.Value = null;
+    }
+
     /// <summary>Recorded HTTP requests in the form "METHOD /path".</summary>
     public IReadOnlyCollection<string> RequestLog => _requestLog;
 
@@ -1206,7 +1254,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         var sqlQuery = queryBody["query"]?.ToString() ?? "SELECT * FROM c";
         _queryLog.Add(sqlQuery);
 
-        var partitionKey = ExtractPartitionKey(request);
+        var partitionKey = ExtractPartitionKey(request) ?? _partitionKeyOverride.Value ?? _partitionKeyHint.Value;
         var maxItemCount = ExtractMaxItemCount(request);
         var continuation = DecodeContinuation(request);
         var rangeId = ExtractPartitionKeyRangeId(request);
@@ -1885,7 +1933,7 @@ public class FakeCosmosHandler : HttpMessageHandler
             cacheKey = Guid.NewGuid().ToString("N");
 
             var requestOptions = new QueryRequestOptions();
-            var partitionKey = ExtractPartitionKey(request);
+            var partitionKey = ExtractPartitionKey(request) ?? _partitionKeyOverride.Value ?? _partitionKeyHint.Value;
             if (partitionKey is not null)
             {
                 requestOptions.PartitionKey = partitionKey;
@@ -2249,6 +2297,91 @@ public class FakeCosmosHandler : HttpMessageHandler
         IReadOnlyDictionary<string, FakeCosmosHandler> handlers)
     {
         return new RoutingHandler(handlers);
+    }
+
+    private const string FakeConnectionString = "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;";
+
+    /// <summary>
+    /// Wraps an existing <see cref="CosmosClient"/> so that containers returned by
+    /// <see cref="CosmosClient.GetContainer"/> automatically capture prefix partition
+    /// keys for hierarchical PK queries. Use this when you have already constructed
+    /// a <see cref="CosmosClient"/> with a custom HTTP pipeline (e.g. tracking handlers)
+    /// and want to add prefix PK support on top.
+    /// <para>
+    /// <example>
+    /// <code>
+    /// var trackingHandler = new CosmosTrackingMessageHandler(opts, fakeHandler);
+    /// var innerClient = new CosmosClient(connStr, new CosmosClientOptions
+    /// {
+    ///     ConnectionMode = ConnectionMode.Gateway,
+    ///     HttpClientFactory = () => new HttpClient(trackingHandler)
+    /// });
+    /// var client = handler.WrapClient(innerClient);
+    /// </code>
+    /// </example>
+    /// </para>
+    /// </summary>
+    /// <param name="innerClient">The <see cref="CosmosClient"/> to wrap.</param>
+    /// <returns>
+    /// A <see cref="CosmosClient"/> whose <see cref="CosmosClient.GetContainer"/>
+    /// returns containers with automatic prefix PK capturing.
+    /// </returns>
+    public CosmosClient WrapClient(CosmosClient innerClient)
+        => WrapClient(innerClient, new Dictionary<string, FakeCosmosHandler> { [_container.Id] = this });
+
+    /// <summary>
+    /// Wraps an existing <see cref="CosmosClient"/> with prefix partition key capturing
+    /// for multiple containers. Each container returned by <see cref="CosmosClient.GetContainer"/>
+    /// will be matched against the <paramref name="handlers"/> dictionary to find the
+    /// correct <see cref="FakeCosmosHandler"/> for PK capture.
+    /// </summary>
+    /// <param name="innerClient">The <see cref="CosmosClient"/> to wrap.</param>
+    /// <param name="handlers">
+    /// A dictionary mapping container names (or "database/container" keys) to their handlers.
+    /// </param>
+    public static CosmosClient WrapClient(
+        CosmosClient innerClient,
+        IReadOnlyDictionary<string, FakeCosmosHandler> handlers)
+        => new PkAwareCosmosClient(innerClient, handlers);
+
+    /// <summary>
+    /// Creates a <see cref="CosmosClient"/> backed by this handler that automatically
+    /// captures prefix partition keys for hierarchical PK queries. This is a convenience
+    /// method that builds the <see cref="CosmosClient"/> and wraps it in a single call.
+    /// <para>
+    /// For custom HTTP pipelines (e.g. tracking or logging handlers), construct the
+    /// <see cref="CosmosClient"/> yourself and use <see cref="WrapClient(CosmosClient)"/> instead.
+    /// </para>
+    /// </summary>
+    public CosmosClient CreateClient()
+        => CreateClient(new Dictionary<string, FakeCosmosHandler> { [_container.Id] = this });
+
+    /// <summary>
+    /// Creates a <see cref="CosmosClient"/> with a routing handler that dispatches
+    /// to multiple <see cref="FakeCosmosHandler"/> instances, with automatic prefix
+    /// partition key capturing for hierarchical PK queries.
+    /// <para>
+    /// For custom HTTP pipelines, construct the <see cref="CosmosClient"/> yourself
+    /// with <see cref="CreateRouter"/> and use
+    /// <see cref="WrapClient(CosmosClient, IReadOnlyDictionary{string, FakeCosmosHandler})"/> instead.
+    /// </para>
+    /// </summary>
+    public static CosmosClient CreateClient(
+        Dictionary<string, FakeCosmosHandler> handlers)
+    {
+        HttpMessageHandler httpHandler = handlers.Count == 1
+            ? handlers.Values.First()
+            : CreateRouter(handlers);
+
+        var innerClient = new CosmosClient(
+            FakeConnectionString,
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                HttpClientFactory = () => new HttpClient(httpHandler)
+            });
+
+        return WrapClient(innerClient, handlers);
     }
 
     /// <summary>
