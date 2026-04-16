@@ -12,7 +12,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 
 public class HierarchicalPkPrefixBugTests(ITestOutputHelper output)
 {
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class HierarchicalDoc
     {
         [JsonProperty("id")] public string Id { get; set; } = "";

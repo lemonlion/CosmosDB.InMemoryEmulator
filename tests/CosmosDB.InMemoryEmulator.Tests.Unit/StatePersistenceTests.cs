@@ -9,7 +9,6 @@ using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceTests
 {
     [Fact]
@@ -218,7 +217,6 @@ public class StatePersistenceTests
 //  Category A: ExportState Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ExportStateEdgeCaseTests
 {
     [Fact]
@@ -479,7 +477,6 @@ public class ExportStateEdgeCaseTests
 //  Category B: ImportState Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ImportStateEdgeCaseTests
 {
     [Fact]
@@ -722,7 +719,6 @@ public class ImportStateEdgeCaseTests
 //  Category C: Change Feed Interaction
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceChangeFeedTests
 {
     [Fact]
@@ -823,7 +819,6 @@ public class StatePersistenceChangeFeedTests
 //  Category D: TTL Interaction
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceTtlTests
 {
     [Fact]
@@ -887,7 +882,6 @@ public class StatePersistenceTtlTests
 //  Category E: Hierarchical Partition Keys
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceHierarchicalPkTests
 {
     [Fact]
@@ -953,7 +947,6 @@ public class StatePersistenceHierarchicalPkTests
 //  Category G: File-Based Operations
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceFileTests
 {
     [Fact]
@@ -1058,7 +1051,6 @@ public class StatePersistenceFileTests
 //  Category H: ClearItems
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ClearItemsTests
 {
     [Fact]
@@ -1149,7 +1141,6 @@ public class ClearItemsTests
 //  Category I: Concurrency
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceConcurrencyTests
 {
     [Fact]
@@ -1206,7 +1197,6 @@ public class StatePersistenceConcurrencyTests
 //  Category J: Cross-Container Export/Import
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrossContainerExportImportTests
 {
     [Fact]
@@ -1269,7 +1259,6 @@ public class CrossContainerExportImportTests
 //  Category K: Data Fidelity After Import
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DataFidelityAfterImportTests
 {
     [Fact]
@@ -1403,7 +1392,6 @@ public class DataFidelityAfterImportTests
 //  Category F: Unique Key Policy on Import
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceUniqueKeyTests
 {
     [Fact]
@@ -1478,7 +1466,6 @@ public class StatePersistenceUniqueKeyTests
 //  Category L: PITR Interaction
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistencePitrTests
 {
     [Fact]
@@ -1551,7 +1538,6 @@ public class StatePersistencePitrTests
 //  Category M: Error Handling / Defensive
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceErrorHandlingTests
 {
     [Fact]
@@ -1889,7 +1875,6 @@ public class StatePersistenceErrorHandlingTests
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── Batch 1: Export After Mutations ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ExportStateAfterMutationTests
 {
     [Fact]
@@ -1958,7 +1943,6 @@ public class ExportStateAfterMutationTests
 }
 
 // ── Batch 2: Import Fidelity ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ImportFidelityDeepDiveTests
 {
     [Fact]
@@ -2019,7 +2003,6 @@ public class ImportFidelityDeepDiveTests
 }
 
 // ── Batch 3: TTL Edge Cases ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceTtlDeepDiveTests
 {
     [Fact]
@@ -2055,7 +2038,6 @@ public class StatePersistenceTtlDeepDiveTests
 }
 
 // ── Batch 4: Auto-Persist ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class AutoPersistDeepDiveTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), $"cosmos-ap-{Guid.NewGuid():N}");
@@ -2150,7 +2132,6 @@ public class AutoPersistDeepDiveTests : IDisposable
 }
 
 // ── Batch 5: ClearItems Fidelity ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ClearItemsFidelityTests
 {
     [Fact]
@@ -2194,7 +2175,6 @@ public class ClearItemsFidelityTests
 }
 
 // ── Batch 6: PITR + Persistence Interaction ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrPersistenceInteractionTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), $"cosmos-pitr-{Guid.NewGuid():N}");
@@ -2270,7 +2250,6 @@ public class PitrPersistenceInteractionTests : IDisposable
 }
 
 // ── Batch 7: File Operations + Cross-Platform ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FileOperationsDeepDiveTests
 {
     [Fact]
@@ -2351,7 +2330,6 @@ public class FileOperationsDeepDiveTests
 }
 
 // ── Batch 8: Error Handling ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceErrorHandlingDeepDiveTests
 {
     [Fact]
@@ -2379,7 +2357,6 @@ public class StatePersistenceErrorHandlingDeepDiveTests
 }
 
 // ── Batch 9: Change Feed Deep ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceChangeFeedDeepDiveTests
 {
     [Fact]
@@ -2408,7 +2385,6 @@ public class StatePersistenceChangeFeedDeepDiveTests
 }
 
 // ── Batch 10: Concurrency ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceConcurrencyDeepDiveTests
 {
     [Fact]
@@ -2469,7 +2445,6 @@ public class StatePersistenceConcurrencyDeepDiveTests
 }
 
 // ── Batch 11: Hierarchical PK Edge ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class HierarchicalPkPersistenceEdgeTests
 {
     [Fact]

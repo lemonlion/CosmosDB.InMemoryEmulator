@@ -13,7 +13,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Comprehensive tests for InMemoryCosmosClient and InMemoryDatabase covering
 /// all SDK API surface as defined in cosmosclient-and-database-tdd-plan.md.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CosmosClientAndDatabaseTests
 {
     // ═══════════════════════════════════════════════════════════════════════
@@ -1214,7 +1213,6 @@ public class CosmosClientAndDatabaseTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateContainerIfNotExistsStatusCodeTests
 {
     [Fact]
@@ -1244,7 +1242,6 @@ public class CreateContainerIfNotExistsStatusCodeTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceThroughputAsyncResponseTests
 {
     [Fact]
@@ -1276,7 +1273,6 @@ public class ReplaceThroughputAsyncResponseTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CosmosClientInputValidationTests
 {
     private readonly InMemoryCosmosClient _client = new();
@@ -1318,7 +1314,6 @@ public class CosmosClientInputValidationTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteAsyncSubsequentOperationsTests
 {
     [Fact]
@@ -1344,7 +1339,6 @@ public class DeleteAsyncSubsequentOperationsTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GetContainerQueryIteratorAfterDeleteTests
 {
     [Fact]
@@ -1373,7 +1367,6 @@ public class GetContainerQueryIteratorAfterDeleteTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentDatabaseOperationTests
 {
     [Fact]
@@ -1412,7 +1405,6 @@ public class ConcurrentDatabaseOperationTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class NullGuardDivergentBehaviorTests
 {
     /// <summary>
@@ -1432,7 +1424,6 @@ public class NullGuardDivergentBehaviorTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateContainerIfNotExistsPropertiesTests
 {
     /// <summary>
@@ -1479,7 +1470,6 @@ public class CreateContainerIfNotExistsPropertiesTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadAsyncDatabaseResponseTests
 {
     [Fact]
@@ -1496,7 +1486,6 @@ public class ReadAsyncDatabaseResponseTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseIdPropertyTests
 {
     [Fact]
@@ -1518,7 +1507,6 @@ public class DatabaseIdPropertyTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadThroughputDivergentTests
 {
     /// <summary>
@@ -1543,7 +1531,6 @@ public class ReadThroughputDivergentTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DefineContainerBuilderDatabaseTests
 {
     [Fact]
@@ -1574,7 +1561,6 @@ public class DefineContainerBuilderDatabaseTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateContainerStreamResponseTests
 {
     /// <summary>
@@ -1599,7 +1585,6 @@ public class CreateContainerStreamResponseTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseManagementEdgeCaseTests
 {
     private readonly InMemoryCosmosClient _client = new();
@@ -1678,7 +1663,6 @@ public class DatabaseManagementEdgeCaseTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GetContainerSameInstanceTests
 {
     [Fact]
@@ -1718,7 +1702,6 @@ public class GetContainerSameInstanceTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateContainerCustomIndexingTests
 {
     [Fact]
@@ -1745,7 +1728,6 @@ public class CreateContainerCustomIndexingTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadStreamAsyncResponseTests
 {
     /// <summary>
@@ -1769,7 +1751,6 @@ public class ReadStreamAsyncResponseTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadThroughputAsyncDetailedTests
 {
     [Fact]
@@ -1798,7 +1779,6 @@ public class ReadThroughputAsyncDetailedTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateContainerReturnedContainerTests
 {
     [Fact]
@@ -1823,7 +1803,6 @@ public class CreateContainerReturnedContainerTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GetContainerQueryIteratorPartitionKeyTests
 {
     [Fact]
@@ -1876,7 +1855,6 @@ public class GetContainerQueryIteratorPartitionKeyTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateContainerResponseResourceTests
 {
     [Fact]
@@ -1920,7 +1898,6 @@ public class CreateContainerResponseResourceTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GetContainerQueryStreamIteratorOverloadTests
 {
     [Fact]
@@ -1946,7 +1923,6 @@ public class GetContainerQueryStreamIteratorOverloadTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteStreamAsyncContainerTests
 {
     [Fact]
@@ -1976,7 +1952,6 @@ public class DeleteStreamAsyncContainerTests
 
 // ─── DeleteContainerAsync Removes From Parent DB ────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteContainerParentDbTests
 {
     /// <summary>
@@ -2006,7 +1981,6 @@ public class DeleteContainerParentDbTests
 
 // ─── Client Encryption Key Operations ───────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ClientEncryptionKeyTests
 {
     /// <summary>
@@ -2042,7 +2016,6 @@ public class ClientEncryptionKeyTests
 // BUG FIX: DeleteAsync / DeleteStreamAsync don't clear _users
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteAsyncClearsUsersTests
 {
     [Fact]
@@ -2093,7 +2066,6 @@ public class DeleteAsyncClearsUsersTests
 // Phase 1: Missing CosmosClient Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentDatabaseCreationTests
 {
     [Fact]
@@ -2127,7 +2099,6 @@ public class ConcurrentDatabaseCreationTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseQueryIteratorAfterDeleteTests
 {
     [Fact]
@@ -2153,7 +2124,6 @@ public class DatabaseQueryIteratorAfterDeleteTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GetDatabaseSameInstanceTests
 {
     [Fact]
@@ -2169,7 +2139,6 @@ public class GetDatabaseSameInstanceTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GetDatabaseQueryStreamIteratorOverloadTests
 {
     [Fact]
@@ -2193,7 +2162,6 @@ public class GetDatabaseQueryStreamIteratorOverloadTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadAccountAsyncDetailedTests
 {
     [Fact]
@@ -2212,7 +2180,6 @@ public class ReadAccountAsyncDetailedTests
 // Phase 2: Missing Database Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateContainerInputValidationTests
 {
     [Fact]
@@ -2253,7 +2220,6 @@ public class CreateContainerInputValidationTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateContainerIfNotExistsNullPkFallbackTests
 {
     [Fact]
@@ -2273,7 +2239,6 @@ public class CreateContainerIfNotExistsNullPkFallbackTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteThenReuseReferenceTests
 {
     [Fact]
@@ -2293,7 +2258,6 @@ public class DeleteThenReuseReferenceTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StandaloneDatabaseTests
 {
     [Fact]
@@ -2316,7 +2280,6 @@ public class StandaloneDatabaseTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UserQueryIteratorEmptyTests
 {
     [Fact]
@@ -2339,7 +2302,6 @@ public class UserQueryIteratorEmptyTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PermissionErrorHandlingTests
 {
     [Fact]
@@ -2377,7 +2339,6 @@ public class PermissionErrorHandlingTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateDatabaseResponseUsabilityTests
 {
     [Fact]
@@ -2397,7 +2358,6 @@ public class CreateDatabaseResponseUsabilityTests
 // Phase 3: Divergent Behavior Tests (Skip + Sister)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DisposeAndContinueDivergentTests
 {
     [Fact]
@@ -2413,7 +2373,6 @@ public class DisposeAndContinueDivergentTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GetUserAutoCreateDivergentTests
 {
     [Fact]
@@ -2449,7 +2408,6 @@ public class GetUserAutoCreateDivergentTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ThroughputNotPersistedDivergentTests
 {
     [Fact]
@@ -2470,7 +2428,6 @@ public class ThroughputNotPersistedDivergentTests
 //  Phase 0 — Bug Fix Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateDatabaseStreamThroughputPropertiesTests
 {
     [Fact]
@@ -2499,7 +2456,6 @@ public class CreateDatabaseStreamThroughputPropertiesTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ClientEncryptionKeyQueryIteratorTests
 {
     [Fact]
@@ -2518,7 +2474,6 @@ public class ClientEncryptionKeyQueryIteratorTests
 //  Phase 1 — Naming & Validation Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseNameSpecialCharsTests
 {
     [Fact]
@@ -2546,7 +2501,6 @@ public class DatabaseNameSpecialCharsTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseNameForbiddenCharsDivergentTests
 {
     [Fact]
@@ -2582,7 +2536,6 @@ public class DatabaseNameForbiddenCharsDivergentTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseNameLengthDivergentTests
 {
     [Fact]
@@ -2595,7 +2548,6 @@ public class DatabaseNameLengthDivergentTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerNameForbiddenCharsDivergentTests
 {
     [Fact]
@@ -2612,7 +2564,6 @@ public class ContainerNameForbiddenCharsDivergentTests
 //  Phase 2 — Lifecycle Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadAfterDeleteDivergentTests
 {
     [Fact]
@@ -2627,7 +2578,6 @@ public class ReadAfterDeleteDivergentTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentDeleteDatabaseTests
 {
     [Fact]
@@ -2643,7 +2593,6 @@ public class ConcurrentDeleteDatabaseTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerOpsAfterDbDeleteDivergentTests
 {
     [Fact]
@@ -2678,7 +2627,6 @@ public class ContainerOpsAfterDbDeleteDivergentTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GetContainerAutoCreateDivergentTests
 {
     [Fact]
@@ -2708,7 +2656,6 @@ public class GetContainerAutoCreateDivergentTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateDbIfNotExistsNullGuardTests
 {
     [Fact]
@@ -2732,7 +2679,6 @@ public class CreateDbIfNotExistsNullGuardTests
 //  Phase 3 — Query Iterator Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryIteratorFilteringDivergentTests
 {
     [Fact]
@@ -2773,7 +2719,6 @@ public class QueryIteratorFilteringDivergentTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryIteratorPagingDivergentTests
 {
     [Fact]
@@ -2791,7 +2736,6 @@ public class QueryIteratorPagingDivergentTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryIteratorContinuationTokenDivergentTests
 {
     [Fact]
@@ -2822,7 +2766,6 @@ public class QueryIteratorContinuationTokenDivergentTests
 //  Phase 4 — Stream API Response Bodies
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateDatabaseStreamResponseBodyDivergentTests
 {
     [Fact]
@@ -2834,7 +2777,6 @@ public class CreateDatabaseStreamResponseBodyDivergentTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteStreamAsyncResponseBodyDivergentTests
 {
     [Fact]
@@ -2851,7 +2793,6 @@ public class DeleteStreamAsyncResponseBodyDivergentTests
 //  Phase 5 — Permission Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PermissionDeleteNonExistentDivergentTests
 {
     [Fact]
@@ -2870,7 +2811,6 @@ public class PermissionDeleteNonExistentDivergentTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PermissionQueryDefinitionOverloadTests
 {
     [Fact]
@@ -2895,7 +2835,6 @@ public class PermissionQueryDefinitionOverloadTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UserReplaceIdDivergentTests
 {
     [Fact]
@@ -2915,7 +2854,6 @@ public class UserReplaceIdDivergentTests
 //  Phase 6 — CancellationToken Behavior
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseCancellationTokenDivergentTests
 {
     [Fact]
@@ -2934,7 +2872,6 @@ public class DatabaseCancellationTokenDivergentTests
 //  Phase 8 — Multi-Database Isolation
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class MultiDatabaseIsolationTests
 {
     [Fact]
@@ -2996,7 +2933,6 @@ public class MultiDatabaseIsolationTests
 //  Phase 9 — Response Metadata Completeness
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DatabaseResponseMetadataTests
 {
     [Fact]
@@ -3024,7 +2960,6 @@ public class DatabaseResponseMetadataTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerResponseMetadataTests
 {
     [Fact]
@@ -3067,7 +3002,6 @@ public class ContainerResponseMetadataTests
 //  Phase 10 — User Management Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UserManagementEdgeCaseTests
 {
     [Fact]

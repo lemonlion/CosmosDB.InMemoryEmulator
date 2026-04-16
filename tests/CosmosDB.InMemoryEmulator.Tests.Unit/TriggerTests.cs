@@ -14,7 +14,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 
 // ─── Phase 1: Trigger Storage & Registration ────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerRegistrationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -150,7 +149,6 @@ public class TriggerRegistrationTests
 
 // ─── Phase 2: Pre-Trigger Execution ─────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PreTriggerExecutionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -407,7 +405,6 @@ public class PreTriggerExecutionTests
 
 // ─── Phase 3: Post-Trigger Execution ────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PostTriggerExecutionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -539,7 +536,6 @@ public class PostTriggerExecutionTests
 
 // ─── Phase 4: Delete Trigger Execution ──────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteTriggerTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -674,7 +670,6 @@ public class DeleteTriggerTests
 //  Phase: Registration & CRUD Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerRegistrationEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -807,7 +802,6 @@ public class TriggerRegistrationEdgeCaseTests
 //  Phase: Pre-Trigger Gaps
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PreTriggerEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -895,7 +889,6 @@ public class PreTriggerEdgeCaseTests
 //  Phase: Post-Trigger & Rollback Gaps
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PostTriggerEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -975,7 +968,6 @@ public class PostTriggerEdgeCaseTests
 //  Phase: Rollback Detail Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerRollbackTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1026,7 +1018,6 @@ public class TriggerRollbackTests
 //  Phase: Mixed Trigger Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerMixedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1082,7 +1073,6 @@ public class TriggerMixedTests
 //  Phase: Unsupported Operations
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerUnsupportedOperationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1109,7 +1099,6 @@ public class TriggerUnsupportedOperationTests
 //  Phase: PatchItemStreamAsync Trigger Support (Issue #22)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchItemStreamAsyncTriggerTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1175,7 +1164,6 @@ public class PatchItemStreamAsyncTriggerTests
 //  Phase: TransactionalBatch Trigger Support (Issue #23)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchTriggerTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1290,7 +1278,6 @@ public class TransactionalBatchTriggerTests
 //  Phase: Divergent Behavior (Skip + Sister)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerDivergentBehaviorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1356,7 +1343,6 @@ public class TriggerDivergentBehaviorTests
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── B1-B5: Change Feed Rollback on Post-Trigger Failure ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerChangeFeedRollbackTests
 {
     private static async Task<List<JObject>> GetChangeFeedSince(InMemoryContainer container, long checkpoint)
@@ -1504,7 +1490,6 @@ public class TriggerChangeFeedRollbackTests
 }
 
 // ── M1-M6: Stream Trigger Coverage ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerStreamCoverageTests
 {
     private readonly InMemoryContainer _container = new("trig-stream", "/pk");
@@ -1575,7 +1560,6 @@ public class TriggerStreamCoverageTests
 }
 
 // ── M7: TriggerOperation Filtering ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerOperationFilteringDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("trig-filter", "/pk");
@@ -1612,7 +1596,6 @@ public class TriggerOperationFilteringDeepDiveTests
 }
 
 // ── E4: Multiple Triggers ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerMultipleTriggerTests
 {
     private readonly InMemoryContainer _container = new("trig-multi", "/pk");
@@ -1648,7 +1631,6 @@ public class TriggerMultipleTriggerTests
 }
 
 // ── E9: Same Name for Pre and Post ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerSameNameTests
 {
     [Fact]
@@ -1672,7 +1654,6 @@ public class TriggerSameNameTests
 }
 
 // ── M22: Triggers + IfMatchEtag ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerETagInteractionTests
 {
     [Fact]
@@ -1694,7 +1675,6 @@ public class TriggerETagInteractionTests
 }
 
 // ── M25: Upsert New Item Rollback ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerUpsertNewItemRollbackTests
 {
     [Fact]
@@ -1717,7 +1697,6 @@ public class TriggerUpsertNewItemRollbackTests
 }
 
 // ── M9-M10: EnableContentResponseOnWrite + Triggers ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerContentResponseOptionsTests
 {
     [Fact]
@@ -1760,7 +1739,6 @@ public class TriggerContentResponseOptionsTests
 }
 
 // ── M12-M13: Nonexistent Item with Triggers ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerNonexistentItemTests
 {
     [Fact]

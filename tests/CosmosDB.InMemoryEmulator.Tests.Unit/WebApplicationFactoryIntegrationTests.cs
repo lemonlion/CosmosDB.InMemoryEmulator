@@ -380,7 +380,6 @@ public class TestAppHost : IAsyncDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WebApplicationFactoryIntegrationTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -630,7 +629,6 @@ public class WebApplicationFactoryIntegrationTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafLinqFilterTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -687,7 +685,6 @@ public class WafLinqFilterTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafCrudViaHttpTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -808,7 +805,6 @@ public class WafCrudViaHttpTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafDiPatternTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -1027,7 +1023,6 @@ public class CountingDelegatingHandler : DelegatingHandler
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafQueryPatternTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -1073,7 +1068,6 @@ public class WafQueryPatternTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafEdgeCaseTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -1173,7 +1167,6 @@ public class WafEdgeCaseTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafDivergentBehaviorTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -1291,7 +1284,6 @@ public class WafDivergentBehaviorTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafCallbackTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -1373,7 +1365,6 @@ public class WafCallbackTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafSeedingPatternTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -1512,7 +1503,6 @@ public class WafSeedingPatternTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafAdvancedFeatureTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -1670,7 +1660,6 @@ public class WafAdvancedFeatureTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafContainerManagementTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -1725,7 +1714,6 @@ public class WafContainerManagementTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafPatternValidationTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -1779,7 +1767,6 @@ public class WafPatternValidationTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafDivergentBehaviorDeepTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -1991,7 +1978,6 @@ public class WafDivergentBehaviorDeepTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafCrudEdgeCaseTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -2027,7 +2013,6 @@ public class WafCrudEdgeCaseTests : IDisposable
 }
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafAdvancedDataPatternTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -2140,7 +2125,6 @@ public class WafAdvancedDataPatternTests : IDisposable
 }
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafLoggingDiagnosticsTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2194,7 +2178,6 @@ public class WafLoggingDiagnosticsTests : IDisposable
 }
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafStateLifecycleTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -2310,7 +2293,6 @@ public class WafStateLifecycleTests : IDisposable
 }
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafConcurrencyIsolationTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -2347,7 +2329,6 @@ public class WafConcurrencyIsolationTests : IDisposable
 }
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafDiPatternDeepTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2399,7 +2380,6 @@ public class WafDiPatternDeepTests : IDisposable
 }
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafMiscEdgeCaseDeepTests : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -2518,7 +2498,6 @@ public class WafMiscEdgeCaseDeepTests : IDisposable
 }
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafStatePersistenceContainerPatternTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2582,7 +2561,6 @@ public class WafStatePersistenceContainerPatternTests : IDisposable
 }
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafFaultInjectorMetadataTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2646,7 +2624,6 @@ public class WafFaultInjectorMetadataTests : IDisposable
 }
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafZeroConfigDeepTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2680,7 +2657,6 @@ public class WafZeroConfigDeepTests : IDisposable
 }
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class WafTypedClientDeepTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();

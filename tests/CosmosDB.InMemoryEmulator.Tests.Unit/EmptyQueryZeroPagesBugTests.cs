@@ -11,7 +11,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// <c>FeedIterator.HasMoreResults</c> is immediately <c>false</c>, but real Cosmos DB
 /// always returns at least one (empty) response page.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class EmptyQueryZeroPagesBugTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");

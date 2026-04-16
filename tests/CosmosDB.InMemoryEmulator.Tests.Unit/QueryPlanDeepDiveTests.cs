@@ -12,7 +12,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Plan #27: Query Plan deep dive tests — additional coverage for HandleQueryPlanAsync
 /// in FakeCosmosHandler, including bug-exposing tests for aggregate detection recursion.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryPlanDeepDiveTests : IDisposable
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");

@@ -9,7 +9,6 @@ using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 namespace CosmosDB.InMemoryEmulator.Tests;
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagGapTests2
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -43,7 +42,6 @@ public class ETagGapTests2
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -98,7 +96,6 @@ public class ETagGapTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -146,7 +143,6 @@ public class ETagGapTests3
 
 #region ETag Response Tests
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagResponseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -259,7 +255,6 @@ public class ETagResponseTests
 
 #region IfMatch Wildcard Tests
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagIfMatchWildcardTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -313,7 +308,6 @@ public class ETagIfMatchWildcardTests
 
 #region IfNoneMatch Edge Cases
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagIfNoneMatchEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -383,7 +377,6 @@ public class ETagIfNoneMatchEdgeCaseTests
 
 #region ETag Lifecycle Tests
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagLifecycleTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -447,7 +440,6 @@ public class ETagLifecycleTests
 
 #region ETag Stream Tests
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagStreamTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -547,7 +539,6 @@ public class ETagStreamTests
 
 #region ETag Batch Tests
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagBatchStreamTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -642,7 +633,6 @@ public class ETagBatchStreamTests
 
 #region GAP-4: Stream Read with Current Specific ETag
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagStreamReadCurrentTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -666,7 +656,6 @@ public class ETagStreamReadCurrentTests
 
 #region GAP-6: Body _etag After Various Operations
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagBodyMatchTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -721,7 +710,6 @@ public class ETagBodyMatchTests
 
 #region GAP-7: Wildcard IfMatch on Non-Existent Upsert
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagWildcardUpsertTests
 {
     [Fact]
@@ -743,7 +731,6 @@ public class ETagWildcardUpsertTests
 
 #region GAP-8: IfNoneMatch Wildcard on Create When Exists
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagIfNoneMatchCreateTests
 {
     [Fact]
@@ -768,7 +755,6 @@ public class ETagIfNoneMatchCreateTests
 
 #region GAP-9: Stream Create ETag Header
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagStreamCreateTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -802,7 +788,6 @@ public class ETagStreamCreateTests
 
 #region GAP-11: ETag in SQL Query Results
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagQueryTests
 {
     [Fact]
@@ -832,7 +817,6 @@ public class ETagQueryTests
 
 #region GAP-12: ETag Preserved Through Export/Import
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagPersistenceTests
 {
     [Fact]
@@ -858,7 +842,6 @@ public class ETagPersistenceTests
 
 #region GAP-13: Patch All Operation Types Generate New ETag
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagPatchAllTypesTests
 {
     [Fact]
@@ -898,7 +881,6 @@ public class ETagPatchAllTypesTests
 
 #region GAP-14/15: Stream Delete/Replace IfMatch Non-Existent
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagStreamNonExistentTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -930,7 +912,6 @@ public class ETagStreamNonExistentTests
 
 #region GAP-16: Multiple Rapid Writes Unique ETags
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagRapidWriteTests
 {
     [Fact]
@@ -959,7 +940,6 @@ public class ETagRapidWriteTests
 
 #region GAP-17: Batch Read Item ETag
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ETagBatchReadTests
 {
     [Fact]

@@ -11,7 +11,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// 1. IS_NULL(@param) returns false when parameter value is null
 /// 2. SUM(IIF(field = @param, 1, 0)) returns 0 with parameterized queries
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ParameterizedQueryBugTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -141,7 +140,6 @@ public class ParameterizedQueryBugTests
 /// Extended coverage for parameterized queries in type-checking functions,
 /// aggregate paths, GROUP BY HAVING, and edge cases around parameter resolution.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ParameterizedQueryExtendedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -563,7 +561,6 @@ public class ParameterizedQueryExtendedTests
 /// Coverage for parameterized queries in ARRAY_CONTAINS, BETWEEN, IN, LIKE,
 /// string functions, null coalesce, comparisons, and edge cases.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ParameterizedQueryEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");

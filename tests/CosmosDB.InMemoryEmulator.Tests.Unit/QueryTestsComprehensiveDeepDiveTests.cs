@@ -15,7 +15,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 
 // ── 1.1 StringTo* Functions — Null Input ─────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringToFunctionNullTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -68,7 +67,6 @@ public class StringToFunctionNullTests
 
 // ── 1.2 StringToBoolean — Non-String Inputs ─────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringToBooleanEdgeTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -109,7 +107,6 @@ public class StringToBooleanEdgeTests
 
 // ── 1.3 NumberBin Edge Cases ─────────────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class NumberBinEdgeTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -151,7 +148,6 @@ public class NumberBinEdgeTests
 
 // ── 1.4 DISTINCT on Objects — Property Order ────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DistinctObjectPropertyOrderTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -195,7 +191,6 @@ public class DistinctObjectPropertyOrderTests
 
 // ── 1.5 IS_PRIMITIVE — Comprehensive ────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IsPrimitiveComprehensiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -257,7 +252,6 @@ public class IsPrimitiveComprehensiveTests
 
 // ── 1.6 COUNT Semantics ──────────────────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CountSemanticsTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -296,7 +290,6 @@ public class CountSemanticsTests
 
 // ── 1.7 ARRAY_CONTAINS — Partial Object Match ──────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ArrayContainsPartialMatchTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -342,7 +335,6 @@ public class ArrayContainsPartialMatchTests
 
 // ── 1.10 ARRAY_SLICE Edge Cases ─────────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ArraySliceEdgeTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -386,7 +378,6 @@ public class ArraySliceEdgeTests
 
 // ── 1.13 SELECT * with Computed Properties ──────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertySelectTests
 {
     [Fact]
@@ -443,7 +434,6 @@ public class ComputedPropertySelectTests
 
 // ── 1.15 ORDER BY with Complex Expression ───────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class OrderByComplexExpressionTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -485,7 +475,6 @@ public class OrderByComplexExpressionTests
 
 // ── 1.17 CONCAT Variadic ────────────────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcatVariadicTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -517,7 +506,6 @@ public class ConcatVariadicTests
 
 // ── 1.18 Nested Ternary ─────────────────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class NestedTernaryTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -550,7 +538,6 @@ public class NestedTernaryTests
 
 // ── 1.20 MaxItemCount = -1 ──────────────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class MaxItemCountTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -576,7 +563,6 @@ public class MaxItemCountTests
 
 // ── 1.22 COALESCE with Null ─────────────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CoalesceNullTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -609,7 +595,6 @@ public class CoalesceNullTests
 
 // ── 1.23 REPLACE Function Edge Cases ────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceFunctionEdgeTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -650,7 +635,6 @@ public class ReplaceFunctionEdgeTests
 
 // ── 1.24 REPLICATE Negative Count ───────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplicateEdgeTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -681,7 +665,6 @@ public class ReplicateEdgeTests
 
 // ── 1.25 DateTimeAdd Invalid Part ───────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateTimeAddEdgeTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -713,7 +696,6 @@ public class DateTimeAddEdgeTests
 
 // ── 1.27 Query with Composite Partition Key ─────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CompositePartitionKeyQueryTests
 {
     [Fact]
@@ -745,7 +727,6 @@ public class CompositePartitionKeyQueryTests
 
 // ── 1.28 SELECT with Array Index Access ─────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ArrayIndexSelectTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -777,7 +758,6 @@ public class ArrayIndexSelectTests
 
 // ── 1.29 WHERE with Chained String Functions ────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChainedStringFunctionTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -812,7 +792,6 @@ public class ChainedStringFunctionTests
 
 // ── 1.30 ARRAY_CONCAT with 3 Arrays ────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ArrayConcatThreeTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -845,7 +824,6 @@ public class ArrayConcatThreeTests
 
 // ── 1.12 WHERE IS NOT NULL ──────────────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IsNotNullTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -882,7 +860,6 @@ public class IsNotNullTests
 
 // ── 1.11 Aggregate with Mixed Types ─────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class AggregateMixedTypeTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -919,7 +896,6 @@ public class AggregateMixedTypeTests
 
 // ── 1.21 Stream Iterator Response Envelope ──────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamIteratorEnvelopeTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");

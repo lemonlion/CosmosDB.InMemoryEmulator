@@ -13,7 +13,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Computed Property Query Clause Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyQueryClauseTests
 {
     private static InMemoryContainer CreateContainer(params (string Name, string Query)[] defs)
@@ -222,7 +221,6 @@ public class ComputedPropertyQueryClauseTests
 //  Computed Property Expression Type Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyExpressionTypeTests
 {
     private static InMemoryContainer CreateContainer(params (string Name, string Query)[] defs)
@@ -345,7 +343,6 @@ public class ComputedPropertyExpressionTypeTests
 //  Computed Property Edge Case Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyEdgeCaseTests
 {
     private static InMemoryContainer CreateContainer(params (string Name, string Query)[] defs)
@@ -572,7 +569,6 @@ public class ComputedPropertyEdgeCaseTests
 //  Computed Property Integration Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyIntegrationTests
 {
     private static InMemoryContainer CreateContainer(params (string Name, string Query)[] defs)
@@ -737,7 +733,6 @@ public class ComputedPropertyIntegrationTests
 //  Computed Property Validation Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ComputedPropertyValidationDeepTests
 {
     [Fact]

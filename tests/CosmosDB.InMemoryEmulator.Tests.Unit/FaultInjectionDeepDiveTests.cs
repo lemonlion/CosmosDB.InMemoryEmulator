@@ -14,7 +14,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// router isolation, content-read edge cases, sequential faults,
 /// cancellation, and concurrent delegate swap.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionDeepDiveStreamTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -71,7 +70,6 @@ public class FaultInjectionDeepDiveStreamTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionBatchTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -126,7 +124,6 @@ public class FaultInjectionBatchTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionLinqTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -189,7 +186,6 @@ public class FaultInjectionLinqTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionReadManyTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -229,7 +225,6 @@ public class FaultInjectionReadManyTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionQueryPlanTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -312,7 +307,6 @@ public class FaultInjectionQueryPlanTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionEdgeCaseTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -483,7 +477,6 @@ public class FaultInjectionEdgeCaseTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionDeepDiveRouterTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -608,7 +601,6 @@ public class FaultInjectionDeepDiveRouterTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionDeepDiveResponseTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -705,7 +697,6 @@ public class FaultInjectionDeepDiveResponseTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionChangeFeedDeepDiveTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>
@@ -745,7 +736,6 @@ public class FaultInjectionChangeFeedDeepDiveTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FaultInjectionBulkTests
 {
     [Fact]

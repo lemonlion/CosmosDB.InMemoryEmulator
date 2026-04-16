@@ -24,7 +24,6 @@ public class PatchPathCollisionBugTests
         [JsonProperty("transactions")] public List<ItemValue> Transactions { get; set; } = new();
     }
 
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class ItemValue
     {
         [JsonProperty("name")] public string Name { get; set; } = "";

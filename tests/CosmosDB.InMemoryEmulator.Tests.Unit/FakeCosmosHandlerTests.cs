@@ -13,7 +13,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Gap tests that seed data via InMemoryContainer directly.
 /// Cannot run against the real emulator.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerGapTests
 {
     private static CosmosClient CreateClient(FakeCosmosHandler handler) =>

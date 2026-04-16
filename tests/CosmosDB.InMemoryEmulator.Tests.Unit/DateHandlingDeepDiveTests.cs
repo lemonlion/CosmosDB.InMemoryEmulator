@@ -11,7 +11,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Date Handling Deep Dive Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DateHandlingDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");

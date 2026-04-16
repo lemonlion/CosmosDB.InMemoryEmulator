@@ -15,7 +15,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// The emulator's IsExpired only checks "_ttl" (with underscore), so items stored
 /// with the standard "ttl" property name are never detected as expired.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlExpiryPointReadBugReproduction
 {
     [Fact]

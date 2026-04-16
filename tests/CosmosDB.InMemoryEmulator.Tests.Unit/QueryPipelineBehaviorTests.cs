@@ -14,7 +14,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  do not alter observable results.
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryPipelineBehaviorTests
 {
     private static async Task<InMemoryContainer> CreateSeededContainer(int count = 10)

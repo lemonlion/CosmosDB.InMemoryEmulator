@@ -13,7 +13,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// between two vectors. Supports cosine similarity, dot product, and Euclidean distance.
 /// Signature: VECTORDISTANCE(vector1, vector2 [, bool_bruteForce] [, {distanceFunction:'cosine'}])
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorSearchTests
 {
     private static async Task<InMemoryContainer> CreateContainerWithVectors()
@@ -1879,7 +1878,6 @@ public class VectorSearchTests
 //  Plan 46: W — Bare String Distance Function (BUG-1 regression tests)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistanceBareStringTests
 {
     private static async Task<InMemoryContainer> CreateContainer()
@@ -1943,7 +1941,6 @@ public class VectorDistanceBareStringTests
 //  Plan 46: N — Subquery Integration
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistanceSubqueryTests
 {
     private static async Task<InMemoryContainer> CreateContainerWithVectors()
@@ -2011,7 +2008,6 @@ public class VectorDistanceSubqueryTests
 //  Plan 46: O — SELECT VALUE & Projection Variants
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistanceProjectionTests
 {
     private static async Task<InMemoryContainer> CreateSingleDoc()
@@ -2078,7 +2074,6 @@ public class VectorDistanceProjectionTests
 //  Plan 46: P — Continuation Token Pagination
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistancePaginationTests
 {
     [Fact]
@@ -2140,7 +2135,6 @@ public class VectorDistancePaginationTests
 //  Plan 46: Q — Replace & Batch Mutation Interaction
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistanceMutationTests
 {
     private static async Task<List<JObject>> RunQuery(InMemoryContainer container, string sql)
@@ -2217,7 +2211,6 @@ public class VectorDistanceMutationTests
 //  Plan 46: R — FeedRange + Vector Search
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistanceFeedRangeTests
 {
     [Fact]
@@ -2270,7 +2263,6 @@ public class VectorDistanceFeedRangeTests
 //  Plan 46: S — Empty Container & Single-Doc Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistanceEdgeCaseExtendedTests
 {
     [Fact]
@@ -2323,7 +2315,6 @@ public class VectorDistanceEdgeCaseExtendedTests
 //  Plan 46: T — Advanced SQL Combinations
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistanceAdvancedSqlTests
 {
     private static async Task<InMemoryContainer> CreateMultiDocContainer()
@@ -2406,7 +2397,6 @@ public class VectorDistanceAdvancedSqlTests
 //  Plan 46: U — Deep Paths & Unusual Properties
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistanceDeepPathTests
 {
     private static async Task<List<JObject>> RunQuery(InMemoryContainer container, string sql)
@@ -2466,7 +2456,6 @@ public class VectorDistanceDeepPathTests
 //  Plan 46: V — State Persistence + Vector Data
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistanceStatePersistenceTests
 {
     [Fact]
@@ -2530,7 +2519,6 @@ public class VectorDistanceStatePersistenceTests
 //  Plan 46: X — IEEE 754 Additional Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistanceIeee754ExtendedTests
 {
     private static async Task<List<JObject>> RunQuery(InMemoryContainer container, string sql)
@@ -2595,7 +2583,6 @@ public class VectorDistanceIeee754ExtendedTests
 //  Plan 46: Y — FakeCosmosHandler Layer
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class VectorDistanceFakeHandlerTests
 {
     private static CosmosClient CreateClient(HttpMessageHandler handler) =>

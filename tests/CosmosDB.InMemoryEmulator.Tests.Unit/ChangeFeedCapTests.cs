@@ -10,7 +10,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Change Feed Cap — eviction of oldest entries when MaxChangeFeedSize is hit
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedCapTests
 {
     [Fact]

@@ -14,7 +14,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Real Cosmos DB always passes <c>(err, docs, responseOptions)</c> where responseOptions
 /// has a <c>continuation</c> property for pagination.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsSprocQueryResponseOptionsBugTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");

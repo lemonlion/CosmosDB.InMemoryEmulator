@@ -16,7 +16,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// All tests in this class use InMemoryContainer-specific APIs (BackingContainer,
 /// checkpoint, change feed processor) and cannot run against the real emulator.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerChangeFeedTests : IDisposable
 {
     private readonly InMemoryContainer _inMemoryContainer;

@@ -8,7 +8,6 @@ using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PointInTimeRestoreTests
 {
     [Fact]
@@ -237,7 +236,6 @@ public class PointInTimeRestoreTests
 //  Phase 1 — Bug Documentation (BUG 1: Stale _etag/_ts in restored JSON)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrEtagConsistencyTests
 {
     [Fact]
@@ -325,7 +323,6 @@ public class PitrEtagConsistencyTests
 //  Phase 2 — Core Functionality
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrCoreFunctionalityTests
 {
     [Fact]
@@ -408,7 +405,6 @@ public class PitrCoreFunctionalityTests
 //  Phase 3 — Edge Cases & Boundary Conditions
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrEdgeCaseTests
 {
     [Fact]
@@ -549,7 +545,6 @@ public class PitrEdgeCaseTests
 //  Phase 4 — Feature Interactions
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrFeatureInteractionTests
 {
     [Fact]
@@ -708,7 +703,6 @@ public class PitrFeatureInteractionTests
 //  Phase 5 — Thread Safety
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrConcurrencyTests
 {
     [Fact]
@@ -767,7 +761,6 @@ public class PitrConcurrencyTests
 //  Phase 6 — Bug Fix Tests (T2–T4)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrBugFixTests
 {
     [Fact]
@@ -844,7 +837,6 @@ public class PitrBugFixTests
 //  Phase 7 — TTL Interaction Tests (T5–T6)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrTtlInteractionTests
 {
     [Fact]
@@ -899,7 +891,6 @@ public class PitrTtlInteractionTests
 //  Phase 8 — Additional Operation Type Coverage (T7–T11)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrOperationCoverageTests
 {
     [Fact]
@@ -1003,7 +994,6 @@ public class PitrOperationCoverageTests
 //  Phase 9 — Boundary & Edge Case Tests (T12–T16)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrBoundaryTests
 {
     [Fact]
@@ -1092,7 +1082,6 @@ public class PitrBoundaryTests
 //  Phase 10 — Divergent Behavior Tests (T17/T17s, T18s)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PitrDivergentBehaviorTests
 {
     [Fact(Skip = "DIVERGENT: Real Cosmos DB PITR creates a new account from continuous backup. " +

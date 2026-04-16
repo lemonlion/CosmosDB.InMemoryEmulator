@@ -15,7 +15,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// RegisterUdf, RegisterStoredProcedure, ClearItems, CreateRouter) and cannot run
 /// against the real emulator.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerAdvancedFeatureTests : IDisposable
 {
     private readonly InMemoryContainer _inMemoryContainer;

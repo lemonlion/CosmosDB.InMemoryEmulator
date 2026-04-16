@@ -8,7 +8,6 @@ using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchItemTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -172,7 +171,6 @@ public class PatchItemTests
 /// Per PatchItemStreamAsync docs: "The item's partition key value is immutable."
 /// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.patchitemasync
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchPartitionKeyImmutabilityTests5
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -201,7 +199,6 @@ public class PatchPartitionKeyImmutabilityTests5
 /// Per API docs: "The patch operations are atomic and are executed sequentially."
 /// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.patchitemasync
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchAtomicityTests5
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -233,7 +230,6 @@ public class PatchAtomicityTests5
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -336,7 +332,6 @@ public class PatchGapTests3
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -433,7 +428,6 @@ public class PatchGapTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchGapTests2
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -512,7 +506,6 @@ public class PatchGapTests2
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchEnableContentResponseDivergentBehaviorTests
 {
     /// <summary>
@@ -546,7 +539,6 @@ public class PatchEnableContentResponseDivergentBehaviorTests
 /// and set it to the specified value. Previously, the emulator silently did nothing.
 /// See: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchIncrementAutoCreateTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -599,7 +591,6 @@ public class PatchIncrementAutoCreateTests
 /// Set creates new properties; Replace does not.
 /// See: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchReplaceStrictSemanticsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -653,7 +644,6 @@ public class PatchReplaceStrictSemanticsTests
 /// Also, Remove at an array index should delete and shift elements.
 /// See: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchRemoveStrictSemanticsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -722,7 +712,6 @@ public class PatchRemoveStrictSemanticsTests
 /// existing element (not insert). This is different from Add which inserts.
 /// See: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchSetArrayIndexTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -763,7 +752,6 @@ public class PatchSetArrayIndexTests
 /// length results in an error. Add at index == length appends.
 /// See: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchAddArrayBoundsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -804,7 +792,6 @@ public class PatchAddArrayBoundsTests
 /// Also, path can't be a JSON child of from.
 /// See: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchMoveValidationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -889,7 +876,6 @@ public class PatchMoveValidationTests
 /// Phase 7: Per Cosmos DB FAQ, there is a limit of 10 patch operations per call.
 /// See: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update-faq
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchOperationsLimitTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -939,7 +925,6 @@ public class PatchOperationsLimitTests
 /// all system properties would require maintaining a list and checking each operation path, which
 /// adds complexity for a low-impact edge case (patching system properties is nonsensical).
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchSystemPropertyProtectionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -986,7 +971,6 @@ public class PatchSystemPropertyProtectionTests
 /// Phase 9: PatchItemStreamAsync coverage — verifying the stream-based patch
 /// variant has the same behavior and validation as the typed variant.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchStreamVariantTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1060,7 +1044,6 @@ public class PatchStreamVariantTests
 /// Phase 10: Edge cases for patch operations — null values, complex objects,
 /// negative increments, type preservation, wrong partition key, etc.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1186,7 +1169,6 @@ public class PatchEdgeCaseTests
 //  Group A: Increment Error Handling (BUG-N2, N3, N6)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchIncrementErrorHandlingTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1266,7 +1248,6 @@ public class PatchIncrementErrorHandlingTests
 //  Group B: PatchItemStreamAsync Unique Key Validation (BUG-N1)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchStreamUniqueKeyTests
 {
     [Fact]
@@ -1314,7 +1295,6 @@ public class PatchStreamUniqueKeyTests
 //  Group C: Replace at Array Index
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchReplaceArrayIndexTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1352,7 +1332,6 @@ public class PatchReplaceArrayIndexTests
 //  Group D: Filter Predicate Matching
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchFilterPredicateTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1420,7 +1399,6 @@ public class PatchFilterPredicateTests
 //  Group E: EnableContentResponseOnWrite
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchContentResponseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1460,7 +1438,6 @@ public class PatchContentResponseTests
 //  Group F: Property Preservation
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchPropertyPreservationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1486,7 +1463,6 @@ public class PatchPropertyPreservationTests
 //  Group G: Complex Value Types
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchComplexValueTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1554,7 +1530,6 @@ public class PatchComplexValueTests
 //  Group H: Move Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchMoveEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1592,7 +1567,6 @@ public class PatchMoveEdgeCaseTests
 //  Group I: Patch on TTL Fields
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchTtlTests
 {
     [Fact]
@@ -1626,7 +1600,6 @@ public class PatchTtlTests
 //  Group J: Patch with Hierarchical Partition Keys
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchHierarchicalPartitionKeyTests
 {
     [Fact]
@@ -1662,7 +1635,6 @@ public class PatchHierarchicalPartitionKeyTests
 //  Group K: Patch Document Size Enforcement
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchDocumentSizeTests
 {
     [Fact]
@@ -1684,7 +1656,6 @@ public class PatchDocumentSizeTests
 //  Group L: Patch + Change Feed Interaction
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchChangeFeedInteractionTests
 {
     [Fact]
@@ -1721,7 +1692,6 @@ public class PatchChangeFeedInteractionTests
 //  Group M: Concurrent Patch Safety
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchConcurrencyTests
 {
     [Fact]
@@ -1751,7 +1721,6 @@ public class PatchConcurrencyTests
 //  Group N: PatchItemStreamAsync Response Body
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchStreamResponseBodyTests
 {
     [Fact]
@@ -1774,7 +1743,6 @@ public class PatchStreamResponseBodyTests
 //  Group O: Patch on Id Field
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchIdFieldTests
 {
     [Fact]
@@ -1793,7 +1761,6 @@ public class PatchIdFieldTests
 //  Group Q: Patch Path Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchPathEdgeCaseTests2
 {
     [Fact]
@@ -1813,7 +1780,6 @@ public class PatchPathEdgeCaseTests2
 //  Group R: Null Operations Argument
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchNullArgumentTests
 {
     [Fact]
@@ -1844,7 +1810,6 @@ public class PatchNullArgumentTests
 //  Group S: Patch After Other Mutations
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchAfterMutationTests
 {
     [Fact]

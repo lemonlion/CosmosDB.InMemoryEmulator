@@ -18,7 +18,6 @@ public class JsTriggerTests
 {
     // ─── Pre-Trigger JS Execution ────────────────────────────────────────
 
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class PreTriggerJsTests
     {
         private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -292,7 +291,6 @@ public class JsTriggerTests
 
     // ─── Post-Trigger JS Execution ───────────────────────────────────────
 
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class PostTriggerJsTests
     {
         private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -470,7 +468,6 @@ public class JsTriggerTests
 
     // ─── Mixed C# handler + JS triggers ──────────────────────────────────
 
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class MixedTriggerTests
     {
         private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -519,7 +516,6 @@ public class JsTriggerTests
 
     // ─── Additional Pre-Trigger Coverage ─────────────────────────────────
 
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class PreTriggerJsAdditionalTests
     {
         private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -862,7 +858,6 @@ public class JsTriggerTests
 
     // ─── Additional Post-Trigger Coverage ─────────────────────────────────
 
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class PostTriggerJsAdditionalTests
     {
         private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1097,7 +1092,6 @@ public class JsTriggerTests
 
     // ─── Combined Pre+Post Trigger Scenarios ─────────────────────────────
 
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class CombinedTriggerTests
     {
         private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1237,7 +1231,6 @@ public class JsTriggerTests
 
     // ─── Scripts CRUD Integration ────────────────────────────────────────
 
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class TriggerScriptsCrudTests
     {
         private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1410,7 +1403,6 @@ public class JsTriggerTests
     // real Cosmos behavior that we don't implement, with a sister test that
     // documents what the emulator actually does.
 
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class JsTriggerDivergentBehaviorTests
     {
         private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1672,7 +1664,6 @@ public class JsTriggerTests
 
     // ─── JintTriggerEngine Edge Cases ────────────────────────────────────
 
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class JintTriggerEngineEdgeCaseTests
     {
         private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1788,7 +1779,6 @@ public class JsTriggerTests
 
     // ─── UseJsTriggers extension ─────────────────────────────────────────
 
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class UseJsTriggersExtensionTests
     {
         [Fact]
@@ -1817,7 +1807,6 @@ public class JsTriggerTests
 //  Trigger CRUD Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerCrudEdgeCaseTests
 {
     [Fact]
@@ -1891,7 +1880,6 @@ public class TriggerCrudEdgeCaseTests
 //  Operation-Specific Trigger Filtering
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerOperationFilteringTests
 {
     [Fact]
@@ -2046,7 +2034,6 @@ public class TriggerOperationFilteringTests
 //  Pre-Trigger Rollback Verification
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PreTriggerRollbackTests
 {
     [Fact]
@@ -2126,7 +2113,6 @@ public class PreTriggerRollbackTests
 //  Post-Trigger Rollback Verification
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PostTriggerRollbackVerificationTests
 {
     [Fact]
@@ -2259,7 +2245,6 @@ public class PostTriggerRollbackVerificationTests
 //  JintTriggerEngine Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JintTriggerEngineAdditionalEdgeCaseTests
 {
     private readonly InMemoryContainer _container;
@@ -2651,7 +2636,6 @@ public class JintTriggerEngineAdditionalEdgeCaseTests
 //  Feature Interaction Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerFeatureInteractionTests
 {
     [Fact]
@@ -2831,7 +2815,6 @@ public class TriggerFeatureInteractionTests
 //  Divergent Behavior — Patch/Batch Triggers
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerPatchBatchDivergentTests
 {
     [Fact]
@@ -2970,7 +2953,6 @@ public class TriggerPatchBatchDivergentTests
 //  Scripts CRUD Status Code Verification
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerScriptsStatusCodeTests
 {
     [Fact]
@@ -3068,7 +3050,6 @@ public class TriggerScriptsStatusCodeTests
 //  Stream API Trigger Rollback Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamTriggerRollbackTests
 {
     [Fact]
@@ -3232,7 +3213,6 @@ public class StreamTriggerRollbackTests
 //  Trigger Concurrency Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerConcurrencyTests
 {
     [Fact]
@@ -3290,7 +3270,6 @@ public class TriggerConcurrencyTests
 //  Phase: JS Engine Edge Cases (Plan 43)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsTriggerEngineEdgeCaseDeepTests
 {
     [Fact]
@@ -3353,7 +3332,6 @@ public class JsTriggerEngineEdgeCaseDeepTests
 //  Phase: JSON Round-Trip Edge Cases (Plan 43)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsTriggerJsonRoundTripTests
 {
     [Fact]
@@ -3447,7 +3425,6 @@ public class JsTriggerJsonRoundTripTests
 //  Phase: JS Stream Delete Tests (Plan 43)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsTriggerDeleteStreamTests
 {
     [Fact]

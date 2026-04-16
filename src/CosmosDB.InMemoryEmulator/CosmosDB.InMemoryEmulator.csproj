@@ -23,7 +23,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<InternalsVisibleTo Include="CosmosDB.InMemoryEmulator.Tests" />
 		<InternalsVisibleTo Include="CosmosDB.InMemoryEmulator.Tests.Unit" />
 	</ItemGroup>
 

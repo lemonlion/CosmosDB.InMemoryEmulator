@@ -14,7 +14,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UseInMemoryCosmosContainersTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -251,7 +250,6 @@ public class UseInMemoryCosmosContainersTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UseInMemoryCosmosDBTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -593,7 +591,6 @@ public class UseInMemoryCosmosDBTests : IDisposable
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ServiceCollectionExtensionEdgeCaseTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -901,7 +898,6 @@ public class OOBRepository
 }
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UseInMemoryTypedCosmosDBTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -1327,7 +1323,6 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
 /// registrations are preserved. They naturally resolve against the in-memory client.
 /// </summary>
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class AutoDetectContainerTests
 {
 
@@ -1531,7 +1526,6 @@ public class AutoDetectContainerTests
 // ════════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class HttpMessageHandlerWrapperTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -1742,7 +1736,6 @@ public class HttpMessageHandlerWrapperTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ServiceCollectionBugInvestigationTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -1781,7 +1774,6 @@ public class ServiceCollectionBugInvestigationTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ServiceCollectionCallbackTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -1883,7 +1875,6 @@ public class ServiceCollectionCallbackTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ServiceCollectionIdempotencyTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -1958,7 +1949,6 @@ public class ServiceCollectionIdempotencyTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContainerPropertiesOverloadTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2118,7 +2108,6 @@ public class ContainerPropertiesOverloadTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StatePersistenceDirectoryTests : IDisposable
 {
     private readonly string _tempDir;
@@ -2244,7 +2233,6 @@ public class StatePersistenceDirectoryTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class MultiDatabaseContainerCollisionTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2308,7 +2296,6 @@ public class MultiDatabaseContainerCollisionTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CallbackExceptionPropagationTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2371,7 +2358,6 @@ public class CallbackExceptionPropagationTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class AutoDetectModeEdgeCaseTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2424,7 +2410,6 @@ public class AutoDetectModeEdgeCaseTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ServiceCollectionEdgeCaseDeepDiveTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2514,7 +2499,6 @@ public class ServiceCollectionEdgeCaseDeepDiveTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ServiceCollectionQueryIntegrationTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2659,7 +2643,6 @@ public class ServiceCollectionQueryIntegrationTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class AutoDetectEdgeCaseTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2727,7 +2710,6 @@ public class AutoDetectEdgeCaseTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ServiceCollectionLifecycleTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2804,7 +2786,6 @@ public class ServiceCollectionLifecycleTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ServiceCollectionFluentApiTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
@@ -2841,7 +2822,6 @@ public class ServiceCollectionFluentApiTests : IDisposable
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ServiceCollectionClientPropertyTests : IDisposable
 {
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();

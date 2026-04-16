@@ -7,7 +7,6 @@ using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientTests
 {
     // ── Database management ─────────────────────────────────────────────────
@@ -235,7 +234,6 @@ public class InMemoryCosmosClientTests
 //  Client Property & Account Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientPropertyTests
 {
     [Fact]
@@ -265,7 +263,6 @@ public class InMemoryCosmosClientPropertyTests
 //  Database Create & Stream Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientCreateTests
 {
     [Fact]
@@ -344,7 +341,6 @@ public class InMemoryCosmosClientCreateTests
 //  Database Query Iterator Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientQueryIteratorTests
 {
     [Fact]
@@ -394,7 +390,6 @@ public class InMemoryCosmosClientQueryIteratorTests
 //  Client GetContainer & GetDatabase Shortcuts
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientShortcutTests
 {
     [Fact]
@@ -434,7 +429,6 @@ public class InMemoryCosmosClientShortcutTests
 //  Delete Database Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientDeleteTests
 {
     [Fact]
@@ -477,7 +471,6 @@ public class InMemoryCosmosClientDeleteTests
 //  Dispose Semantics
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientDisposeTests
 {
     [Fact]
@@ -507,7 +500,6 @@ public class InMemoryCosmosClientDisposeTests
 //  Concurrency Tests (TOCTOU race fix verification)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientConcurrencyTests
 {
     [Fact]
@@ -543,7 +535,6 @@ public class InMemoryCosmosClientConcurrencyTests
 //  Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientEdgeCaseTests
 {
     [Fact]
@@ -614,7 +605,6 @@ public class InMemoryCosmosClientEdgeCaseTests
 //  Divergent Behavior — Auto-Creation
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientAutoCreationDivergentTests
 {
     [Fact]
@@ -661,7 +651,6 @@ public class InMemoryCosmosClientAutoCreationDivergentTests
 //  Deep Dive — Dispose Guards on All APIs
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientDisposeGuardDeepDiveTests
 {
     [Fact]
@@ -699,7 +688,6 @@ public class InMemoryCosmosClientDisposeGuardDeepDiveTests
 //  Deep Dive — Stream Response Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientStreamResponseDeepDiveTests
 {
     [Fact]
@@ -759,7 +747,6 @@ public class InMemoryCosmosClientStreamResponseDeepDiveTests
 //  Deep Dive — CancellationToken Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientCancellationTokenDeepDiveTests
 {
     [Fact]
@@ -800,7 +787,6 @@ public class InMemoryCosmosClientCancellationTokenDeepDiveTests
 //  Deep Dive — Resource Name Validation on Stream API
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientResourceNameDeepDiveTests
 {
     [Fact]
@@ -827,7 +813,6 @@ public class InMemoryCosmosClientResourceNameDeepDiveTests
 //  Deep Dive — Auto-Created Database Visibility
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientAutoCreationDeepDiveTests
 {
     [Fact]
@@ -855,7 +840,6 @@ public class InMemoryCosmosClientAutoCreationDeepDiveTests
 //  Deep Dive — Stream Iterator Divergent Behavior
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InMemoryCosmosClientStreamIteratorDivergentDeepDiveTests
 {
     [Fact]

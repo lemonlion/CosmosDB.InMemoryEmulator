@@ -7,7 +7,6 @@ using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -533,7 +532,6 @@ public class ReadManyTests
 //  Deep Dive: ReadMany TTL Interaction
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyTtlDeepDiveTests
 {
     [Fact]
@@ -581,7 +579,6 @@ public class ReadManyTtlDeepDiveTests
 //  Deep Dive: ReadMany Partition Key Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyPartitionKeyDeepDiveTests
 {
     [Fact]
@@ -633,7 +630,6 @@ public class ReadManyPartitionKeyDeepDiveTests
 //  Deep Dive: ReadMany Request Options & CancellationToken
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyOptionsDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -701,7 +697,6 @@ public class ReadManyOptionsDeepDiveTests
 //  Deep Dive: ReadMany After Mutations Extended
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyMutationDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -721,7 +716,6 @@ public class ReadManyMutationDeepDiveTests
 //  Deep Dive: ReadMany Response Properties
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyResponseDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");
@@ -778,7 +772,6 @@ public class ReadManyResponseDeepDiveTests
 //  Deep Dive: ReadMany Deserialization & Stream Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadManyDeserializationDeepDiveTests
 {
     private readonly InMemoryContainer _container = new("test", "/pk");

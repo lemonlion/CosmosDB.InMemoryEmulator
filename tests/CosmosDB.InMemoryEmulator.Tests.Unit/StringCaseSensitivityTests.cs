@@ -13,7 +13,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Real Cosmos DB uses ordinal (case-sensitive) string comparison
 /// for =, !=, &lt;, &gt;, &lt;=, &gt;=, IN, NOT IN, and LIKE.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringCaseSensitivityTests
 {
     private readonly InMemoryContainer _container = new("case-test", "/pk");
@@ -192,7 +191,6 @@ public class StringCaseSensitivityTests
 //  C5: Remaining Comparison Operators
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringComparisonOperatorTests
 {
     private readonly InMemoryContainer _container = new("case-cmp", "/pk");
@@ -277,7 +275,6 @@ public class StringComparisonOperatorTests
 //  C6: ORDER BY DESC
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringOrderByDescTests
 {
     [Fact]
@@ -308,7 +305,6 @@ public class StringOrderByDescTests
 //  C7: LIKE Extended Coverage
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringLikeExtendedTests
 {
     private readonly InMemoryContainer _container = new("case-like", "/pk");
@@ -414,7 +410,6 @@ public class StringLikeExtendedTests
 //  C8: String Functions Case Sensitivity
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringFunctionCaseSensitivityTests
 {
     private readonly InMemoryContainer _container = new("case-func", "/pk");
@@ -593,7 +588,6 @@ public class StringFunctionCaseSensitivityTests
 //  C9: Case Transformations in Comparisons
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CaseTransformComparisonTests
 {
     [Fact]
@@ -645,7 +639,6 @@ public class CaseTransformComparisonTests
 //  C10: DISTINCT, GROUP BY, MIN/MAX
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringDistinctGroupByTests
 {
     private async Task<InMemoryContainer> CreateSeededContainerAsync()
@@ -708,7 +701,6 @@ public class StringDistinctGroupByTests
 //  C11: Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringCaseEdgeCaseTests
 {
     [Fact]
@@ -773,7 +765,6 @@ public class StringCaseEdgeCaseTests
 //  Phase 1: StringConcat (||) null handling bug fix
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringConcatNullTests
 {
     [Fact]
@@ -825,7 +816,6 @@ public class StringConcatNullTests
 //  Phase 2: LIKE extended coverage
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringLikeExtendedDeepDiveTests
 {
     [Fact]
@@ -953,7 +943,6 @@ public class StringLikeExtendedDeepDiveTests
 //  Phase 3: String functions — explicit false, null, empty
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringFunctionEdgeCaseDeepDiveTests
 {
     private async Task<InMemoryContainer> SeedAsync()
@@ -1068,7 +1057,6 @@ public class StringFunctionEdgeCaseDeepDiveTests
 //  Phase 4: ARRAY_CONTAINS and CONCAT
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringArrayConcatTests
 {
     [Fact]
@@ -1116,7 +1104,6 @@ public class StringArrayConcatTests
 //  Phase 5: Null and empty value edge cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringNullEmptyEdgeCaseTests
 {
     [Fact]
@@ -1150,7 +1137,6 @@ public class StringNullEmptyEdgeCaseTests
 //  Phase 6: Composed operations
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringComposedOperationTests
 {
     private async Task<InMemoryContainer> SeedAsync()
@@ -1235,7 +1221,6 @@ public class StringComposedOperationTests
 //  Phase 7: INDEX_OF null input
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringIndexOfEdgeCaseTests
 {
     [Fact]
@@ -1270,7 +1255,6 @@ public class StringIndexOfEdgeCaseTests
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── A1: REGEX_MATCH null → undefined ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RegexMatchNullUndefinedTests
 {
     private readonly InMemoryContainer _container = new("regexnull", "/pk");
@@ -1321,7 +1305,6 @@ public class RegexMatchNullUndefinedTests
 }
 
 // ── A2: INDEX_OF null → undefined ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IndexOfNullUndefinedTests
 {
     private readonly InMemoryContainer _container = new("idxnull", "/pk");
@@ -1373,7 +1356,6 @@ public class IndexOfNullUndefinedTests
 }
 
 // ── A3: INDEX_OF bounds checking ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IndexOfBoundsTests
 {
     private readonly InMemoryContainer _container = new("idxbounds", "/pk");
@@ -1410,7 +1392,6 @@ public class IndexOfBoundsTests
 }
 
 // ── A4: LIKE on non-string types (divergent — skip + sister) ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LikeNonStringTypeTests
 {
     private readonly InMemoryContainer _container = new("likenonstr", "/pk");
@@ -1448,7 +1429,6 @@ public class LikeNonStringTypeTests
 }
 
 // ── B1: LIKE with pipe character ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LikePipeCharTests
 {
     [Fact]
@@ -1466,7 +1446,6 @@ public class LikePipeCharTests
 }
 
 // ── B2: LIKE consecutive wildcards ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LikeConsecutiveWildcardTests
 {
     [Fact]
@@ -1507,7 +1486,6 @@ public class LikeConsecutiveWildcardTests
 }
 
 // ── B3: LIKE ESCAPE case sensitivity ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LikeEscapeCaseSensitivityTests
 {
     [Fact]
@@ -1536,7 +1514,6 @@ public class LikeEscapeCaseSensitivityTests
 }
 
 // ── B4: LIKE with Unicode ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LikeUnicodeTests
 {
     [Fact]
@@ -1564,7 +1541,6 @@ public class LikeUnicodeTests
 }
 
 // ── B5: CONTAINS/STARTSWITH/ENDSWITH third arg ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringFunctionThirdArgTests
 {
     private readonly InMemoryContainer _container = new("thirdarg", "/pk");
@@ -1601,7 +1577,6 @@ public class StringFunctionThirdArgTests
 }
 
 // ── B6: STRING_EQUALS with undefined/null ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringEqualsEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("streq", "/pk");
@@ -1638,7 +1613,6 @@ public class StringEqualsEdgeCaseTests
 }
 
 // ── B7: REPLACE edge cases ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceCaseSensitivityEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("replcase", "/pk");
@@ -1675,7 +1649,6 @@ public class ReplaceCaseSensitivityEdgeCaseTests
 }
 
 // ── B8: ORDER BY mixed types ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class OrderByMixedTypeTests
 {
     [Fact]
@@ -1694,7 +1667,6 @@ public class OrderByMixedTypeTests
 }
 
 // ── B9: BETWEEN inclusive boundaries ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class BetweenInclusiveTests
 {
     [Fact]
@@ -1724,7 +1696,6 @@ public class BetweenInclusiveTests
 }
 
 // ── B10: IN operator large list ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class InOperatorLargeListTests
 {
     [Fact]
@@ -1743,7 +1714,6 @@ public class InOperatorLargeListTests
 }
 
 // ── B11: Empty string edge cases ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class EmptyStringFunctionTests
 {
     private readonly InMemoryContainer _container = new("emptystr", "/pk");
@@ -1787,7 +1757,6 @@ public class EmptyStringFunctionTests
 }
 
 // ── B12: REGEX_MATCH invalid regex / empty pattern ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RegexMatchEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("regexedge", "/pk");
@@ -1824,7 +1793,6 @@ public class RegexMatchEdgeCaseTests
 }
 
 // ── B13: String concat with undefined ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StringConcatUndefinedTests
 {
     private readonly InMemoryContainer _container = new("concatundef", "/pk");
@@ -1861,7 +1829,6 @@ public class StringConcatUndefinedTests
 }
 
 // ── B14: DISTINCT in subquery ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DistinctSubqueryCaseSensitiveTests
 {
     [Fact]
@@ -1879,7 +1846,6 @@ public class DistinctSubqueryCaseSensitiveTests
 }
 
 // ── B15: GROUP BY with HAVING case-sensitive ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GroupByHavingCaseSensitiveTests
 {
     [Fact]
@@ -1898,7 +1864,6 @@ public class GroupByHavingCaseSensitiveTests
 }
 
 // ── B16: LIKE with parameterized pattern ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LikeParameterizedTests
 {
     [Fact]

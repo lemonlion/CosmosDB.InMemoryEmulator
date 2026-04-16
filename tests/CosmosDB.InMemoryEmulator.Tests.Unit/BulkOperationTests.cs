@@ -14,7 +14,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// The SDK internally batches these into efficient service calls. The in-memory emulator
 /// must handle this concurrency correctly.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class BulkOperationTests
 {
     [Fact]

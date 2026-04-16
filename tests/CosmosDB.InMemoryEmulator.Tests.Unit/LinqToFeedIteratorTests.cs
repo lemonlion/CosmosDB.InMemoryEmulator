@@ -16,7 +16,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// the <c>ToFeedIteratorOverridable()</c> workaround.
 /// </summary>
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqToFeedIteratorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -216,7 +215,6 @@ public class LinqToFeedIteratorTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqGapTests2
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -304,7 +302,6 @@ public class LinqGapTests2
 /// ignores both parameters.
 /// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.getitemlinqqueryable
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqQueryableParameterTests5
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -349,7 +346,6 @@ public class LinqQueryableParameterTests5
 //  Plan 23 — LINQ Operator Coverage
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqOperatorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -462,7 +458,6 @@ public class LinqOperatorTests
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqRegistrationLifecycleTests
 {
     [Fact]
@@ -494,7 +489,6 @@ public class LinqRegistrationLifecycleTests
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqFeedIteratorIntegrationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -593,7 +587,6 @@ public class LinqFeedIteratorIntegrationTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -632,7 +625,6 @@ public class LinqGapTests3
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -706,7 +698,6 @@ public class LinqGapTests
 //  Group A: LINQ Operator Gaps
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqOperatorGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -900,7 +891,6 @@ public class LinqOperatorGapTests
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqFeedIteratorIntegrationGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1008,7 +998,6 @@ public class LinqFeedIteratorIntegrationGapTests
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqRegistrationLifecycleGapTests
 {
     [Fact]
@@ -1036,7 +1025,6 @@ public class LinqRegistrationLifecycleGapTests
 //  Group D: Edge Cases & Error Handling
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1192,7 +1180,6 @@ public class LinqEdgeCaseTests
 // ═══════════════════════════════════════════════════════════════════════════════
 
 [Collection("FeedIteratorSetup")]
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LinqDivergentBehaviorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");

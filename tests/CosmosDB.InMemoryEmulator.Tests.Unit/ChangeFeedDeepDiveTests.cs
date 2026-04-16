@@ -12,7 +12,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Category A: Read operations do NOT produce change feed entries
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedReadNoEntryTests
 {
     [Fact]
@@ -68,7 +67,6 @@ public class ChangeFeedReadNoEntryTests
 //  Category B: DeleteAllItemsByPartitionKeyStreamAsync change feed
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedDeleteAllByPKTests
 {
     [Fact]
@@ -110,7 +108,6 @@ public class ChangeFeedDeleteAllByPKTests
 //  Category C: Transactional batch change feed interactions
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedBatchTests
 {
     [Fact]
@@ -185,7 +182,6 @@ public class ChangeFeedBatchTests
 //  Category D: Partition key edge cases in change feed
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedPartitionKeyEdgeCaseTests
 {
     [Fact]
@@ -251,7 +247,6 @@ public class ChangeFeedPartitionKeyEdgeCaseTests
 //  Category E: Processor advanced scenarios
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedProcessorAdvancedScenarioTests
 {
     [Fact]
@@ -309,7 +304,6 @@ public class ChangeFeedProcessorAdvancedScenarioTests
 //  Category G: State management interactions with change feed
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedStateManagementTests
 {
     [Fact]
@@ -386,7 +380,6 @@ public class ChangeFeedStateManagementTests
 //  Category H: Additional edge cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedEdgeCaseDeepTests
 {
     [Fact]
@@ -507,7 +500,6 @@ public class ChangeFeedEdgeCaseDeepTests
 //  Category I: Stream iterator gaps
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedStreamIteratorDeepTests
 {
     [Fact]
@@ -556,7 +548,6 @@ public class ChangeFeedStreamIteratorDeepTests
 //  Category J: Processor delivery semantics
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedProcessorDeliverySemanticsTests
 {
     [Fact]
@@ -592,7 +583,6 @@ public class ChangeFeedProcessorDeliverySemanticsTests
 //  Category F: Stream processor bug fixes (deduplication + envelope format)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ChangeFeedStreamProcessorBugFixTests
 {
     [Fact]

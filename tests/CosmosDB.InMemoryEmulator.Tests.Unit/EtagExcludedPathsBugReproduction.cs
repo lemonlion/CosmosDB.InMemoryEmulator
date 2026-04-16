@@ -12,7 +12,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// is created with a custom IndexingPolicy. The InMemoryEmulator does not do this,
 /// causing tests that assert on ExcludedPaths.Count to fail.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class EtagExcludedPathsBugReproduction
 {
     [Fact]

@@ -19,7 +19,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 // Reference: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/full-text-search
 // ════════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextContainsTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -134,7 +133,6 @@ public class FullTextContainsTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextContainsAllTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -204,7 +202,6 @@ public class FullTextContainsAllTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextContainsAnyTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -281,7 +278,6 @@ public class FullTextContainsAnyTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextScoreTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -344,7 +340,6 @@ public class FullTextScoreTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class OrderByRankTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -449,7 +444,6 @@ public class OrderByRankTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextCombinedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -502,7 +496,6 @@ public class FullTextCombinedTests
 // intentionally differs from real Cosmos DB.
 // ════════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextSearchDivergentBehaviorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -610,7 +603,6 @@ public class FullTextSearchDivergentBehaviorTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextSearchSkippedTests
 {
     /// <summary>
@@ -740,7 +732,6 @@ public class FullTextSearchSkippedTests
 // full-text search intentionally differs from real Cosmos DB.
 // ════════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextSearchAdditionalDivergentBehaviorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -854,7 +845,6 @@ public class FullTextSearchAdditionalDivergentBehaviorTests
 // sibling functions were missing.
 // ════════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextContainsAllParityTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -897,7 +887,6 @@ public class FullTextContainsAllParityTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextContainsAnyParityTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -972,7 +961,6 @@ public class FullTextContainsAnyParityTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextScoreParityTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1037,7 +1025,6 @@ public class FullTextScoreParityTests
 // logical operators, variadic arguments, and non-string field types.
 // ════════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1206,7 +1193,6 @@ public class FullTextEdgeCaseTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class OrderByRankEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1308,7 +1294,6 @@ public class OrderByRankEdgeCaseTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextParameterizedQueryTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1355,7 +1340,6 @@ public class FullTextParameterizedQueryTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextNonStringFieldTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1418,7 +1402,6 @@ public class FullTextNonStringFieldTests
 //  Category A — FullTextScore Edge Cases (CountOccurrences bugs)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextScoreEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1502,7 +1485,6 @@ public class FullTextScoreEdgeCaseTests
 //  Category B — FullTextContains Additional Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextContainsAdditionalEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1577,7 +1559,6 @@ public class FullTextContainsAdditionalEdgeCaseTests
 //  Category C — FullTextContainsAll Additional Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextContainsAllAdditionalTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1635,7 +1616,6 @@ public class FullTextContainsAllAdditionalTests
 //  Category D — FullTextContainsAny Additional Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextContainsAnyAdditionalTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1693,7 +1673,6 @@ public class FullTextContainsAnyAdditionalTests
 //  Category E — ORDER BY RANK Advanced Scenarios
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class OrderByRankAdvancedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1765,7 +1744,6 @@ public class OrderByRankAdvancedTests
 //  Category F — Cross-Function Interaction Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextCrossFunctionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1818,7 +1796,6 @@ public class FullTextCrossFunctionTests
 //  Category G — FullTextScore Scoring Accuracy
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextScoreAccuracyTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1879,7 +1856,6 @@ public class FullTextScoreAccuracyTests
 //  Category H — Parameterized Query Gaps
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextParameterizedQueryAdditionalTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1949,7 +1925,6 @@ public class FullTextParameterizedQueryAdditionalTests
 //  Category I — Divergent Behavior (Stop Words)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FullTextStopWordDivergentTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");

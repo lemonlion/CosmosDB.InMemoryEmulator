@@ -14,7 +14,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Real Cosmos DB serializes batch execution within a logical partition, ensuring
 /// the second batch sees effects of the first and fails on stale ETags.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchConcurrentEtagBugTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -125,7 +124,6 @@ public class TransactionalBatchConcurrentEtagBugTests
 /// _items.Clear() then re-populated from the snapshot, destroying concurrent writes.
 /// Fixed by tracking which keys each batch touches and only restoring those on failure.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TransactionalBatchConcurrentRollbackTests
 {
     [Fact]

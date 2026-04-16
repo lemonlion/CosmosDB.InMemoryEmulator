@@ -14,7 +14,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Change feed tests use InMemoryContainer-specific APIs (BackingContainer).
 /// Tagged InMemoryOnly because all tests use inline FakeCosmosHandler stacks.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerHierarchicalPkTests
 {
     public class HierDoc

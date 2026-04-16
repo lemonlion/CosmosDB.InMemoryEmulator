@@ -10,7 +10,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 // Phase 1 — Aggregate + VALUE Divergent Behavior Tests
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeAggregateDivergentTests
 {
     private static async Task<InMemoryContainer> CreatePopulatedContainer(int count = 50, int feedRangeCount = 4)
@@ -258,7 +257,6 @@ public class FeedRangeAggregateDivergentTests
 // Phase 2 — TTL + FeedRange
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeTtlTests
 {
     // 2.1 — TTL-expired items excluded from FeedRange queries
@@ -339,7 +337,6 @@ public class FeedRangeTtlTests
 // Phase 3 — Mutation + FeedRange Consistency
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeMutationTests
 {
     // 3.1 — Patch doesn't change PK so item stays in same range
@@ -485,7 +482,6 @@ public class FeedRangeMutationTests
 // Phase 4 — State Persistence + FeedRange
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeStatePersistenceTests
 {
     // 4.1 — Export/Import preserves FeedRange distribution
@@ -588,7 +584,6 @@ public class FeedRangeStatePersistenceTests
 // Phase 5 — Change Feed Advanced
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeChangeFeedAdvancedDeepDiveTests
 {
     // 5.1 — After delete, item disappears from the correct FeedRange
@@ -666,7 +661,6 @@ public class FeedRangeChangeFeedAdvancedDeepDiveTests
 // Phase 6 — Query + FeedRange Interaction Edge Cases
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeQueryInteractionDeepDiveTests
 {
     private static async Task<InMemoryContainer> CreatePopulatedContainer()
@@ -783,7 +777,6 @@ public class FeedRangeQueryInteractionDeepDiveTests
 // Phase 7 — FakeCosmosHandler + FeedRange Sync
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeHandlerSyncTests
 {
     // 7.1 — Handler defaulting to PKRangeCount=1 while container has FeedRangeCount=4

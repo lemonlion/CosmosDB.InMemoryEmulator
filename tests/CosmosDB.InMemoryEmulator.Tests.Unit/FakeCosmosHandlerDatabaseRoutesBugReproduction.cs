@@ -24,7 +24,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Tests verify FakeCosmosHandler-specific route stubs and cannot meaningfully
 /// parity-validate against the real emulator (which supports these natively).
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerDatabaseRoutesBugReproduction
 {
     [Fact]

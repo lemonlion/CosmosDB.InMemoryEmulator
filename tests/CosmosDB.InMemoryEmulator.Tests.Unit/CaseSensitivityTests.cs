@@ -13,7 +13,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Cosmos DB is case-sensitive for UDF names, stored procedure IDs, trigger IDs,
 /// and container names in routing. These tests verify the emulator matches that behaviour.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CaseSensitivityTests
 {
     // ═══════════════════════════════════════════════════════════════════════════

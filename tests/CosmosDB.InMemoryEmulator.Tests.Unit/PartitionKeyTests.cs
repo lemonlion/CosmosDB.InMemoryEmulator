@@ -9,7 +9,6 @@ using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 namespace CosmosDB.InMemoryEmulator.Tests;
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyGapTests4
 {
     [Fact]
@@ -48,7 +47,6 @@ public class PartitionKeyGapTests4
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyGapTests
 {
     [Fact]
@@ -99,7 +97,6 @@ public class PartitionKeyGapTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyGapTests3
 {
     [Fact]
@@ -143,7 +140,6 @@ public class PartitionKeyGapTests3
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyGapTests2
 {
     [Fact]
@@ -191,7 +187,6 @@ public class PartitionKeyGapTests2
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyFallbackDivergentBehaviorTests
 {
     /// <summary>
@@ -218,7 +213,6 @@ public class PartitionKeyFallbackDivergentBehaviorTests
 
 // ─── PartitionKey.None vs PartitionKey.Null ─────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyNoneVsNullTests
 {
     /// <summary>
@@ -278,7 +272,6 @@ public class PartitionKeyNoneVsNullTests
 //  Phase 1 — PK Data Type Coverage
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyDataTypeTests
 {
     [Fact]
@@ -370,7 +363,6 @@ public class PartitionKeyDataTypeTests
 //  Phase 2 — Composite/Hierarchical PK Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CompositePartitionKeyEdgeCaseTests
 {
     [Fact]
@@ -487,7 +479,6 @@ public class CompositePartitionKeyEdgeCaseTests
 //  Phase 3 — Bug Documentation Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyBugDocumentationTests
 {
     [Fact]
@@ -557,7 +548,6 @@ public class PartitionKeyBugDocumentationTests
 //  Phase 4 — PK Path Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyPathEdgeCaseTests
 {
     [Fact]
@@ -607,7 +597,6 @@ public class PartitionKeyPathEdgeCaseTests
 //  Phase 5 — PK with Operations (Cross-Cutting)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyOperationsTests
 {
     [Fact]
@@ -765,7 +754,6 @@ public class PartitionKeyOperationsTests
 //  Phase 6 — PK and Change Feed
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyChangeFeedTests
 {
     [Fact]
@@ -857,7 +845,6 @@ public class PartitionKeyChangeFeedTests
 //  Phase 7: PK Type Discrimination (Fixed)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PartitionKeyTypeDiscriminationTests
 {
     [Fact]
@@ -899,7 +886,6 @@ public class PartitionKeyTypeDiscriminationTests
 //  Phase 8: Stream API PK Extraction (BUG 7 — Fixed)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamApiPkExtractionTests
 {
     [Fact]
@@ -953,7 +939,6 @@ public class StreamApiPkExtractionTests
 //  Phase 9: Query PK Scoping (BUG 8 — Fixed)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryPkScopingTests
 {
     [Fact]
@@ -1003,7 +988,6 @@ public class QueryPkScopingTests
 //  Phase 10: PK Validation / Mismatch Detection (BUG 5, BUG 10)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PkValidationMismatchTests
 {
     [Fact]
@@ -1046,7 +1030,6 @@ public class PkValidationMismatchTests
 //  Phase 11: Hierarchical PK Advanced Scenarios
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class HierarchicalPkAdvancedTests
 {
     [Fact]
@@ -1110,7 +1093,6 @@ public class HierarchicalPkAdvancedTests
 //  Phase 12: DeleteAll Change Feed & Tombstones
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteAllChangeFeedTombstoneTests
 {
     [Fact]
@@ -1161,7 +1143,6 @@ public class DeleteAllChangeFeedTombstoneTests
 //  Phase 13: PK Extraction Path Consistency
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PkExtractionConsistencyTests
 {
     [Fact]
@@ -1188,7 +1169,6 @@ public class PkExtractionConsistencyTests
 //  Phase 14: PK Boundary / Extreme Values
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PkBoundaryValueTests
 {
     [Fact]
@@ -1262,7 +1242,6 @@ public class PkBoundaryValueTests
 //  Phase 15: PK with Container Lifecycle
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PkContainerLifecycleTests
 {
     [Fact]
@@ -1293,7 +1272,6 @@ public class PkContainerLifecycleTests
 
 // ── Round 1: CRUD PK Mismatch & Wrong PK Tests ──────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PkCrudMismatchTests
 {
     [Fact]
@@ -1364,7 +1342,6 @@ public class PkCrudMismatchTests
 
 // ── Round 2: Composite PK Edge Cases ─────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CompositeKeyPipeDelimiterTests
 {
     [Fact]
@@ -1430,7 +1407,6 @@ public class CompositeKeyPipeDelimiterTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CompositeKeyValidationGapTests
 {
     [Fact]
@@ -1477,7 +1453,6 @@ public class CompositeKeyValidationGapTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CompositeKeyComponentCountTests
 {
     [Fact]
@@ -1518,7 +1493,6 @@ public class CompositeKeyComponentCountTests
 
 // ── Round 3: PK Extraction & Type Edge Cases ─────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PkExtractionEdgeCaseTests
 {
     [Fact]
@@ -1589,7 +1563,6 @@ public class PkExtractionEdgeCaseTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PkDoubleEdgeCaseTests
 {
     [Fact]
@@ -1649,7 +1622,6 @@ public class PkDoubleEdgeCaseTests
 
 // ── Round 4: Cross-Cutting Concerns ──────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PkEtagInteractionTests
 {
     [Fact]
@@ -1687,7 +1659,6 @@ public class PkEtagInteractionTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PkQueryIntegrationTests
 {
     [Fact]
@@ -1735,7 +1706,6 @@ public class PkQueryIntegrationTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PkTtlInteractionTests
 {
     [Fact]
@@ -1756,7 +1726,6 @@ public class PkTtlInteractionTests
 
 // ── Round 5: Tombstone & Change Feed Type Preservation ───────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PkTombstoneTypePreservationTests
 {
     [Fact]
@@ -1835,7 +1804,6 @@ public class PkTombstoneTypePreservationTests
 
 // ── Round 6: Stream API PK Mismatch Gaps ─────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamApiPkMismatchTests
 {
     [Fact]
@@ -1868,7 +1836,6 @@ public class StreamApiPkMismatchTests
 
 // ── Round 7: Special Characters ──────────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PkSpecialCharacterTests
 {
     [Fact]

@@ -12,7 +12,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// with a pre-cancelled CancellationToken. The InMemoryEmulator completes
 /// synchronously and ignores the token entirely.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CancellationTokenBugReproduction
 {
     [Fact]

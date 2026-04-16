@@ -9,7 +9,6 @@ using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SkippedBehaviorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -294,7 +293,6 @@ public class SkippedBehaviorTests
 //  Request Charge Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class RequestChargeEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("rc-test", "/partitionKey");
@@ -377,7 +375,6 @@ public class RequestChargeEdgeCaseTests
 //  Continuation Token Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ContinuationTokenEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("ct-test", "/partitionKey");
@@ -507,7 +504,6 @@ public class ContinuationTokenEdgeCaseTests
 //  TTL Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlSkippedBehaviorEdgeCaseTests
 {
     [Fact]
@@ -532,7 +528,6 @@ public class TtlSkippedBehaviorEdgeCaseTests
 //  Session Token Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SessionTokenEdgeCaseTests
 {
     [Fact]
@@ -575,7 +570,6 @@ public class SessionTokenEdgeCaseTests
 //  MaxItemCount Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class MaxItemCountEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("mi-test", "/partitionKey");
@@ -655,7 +649,6 @@ public class MaxItemCountEdgeCaseTests
 //  Hierarchical PK Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class HierarchicalPkEdgeCaseTests
 {
     [Fact]
@@ -716,7 +709,6 @@ public class HierarchicalPkEdgeCaseTests
 //  Stream Header Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamHeaderEdgeCaseTests
 {
     [Fact]
@@ -762,7 +754,6 @@ public class StreamHeaderEdgeCaseTests
 //  Cross-Partition ORDER BY Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrossPartitionOrderByEdgeCaseTests
 {
     [Fact]
@@ -840,7 +831,6 @@ public class CrossPartitionOrderByEdgeCaseTests
 //  Conflict Resolution Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConflictResolutionEdgeCaseTests
 {
     [Fact]
@@ -869,7 +859,6 @@ public class ConflictResolutionEdgeCaseTests
 //  Skipped Tests with Divergent Behavior Sisters
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SkippedBehaviorDivergentTests
 {
     [Fact(Skip = "Conflict resolution policy is stored but not enforced. " +
@@ -1036,7 +1025,6 @@ public class SkippedBehaviorDivergentTests
 //  LIKE Operator Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class LikeOperatorEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("like-test", "/partitionKey");
@@ -1120,7 +1108,6 @@ public class LikeOperatorEdgeCaseTests
 //  UDF Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UdfEdgeCaseTests
 {
     [Fact]
@@ -1166,7 +1153,6 @@ public class UdfEdgeCaseTests
 //  Indexing Policy Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class IndexingPolicyEdgeCaseTests
 {
     [Fact]
@@ -1221,7 +1207,6 @@ public class IndexingPolicyEdgeCaseTests
 //  General Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class GeneralEdgeCaseTests
 {
     [Fact]

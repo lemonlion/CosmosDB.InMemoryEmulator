@@ -15,7 +15,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// (ORDER BY merge sort, aggregate accumulation, DISTINCT deduplication, etc.).
 /// These tests verify that the query plan metadata is accurate for each query pattern.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class QueryPlanTests : IDisposable
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");

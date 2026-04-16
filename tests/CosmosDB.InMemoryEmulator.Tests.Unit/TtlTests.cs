@@ -16,7 +16,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Existing tests (preserved from original TtlTests.cs)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlContainerLevelTests
 {
     [Fact]
@@ -141,7 +140,6 @@ public class TtlContainerLevelTests
 //  Group A: Per-item TTL semantics
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlPerItemTests
 {
     [Fact]
@@ -301,7 +299,6 @@ public class TtlPerItemTests
 //  Group B: Container DefaultTimeToLive = -1 (TTL ON, no default expiry)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlContainerMinusOneTests
 {
     [Fact]
@@ -368,7 +365,6 @@ public class TtlContainerMinusOneTests
 //  Group C: TTL interaction with write operations
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlWriteOperationTests
 {
     [Fact]
@@ -567,7 +563,6 @@ public class TtlWriteOperationTests
 //  Group D: TTL on different read paths
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlReadPathTests
 {
     [Fact]
@@ -713,7 +708,6 @@ public class TtlReadPathTests
 //  Group E: Container TTL management
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlContainerManagementTests
 {
     [Fact]
@@ -812,7 +806,6 @@ public class TtlContainerManagementTests
 //  Group F: Edge cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlEdgeCaseTests
 {
     [Fact]
@@ -861,7 +854,6 @@ public class TtlEdgeCaseTests
 //  Group H: Stream operation variants
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlStreamVariantTests
 {
     [Fact]
@@ -951,7 +943,6 @@ public class TtlStreamVariantTests
 //  Group G: Change feed interaction (divergent behaviour)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlChangeFeedDivergentTests
 {
     [Fact]
@@ -1028,7 +1019,6 @@ public class TtlChangeFeedDivergentTests
 //  Plan 44: TTL Bug Fix Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlBugFixTests
 {
     [Fact]
@@ -1102,7 +1092,6 @@ public class TtlBugFixTests
 
 public class TtlPerItemExtendedTests
 {
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class TtlDocument
     {
         [JsonProperty("id")] public string Id { get; set; } = default!;
@@ -1225,7 +1214,6 @@ public class TtlPerItemExtendedTests
 //  Plan 44: Transactional Batch TTL Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlTransactionalBatchTests
 {
     [Fact]
@@ -1338,7 +1326,6 @@ public class TtlTransactionalBatchTests
 //  Plan 44: Container Properties Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlContainerPropertiesTests
 {
     [Fact]
@@ -1402,7 +1389,6 @@ public class TtlContainerPropertiesTests
 //  Plan 44: _ts System Property Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlSystemPropertyTests
 {
     [Fact]
@@ -1498,7 +1484,6 @@ public class TtlSystemPropertyTests
 //  Plan 44: Query Path Extended Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlQueryPathExtendedTests
 {
     private async Task<InMemoryContainer> CreateContainerWithExpiredAndLiveItems()
@@ -1635,7 +1620,6 @@ public class TtlQueryPathExtendedTests
 //  Plan 44: Stream Write Resets TTL Clock Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlStreamWriteResetTests
 {
     [Fact]
@@ -1714,7 +1698,6 @@ public class TtlStreamWriteResetTests
 //  Plan 44: Hierarchical Partition Key TTL Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlHierarchicalPartitionKeyTests
 {
     [Fact]
@@ -1775,7 +1758,6 @@ public class TtlHierarchicalPartitionKeyTests
 //  Plan 44: ETag / Concurrency TTL Interaction Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlConcurrencyTests
 {
     [Fact]
@@ -1825,7 +1807,6 @@ public class TtlConcurrencyTests
 //  Plan 44: Change Feed Extended TTL Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlChangeFeedExtendedTests
 {
     [Fact]
@@ -1891,7 +1872,6 @@ public class TtlChangeFeedExtendedTests
 //  Plan 44: Divergent Behaviour Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlDivergentBehaviorDeepTests
 {
     [Fact]
@@ -1951,7 +1931,6 @@ public class TtlDivergentBehaviorDeepTests
 //  Plan 45: Stream API _ttl Validation Gap — BUG-1 fix tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlStreamTtlValidationTests
 {
     [Fact]
@@ -2014,7 +1993,6 @@ public class TtlStreamTtlValidationTests
 //  Plan 45: Patch _ttl Validation Gap — BUG-2 fix tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlPatchTtlValidationTests
 {
     [Fact]
@@ -2125,7 +2103,6 @@ public class TtlPatchTtlValidationTests
 //  Plan 45: State Persistence + TTL Interaction
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlStatePersistenceTests
 {
     [Fact]
@@ -2219,7 +2196,6 @@ public class TtlStatePersistenceTests
 //  Plan 45: Unique Key + TTL Interaction
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlUniqueKeyTests
 {
     [Fact]
@@ -2284,7 +2260,6 @@ public class TtlUniqueKeyTests
 //  Plan 45: Bulk Operations + TTL
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlBulkOperationTests
 {
     [Fact]
@@ -2364,7 +2339,6 @@ public class TtlBulkOperationTests
 //  Plan 45: DeleteAllItemsByPartitionKey + TTL
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlDeleteAllByPartitionKeyTests
 {
     [Fact]
@@ -2419,7 +2393,6 @@ public class TtlDeleteAllByPartitionKeyTests
 //  Plan 45: Computed Properties + TTL
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlComputedPropertyTests
 {
     [Fact]
@@ -2480,7 +2453,6 @@ public class TtlComputedPropertyTests
 //  Plan 45: FeedRange + TTL
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlFeedRangeTests
 {
     [Fact]
@@ -2547,7 +2519,6 @@ public class TtlFeedRangeTests
 //  Plan 45: Per-Item TTL Edge Cases (extending TtlPerItemExtendedTests)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlPerItemEdgeCaseTests
 {
     [Fact]
@@ -2629,7 +2600,6 @@ public class TtlPerItemEdgeCaseTests
 //  Plan 45: TTL + Triggers
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlTriggerTests
 {
     [Fact]
@@ -2687,7 +2657,6 @@ public class TtlTriggerTests
 //  Plan 45: _ts System Property Deep Tests (extending TtlSystemPropertyTests)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlTsDeepTests
 {
     [Fact]
@@ -2759,7 +2728,6 @@ public class TtlTsDeepTests
 //  Plan 45: Concurrent TTL Operations (extending TtlConcurrencyTests)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlConcurrencyDeepTests
 {
     [Fact]
@@ -2823,7 +2791,6 @@ public class TtlConcurrencyDeepTests
 //  Plan 45: Container Management Extended TTL
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlContainerManagementDeepTests
 {
     [Fact]
@@ -2890,7 +2857,6 @@ public class TtlContainerManagementDeepTests
 //  Plan 45: Batch + TTL Extended (extending TtlTransactionalBatchTests)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlBatchExtendedTests
 {
     [Fact]
@@ -2958,7 +2924,6 @@ public class TtlBatchExtendedTests
 //  Plan 45: Query SQL Expressions with TTL Fields
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlQuerySqlExpressionsTests
 {
     [Fact]
@@ -3032,7 +2997,6 @@ public class TtlQuerySqlExpressionsTests
 //  Plan 45: ItemCount + TTL Divergent Behavior Documentation
 // ═══════════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TtlItemCountDivergentTests
 {
     [Fact]

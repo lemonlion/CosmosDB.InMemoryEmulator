@@ -10,7 +10,6 @@ using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateItemTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -97,7 +96,6 @@ public class CreateItemTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadItemTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -173,7 +171,6 @@ public class ReadItemTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UpsertItemTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -244,7 +241,6 @@ public class UpsertItemTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceItemTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -315,7 +311,6 @@ public class ReplaceItemTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteItemTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -415,7 +410,6 @@ public class DeleteItemTests
 /// when the token is already cancelled.
 /// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.createitemasync
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CancellationTokenTests5
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -512,7 +506,6 @@ public class CancellationTokenTests5
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceItemGapTests2
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -552,7 +545,6 @@ public class ReplaceItemGapTests2
 /// partition key value you must delete the original item and insert a new item."
 /// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.replaceitemasync
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplacePartitionKeyImmutabilityTests5
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -574,7 +566,6 @@ public class ReplacePartitionKeyImmutabilityTests5
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadItemGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -642,7 +633,6 @@ public class ReadItemGapTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteItemGapTests2
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -671,7 +661,6 @@ public class DeleteItemGapTests2
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadItemGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -726,7 +715,6 @@ public class ReadItemGapTests3
 /// to properties in T."
 /// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.readitemasync
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class SystemMetadataPropertyTests5
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -786,7 +774,6 @@ public class SystemMetadataPropertyTests5
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceItemGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -845,7 +832,6 @@ public class ReplaceItemGapTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UpsertItemGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -887,7 +873,6 @@ public class UpsertItemGapTests3
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteItemGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -950,7 +935,6 @@ public class DeleteItemGapTests
 /// (which is meaningful for reads, not writes) does not interfere with delete.
 /// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.deleteitemasync
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteEdgeCaseTests5
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -972,7 +956,6 @@ public class DeleteEdgeCaseTests5
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateItemGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1029,7 +1012,6 @@ public class CreateItemGapTests3
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrudNullGuardTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1099,7 +1081,6 @@ public class CrudNullGuardTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteAllItemsByPartitionKeyTests
 {
     [Fact]
@@ -1126,7 +1107,6 @@ public class DeleteAllItemsByPartitionKeyTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceItemGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1148,7 +1128,6 @@ public class ReplaceItemGapTests3
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateItemGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1252,7 +1231,6 @@ public class CreateItemGapTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CreateItemGapTests2
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1334,7 +1312,6 @@ public class CreateItemGapTests2
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadItemGapTests2
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1368,7 +1345,6 @@ public class ReadItemGapTests2
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class EnableContentResponseOnWriteTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1430,7 +1406,6 @@ public class EnableContentResponseOnWriteTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ItemRequestOptionsEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1504,7 +1479,6 @@ public class ItemRequestOptionsEdgeCaseTests
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteItemGapTests3
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1538,7 +1512,6 @@ public class DeleteItemGapTests3
 }
 
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UpsertItemGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1643,7 +1616,6 @@ public class UpsertItemGapTests
 
 // ─── ReplaceItemAsync Unique Key Validation ─────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceItemUniqueKeyTests
 {
     [Fact]
@@ -1677,7 +1649,6 @@ public class ReplaceItemUniqueKeyTests
 
 // ─── PatchItemAsync Unique Key Validation ───────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchItemUniqueKeyTests
 {
     [Fact]
@@ -1711,7 +1682,6 @@ public class PatchItemUniqueKeyTests
 
 // ─── Stream CRUD Unique Key Validation ──────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamCrudUniqueKeyTests
 {
     private static MemoryStream ToStream(object obj) =>
@@ -1792,7 +1762,6 @@ public class StreamCrudUniqueKeyTests
 
 // ─── Trigger Execution ──────────────────────────────────────────────────
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TriggerExecutionTests
 {
     /// <summary>
@@ -1866,7 +1835,6 @@ public class TriggerExecutionTests
 //  CRUD Deep Dive — Phase 1: Bug Fix Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReadItemErrorMessageTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -1885,7 +1853,6 @@ public class ReadItemErrorMessageTests
 //  CRUD Deep Dive — Phase 2: ETag / Conditional Requests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrudIfMatchWildcardTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -1932,7 +1899,6 @@ public class CrudIfMatchWildcardTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrudETagFormatTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -1997,7 +1963,6 @@ public class CrudETagFormatTests
 //  CRUD Deep Dive — Phase 3: Response Metadata
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrudResponseMetadataTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -2052,7 +2017,6 @@ public class CrudResponseMetadataTests
 //  CRUD Deep Dive — Phase 3b: Timestamps
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrudTimestampTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -2110,7 +2074,6 @@ public class CrudTimestampTests
 //  CRUD Deep Dive — Phase 4: Partition Key Edge Cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrudPartitionKeyEdgeCaseTests
 {
     [Fact]
@@ -2167,7 +2130,6 @@ public class CrudPartitionKeyEdgeCaseTests
 //  CRUD Deep Dive — Phase 5: Document Size Validation
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrudDocumentSizeValidationTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -2210,7 +2172,6 @@ public class CrudDocumentSizeValidationTests
 //  CRUD Deep Dive — Phase 6: Error Semantics & Empty IDs
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrudEmptyIdEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
@@ -2253,7 +2214,6 @@ public class CrudEmptyIdEdgeCaseTests
 //  CRUD Deep Dive — Phase 7: Change Feed Integration
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrudChangeFeedIntegrationTests
 {
     [Fact]
@@ -2299,7 +2259,6 @@ public class CrudChangeFeedIntegrationTests
 //  CRUD Deep Dive — Phase 8: DeleteAllByPartitionKey Gaps
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteAllByPKExtendedGapTests
 {
     [Fact]
@@ -2356,7 +2315,6 @@ public class DeleteAllByPKExtendedGapTests
 //  CRUD Deep Dive — Phase 10: CancellationToken
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ReplaceItemCancelledTokenTests
 {
     [Fact]
@@ -2381,7 +2339,6 @@ public class ReplaceItemCancelledTokenTests
 //  CRUD Deep Dive — Phase 11: Divergent Behavior Tests (Skip + Sister)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class CrudSystemPropertyDivergentTests
 {
     private readonly InMemoryContainer _container = new("test", "/partitionKey");

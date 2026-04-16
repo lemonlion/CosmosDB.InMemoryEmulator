@@ -11,7 +11,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 // Phase 9 — Query Clause + FeedRange Interaction
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeQueryClauseInteractionTests
 {
     private static async Task<InMemoryContainer> CreatePopulatedContainer(int count = 50, int feedRangeCount = 4)
@@ -174,7 +173,6 @@ public class FeedRangeQueryClauseInteractionTests
 // Phase 10 — Change Feed Advanced FeedRange Filtering
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeChangeFeedAdvancedFilteringTests
 {
     [Fact]
@@ -321,7 +319,6 @@ public class FeedRangeChangeFeedAdvancedFilteringTests
 // Phase 11 — Partition Key Edge Cases in Filtering
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangePartitionKeyEdgeCaseFilteringTests
 {
     [Fact]
@@ -437,7 +434,6 @@ public class FeedRangePartitionKeyEdgeCaseFilteringTests
 // Phase 12 — Boundary Precision
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeBoundaryPrecisionTests
 {
     [Fact]
@@ -568,7 +564,6 @@ public class FeedRangeBoundaryPrecisionTests
 // Phase 13 — Query + RequestOptions Interaction
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeQueryRequestOptionsFilteringTests
 {
     [Fact]
@@ -616,7 +611,6 @@ public class FeedRangeQueryRequestOptionsFilteringTests
 // Phase 14 — Aggregate Query + FeedRange Correctness
 // ═══════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FeedRangeAggregateQueryFilteringTests
 {
     [Fact]

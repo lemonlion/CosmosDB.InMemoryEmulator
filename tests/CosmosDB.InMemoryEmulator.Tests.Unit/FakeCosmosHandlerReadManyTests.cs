@@ -13,7 +13,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// All tests use BackingContainer.ReadManyItemsAsync directly and cannot run
 /// against the real emulator.
 /// </summary>
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerReadManyTests : IDisposable
 {
     private readonly InMemoryContainer _inMemoryContainer;

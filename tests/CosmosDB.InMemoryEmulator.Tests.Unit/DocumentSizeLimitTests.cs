@@ -8,7 +8,6 @@ using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DocumentSizeLimitTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -398,7 +397,6 @@ public class DocumentSizeLimitTests
 
 #region BUG-3: Error Message Size Info
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DocumentSizeErrorMessageTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -433,7 +431,6 @@ public class DocumentSizeErrorMessageTests
 
 #region BUG-2: Batch Delete/Read Size Accounting
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class BatchDeleteReadSizeAccountingTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -502,7 +499,6 @@ public class BatchDeleteReadSizeAccountingTests
 
 #region Category 1: Typed Boundary Precision
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class TypedBoundaryPrecisionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -636,7 +632,6 @@ public class TypedBoundaryPrecisionTests
 
 #region Category 2: Stream Boundary Precision
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StreamBoundaryPrecisionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -702,7 +697,6 @@ public class StreamBoundaryPrecisionTests
 
 #region Category 3: State Integrity After Rejection
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DocumentSizeStateIntegrityTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -827,7 +821,6 @@ public class DocumentSizeStateIntegrityTests
 
 #region Category 4: Batch Extended Coverage
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class BatchSizeExtendedTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -930,7 +923,6 @@ public class BatchSizeExtendedTests
 
 #region Category 5: Patch-Specific Size Scenarios
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchSizeEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1030,7 +1022,6 @@ public class PatchSizeEdgeCaseTests
 
 #region Category 6: Multi-byte Edge Cases
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class MultiByteCharacterSizeTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1097,7 +1088,6 @@ public class MultiByteCharacterSizeTests
 
 #region Category 7: Error Response Details
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DocumentSizeErrorResponseDetailTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1142,7 +1132,6 @@ public class DocumentSizeErrorResponseDetailTests
 
 #region Category 8: Concurrent Size Validation
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ConcurrentSizeValidationTests
 {
     [Fact]
@@ -1198,7 +1187,6 @@ public class ConcurrentSizeValidationTests
 
 #region Divergence 1: Stored Procedure Size Limits
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureSizeLimitDivergenceTests
 {
     [Fact]
@@ -1220,7 +1208,6 @@ public class StoredProcedureSizeLimitDivergenceTests
 
 #region Divergence 2: Batch Overhead Not Counted
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class BatchOverheadDivergenceTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1259,7 +1246,6 @@ public class BatchOverheadDivergenceTests
 
 #region Divergence 3: Post-trigger Size Inflation
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PostTriggerSizeDivergenceTests
 {
     [Fact]
@@ -1326,7 +1312,6 @@ public class PostTriggerSizeDivergenceTests
 
 #region Divergence 4: Patch 10-Operation Limit
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchOperationLimitTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1371,7 +1356,6 @@ public class PatchOperationLimitTests
 
 #region Batch Stream Operation Size Tests
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class BatchStreamOperationSizeTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1427,7 +1411,6 @@ public class BatchStreamOperationSizeTests
 
 #region Delete Large Document
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class DeleteLargeDocumentTests
 {
     [Fact]
@@ -1449,7 +1432,6 @@ public class DeleteLargeDocumentTests
 
 #region Minimal and Empty Documents
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class MinimalDocumentTests
 {
     [Fact]
@@ -1488,7 +1470,6 @@ public class MinimalDocumentTests
 
 #region FakeCosmosHandler Document Size
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerDocumentSizeTests
 {
     [Fact]
@@ -1521,7 +1502,6 @@ public class FakeCosmosHandlerDocumentSizeTests
 
 #region Hierarchical Partition Key + Document Size
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class HierarchicalPartitionKeyDocumentSizeTests
 {
     [Fact]
@@ -1544,7 +1524,6 @@ public class HierarchicalPartitionKeyDocumentSizeTests
 
 #region Patch Input Size
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class PatchInputSizeTests
 {
     [Fact]
@@ -1567,7 +1546,6 @@ public class PatchInputSizeTests
 
 #region Stored Procedure Creates Oversized Document
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureDocumentSizeTests
 {
     [Fact]

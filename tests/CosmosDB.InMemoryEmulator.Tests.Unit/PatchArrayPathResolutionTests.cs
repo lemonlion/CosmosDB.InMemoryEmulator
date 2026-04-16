@@ -66,7 +66,6 @@ public class PatchArrayPathResolutionTests
         [JsonProperty("count")] public int Count { get; set; }
     }
 
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public class RunEntry
     {
         [JsonProperty("status")] public string Status { get; set; } = "";

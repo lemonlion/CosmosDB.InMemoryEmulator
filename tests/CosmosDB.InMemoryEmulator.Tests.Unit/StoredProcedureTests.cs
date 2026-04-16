@@ -15,7 +15,6 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 //  Stored Procedure Tests — Full CRUD, registration, execution, edge cases
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -844,7 +843,6 @@ public class StoredProcedureTests
 //  Sister tests show the emulator's actual behaviour.
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureDivergentBehaviorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1157,7 +1155,6 @@ public class StoredProcedureDivergentBehaviorTests
 //  UDF Tests (moved from StoredProcGapTests — these test UDF behavior)
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UdfGapTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1431,7 +1428,6 @@ public class UdfGapTests
 //  Stored Procedure Dual Store Tests — _storedProcedureProperties vs _storedProcedures
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureDualStoreTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1548,7 +1544,6 @@ public class StoredProcedureDualStoreTests
 //  Stored Procedure Input Validation Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureInputValidationTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1579,7 +1574,6 @@ public class StoredProcedureInputValidationTests
 //  Stored Procedure Container Isolation Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureContainerIsolationTests
 {
     [Fact]
@@ -1624,7 +1618,6 @@ public class StoredProcedureContainerIsolationTests
 //  Gap 5: Stream Query Iterator Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ScriptStreamQueryIteratorTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1684,7 +1677,6 @@ public class ScriptStreamQueryIteratorTests
 //  Gap 6: Script Metadata Query Filtering Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class ScriptMetadataQueryFilteringTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/partitionKey");
@@ -1760,7 +1752,6 @@ public class ScriptMetadataQueryFilteringTests
 //  Gap 1: JS Stored Procedure Collection Access Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsSprocCollectionAccessTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -1974,7 +1965,6 @@ public class JsSprocCollectionAccessTests
 //  Gap 2: JS UDF Execution Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsUdfExecutionTests
 {
     private readonly InMemoryContainer _container = new("test-container", "/pk");
@@ -2086,7 +2076,6 @@ public class JsUdfExecutionTests
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── Phase 1: Bug Fix Verification (BUG-1 already fixed) ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureCleanupTests
 {
     [Fact]
@@ -2153,7 +2142,6 @@ public class StoredProcedureCleanupTests
 }
 
 // ── Phase 2: Stream API ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureStreamTests
 {
     private readonly InMemoryContainer _container = new("sp-stream", "/pk");
@@ -2235,7 +2223,6 @@ public class StoredProcedureStreamTests
 }
 
 // ── Phase 3: JS Engine Edge Cases ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class JsSprocEdgeCaseTests
 {
     private readonly InMemoryContainer _container = new("js-edge", "/pk");
@@ -2391,7 +2378,6 @@ public class JsSprocEdgeCaseTests
 }
 
 // ── Phase 4: ClearItems & Lifecycle ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureLifecycleTests
 {
     [Fact]
@@ -2462,7 +2448,6 @@ public class StoredProcedureLifecycleTests
 }
 
 // ── Phase 5: System Properties & Metadata ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureMetadataTests
 {
     [Fact]
@@ -2541,7 +2526,6 @@ public class StoredProcedureMetadataTests
 }
 
 // ── Phase 6: Typed Response Deserialization ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureTypedResponseTests
 {
     private readonly InMemoryContainer _container = new("sp-typed", "/pk");
@@ -2603,7 +2587,6 @@ public class StoredProcedureTypedResponseTests
 }
 
 // ── Phase 7: UDF Full CRUD ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class UdfCrudTests
 {
     private readonly InMemoryContainer _container = new("udf-crud", "/pk");
@@ -2706,7 +2689,6 @@ public class UdfCrudTests
 }
 
 // ── Phase 8: Concurrency & Edge Cases ──
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureConcurrencyTests
 {
     [Fact]
@@ -2723,7 +2705,6 @@ public class StoredProcedureConcurrencyTests
     }
 }
 
-[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class StoredProcedureEdgeCaseTests
 {
     [Fact]
