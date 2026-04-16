@@ -5,14 +5,19 @@
     Directory containing TRX files. Default ./test-results.
 .PARAMETER OutputFormat
     Output format: 'console' (default) or 'markdown' (for GitHub Step Summary).
+.PARAMETER EmulatorTarget
+    Which emulator TRX to compare against: 'emulator-linux' (default) or 'emulator-windows'.
 .EXAMPLE
     .\scripts\compare-trx.ps1
+    .\scripts\compare-trx.ps1 -EmulatorTarget emulator-windows
     .\scripts\compare-trx.ps1 -OutputFormat markdown >> $env:GITHUB_STEP_SUMMARY
 #>
 param(
     [string]$ResultsDir = './test-results',
     [ValidateSet('console', 'markdown')]
-    [string]$OutputFormat = 'console'
+    [string]$OutputFormat = 'console',
+    [ValidateSet('emulator-linux', 'emulator-windows')]
+    [string]$EmulatorTarget = 'emulator-linux'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,10 +37,10 @@ function Parse-TrxFile([string]$Path) {
 
 # Find TRX files
 $inmemoryTrx = Get-ChildItem $ResultsDir -Filter 'inmemory-results.trx' -ErrorAction SilentlyContinue
-$emulatorTrx = Get-ChildItem $ResultsDir -Filter 'emulator-linux-results.trx' -ErrorAction SilentlyContinue
+$emulatorTrx = Get-ChildItem $ResultsDir -Filter "$EmulatorTarget-results.trx" -ErrorAction SilentlyContinue
 
 if (-not $inmemoryTrx) { Write-Error "No inmemory-results.trx found in $ResultsDir"; exit 1 }
-if (-not $emulatorTrx) { Write-Error "No emulator-linux-results.trx found in $ResultsDir"; exit 1 }
+if (-not $emulatorTrx) { Write-Error "No $EmulatorTarget-results.trx found in $ResultsDir"; exit 1 }
 
 $inmemoryResults = Parse-TrxFile $inmemoryTrx.FullName
 $emulatorResults = Parse-TrxFile $emulatorTrx.FullName

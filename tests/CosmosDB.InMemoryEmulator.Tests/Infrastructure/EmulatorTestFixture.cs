@@ -9,7 +9,7 @@ namespace CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 /// </summary>
 public sealed class EmulatorTestFixture : ITestContainerFixture
 {
-    private const string Endpoint = "https://localhost:8081";
+    private const string DefaultEndpoint = "https://localhost:8081";
     private const string Key = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
     private const string DatabaseName = "parity-validation";
 
@@ -17,26 +17,34 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
     private readonly List<Container> _containersToCleanup = [];
     private Database? _database;
 
-    public TestTarget Target => TestTarget.EmulatorLinux;
+    public TestTarget Target { get; }
     public bool IsEmulator => true;
 
-    public EmulatorTestFixture()
+    public EmulatorTestFixture(TestTarget target = TestTarget.EmulatorLinux, string? endpoint = null)
     {
-        _client = new CosmosClient(Endpoint, Key, new CosmosClientOptions
+        Target = target;
+        var resolvedEndpoint = endpoint ?? DefaultEndpoint;
+        var isHttps = resolvedEndpoint.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+
+        var options = new CosmosClientOptions
         {
             ConnectionMode = ConnectionMode.Gateway,
             MaxRetryAttemptsOnRateLimitedRequests = 3,
             RequestTimeout = TimeSpan.FromSeconds(30),
-            HttpClientFactory = () =>
-            {
-                var handler = new HttpClientHandler
+        };
+
+        if (isHttps)
+        {
+            options.HttpClientFactory = () => new HttpClient(
+                new HttpClientHandler
                 {
                     ServerCertificateCustomValidationCallback =
                         HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-                };
-                return new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
-            }
-        });
+                })
+            { Timeout = TimeSpan.FromSeconds(30) };
+        }
+
+        _client = new CosmosClient(resolvedEndpoint, Key, options);
     }
 
     public async Task<Container> CreateContainerAsync(

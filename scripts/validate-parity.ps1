@@ -9,16 +9,22 @@
     Skip the build step (if you've already built).
 .PARAMETER SkipEmulatorStop
     Don't stop the emulator after the run (useful for debugging).
+.PARAMETER EmulatorTarget
+    Which emulator to run against: 'emulator-linux' (default) or 'emulator-windows'.
+    emulator-windows requires Docker Desktop in Windows containers mode.
 .EXAMPLE
     .\scripts\validate-parity.ps1
     .\scripts\validate-parity.ps1 -Filter "FullyQualifiedName~Crud"
+    .\scripts\validate-parity.ps1 -EmulatorTarget emulator-windows
     .\scripts\validate-parity.ps1 -SkipBuild -SkipEmulatorStop
 #>
 param(
     [string]$Filter,
     [string]$Framework = 'net8.0',
     [switch]$SkipBuild,
-    [switch]$SkipEmulatorStop
+    [switch]$SkipEmulatorStop,
+    [ValidateSet('emulator-linux', 'emulator-windows')]
+    [string]$EmulatorTarget = 'emulator-linux'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,19 +55,34 @@ if ($Filter) { $runArgs.Filter = $Filter }
 $inMemoryExit = $LASTEXITCODE
 
 # Step 2: Start emulator (if not already running)
-$emulatorRunning = docker ps --filter name=cosmosdb-emulator --format '{{.Names}}' 2>$null
-if (-not $emulatorRunning) {
+# For Docker-based targets: check docker ps. For Windows local: probe the HTTP endpoint.
+$emulatorReady = $false
+if ($EmulatorTarget -eq 'emulator-windows') {
+    try {
+        $probe = Invoke-WebRequest -Uri "https://localhost:8081/" `
+            -SkipCertificateCheck -SkipHttpErrorCheck -TimeoutSec 3 -ErrorAction Stop
+        $emulatorReady = $probe.StatusCode -in 200, 401
+    } catch { $emulatorReady = $false }
+} else {
+    $emulatorReady = [bool](docker ps --filter name=cosmosdb-emulator --format '{{.Names}}' 2>$null)
+}
+
+if (-not $emulatorReady) {
     Write-Host "`n══════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host "  Step 2: Starting emulator" -ForegroundColor Cyan
+    Write-Host "  Step 2: Starting emulator ($EmulatorTarget)" -ForegroundColor Cyan
     Write-Host "══════════════════════════════════════" -ForegroundColor Cyan
-    & "$scriptsDir/start-emulator.ps1"
+    if ($EmulatorTarget -eq 'emulator-windows') {
+        & "$scriptsDir/start-emulator-windows-local.ps1"
+    } else {
+        & "$scriptsDir/start-emulator.ps1"
+    }
 }
 
 # Step 3: Run emulator tests
 Write-Host "`n══════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  Step 3: Running emulator tests" -ForegroundColor Cyan
+Write-Host "  Step 3: Running emulator tests ($EmulatorTarget)" -ForegroundColor Cyan
 Write-Host "══════════════════════════════════════" -ForegroundColor Cyan
-$runArgs.Target = 'emulator-linux'
+$runArgs.Target = $EmulatorTarget
 & "$scriptsDir/run-tests.ps1" @runArgs
 $emulatorExit = $LASTEXITCODE
 
@@ -69,12 +90,18 @@ $emulatorExit = $LASTEXITCODE
 Write-Host "`n══════════════════════════════════════" -ForegroundColor Cyan
 Write-Host "  Step 4: Parity comparison" -ForegroundColor Cyan
 Write-Host "══════════════════════════════════════" -ForegroundColor Cyan
-& "$scriptsDir/compare-trx.ps1" -ResultsDir $resultsDir
+& "$scriptsDir/compare-trx.ps1" -ResultsDir $resultsDir -EmulatorTarget $EmulatorTarget
 
 # Step 5: Cleanup
 if (-not $SkipEmulatorStop) {
     Write-Host "`nStopping emulator..." -ForegroundColor DarkGray
-    docker rm -f cosmosdb-emulator 2>$null | Out-Null
+    if ($EmulatorTarget -eq 'emulator-windows') {
+        $emulatorExe = "C:\Program Files\Azure Cosmos DB Emulator\Microsoft.Azure.Cosmos.Emulator.exe"
+        if (-not (Test-Path $emulatorExe)) { $emulatorExe = "C:\Program Files\Azure Cosmos DB Emulator\CosmosDB.Emulator.exe" }
+        Start-Process -FilePath $emulatorExe -ArgumentList "/Shutdown" -Verb RunAs -Wait -ErrorAction SilentlyContinue
+    } else {
+        docker rm -f cosmosdb-emulator 2>$null | Out-Null
+    }
 }
 
 Write-Host "`nDone." -ForegroundColor Green

@@ -14,7 +14,7 @@
     .\scripts\start-emulator.ps1 -Image mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
 #>
 param(
-    [string]$Image = 'mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest',
+    [string]$Image = 'mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview',
     [string]$ContainerName = 'cosmosdb-emulator',
     [int]$Port = 8081,
     [int]$TimeoutSeconds = 300
@@ -35,21 +35,22 @@ docker rm -f $ContainerName 2>$null | Out-Null
 Write-Host "Starting emulator ($Image)..." -ForegroundColor Cyan
 docker run --detach --name $ContainerName `
     --publish "${Port}:8081" `
-    --publish "10250-10256:10250-10256" `
+    --publish "20250-20256:10250-10256" `
     --env AZURE_COSMOS_EMULATOR_PARTITION_COUNT=3 `
     --env AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE=false `
     --env AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE=127.0.0.1 `
     $Image | Out-Null
 
-# Wait for readiness
+# Wait for readiness — detect protocol from image name
+$protocol = if ($Image -like '*vnext*') { 'http' } else { 'https' }
 $elapsed = 0
 while ($elapsed -lt $TimeoutSeconds) {
     try {
-        $response = Invoke-WebRequest -Uri "https://localhost:${Port}/" `
-            -SkipCertificateCheck -TimeoutSec 3 -ErrorAction Stop
+        $response = Invoke-WebRequest -Uri "${protocol}://localhost:${Port}/" `
+            -SkipCertificateCheck -SkipHttpErrorCheck -TimeoutSec 3 -ErrorAction Stop
         if ($response.StatusCode -in 200, 401) {
             Write-Host "Emulator ready after ${elapsed}s (HTTP $($response.StatusCode))" -ForegroundColor Green
-            Start-Sleep 15  # Extra buffer for internal initialization
+            Start-Sleep 5  # Small buffer for internal initialization
             return
         }
     } catch {

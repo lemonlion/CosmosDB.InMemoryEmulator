@@ -6,8 +6,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  parity-check:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [inmemory, emulator-linux]
+
+    # Emulator service starts for both matrix entries (harmless for inmemory)
     services:
       cosmosdb:
         image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
@@ -28,6 +34,7 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Wait for Cosmos DB Emulator
+        if: matrix.target == 'emulator-linux'
         run: |
           echo "Waiting for Cosmos DB Emulator to be ready..."
           timeout=300
@@ -52,20 +59,37 @@ jobs:
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
 
-      - name: Run In-Memory Tests
+      - name: Run Tests (${{ matrix.target }})
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target inmemory
+        run: ./scripts/run-tests.ps1 -Target ${{ matrix.target }}
 
-      - name: Run Emulator Tests
-        shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target emulator-linux
+      - name: Upload TRX
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trx-${{ matrix.target }}
+          path: test-results/
+
+  compare:
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all TRX artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: trx-*
+          path: test-results/
+          merge-multiple: true
 
       - name: Parity Report
-        if: always()
         shell: pwsh
-        run: ./scripts/compare-trx.ps1 -OutputFormat markdown >> $env:GITHUB_STEP_SUMMARY
+        run: ./scripts/compare-trx.ps1 -ResultsDir test-results -OutputFormat markdown >> $env:GITHUB_STEP_SUMMARY
 
-      - name: Upload Results
+      - name: Upload Combined Results
         if: always()
         uses: actions/upload-artifact@v4
         with:

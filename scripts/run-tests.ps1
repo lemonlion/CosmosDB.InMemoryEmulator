@@ -16,7 +16,7 @@
 #>
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('inmemory', 'emulator-linux')]
+    [ValidateSet('inmemory', 'emulator-linux', 'emulator-windows')]
     [string]$Target,
 
     [string]$Framework = 'net8.0',
@@ -26,6 +26,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $env:COSMOS_TEST_TARGET = $Target
+
+# Set emulator endpoint — vnext-preview runs plain HTTP, legacy latest runs HTTPS
+if ($Target -eq 'emulator-linux') {
+    $env:COSMOS_EMULATOR_ENDPOINT = 'http://localhost:8081'
+} elseif ($Target -eq 'emulator-windows') {
+    $env:COSMOS_EMULATOR_ENDPOINT = 'https://localhost:8081'
+} else {
+    Remove-Item Env:COSMOS_EMULATOR_ENDPOINT -ErrorAction SilentlyContinue
+}
 
 # Build filter: exclude InMemoryOnly tests when targeting emulator
 $filterExpr = ''

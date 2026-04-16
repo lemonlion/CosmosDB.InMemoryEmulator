@@ -15,11 +15,12 @@ public static class TestFixtureFactory
         var target = Environment.GetEnvironmentVariable("COSMOS_TEST_TARGET")?.ToLowerInvariant() switch
         {
             "emulator-linux" => TestTarget.EmulatorLinux,
+            "emulator-windows" => TestTarget.EmulatorWindows,
             _ => TestTarget.InMemory
         };
 
         return target == TestTarget.InMemory
             ? new InMemoryTestFixture()
-            : new EmulatorTestFixture();
+            : new EmulatorTestFixture(target, Environment.GetEnvironmentVariable("COSMOS_EMULATOR_ENDPOINT"));
     }
 }
