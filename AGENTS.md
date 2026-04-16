@@ -1,4 +1,4 @@
-# Copilot Instructions
+# Contribution Instructions
 
 ## TDD Workflow
 
@@ -19,4 +19,5 @@
   - `src/CosmosDB.InMemoryEmulator.JsTriggers/CosmosDB.InMemoryEmulator.JsTriggers.csproj`
   - `src/CosmosDB.InMemoryEmulator.ProductionExtensions/CosmosDB.InMemoryEmulator.ProductionExtensions.csproj`
 - All three packages must use the same version number.
-- Commit, create a git tag (`v{version}`), and push both the commit and the tag to origin.
+- **On `main`:** Commit, create a git tag (`v{version}`), and push both the commit and the tag to origin.
+- **On any other branch:** Commit and push the code changes and version bump only. Do not create or push a tag.
