@@ -6,12 +6,33 @@ on:
   workflow_dispatch:
 
 jobs:
-  test-ubuntu:
+  test-inmemory:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [inmemory, emulator-linux]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build
+        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
+
+      - name: Run Tests (inmemory)
+        shell: pwsh
+        run: ./scripts/run-tests.ps1 -Target inmemory
+
+      - name: Upload TRX
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trx-inmemory
+          path: test-results/
+
+  test-emulator-linux:
+    runs-on: ubuntu-latest
 
     services:
       cosmosdb:
@@ -33,7 +54,6 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Wait for Cosmos DB Emulator
-        if: matrix.target == 'emulator-linux'
         run: |
           echo "Waiting for Cosmos DB Emulator to be ready..."
           timeout=300
@@ -58,15 +78,15 @@ jobs:
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
 
-      - name: Run Tests (${{ matrix.target }})
+      - name: Run Tests (emulator-linux)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target ${{ matrix.target }}
+        run: ./scripts/run-tests.ps1 -Target emulator-linux
 
       - name: Upload TRX
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trx-${{ matrix.target }}
+          name: trx-emulator-linux
           path: test-results/
 
   test-windows:
@@ -121,7 +141,7 @@ jobs:
           path: test-results/
 
   compare:
-    needs: [test-ubuntu, test-windows]
+    needs: [test-inmemory, test-emulator-linux, test-windows]
     if: always()
     runs-on: ubuntu-latest
 

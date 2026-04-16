@@ -45,6 +45,10 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
         }
 
         _client = new CosmosClient(resolvedEndpoint, Key, options);
+
+        // TODO: Consider adding a readiness check here (like EmulatorDetector) so that
+        // tests fail fast with a clear message when the emulator endpoint is unreachable,
+        // instead of timing out with opaque connection errors.
     }
 
     public async Task<Container> CreateContainerAsync(

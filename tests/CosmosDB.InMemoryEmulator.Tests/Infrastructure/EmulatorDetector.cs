@@ -5,6 +5,11 @@ namespace CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 /// <summary>
 /// Cached check for whether a Cosmos DB emulator is reachable at localhost:8081.
 /// </summary>
+/// <remarks>
+/// Uses a blocking HTTP call inside <see cref="Lazy{T}"/>. This is safe because xUnit v3
+/// does not set a <see cref="SynchronizationContext"/>, so .GetAwaiter().GetResult()
+/// will not deadlock. If the test runner changes, revisit this.
+/// </remarks>
 public static class EmulatorDetector
 {
     private static readonly Lazy<bool> IsAvailableLazy = new(() =>

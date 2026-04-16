@@ -73,7 +73,6 @@ foreach ($test in $allTestNames) {
 }
 
 # --- Classify each test ---
-$anySuspects = $false
 $fullParity = @()       # same outcome across ALL targets
 $suspects = @()         # inmemory passes, at least one emulator fails
 $emulatorGaps = @()     # inmemory fails, at least one emulator passes
@@ -94,7 +93,6 @@ foreach ($row in $rows) {
         $fullParity += $row
     } elseif ($im -eq 'Passed' -and $anyEmFail) {
         $suspects += $row
-        $anySuspects = $true
     } elseif ($im -ne 'Passed' -and $im -ne '-' -and $anyEmPass) {
         $emulatorGaps += $row
     } elseif ($emulatorsDisagree) {
@@ -258,4 +256,4 @@ if ($OutputFormat -eq 'markdown') {
     Write-Host ""
 }
 
-if ($anySuspects) { exit 1 }
+if ($suspects.Count -gt 0) { exit 1 }

@@ -2,7 +2,8 @@
 .SYNOPSIS
     Starts the Cosmos DB emulator in Docker and waits for readiness.
 .PARAMETER Image
-    Docker image to use. Defaults to legacy emulator.
+    Docker image to use. Defaults to legacy emulator (HTTPS).
+    Use 'mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview' for the vnext HTTP variant.
 .PARAMETER ContainerName
     Docker container name. Default 'cosmosdb-emulator'.
 .PARAMETER Port
@@ -14,7 +15,7 @@
     .\scripts\start-emulator.ps1 -Image mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
 #>
 param(
-    [string]$Image = 'mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview',
+    [string]$Image = 'mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator',
     [string]$ContainerName = 'cosmosdb-emulator',
     [int]$Port = 8081,
     [int]$TimeoutSeconds = 300
