@@ -1,5 +1,6 @@
 using System.Net;
 using AwesomeAssertions;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 using Microsoft.Azure.Cosmos;
 using Xunit;
 
@@ -9,7 +10,10 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Tests for ReadMany operations through FakeCosmosHandler.
 /// ReadMany is a direct method on Container — verify it works when the
 /// Container is backed by FakeCosmosHandler/InMemoryContainer.
+/// All tests use BackingContainer.ReadManyItemsAsync directly and cannot run
+/// against the real emulator.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerReadManyTests : IDisposable
 {
     private readonly InMemoryContainer _inMemoryContainer;

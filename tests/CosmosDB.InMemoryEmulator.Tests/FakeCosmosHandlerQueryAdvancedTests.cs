@@ -1,5 +1,6 @@
 using System.Reflection;
 using AwesomeAssertions;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -11,8 +12,10 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Tests for advanced SQL query features through FakeCosmosHandler.
 /// Covers subqueries, built-in functions, vector/FTS/geospatial queries,
 /// and parameterized queries that go through the full SDK → HTTP → handler pipeline.
+/// Parity-validated: string/math/array/type/aggregate/subquery/parameterized tests run against both backends.
+/// Vector, FTS, and geospatial tests create inline containers and are tagged InMemoryOnly.
 /// </summary>
-public class FakeCosmosHandlerQueryAdvancedTests : IDisposable
+public class FakeCosmosHandlerQueryAdvancedTests : IAsyncLifetime
 {
     private class QueryDoc
     {
@@ -25,27 +28,13 @@ public class FakeCosmosHandlerQueryAdvancedTests : IDisposable
         [JsonProperty("nested")] public NestedObject? Nested { get; set; }
     }
 
-    private readonly InMemoryContainer _inMemoryContainer;
-    private readonly FakeCosmosHandler _handler;
-    private readonly CosmosClient _client;
-    private readonly Container _container;
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private Container _container = null!;
 
-    public FakeCosmosHandlerQueryAdvancedTests()
+    public async ValueTask InitializeAsync()
     {
-        _inMemoryContainer = new InMemoryContainer("test-query-adv", "/partitionKey");
-        _handler = new FakeCosmosHandler(_inMemoryContainer);
-        _client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                RequestTimeout = TimeSpan.FromSeconds(10),
-                HttpClientFactory = () => new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        _container = _client.GetContainer("db", "test-query-adv");
-        SeedData().GetAwaiter().GetResult();
+        _container = await _fixture.CreateContainerAsync("test-query-adv", "/partitionKey");
+        await SeedData();
     }
 
     private async Task SeedData()
@@ -62,10 +51,9 @@ public class FakeCosmosHandlerQueryAdvancedTests : IDisposable
             await _container.CreateItemAsync(doc, new PartitionKey(doc.PartitionKey));
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _client.Dispose();
-        _handler.Dispose();
+        await _fixture.DisposeAsync();
     }
 
     private async Task<List<T>> DrainQuery<T>(string sql)
@@ -587,23 +575,12 @@ public class FakeCosmosHandlerQueryAdvancedTests : IDisposable
         return results;
     }
 
-    private async Task<List<T>> DrainBackingQuery<T>(string sql)
-    {
-        var iterator = _inMemoryContainer.GetItemQueryIterator<T>(sql);
-        var results = new List<T>();
-        while (iterator.HasMoreResults)
-        {
-            var page = await iterator.ReadNextAsync();
-            results.AddRange(page);
-        }
-        return results;
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
-    //  Vector Search (VECTORDISTANCE)
+    //  Vector Search (VECTORDISTANCE) — InMemoryOnly (uses inline containers)
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_VectorDistance_Cosine_OrdersByDistance()
     {
         // VectorDistance ORDER BY goes through the full SDK → HTTP → handler pipeline
@@ -649,6 +626,7 @@ public class FakeCosmosHandlerQueryAdvancedTests : IDisposable
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_VectorDistance_Euclidean_Works()
     {
         // VectorDistance without ORDER BY goes through the full SDK pipeline
@@ -691,10 +669,11 @@ public class FakeCosmosHandlerQueryAdvancedTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    //  Full-Text Search
+    //  Full-Text Search — InMemoryOnly (uses inline containers)
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_FullTextContains_Filters()
     {
         // FullTextContains is rejected by SDK ServiceInterop (SC2005),
@@ -731,6 +710,7 @@ public class FakeCosmosHandlerQueryAdvancedTests : IDisposable
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_FullTextContainsAll_RequiresAllTerms()
     {
         var backing = new InMemoryContainer("test-fts-all", "/pk");
@@ -762,6 +742,7 @@ public class FakeCosmosHandlerQueryAdvancedTests : IDisposable
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_FullTextContainsAny_MatchesAnyTerm()
     {
         var backing = new InMemoryContainer("test-fts-any", "/pk");
@@ -796,10 +777,11 @@ public class FakeCosmosHandlerQueryAdvancedTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    //  Geospatial (ST_* functions)
+    //  Geospatial (ST_* functions) — InMemoryOnly (uses inline containers)
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_StDistance_CalculatesDistanceBetweenPoints()
     {
         var backing = new InMemoryContainer("test-geo", "/pk");
@@ -840,6 +822,7 @@ public class FakeCosmosHandlerQueryAdvancedTests : IDisposable
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_StWithin_ChecksPointInPolygon()
     {
         var backing = new InMemoryContainer("test-geo-within", "/pk");
@@ -879,6 +862,7 @@ public class FakeCosmosHandlerQueryAdvancedTests : IDisposable
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_StIsValid_ValidatesGeoJson()
     {
         var backing = new InMemoryContainer("test-geo-valid", "/pk");

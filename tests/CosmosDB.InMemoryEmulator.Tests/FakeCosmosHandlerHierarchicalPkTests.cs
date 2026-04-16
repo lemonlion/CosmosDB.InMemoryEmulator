@@ -1,5 +1,6 @@
 using System.Net;
 using CosmosDB.InMemoryEmulator;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
 using Newtonsoft.Json;
@@ -8,6 +9,12 @@ using AwesomeAssertions;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
+/// <summary>
+/// Hierarchical partition key tests using per-method inline container setups.
+/// Change feed tests use InMemoryContainer-specific APIs (BackingContainer).
+/// Tagged InMemoryOnly because all tests use inline FakeCosmosHandler stacks.
+/// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerHierarchicalPkTests
 {
     public class HierDoc

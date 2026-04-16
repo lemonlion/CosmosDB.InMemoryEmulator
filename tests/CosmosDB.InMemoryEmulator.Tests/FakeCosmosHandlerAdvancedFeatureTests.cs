@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -10,7 +11,11 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Tests for container management, stored procedures, UDFs, triggers, and
 /// computed properties through FakeCosmosHandler.
 /// Features are configured via backing container, then exercised through the SDK pipeline.
+/// All tests in this class use InMemoryContainer-specific APIs (BackingContainer,
+/// RegisterUdf, RegisterStoredProcedure, ClearItems, CreateRouter) and cannot run
+/// against the real emulator.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerAdvancedFeatureTests : IDisposable
 {
     private readonly InMemoryContainer _inMemoryContainer;

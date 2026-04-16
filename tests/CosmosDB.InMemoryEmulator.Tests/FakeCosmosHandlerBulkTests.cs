@@ -1,5 +1,6 @@
 using System.Net;
 using AwesomeAssertions;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 using Microsoft.Azure.Cosmos;
 using Xunit;
 
@@ -8,35 +9,21 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// <summary>
 /// Tests for concurrent/bulk operations through FakeCosmosHandler.
 /// Exercises concurrent SDK operations through the handler pipeline.
+/// Parity-validated: runs against both FakeCosmosHandler (in-memory) and real emulator.
 /// </summary>
-public class FakeCosmosHandlerBulkTests : IDisposable
+public class FakeCosmosHandlerBulkTests : IAsyncLifetime
 {
-    private readonly InMemoryContainer _inMemoryContainer;
-    private readonly FakeCosmosHandler _handler;
-    private readonly CosmosClient _client;
-    private readonly Container _container;
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private Container _container = null!;
 
-    public FakeCosmosHandlerBulkTests()
+    public async ValueTask InitializeAsync()
     {
-        _inMemoryContainer = new InMemoryContainer("test-bulk", "/partitionKey");
-        _handler = new FakeCosmosHandler(_inMemoryContainer);
-        _client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                RequestTimeout = TimeSpan.FromSeconds(30),
-                HttpClientFactory = () => new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(30) }
-            });
-        _container = _client.GetContainer("db", "test-bulk");
+        _container = await _fixture.CreateContainerAsync("test-bulk", "/partitionKey");
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _client.Dispose();
-        _handler.Dispose();
+        await _fixture.DisposeAsync();
     }
 
     [Fact]

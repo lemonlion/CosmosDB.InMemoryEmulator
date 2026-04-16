@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
 using Newtonsoft.Json.Linq;
@@ -8,7 +9,11 @@ using Xunit;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
-
+/// <summary>
+/// Gap tests that seed data via InMemoryContainer directly.
+/// Cannot run against the real emulator.
+/// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerGapTests
 {
     private static CosmosClient CreateClient(FakeCosmosHandler handler) =>

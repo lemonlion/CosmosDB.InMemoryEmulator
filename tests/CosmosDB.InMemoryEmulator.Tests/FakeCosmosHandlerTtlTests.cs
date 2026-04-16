@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using AwesomeAssertions;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using Xunit;
@@ -10,35 +11,23 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// <summary>
 /// Tests for TTL (Time to Live) behavior through FakeCosmosHandler.
 /// CRUD goes through handler, TTL filtering verified via queries.
+/// Parity-validated: runs against both FakeCosmosHandler (in-memory) and real emulator.
+/// Change feed tombstone test is tagged InMemoryOnly.
 /// </summary>
-public class FakeCosmosHandlerTtlTests : IDisposable
+public class FakeCosmosHandlerTtlTests : IAsyncLifetime
 {
-    private readonly InMemoryContainer _inMemoryContainer;
-    private readonly FakeCosmosHandler _handler;
-    private readonly CosmosClient _client;
-    private readonly Container _container;
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private Container _container = null!;
 
-    public FakeCosmosHandlerTtlTests()
+    public async ValueTask InitializeAsync()
     {
-        _inMemoryContainer = new InMemoryContainer("test-ttl", "/partitionKey") { DefaultTimeToLive = 2 };
-        _handler = new FakeCosmosHandler(_inMemoryContainer);
-        _client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                RequestTimeout = TimeSpan.FromSeconds(10),
-                HttpClientFactory = () => new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        _container = _client.GetContainer("db", "test-ttl");
+        _container = await _fixture.CreateContainerAsync("test-ttl", "/partitionKey",
+            configure: props => props.DefaultTimeToLive = 2);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _client.Dispose();
-        _handler.Dispose();
+        await _fixture.DisposeAsync();
     }
 
     private async Task<List<T>> DrainQuery<T>(string sql)
@@ -157,22 +146,38 @@ public class FakeCosmosHandlerTtlTests : IDisposable
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task TTL_ExpiredItem_ProducesTombstoneInChangeFeed()
     {
-        var checkpoint = _inMemoryContainer.GetChangeFeedCheckpoint();
+        var inMemoryContainer = new InMemoryContainer("test-ttl-cf", "/partitionKey") { DefaultTimeToLive = 2 };
+        using var handler = new FakeCosmosHandler(inMemoryContainer);
+        using var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                RequestTimeout = TimeSpan.FromSeconds(10),
+                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+        var container = client.GetContainer("db", "test-ttl-cf");
 
-        await _container.CreateItemAsync(
+        var checkpoint = inMemoryContainer.GetChangeFeedCheckpoint();
+
+        await container.CreateItemAsync(
             new TestDocument { Id = "ttl1", PartitionKey = "pk1", Name = "WillExpire" },
             new PartitionKey("pk1"));
 
         await Task.Delay(3000); // wait for TTL expiry
 
         // Force eviction by querying
-        await DrainQuery<TestDocument>("SELECT * FROM c WHERE c.id = 'ttl1'");
+        var iterator2 = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c WHERE c.id = 'ttl1'");
+        while (iterator2.HasMoreResults) await iterator2.ReadNextAsync();
 
         // Change feed should show the create + the TTL eviction tombstone
         var changes = new List<JObject>();
-        var iterator = _inMemoryContainer.GetChangeFeedIterator<JObject>(checkpoint);
+        var iterator = inMemoryContainer.GetChangeFeedIterator<JObject>(checkpoint);
         while (iterator.HasMoreResults)
         {
             var page = await iterator.ReadNextAsync();

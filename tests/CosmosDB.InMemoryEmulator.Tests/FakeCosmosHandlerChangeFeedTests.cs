@@ -1,5 +1,6 @@
 using System.Net;
 using AwesomeAssertions;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using Xunit;
@@ -12,7 +13,10 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// via backing container's checkpoint-based API and SDK iterators.
 /// Note: SDK's Container.GetChangeFeedIterator doesn't work through FakeCosmosHandler
 /// because the handler doesn't implement the A-IM change feed HTTP protocol.
+/// All tests in this class use InMemoryContainer-specific APIs (BackingContainer,
+/// checkpoint, change feed processor) and cannot run against the real emulator.
 /// </summary>
+[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
 public class FakeCosmosHandlerChangeFeedTests : IDisposable
 {
     private readonly InMemoryContainer _inMemoryContainer;

@@ -1,5 +1,6 @@
 using System.Net;
 using AwesomeAssertions;
+using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 using Microsoft.Azure.Cosmos;
 using Xunit;
 
@@ -8,40 +9,32 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// <summary>
 /// Tests for DeleteAllItemsByPartitionKey and other partition key edge cases
 /// through FakeCosmosHandler.
+/// Parity-validated: cross-partition queries and PK edge cases run against both backends.
+/// DeleteAllItemsByPartitionKey tests use BackingContainer and are tagged InMemoryOnly.
 /// </summary>
-public class FakeCosmosHandlerPartitionKeyTests : IDisposable
+public class FakeCosmosHandlerPartitionKeyTests : IAsyncLifetime
 {
-    private readonly InMemoryContainer _inMemoryContainer;
-    private readonly FakeCosmosHandler _handler;
-    private readonly CosmosClient _client;
-    private readonly Container _container;
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private Container _container = null!;
 
-    public FakeCosmosHandlerPartitionKeyTests()
+    public async ValueTask InitializeAsync()
     {
-        _inMemoryContainer = new InMemoryContainer("test-pk", "/partitionKey");
-        _handler = new FakeCosmosHandler(_inMemoryContainer);
-        _client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                RequestTimeout = TimeSpan.FromSeconds(10),
-                HttpClientFactory = () => new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        _container = _client.GetContainer("db", "test-pk");
+        _container = await _fixture.CreateContainerAsync("test-pk", "/partitionKey");
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _client.Dispose();
-        _handler.Dispose();
+        await _fixture.DisposeAsync();
     }
 
     private async Task<List<T>> DrainQuery<T>(string sql)
     {
-        var iterator = _container.GetItemQueryIterator<T>(sql);
+        return await DrainQuery<T>(_container, sql);
+    }
+
+    private static async Task<List<T>> DrainQuery<T>(Container container, string sql)
+    {
+        var iterator = container.GetItemQueryIterator<T>(sql);
         var results = new List<T>();
         while (iterator.HasMoreResults)
         {
@@ -52,49 +45,85 @@ public class FakeCosmosHandlerPartitionKeyTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    //  DeleteAllItemsByPartitionKeyStreamAsync
+    //  DeleteAllItemsByPartitionKeyStreamAsync (InMemoryOnly — uses BackingContainer API)
     // ═══════════════════════════════════════════════════════════════════════════
 
+    private static (FakeCosmosHandler Handler, CosmosClient Client, Container Container) CreateInMemoryStack(
+        string name = "test-pk", string pkPath = "/partitionKey")
+    {
+        var backing = new InMemoryContainer(name, pkPath);
+        var handler = new FakeCosmosHandler(backing);
+        var client = new CosmosClient(
+            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                LimitToEndpoint = true,
+                MaxRetryAttemptsOnRateLimitedRequests = 0,
+                RequestTimeout = TimeSpan.FromSeconds(10),
+                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
+            });
+        return (handler, client, client.GetContainer("db", name));
+    }
+
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task DeleteAllByPK_RemovesAllItemsInPartition()
     {
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B" }, new PartitionKey("pk1"));
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "3", PartitionKey = "pk2", Name = "C" }, new PartitionKey("pk2"));
+        var (handler, client, container) = CreateInMemoryStack("test-pk-del1");
+        using (client)
+        using (handler)
+        {
+            await container.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
+            await container.CreateItemAsync(
+                new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B" }, new PartitionKey("pk1"));
+            await container.CreateItemAsync(
+                new TestDocument { Id = "3", PartitionKey = "pk2", Name = "C" }, new PartitionKey("pk2"));
 
-        var response = await _handler.BackingContainer.DeleteAllItemsByPartitionKeyStreamAsync(
-            new PartitionKey("pk1"));
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var response = await handler.BackingContainer.DeleteAllItemsByPartitionKeyStreamAsync(
+                new PartitionKey("pk1"));
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var remaining = await DrainQuery<TestDocument>("SELECT * FROM c");
-        remaining.Should().HaveCount(1);
-        remaining[0].Name.Should().Be("C");
+            var remaining = await DrainQuery<TestDocument>(container, "SELECT * FROM c");
+            remaining.Should().HaveCount(1);
+            remaining[0].Name.Should().Be("C");
+        }
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task DeleteAllByPK_EmptyPartition_Succeeds()
     {
-        var response = await _handler.BackingContainer.DeleteAllItemsByPartitionKeyStreamAsync(
-            new PartitionKey("nonexistent"));
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var (handler, client, container) = CreateInMemoryStack("test-pk-del2");
+        using (client)
+        using (handler)
+        {
+            var response = await handler.BackingContainer.DeleteAllItemsByPartitionKeyStreamAsync(
+                new PartitionKey("nonexistent"));
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+        }
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task DeleteAllByPK_AdvancesChangeFeed()
     {
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
+        var (handler, client, container) = CreateInMemoryStack("test-pk-del3");
+        using (client)
+        using (handler)
+        {
+            await container.CreateItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
 
-        var checkpoint = _handler.BackingContainer.GetChangeFeedCheckpoint();
+            var checkpoint = handler.BackingContainer.GetChangeFeedCheckpoint();
 
-        await _handler.BackingContainer.DeleteAllItemsByPartitionKeyStreamAsync(
-            new PartitionKey("pk1"));
+            await handler.BackingContainer.DeleteAllItemsByPartitionKeyStreamAsync(
+                new PartitionKey("pk1"));
 
-        var newCheckpoint = _handler.BackingContainer.GetChangeFeedCheckpoint();
-        newCheckpoint.Should().BeGreaterThan(checkpoint);
+            var newCheckpoint = handler.BackingContainer.GetChangeFeedCheckpoint();
+            newCheckpoint.Should().BeGreaterThan(checkpoint);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
