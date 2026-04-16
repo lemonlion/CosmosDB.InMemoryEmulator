@@ -1,0 +1,73 @@
+name: Emulator Parity Validation
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC
+  workflow_dispatch:
+
+jobs:
+  parity-check:
+    runs-on: ubuntu-latest
+    services:
+      cosmosdb:
+        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
+        ports:
+          - 8081:8081
+          - 10250-10256:10250-10256
+        env:
+          AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 3
+          AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
+          AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: "127.0.0.1"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Wait for Cosmos DB Emulator
+        run: |
+          echo "Waiting for Cosmos DB Emulator to be ready..."
+          timeout=300
+          elapsed=0
+          while [ $elapsed -lt $timeout ]; do
+            status=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8081/ 2>/dev/null || echo "000")
+            if [ "$status" = "200" ] || [ "$status" = "401" ]; then
+              echo "Emulator ready after ${elapsed}s (HTTP $status)"
+              break
+            fi
+            sleep 5
+            elapsed=$((elapsed + 5))
+            echo "Still waiting... (${elapsed}s)"
+          done
+          if [ $elapsed -ge $timeout ]; then
+            echo "::error::Cosmos DB Emulator did not start within ${timeout}s"
+            exit 1
+          fi
+          echo "Waiting 15s for internal initialization..."
+          sleep 15
+
+      - name: Build
+        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
+
+      - name: Run In-Memory Tests
+        shell: pwsh
+        run: ./scripts/run-tests.ps1 -Target inmemory
+
+      - name: Run Emulator Tests
+        shell: pwsh
+        run: ./scripts/run-tests.ps1 -Target emulator-linux
+
+      - name: Parity Report
+        if: always()
+        shell: pwsh
+        run: ./scripts/compare-trx.ps1 -OutputFormat markdown >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-results
+          path: test-results/
