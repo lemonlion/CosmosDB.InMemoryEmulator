@@ -111,7 +111,7 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// <c>x-ms-documentdb-partitionkey</c> header is absent. This is necessary because
     /// the Cosmos SDK does not send the partition key header for prefix (hierarchical)
     /// partition key queries — it routes by partition key range ID instead.
-    /// Use <see cref="WithPartitionKey"/> for a scoped, disposable lifetime.
+    /// Used internally by the <see cref="PartitionKeyCapturingContainer"/> decorator.
     /// </summary>
     private readonly AsyncLocal<PartitionKey?> _partitionKeyOverride = new();
 
@@ -128,7 +128,7 @@ public class FakeCosmosHandler : HttpMessageHandler
 
     /// <summary>
     /// Sets a partition key hint for the LINQ <c>.ToFeedIterator()</c> path.
-    /// Unlike <see cref="WithPartitionKey"/>, this value persists until overwritten
+    /// Unlike the scoped override, this value persists until overwritten
     /// or the async context ends. It is used as a fallback when neither the HTTP
     /// partition key header nor the scoped override is present.
     /// </summary>
@@ -138,26 +138,11 @@ public class FakeCosmosHandler : HttpMessageHandler
     }
 
     /// <summary>
-    /// Sets a partition key override that will be used for queries within the returned
-    /// scope. This is needed when querying with a prefix (hierarchical) partition key
-    /// via <see cref="FakeCosmosHandler"/>, because the Cosmos SDK does not forward
-    /// prefix partition keys to the HTTP transport layer.
-    /// <para>
-    /// <example>
-    /// <code>
-    /// using (handler.WithPartitionKey(prefixPk))
-    /// {
-    ///     var iterator = container.GetItemQueryIterator&lt;T&gt;(query,
-    ///         requestOptions: new QueryRequestOptions { PartitionKey = prefixPk });
-    ///     // ...
-    /// }
-    /// </code>
-    /// </example>
-    /// </para>
+    /// Sets a scoped partition key override for the current async context.
+    /// Used internally by <see cref="PkCapturingFeedIterator{T}"/> to forward
+    /// the partition key captured at the Container API surface.
     /// </summary>
-    /// <param name="partitionKey">The partition key (full or prefix) to apply.</param>
-    /// <returns>An <see cref="IDisposable"/> that clears the override when disposed.</returns>
-    public IDisposable WithPartitionKey(PartitionKey partitionKey)
+    internal IDisposable WithPartitionKey(PartitionKey partitionKey)
     {
         _partitionKeyOverride.Value = partitionKey;
         return new PartitionKeyScope(_partitionKeyOverride);
