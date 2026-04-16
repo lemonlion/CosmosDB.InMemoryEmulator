@@ -90,7 +90,7 @@ $emulatorExit = $LASTEXITCODE
 Write-Host "`n══════════════════════════════════════" -ForegroundColor Cyan
 Write-Host "  Step 4: Parity comparison" -ForegroundColor Cyan
 Write-Host "══════════════════════════════════════" -ForegroundColor Cyan
-& "$scriptsDir/compare-trx.ps1" -ResultsDir $resultsDir -EmulatorTarget $EmulatorTarget
+& "$scriptsDir/compare-trx.ps1" -ResultsDir $resultsDir
 
 # Step 5: Cleanup
 if (-not $SkipEmulatorStop) {

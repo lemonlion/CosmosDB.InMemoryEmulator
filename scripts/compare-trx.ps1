@@ -1,25 +1,22 @@
 <#
 .SYNOPSIS
-    Compares TRX files from in-memory and emulator test runs to produce a parity report.
+    Compares all TRX files in the results directory and produces a unified cross-platform parity report.
 .DESCRIPTION
-    When EmulatorTarget is not specified, auto-discovers all emulator TRX files in ResultsDir
-    and produces a separate comparison for each (e.g. emulator-linux, emulator-windows).
+    Auto-discovers every *-results.trx file in ResultsDir. The 'inmemory' file is the baseline;
+    all others are emulator targets. Produces a single N-way comparison showing every test's
+    outcome across all targets, plus per-target summary stats and a cross-platform divergence table.
 .PARAMETER ResultsDir
     Directory containing TRX files. Default ./test-results.
 .PARAMETER OutputFormat
     Output format: 'console' (default) or 'markdown' (for GitHub Step Summary).
-.PARAMETER EmulatorTarget
-    Compare against a specific emulator only. If omitted, compares against all found emulator TRX files.
 .EXAMPLE
     .\scripts\compare-trx.ps1
-    .\scripts\compare-trx.ps1 -EmulatorTarget emulator-linux
-    .\scripts\compare-trx.ps1 -OutputFormat markdown >> $env:GITHUB_STEP_SUMMARY
+    .\scripts\compare-trx.ps1 -ResultsDir ./test-results -OutputFormat markdown >> $env:GITHUB_STEP_SUMMARY
 #>
 param(
     [string]$ResultsDir = './test-results',
     [ValidateSet('console', 'markdown')]
-    [string]$OutputFormat = 'console',
-    [string]$EmulatorTarget
+    [string]$OutputFormat = 'console'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,131 +32,230 @@ function Parse-TrxFile([string]$Path) {
     return $results
 }
 
-function Compare-Results([hashtable]$InMemory, [hashtable]$Emulator) {
-    $allTests = ($InMemory.Keys + $Emulator.Keys) | Sort-Object -Unique
-    $parity = @(); $suspect = @(); $emulatorGap = @(); $bothFail = @()
-    $onlyInMemory = @(); $onlyEmulator = @()
+# --- Discover all TRX files ---
+$allTrxFiles = @(Get-ChildItem $ResultsDir -Filter '*-results.trx' -ErrorAction SilentlyContinue)
+if ($allTrxFiles.Count -eq 0) { Write-Error "No *-results.trx files found in $ResultsDir"; exit 1 }
 
-    foreach ($test in $allTests) {
-        $im = $InMemory[$test]; $em = $Emulator[$test]
-        if (-not $im) {
-            $onlyEmulator += [PSCustomObject]@{ Test = $test; InMemory = '-'; Emulator = $em }
-        } elseif (-not $em) {
-            $onlyInMemory += [PSCustomObject]@{ Test = $test; InMemory = $im; Emulator = '-' }
-        } elseif ($im -eq $em) {
-            $parity += [PSCustomObject]@{ Test = $test; InMemory = $im; Emulator = $em }
-        } elseif ($im -eq 'Passed' -and $em -ne 'Passed') {
-            $suspect += [PSCustomObject]@{ Test = $test; InMemory = $im; Emulator = $em }
-        } elseif ($im -ne 'Passed' -and $em -eq 'Passed') {
-            $emulatorGap += [PSCustomObject]@{ Test = $test; InMemory = $im; Emulator = $em }
-        } else {
-            $bothFail += [PSCustomObject]@{ Test = $test; InMemory = $im; Emulator = $em }
-        }
-    }
-
-    return @{
-        Total        = $allTests.Count
-        Parity       = $parity
-        Suspect      = $suspect
-        EmulatorGap  = $emulatorGap
-        BothFail     = $bothFail
-        OnlyInMemory = $onlyInMemory
-        OnlyEmulator = $onlyEmulator
-    }
+# Parse all files into a hashtable keyed by target name
+$targets = [ordered]@{}
+foreach ($f in $allTrxFiles | Sort-Object Name) {
+    $name = $f.BaseName -replace '-results$', ''
+    $targets[$name] = Parse-TrxFile $f.FullName
 }
 
-function Write-Report([string]$Label, [hashtable]$Data, [string]$Format) {
-    $total = $Data.Total
-    $parityPct = if ($total -gt 0) { [math]::Round(($Data.Parity.Count / $total) * 100, 1) } else { 0 }
-
-    if ($Format -eq 'markdown') {
-        Write-Output "## Parity Report — $Label"
-        Write-Output ""
-        Write-Output "| Metric | Count |"
-        Write-Output "|--------|-------|"
-        Write-Output "| Total tests compared | $total |"
-        Write-Output "| ✅ Parity (same result) | $($Data.Parity.Count) ($parityPct%) |"
-        Write-Output "| 🔍 Suspect (in-memory passes, emulator fails) | $($Data.Suspect.Count) |"
-        Write-Output "| ⚠️ Emulator gap (emulator passes, in-memory fails) | $($Data.EmulatorGap.Count) |"
-        Write-Output "| ❌ Both fail | $($Data.BothFail.Count) |"
-        Write-Output "| 📋 Only in in-memory run | $($Data.OnlyInMemory.Count) |"
-        Write-Output "| 📋 Only in emulator run | $($Data.OnlyEmulator.Count) |"
-
-        if ($Data.Suspect.Count -gt 0) {
-            Write-Output ""
-            Write-Output "### 🔍 Suspect — In-Memory Passes, Emulator Fails"
-            Write-Output ""
-            Write-Output "| Test | InMemory | Emulator |"
-            Write-Output "|------|----------|----------|"
-            foreach ($s in $Data.Suspect) {
-                Write-Output "| $($s.Test) | $($s.InMemory) | $($s.Emulator) |"
-            }
-        }
-        if ($Data.EmulatorGap.Count -gt 0) {
-            Write-Output ""
-            Write-Output "### ⚠️ Emulator Gap — Emulator Passes, In-Memory Fails"
-            Write-Output ""
-            Write-Output "| Test | InMemory | Emulator |"
-            Write-Output "|------|----------|----------|"
-            foreach ($g in $Data.EmulatorGap) {
-                Write-Output "| $($g.Test) | $($g.InMemory) | $($g.Emulator) |"
-            }
-        }
-        Write-Output ""
-    } else {
-        Write-Host ""
-        Write-Host "═══════════════════════════════════════════════════════" -ForegroundColor Cyan
-        Write-Host "  PARITY REPORT — $Label" -ForegroundColor Cyan
-        Write-Host "═══════════════════════════════════════════════════════" -ForegroundColor Cyan
-        Write-Host ""
-        Write-Host "  Total tests compared:   $total"
-        Write-Host "  ✅ Parity:              $($Data.Parity.Count) ($parityPct%)" -ForegroundColor Green
-        Write-Host "  🔍 Suspect:             $($Data.Suspect.Count)" -ForegroundColor $(if ($Data.Suspect.Count -gt 0) { 'Red' } else { 'Green' })
-        Write-Host "  ⚠️  Emulator gap:       $($Data.EmulatorGap.Count)" -ForegroundColor $(if ($Data.EmulatorGap.Count -gt 0) { 'Yellow' } else { 'Green' })
-        Write-Host "  ❌ Both fail:           $($Data.BothFail.Count)" -ForegroundColor $(if ($Data.BothFail.Count -gt 0) { 'Yellow' } else { 'Green' })
-        Write-Host "  📋 Only in-memory:      $($Data.OnlyInMemory.Count)"
-        Write-Host "  📋 Only emulator:       $($Data.OnlyEmulator.Count)"
-
-        if ($Data.Suspect.Count -gt 0) {
-            Write-Host ""
-            Write-Host "  🔍 SUSPECT (in-memory passes, emulator fails):" -ForegroundColor Red
-            foreach ($s in $Data.Suspect) { Write-Host "    - $($s.Test)" -ForegroundColor Red }
-        }
-        if ($Data.EmulatorGap.Count -gt 0) {
-            Write-Host ""
-            Write-Host "  ⚠️  EMULATOR GAP (emulator passes, in-memory fails):" -ForegroundColor Yellow
-            foreach ($g in $Data.EmulatorGap) { Write-Host "    - $($g.Test)" -ForegroundColor Yellow }
-        }
-        Write-Host ""
-    }
+# Identify baseline and emulator targets
+$baselineName = 'inmemory'
+if (-not $targets.Contains($baselineName)) {
+    Write-Error "No inmemory-results.trx found in $ResultsDir (required as baseline)"
+    exit 1
 }
+$baseline = $targets[$baselineName]
+$emulatorNames = @($targets.Keys | Where-Object { $_ -ne $baselineName })
 
-# Find in-memory baseline
-$inmemoryTrx = Get-ChildItem $ResultsDir -Filter 'inmemory-results.trx' -ErrorAction SilentlyContinue
-if (-not $inmemoryTrx) { Write-Error "No inmemory-results.trx found in $ResultsDir"; exit 1 }
-$inmemoryResults = Parse-TrxFile $inmemoryTrx.FullName
-
-# Discover emulator TRX files
-if ($EmulatorTarget) {
-    $emulatorTrxFiles = @(Get-ChildItem $ResultsDir -Filter "$EmulatorTarget-results.trx" -ErrorAction SilentlyContinue)
-} else {
-    $emulatorTrxFiles = @(Get-ChildItem $ResultsDir -Filter 'emulator-*-results.trx' -ErrorAction SilentlyContinue)
-}
-
-if ($emulatorTrxFiles.Count -eq 0) {
-    $target = if ($EmulatorTarget) { $EmulatorTarget } else { "emulator-*" }
-    Write-Error "No $target-results.trx found in $ResultsDir"
+if ($emulatorNames.Count -eq 0) {
+    Write-Error "No emulator TRX files found (only inmemory-results.trx present)"
     exit 1
 }
 
-# Compare against each emulator and track suspects
+# --- Build unified test matrix ---
+$allTestNames = @()
+foreach ($t in $targets.Values) { $allTestNames += $t.Keys }
+$allTestNames = $allTestNames | Sort-Object -Unique
+
+# Build per-test row: { Test, inmemory, emulator-linux, emulator-windows, ... }
+$rows = @()
+foreach ($test in $allTestNames) {
+    $row = [ordered]@{ Test = $test }
+    foreach ($name in $targets.Keys) {
+        $row[$name] = if ($targets[$name].ContainsKey($test)) { $targets[$name][$test] } else { '-' }
+    }
+    $rows += [PSCustomObject]$row
+}
+
+# --- Classify each test ---
 $anySuspects = $false
-foreach ($trxFile in $emulatorTrxFiles) {
-    $label = $trxFile.BaseName -replace '-results$', ''
-    $emulatorResults = Parse-TrxFile $trxFile.FullName
-    $data = Compare-Results -InMemory $inmemoryResults -Emulator $emulatorResults
-    Write-Report -Label $label -Data $data -Format $OutputFormat
-    if ($data.Suspect.Count -gt 0) { $anySuspects = $true }
+$fullParity = @()       # same outcome across ALL targets
+$suspects = @()         # inmemory passes, at least one emulator fails
+$emulatorGaps = @()     # inmemory fails, at least one emulator passes
+$platformDiverge = @()  # emulators disagree with each other (but not suspect/gap)
+$bothFail = @()         # fails everywhere
+
+foreach ($row in $rows) {
+    $im = $row.$baselineName
+    $emOutcomes = @()
+    foreach ($eName in $emulatorNames) { $emOutcomes += $row.$eName }
+
+    $allSame = ($emOutcomes + $im | Sort-Object -Unique).Count -eq 1
+    $anyEmFail = $emOutcomes | Where-Object { $_ -ne 'Passed' -and $_ -ne '-' }
+    $anyEmPass = $emOutcomes | Where-Object { $_ -eq 'Passed' }
+    $emulatorsDisagree = ($emOutcomes | Where-Object { $_ -ne '-' } | Sort-Object -Unique).Count -gt 1
+
+    if ($allSame) {
+        $fullParity += $row
+    } elseif ($im -eq 'Passed' -and $anyEmFail) {
+        $suspects += $row
+        $anySuspects = $true
+    } elseif ($im -ne 'Passed' -and $im -ne '-' -and $anyEmPass) {
+        $emulatorGaps += $row
+    } elseif ($emulatorsDisagree) {
+        $platformDiverge += $row
+    } else {
+        $bothFail += $row
+    }
+}
+
+$totalTests = $allTestNames.Count
+$parityPct = if ($totalTests -gt 0) { [math]::Round(($fullParity.Count / $totalTests) * 100, 1) } else { 0 }
+
+# --- Helper to format a row for the divergence table ---
+function Format-Outcome([string]$outcome) {
+    switch ($outcome) {
+        'Passed'      { '✅ Passed' }
+        'Failed'      { '❌ Failed' }
+        'NotExecuted' { '⏭️ Skipped' }
+        '-'           { '—' }
+        default       { $outcome }
+    }
+}
+
+# --- Output ---
+if ($OutputFormat -eq 'markdown') {
+    # Header columns for tables
+    $emulatorCols = ($emulatorNames | ForEach-Object { $_ }) -join ' | '
+    $emulatorSep  = ($emulatorNames | ForEach-Object { '---' }) -join ' | '
+
+    Write-Output "# Parity Report"
+    Write-Output ""
+    Write-Output "**Targets:** $($targets.Keys -join ', ')"
+    Write-Output ""
+
+    # Summary table
+    Write-Output "## Summary"
+    Write-Output ""
+    Write-Output "| Metric | Count |"
+    Write-Output "|--------|-------|"
+    Write-Output "| Total tests | $totalTests |"
+    Write-Output "| ✅ Full parity (all targets agree) | $($fullParity.Count) ($parityPct%) |"
+    Write-Output "| 🔍 Suspects (in-memory passes, emulator fails) | $($suspects.Count) |"
+    Write-Output "| ⚠️ Emulator gaps (emulator passes, in-memory fails) | $($emulatorGaps.Count) |"
+    Write-Output "| 🔀 Platform divergence (emulators disagree) | $($platformDiverge.Count) |"
+    Write-Output "| ❌ All fail | $($bothFail.Count) |"
+    Write-Output ""
+
+    # Per-target breakdown
+    Write-Output "## Per-Target Breakdown"
+    Write-Output ""
+    Write-Output "| Target | Total | Passed | Failed | Skipped |"
+    Write-Output "|--------|-------|--------|--------|---------|"
+    foreach ($name in $targets.Keys) {
+        $data = $targets[$name]
+        $passed  = @($data.Values | Where-Object { $_ -eq 'Passed' }).Count
+        $failed  = @($data.Values | Where-Object { $_ -eq 'Failed' }).Count
+        $skipped = @($data.Values | Where-Object { $_ -eq 'NotExecuted' }).Count
+        Write-Output "| $name | $($data.Count) | $passed | $failed | $skipped |"
+    }
+    Write-Output ""
+
+    # Suspects detail
+    if ($suspects.Count -gt 0) {
+        Write-Output "## 🔍 Suspects — In-Memory Passes, Emulator Fails"
+        Write-Output ""
+        Write-Output "| Test | inmemory | $emulatorCols |"
+        Write-Output "|------|----------|$emulatorSep|"
+        foreach ($r in $suspects) {
+            $vals = ($emulatorNames | ForEach-Object { Format-Outcome $r.$_ }) -join ' | '
+            Write-Output "| $($r.Test) | $(Format-Outcome $r.$baselineName) | $vals |"
+        }
+        Write-Output ""
+    }
+
+    # Emulator gaps detail
+    if ($emulatorGaps.Count -gt 0) {
+        Write-Output "## ⚠️ Emulator Gaps — Emulator Passes, In-Memory Fails"
+        Write-Output ""
+        Write-Output "| Test | inmemory | $emulatorCols |"
+        Write-Output "|------|----------|$emulatorSep|"
+        foreach ($r in $emulatorGaps) {
+            $vals = ($emulatorNames | ForEach-Object { Format-Outcome $r.$_ }) -join ' | '
+            Write-Output "| $($r.Test) | $(Format-Outcome $r.$baselineName) | $vals |"
+        }
+        Write-Output ""
+    }
+
+    # Platform divergence detail
+    if ($platformDiverge.Count -gt 0) {
+        Write-Output "## 🔀 Platform Divergence — Emulators Disagree"
+        Write-Output ""
+        Write-Output "| Test | inmemory | $emulatorCols |"
+        Write-Output "|------|----------|$emulatorSep|"
+        foreach ($r in $platformDiverge) {
+            $vals = ($emulatorNames | ForEach-Object { Format-Outcome $r.$_ }) -join ' | '
+            Write-Output "| $($r.Test) | $(Format-Outcome $r.$baselineName) | $vals |"
+        }
+        Write-Output ""
+    }
+
+} else {
+    # Console output
+    Write-Host ""
+    Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "  PARITY REPORT" -ForegroundColor Cyan
+    Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "  Targets: $($targets.Keys -join ', ')" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  Total tests:            $totalTests"
+    Write-Host "  ✅ Full parity:          $($fullParity.Count) ($parityPct%)" -ForegroundColor Green
+    Write-Host "  🔍 Suspects:             $($suspects.Count)" -ForegroundColor $(if ($suspects.Count -gt 0) { 'Red' } else { 'Green' })
+    Write-Host "  ⚠️  Emulator gaps:       $($emulatorGaps.Count)" -ForegroundColor $(if ($emulatorGaps.Count -gt 0) { 'Yellow' } else { 'Green' })
+    Write-Host "  🔀 Platform divergence:  $($platformDiverge.Count)" -ForegroundColor $(if ($platformDiverge.Count -gt 0) { 'Yellow' } else { 'Green' })
+    Write-Host "  ❌ All fail:             $($bothFail.Count)" -ForegroundColor $(if ($bothFail.Count -gt 0) { 'Yellow' } else { 'Green' })
+
+    # Per-target breakdown
+    Write-Host ""
+    Write-Host "  Per-Target:" -ForegroundColor Cyan
+    foreach ($name in $targets.Keys) {
+        $data = $targets[$name]
+        $passed  = @($data.Values | Where-Object { $_ -eq 'Passed' }).Count
+        $failed  = @($data.Values | Where-Object { $_ -eq 'Failed' }).Count
+        $skipped = @($data.Values | Where-Object { $_ -eq 'NotExecuted' }).Count
+        $color = if ($failed -gt 0) { 'Yellow' } else { 'Green' }
+        Write-Host "    $($name.PadRight(20)) $passed passed, $failed failed, $skipped skipped" -ForegroundColor $color
+    }
+
+    if ($suspects.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  🔍 SUSPECTS (in-memory passes, emulator fails):" -ForegroundColor Red
+        foreach ($r in $suspects) {
+            $parts = @()
+            foreach ($eName in $emulatorNames) {
+                $o = $r.$eName; if ($o -ne 'Passed') { $parts += "$eName=$o" }
+            }
+            Write-Host "    - $($r.Test)  [$($parts -join ', ')]" -ForegroundColor Red
+        }
+    }
+
+    if ($emulatorGaps.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  ⚠️  EMULATOR GAPS (emulator passes, in-memory fails):" -ForegroundColor Yellow
+        foreach ($r in $emulatorGaps) {
+            $parts = @()
+            foreach ($eName in $emulatorNames) {
+                $o = $r.$eName; if ($o -eq 'Passed') { $parts += $eName }
+            }
+            Write-Host "    - $($r.Test)  [passes on: $($parts -join ', ')]" -ForegroundColor Yellow
+        }
+    }
+
+    if ($platformDiverge.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  🔀 PLATFORM DIVERGENCE (emulators disagree):" -ForegroundColor Yellow
+        foreach ($r in $platformDiverge) {
+            $parts = @()
+            foreach ($eName in $emulatorNames) { $parts += "$eName=$($r.$eName)" }
+            Write-Host "    - $($r.Test)  [$($parts -join ', ')]" -ForegroundColor Yellow
+        }
+    }
+    Write-Host ""
 }
 
 if ($anySuspects) { exit 1 }
