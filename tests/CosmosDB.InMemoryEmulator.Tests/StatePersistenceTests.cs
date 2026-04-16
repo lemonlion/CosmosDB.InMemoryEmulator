@@ -11,7 +11,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 public class StatePersistenceTests
 {
     [Fact]
-    public async Task ExportState_EmptyContainer_ReturnsEmptyJson()
+    public void ExportState_EmptyContainer_ReturnsEmptyJson()
     {
         var container = new InMemoryContainer("test-container", "/partitionKey");
 

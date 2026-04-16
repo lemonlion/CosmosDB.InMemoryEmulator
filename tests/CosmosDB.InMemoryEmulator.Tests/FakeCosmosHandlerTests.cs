@@ -1694,7 +1694,7 @@ public class FakeCosmosHandlerDeepDiveTests
     // ── V: Router Edge Cases ────────────────────────────────────────────────
 
     [Fact]
-    public async Task Handler_Router_EmptyDictionary_ThrowsOnConstruction()
+    public void Handler_Router_EmptyDictionary_ThrowsOnConstruction()
     {
         var act = () => FakeCosmosHandler.CreateRouter(new Dictionary<string, FakeCosmosHandler>());
 
@@ -1703,7 +1703,7 @@ public class FakeCosmosHandlerDeepDiveTests
     }
 
     [Fact]
-    public async Task Handler_Router_Dispose_DisposesAllChildHandlers()
+    public void Handler_Router_Dispose_DisposesAllChildHandlers()
     {
         var container1 = new InMemoryContainer("c1", "/partitionKey");
         var container2 = new InMemoryContainer("c2", "/partitionKey");
@@ -2377,7 +2377,7 @@ public class FakeCosmosHandlerCoverageTests
     // ── Section G: Response Metadata ──
 
     [Fact]
-    public async Task Handler_BackingContainer_Accessible()
+    public void Handler_BackingContainer_Accessible()
     {
         var container = new InMemoryContainer("backing-test", "/partitionKey");
         using var handler = new FakeCosmosHandler(container);
@@ -2385,7 +2385,7 @@ public class FakeCosmosHandlerCoverageTests
     }
 
     [Fact]
-    public async Task Handler_DoubleDispose_DoesNotThrow()
+    public void Handler_DoubleDispose_DoesNotThrow()
     {
         var container = new InMemoryContainer("dd-test", "/partitionKey");
         var handler = new FakeCosmosHandler(container);

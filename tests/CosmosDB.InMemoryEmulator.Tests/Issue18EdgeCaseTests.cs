@@ -275,17 +275,19 @@ public class Issue18EdgeCaseTests
 
         // GetObjectData should not throw — even if BinaryFormatter is obsolete,
         // libraries may still call GetObjectData for logging/serialization
+#pragma warning disable SYSLIB0050, SYSLIB0051
         var info = new SerializationInfo(typeof(CosmosException), new FormatterConverter());
         var context = new StreamingContext(StreamingContextStates.All);
 
         var act = () => ex.GetObjectData(info, context);
+#pragma warning restore SYSLIB0050, SYSLIB0051
         act.Should().NotThrow("GetObjectData should work without error");
     }
 
     [Fact]
     public void Exception_StackTrace_IsPreserved()
     {
-        CosmosException caught = null;
+        CosmosException? caught = null;
         try
         {
             throw InMemoryCosmosException.Create("stack-test", HttpStatusCode.NotFound, 0, "", 0);
@@ -338,7 +340,7 @@ public class Issue18EdgeCaseTests
     public void Diagnostics_IsNotNull_OnCaughtException()
     {
         // Diagnostics was previously null which caused NREs in logging
-        CosmosException caught = null;
+        CosmosException? caught = null;
         try
         {
             throw InMemoryCosmosException.Create("test", HttpStatusCode.NotFound, 0, "", 0);
@@ -796,7 +798,7 @@ public class Issue18EdgeCaseTests
         (ex is object).Should().BeTrue();
 
         // Should NOT be assignable to any other derived type
-        typeof(CosmosException).IsAssignableFrom(ex.GetType()).Should().BeTrue();
+        typeof(CosmosException).IsAssignableFrom(ex!.GetType()).Should().BeTrue();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -810,7 +812,7 @@ public class Issue18EdgeCaseTests
         var db = (await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
         var container = (await db.CreateContainerAsync("items", "/pk")).Container;
 
-        CosmosException caught = null;
+        CosmosException? caught = null;
         try
         {
             await NestedAsyncCall(container);
@@ -821,7 +823,7 @@ public class Issue18EdgeCaseTests
         }
 
         caught.Should().NotBeNull();
-        caught.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        caught!.StatusCode.Should().Be(HttpStatusCode.NotFound);
         caught.Diagnostics.Should().NotBeNull("Diagnostics must survive async stack unwinding");
         caught.Diagnostics.ToString().Should().Be("{}");
         caught.Diagnostics.GetClientElapsedTime().Should().Be(TimeSpan.Zero);

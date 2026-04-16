@@ -532,7 +532,7 @@ public class PitrEdgeCaseTests
     }
 
     [Fact]
-    public async Task RestoreToPointInTime_EmptyContainer_NoOpRestore()
+    public void RestoreToPointInTime_EmptyContainer_NoOpRestore()
     {
         var container = new InMemoryContainer("test", "/partitionKey");
         container.RestoreToPointInTime(DateTimeOffset.UtcNow);
