@@ -33,7 +33,7 @@ public class FakeCosmosHandlerLinqTests : IAsyncLifetime
             new TestDocument { Id = "5", PartitionKey = "pk1", Name = "Eve", Value = 40, IsActive = false, Tags = [] },
         };
         foreach (var doc in docs)
-            await _container.CreateItemAsync(doc, new PartitionKey(doc.PartitionKey));
+            await _container.UpsertItemAsync(doc, new PartitionKey(doc.PartitionKey));
     }
 
     public async ValueTask DisposeAsync()
