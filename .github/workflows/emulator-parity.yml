@@ -107,15 +107,17 @@ jobs:
             8.0.x
             10.0.x
 
-      - name: Install & Start Cosmos DB Windows Emulator
+      - name: Start Cosmos DB Windows Emulator
         shell: pwsh
         run: |
-          Write-Host "Installing Azure Cosmos DB Emulator..."
-          choco install azure-cosmosdb-emulator -y --no-progress
           Write-Host "Starting emulator..."
           $emulatorExe = "C:\Program Files\Azure Cosmos DB Emulator\Microsoft.Azure.Cosmos.Emulator.exe"
           if (-not (Test-Path $emulatorExe)) {
             $emulatorExe = "C:\Program Files\Azure Cosmos DB Emulator\CosmosDB.Emulator.exe"
+          }
+          if (-not (Test-Path $emulatorExe)) {
+            Write-Error "Cosmos DB Emulator not found on runner image"
+            exit 1
           }
           Start-Process -FilePath $emulatorExe -ArgumentList "/NoExplorer /NoFirewall /PartitionCount=3"
           # Wait for readiness
