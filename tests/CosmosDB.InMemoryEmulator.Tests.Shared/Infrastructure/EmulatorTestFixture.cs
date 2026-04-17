@@ -11,32 +11,24 @@ namespace CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 ///
 /// Key strategies:
 ///   • Single shared CosmosClient for the entire test run
-///   • Container cache keyed by name (one create per test class, not per method)
+///   • Container cache by name (one create per test class, not per method)
+///   • Self-warm-up: proves write-path readiness by creating a throwaway
+///     container before any real test containers are created
 ///   • Patient retry with exponential backoff for all transient emulator errors
-///     including write-path 503s, connection refused, and 404 "not yet available"
-///   • Throttle delay between container creations to avoid overwhelming the emulator
+///   • Cooldown between container creations to avoid overwhelming the emulator
 /// </summary>
 public sealed class EmulatorTestFixture : ITestContainerFixture
 {
     private const string DefaultEndpoint = "https://localhost:8081";
     private const string Key = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
     private const string DatabaseName = "parity-validation";
+    private const int MaxRetries = 30;
+    private const double MaxBackoffSeconds = 10;
+    private static readonly TimeSpan ContainerCreationCooldown = TimeSpan.FromSeconds(2);
 
-    /// <summary>Maximum number of retry attempts for any single Cosmos operation.</summary>
-    private const int MaxRetries = 20;
-
-    /// <summary>Maximum backoff delay between retries (seconds).</summary>
-    private const double MaxBackoffSeconds = 30;
-
-    /// <summary>
-    /// Cooldown after creating a container, giving the emulator time to settle
-    /// its partition services before the next creation request.
-    /// </summary>
-    private static readonly TimeSpan ContainerCreationCooldown = TimeSpan.FromSeconds(1);
-
-    // Shared across all fixture instances for the entire test run.
     private static CosmosClient? _sharedClient;
     private static Database? _sharedDatabase;
+    private static bool _warmUpComplete;
     private static readonly ConcurrentDictionary<string, Container> _containerCache = new();
     private static readonly SemaphoreSlim _initLock = new(1, 1);
     private static string _resolvedEndpoint = DefaultEndpoint;
@@ -65,9 +57,11 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
             if (_containerCache.TryGetValue(containerName, out cached))
                 return cached;
 
+            await EnsureWarmAsync();
+
             var props = new ContainerProperties(containerName, partitionKeyPath);
             configure?.Invoke(props);
-            var container = await CreateRealContainerAsync(props);
+            var container = await CreateContainerCoreAsync(props);
             _containerCache.TryAdd(containerName, container);
             return container;
         }
@@ -91,9 +85,11 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
             if (_containerCache.TryGetValue(containerName, out cached))
                 return cached;
 
+            await EnsureWarmAsync();
+
             var props = new ContainerProperties(containerName, partitionKeyPaths);
             configure?.Invoke(props);
-            var container = await CreateRealContainerAsync(props);
+            var container = await CreateContainerCoreAsync(props);
             _containerCache.TryAdd(containerName, container);
             return container;
         }
@@ -103,12 +99,48 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
         }
     }
 
-    private async Task<Container> CreateRealContainerAsync(ContainerProperties props)
+    /// <summary>
+    /// Ensures the emulator's write path is fully ready. Creates the database
+    /// and a throwaway container, absorbing the initial 503s that the emulator
+    /// returns while its partition services are still starting up.
+    /// </summary>
+    private static async Task EnsureWarmAsync()
     {
-        var client = GetOrCreateClient();
-        _sharedDatabase ??= await CreateDatabaseWithRetryAsync(client);
+        if (_warmUpComplete) return;
 
-        var container = (await CreateContainerWithRetryAsync(props)).Container;
+        var client = GetOrCreateClient();
+
+        Console.WriteLine("[EmulatorTestFixture] Warming up emulator write path...");
+
+        _sharedDatabase = (await RetryAsync(
+            () => client.CreateDatabaseIfNotExistsAsync(DatabaseName),
+            "CreateDatabase")).Database;
+
+        // Create and delete a throwaway container to prove write-path readiness.
+        // This absorbs the initial 503/1007 period that can last several minutes.
+        var warmupProps = new ContainerProperties("_warmup", "/id");
+        await RetryAsync(
+            () => _sharedDatabase.CreateContainerIfNotExistsAsync(warmupProps),
+            "WarmupContainer");
+
+        try
+        {
+            await _sharedDatabase.GetContainer("_warmup").DeleteContainerAsync();
+        }
+        catch
+        {
+            // Best-effort cleanup — the container will be gone when the emulator shuts down.
+        }
+
+        Console.WriteLine("[EmulatorTestFixture] Emulator write path is ready.");
+        _warmUpComplete = true;
+    }
+
+    private static async Task<Container> CreateContainerCoreAsync(ContainerProperties props)
+    {
+        var container = (await RetryAsync(
+            () => _sharedDatabase!.CreateContainerIfNotExistsAsync(props),
+            $"CreateContainer({props.Id})")).Container;
         await Task.Delay(ContainerCreationCooldown);
         return container;
     }
@@ -143,42 +175,25 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
         return _sharedClient;
     }
 
-    private static async Task<Database> CreateDatabaseWithRetryAsync(CosmosClient client)
+    private static async Task<T> RetryAsync<T>(Func<Task<T>> operation, string operationName)
     {
         for (var attempt = 0; ; attempt++)
         {
             try
             {
-                return (await client.CreateDatabaseIfNotExistsAsync(DatabaseName)).Database;
+                return await operation();
             }
             catch (Exception ex) when (attempt < MaxRetries && IsTransient(ex))
             {
-                await Task.Delay(GetBackoff(attempt));
+                var delay = GetBackoff(attempt);
+                Console.WriteLine(
+                    $"[EmulatorTestFixture] {operationName} attempt {attempt + 1} failed " +
+                    $"({ex.GetType().Name}), retrying in {delay.TotalSeconds:F0}s...");
+                await Task.Delay(delay);
             }
         }
     }
 
-    private static async Task<ContainerResponse> CreateContainerWithRetryAsync(ContainerProperties props)
-    {
-        for (var attempt = 0; ; attempt++)
-        {
-            try
-            {
-                return await _sharedDatabase!.CreateContainerIfNotExistsAsync(props);
-            }
-            catch (Exception ex) when (attempt < MaxRetries && IsTransient(ex))
-            {
-                await Task.Delay(GetBackoff(attempt));
-            }
-        }
-    }
-
-    /// <summary>
-    /// Determines whether an exception represents a transient emulator error
-    /// that should be retried. Covers the full progression of emulator failures:
-    /// write-path 503 → internal 500 → timeout 408 → rate limit 429 →
-    /// 404 "collection not yet available" → connection refused.
-    /// </summary>
     private static bool IsTransient(Exception ex) => ex switch
     {
         CosmosException ce => ce.StatusCode is
@@ -197,9 +212,8 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
 
     public ValueTask DisposeAsync()
     {
-        // No-op: the shared client, database, and cached containers persist for the
-        // entire test run. The CI emulator container is torn down after tests complete,
-        // so explicit cleanup is unnecessary and would add harmful churn.
+        // No-op: cached containers persist for the entire test run.
+        // The CI emulator is torn down after tests complete.
         return ValueTask.CompletedTask;
     }
 }
