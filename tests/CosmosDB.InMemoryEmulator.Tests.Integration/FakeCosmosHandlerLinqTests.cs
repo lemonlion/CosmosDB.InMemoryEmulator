@@ -9,30 +9,17 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 
 /// <summary>
 /// Tests for LINQ queries through FakeCosmosHandler (SDK translates LINQ → SQL → HTTP → handler).
+/// Parity-validated: runs against both FakeCosmosHandler (in-memory) and real emulator.
 /// </summary>
-public class FakeCosmosHandlerLinqTests : IDisposable
+public class FakeCosmosHandlerLinqTests : IAsyncLifetime
 {
-    private readonly InMemoryContainer _inMemoryContainer;
-    private readonly FakeCosmosHandler _handler;
-    private readonly CosmosClient _client;
-    private readonly Container _container;
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private Container _container = null!;
 
-    public FakeCosmosHandlerLinqTests()
+    public async ValueTask InitializeAsync()
     {
-        _inMemoryContainer = new InMemoryContainer("test-linq", "/partitionKey");
-        _handler = new FakeCosmosHandler(_inMemoryContainer);
-        _client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                RequestTimeout = TimeSpan.FromSeconds(10),
-                HttpClientFactory = () => new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        _container = _client.GetContainer("db", "test-linq");
-        SeedData().GetAwaiter().GetResult();
+        _container = await _fixture.CreateContainerAsync("test-linq", "/partitionKey");
+        await SeedData();
     }
 
     private async Task SeedData()
@@ -49,10 +36,9 @@ public class FakeCosmosHandlerLinqTests : IDisposable
             await _container.CreateItemAsync(doc, new PartitionKey(doc.PartitionKey));
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _client.Dispose();
-        _handler.Dispose();
+        await _fixture.DisposeAsync();
     }
 
     private async Task<List<T>> DrainIterator<T>(FeedIterator<T> iterator)

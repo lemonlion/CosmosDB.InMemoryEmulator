@@ -8,6 +8,11 @@ using AwesomeAssertions;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
+/// <summary>
+/// Hierarchical partition key tests using per-method inline container setups.
+/// Change feed tests use InMemoryContainer-specific APIs (BackingContainer).
+/// Tagged InMemoryOnly because all tests use inline FakeCosmosHandler stacks.
+/// </summary>
 public class FakeCosmosHandlerHierarchicalPkTests
 {
     public class HierDoc

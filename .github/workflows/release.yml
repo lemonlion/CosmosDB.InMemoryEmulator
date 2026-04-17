@@ -20,11 +20,17 @@ jobs:
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
 
-      - name: Test (net8.0)
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests --configuration Release --no-build --verbosity normal --framework net8.0
+      - name: Test Unit (net8.0)
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Unit --configuration Release --no-build --verbosity normal --framework net8.0
 
-      - name: Test (net10.0)
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests --configuration Release --no-build --verbosity normal --framework net10.0
+      - name: Test Integration (net8.0)
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Integration --configuration Release --no-build --verbosity normal --framework net8.0
+
+      - name: Test Unit (net10.0)
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Unit --configuration Release --no-build --verbosity normal --framework net10.0
+
+      - name: Test Integration (net10.0)
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Integration --configuration Release --no-build --verbosity normal --framework net10.0
 
   release:
     needs: [test]

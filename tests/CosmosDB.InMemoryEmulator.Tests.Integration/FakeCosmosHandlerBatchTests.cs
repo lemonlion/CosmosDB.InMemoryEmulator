@@ -12,35 +12,22 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// <summary>
 /// Tests for TransactionalBatch operations through FakeCosmosHandler.
 /// Validates the HybridRow binary batch protocol handling.
+/// Parity-validated: runs against both FakeCosmosHandler (in-memory) and real emulator.
+/// Schema reflection tests are tagged InMemoryOnly.
 /// </summary>
-public class FakeCosmosHandlerBatchTests : IDisposable
+public class FakeCosmosHandlerBatchTests : IAsyncLifetime
 {
-    private readonly InMemoryContainer _inMemoryContainer;
-    private readonly FakeCosmosHandler _handler;
-    private readonly CosmosClient _client;
-    private readonly Container _container;
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private Container _container = null!;
 
-    public FakeCosmosHandlerBatchTests()
+    public async ValueTask InitializeAsync()
     {
-        _inMemoryContainer = new InMemoryContainer("test-batch", "/partitionKey");
-        _handler = new FakeCosmosHandler(_inMemoryContainer);
-        _client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                RequestTimeout = TimeSpan.FromSeconds(10),
-                HttpClientFactory = () => new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        _container = _client.GetContainer("db", "test-batch");
+        _container = await _fixture.CreateContainerAsync("test-batch", "/partitionKey");
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _client.Dispose();
-        _handler.Dispose();
+        await _fixture.DisposeAsync();
     }
 
     [Fact]
@@ -187,6 +174,7 @@ public class FakeCosmosHandlerBatchTests : IDisposable
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public void BatchSchemas_SelfBuiltSchemasMatchSdkInternals()
     {
         // Canary test: verify our self-built HybridRow schemas produce layouts
@@ -241,6 +229,7 @@ public class FakeCosmosHandlerBatchTests : IDisposable
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public void BatchSchemas_SelfBuiltRoundTrip_WriteThenRead()
     {
         // Verify that a HybridRow written with our self-built result schema

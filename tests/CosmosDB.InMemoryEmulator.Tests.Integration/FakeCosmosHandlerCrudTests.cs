@@ -8,22 +8,35 @@ using Xunit;
 namespace CosmosDB.InMemoryEmulator.Tests;
 
 /// <summary>
-/// TDD tests for CRUD route handling in <see cref="FakeCosmosHandler"/>.
-/// These tests exercise the real Cosmos SDK HTTP pipeline end-to-end:
-/// SDK → HTTP request → FakeCosmosHandler → InMemoryContainer → HTTP response → SDK.
+/// TDD tests for CRUD route handling through the SDK HTTP pipeline.
+/// Parity-validated: runs against both FakeCosmosHandler (in-memory) and real emulator.
+/// Tests tagged [Trait(TestTraits.Target, TestTraits.InMemoryOnly)] are excluded from emulator runs.
 /// </summary>
-public class FakeCosmosHandlerCrudTests : IDisposable
+public class FakeCosmosHandlerCrudTests : IAsyncLifetime
 {
-    private readonly InMemoryContainer _inMemoryContainer;
-    private readonly FakeCosmosHandler _handler;
-    private readonly CosmosClient _client;
-    private readonly Container _container;
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private Container _container = null!;
 
-    public FakeCosmosHandlerCrudTests()
+    public async ValueTask InitializeAsync()
     {
-        _inMemoryContainer = new InMemoryContainer("test-crud", "/partitionKey");
-        _handler = new FakeCosmosHandler(_inMemoryContainer);
-        _client = new CosmosClient(
+        _container = await _fixture.CreateContainerAsync("test-crud", "/partitionKey");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _fixture.DisposeAsync();
+    }
+
+    /// <summary>
+    /// Helper for in-memory-only tests that need direct access to FakeCosmosHandler APIs
+    /// (RequestLog, FaultInjector, etc.). Creates an isolated handler stack.
+    /// </summary>
+    private static (FakeCosmosHandler Handler, CosmosClient Client, Container Container) CreateInMemoryStack(
+        string name = "test", string pkPath = "/partitionKey")
+    {
+        var backing = new InMemoryContainer(name, pkPath);
+        var handler = new FakeCosmosHandler(backing);
+        var client = new CosmosClient(
             "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
             new CosmosClientOptions
             {
@@ -31,15 +44,9 @@ public class FakeCosmosHandlerCrudTests : IDisposable
                 LimitToEndpoint = true,
                 MaxRetryAttemptsOnRateLimitedRequests = 0,
                 RequestTimeout = TimeSpan.FromSeconds(10),
-                HttpClientFactory = () => new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(10) }
+                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
             });
-        _container = _client.GetContainer("db", "test-crud");
-    }
-
-    public void Dispose()
-    {
-        _client.Dispose();
-        _handler.Dispose();
+        return (handler, client, client.GetContainer("db", name));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -359,30 +366,8 @@ public class FakeCosmosHandlerCrudTests : IDisposable
     [Fact]
     public async Task Handler_MultiContainer_CrudIsolated()
     {
-        var containerA = new InMemoryContainer("containerA", "/partitionKey");
-        var containerB = new InMemoryContainer("containerB", "/partitionKey");
-
-        using var handlerA = new FakeCosmosHandler(containerA);
-        using var handlerB = new FakeCosmosHandler(containerB);
-
-        var router = FakeCosmosHandler.CreateRouter(new Dictionary<string, FakeCosmosHandler>
-        {
-            ["containerA"] = handlerA,
-            ["containerB"] = handlerB,
-        });
-
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(router) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-
-        var cA = client.GetContainer("db", "containerA");
-        var cB = client.GetContainer("db", "containerB");
+        var cA = await _fixture.CreateContainerAsync("containerA", "/partitionKey");
+        var cB = await _fixture.CreateContainerAsync("containerB", "/partitionKey");
 
         // Create in A
         await cA.CreateItemAsync(
@@ -400,17 +385,22 @@ public class FakeCosmosHandlerCrudTests : IDisposable
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Handler_RequestLog_RecordsCrudOperations()
     {
+        var (handler, client, container) = CreateInMemoryStack("log-crud");
+        using var _h = handler;
+        using var _c = client;
+
         var doc = new TestDocument { Id = "log1", PartitionKey = "pk1", Name = "Logged" };
-        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
-        await _container.ReadItemAsync<TestDocument>("log1", new PartitionKey("pk1"));
-        await _container.DeleteItemAsync<TestDocument>("log1", new PartitionKey("pk1"));
+        await container.CreateItemAsync(doc, new PartitionKey("pk1"));
+        await container.ReadItemAsync<TestDocument>("log1", new PartitionKey("pk1"));
+        await container.DeleteItemAsync<TestDocument>("log1", new PartitionKey("pk1"));
 
         // POST for create, GET for read, DELETE for delete
-        _handler.RequestLog.Should().Contain(e => e.StartsWith("POST") && e.Contains("/docs"));
-        _handler.RequestLog.Should().Contain(e => e.StartsWith("GET") && e.Contains("/docs/"));
-        _handler.RequestLog.Should().Contain(e => e.StartsWith("DELETE") && e.Contains("/docs/"));
+        handler.RequestLog.Should().Contain(e => e.StartsWith("POST") && e.Contains("/docs"));
+        handler.RequestLog.Should().Contain(e => e.StartsWith("GET") && e.Contains("/docs/"));
+        handler.RequestLog.Should().Contain(e => e.StartsWith("DELETE") && e.Contains("/docs/"));
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -418,6 +408,7 @@ public class FakeCosmosHandlerCrudTests : IDisposable
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Handler_VerifySdkCompatibility_IncludesCrudCheck()
     {
         var act = FakeCosmosHandler.VerifySdkCompatibilityAsync;
@@ -430,17 +421,22 @@ public class FakeCosmosHandlerCrudTests : IDisposable
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Handler_FaultInjection_ThrottlesCreateRequest()
     {
-        _handler.FaultInjector = _ =>
+        var (handler, client, container) = CreateInMemoryStack("fault-throttle");
+        using var _h = handler;
+        using var _c = client;
+
+        handler.FaultInjector = _ =>
             new HttpResponseMessage((HttpStatusCode)429)
             {
                 Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMilliseconds(1)) }
             };
-        _handler.FaultInjectorIncludesMetadata = false;
+        handler.FaultInjectorIncludesMetadata = false;
 
         var doc = new TestDocument { Id = "fi1", PartitionKey = "pk1", Name = "Throttled" };
-        var act = () => _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+        var act = () => container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
         var ex = await act.Should().ThrowAsync<CosmosException>();
         ex.Which.StatusCode.Should().Be((HttpStatusCode)429);
@@ -476,18 +472,7 @@ public class FakeCosmosHandlerCrudTests : IDisposable
     [Fact]
     public async Task Handler_Crud_WithCompositePartitionKey_RoundTrip()
     {
-        var compositeContainer = new InMemoryContainer("composite-test", ["/tenantId", "/userId"]);
-        using var compositeHandler = new FakeCosmosHandler(compositeContainer);
-        using var compositeClient = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(compositeHandler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        var container = compositeClient.GetContainer("db", "composite-test");
+        var container = await _fixture.CreateContainerAsync("composite-test", ["/tenantId", "/userId"]);
 
         var pk = new PartitionKeyBuilder().Add("t1").Add("u1").Build();
         var doc = new { id = "cpk1", tenantId = "t1", userId = "u1", name = "Composite" };
@@ -664,18 +649,7 @@ public class FakeCosmosHandlerCrudTests : IDisposable
     [Fact]
     public async Task Handler_ReadItem_WithPartitionKeyNone_Succeeds()
     {
-        var pkNoneContainer = new InMemoryContainer("pknone-test", "/partitionKey");
-        using var pkNoneHandler = new FakeCosmosHandler(pkNoneContainer);
-        using var pkNoneClient = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(pkNoneHandler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        var container = pkNoneClient.GetContainer("db", "pknone-test");
+        var container = await _fixture.CreateContainerAsync("pknone-test", "/partitionKey");
 
         var doc = new { id = "none1", name = "NoPK" };
         await container.CreateItemAsync(doc, PartitionKey.None);
@@ -793,17 +767,7 @@ public class FakeCosmosHandlerCrudTests : IDisposable
     [Fact]
     public async Task Handler_CreateItem_WithNumericPartitionKey_Succeeds()
     {
-        var numContainer = new InMemoryContainer("num-pk-test", "/numericPk");
-        using var numHandler = new FakeCosmosHandler(numContainer);
-        using var numClient = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway, LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(numHandler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        var container = numClient.GetContainer("db", "num-pk-test");
+        var container = await _fixture.CreateContainerAsync("num-pk-test", "/numericPk");
 
         var doc = new { id = "num1", numericPk = 42, name = "NumericPK" };
         var response = await container.CreateItemAsync(doc, new PartitionKey(42));
@@ -817,17 +781,7 @@ public class FakeCosmosHandlerCrudTests : IDisposable
     [Fact]
     public async Task Handler_CreateItem_WithBooleanPartitionKey_Succeeds()
     {
-        var boolContainer = new InMemoryContainer("bool-pk-test", "/boolPk");
-        using var boolHandler = new FakeCosmosHandler(boolContainer);
-        using var boolClient = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway, LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(boolHandler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        var container = boolClient.GetContainer("db", "bool-pk-test");
+        var container = await _fixture.CreateContainerAsync("bool-pk-test", "/boolPk");
 
         var doc = new { id = "bool1", boolPk = true, name = "BoolPK" };
         var response = await container.CreateItemAsync(doc, new PartitionKey(true));
@@ -1170,47 +1124,62 @@ public class FakeCosmosHandlerCrudTests : IDisposable
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Handler_FaultInjection_ThrottlesReadRequest()
     {
-        var doc = new TestDocument { Id = "fi-read", PartitionKey = "pk1", Name = "Throttled" };
-        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+        var (handler, client, container) = CreateInMemoryStack("fault-read");
+        using var _h = handler;
+        using var _c = client;
 
-        _handler.FaultInjector = _ =>
+        var doc = new TestDocument { Id = "fi-read", PartitionKey = "pk1", Name = "Throttled" };
+        await container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        handler.FaultInjector = _ =>
             new HttpResponseMessage((HttpStatusCode)429)
             {
                 Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMilliseconds(1)) }
             };
-        _handler.FaultInjectorIncludesMetadata = false;
+        handler.FaultInjectorIncludesMetadata = false;
 
-        var act = () => _container.ReadItemAsync<TestDocument>("fi-read", new PartitionKey("pk1"));
+        var act = () => container.ReadItemAsync<TestDocument>("fi-read", new PartitionKey("pk1"));
 
         var ex = await act.Should().ThrowAsync<CosmosException>();
         ex.Which.StatusCode.Should().Be((HttpStatusCode)429);
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Handler_FaultInjection_ReturnsServiceUnavailable_OnDelete()
     {
+        var (handler, client, container) = CreateInMemoryStack("fault-del");
+        using var _h = handler;
+        using var _c = client;
+
         var doc = new TestDocument { Id = "fi-del", PartitionKey = "pk1", Name = "Unavailable" };
-        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+        await container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
-        _handler.FaultInjector = _ =>
+        handler.FaultInjector = _ =>
             new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
-        _handler.FaultInjectorIncludesMetadata = false;
+        handler.FaultInjectorIncludesMetadata = false;
 
-        var act = () => _container.DeleteItemAsync<TestDocument>("fi-del", new PartitionKey("pk1"));
+        var act = () => container.DeleteItemAsync<TestDocument>("fi-del", new PartitionKey("pk1"));
 
         var ex = await act.Should().ThrowAsync<CosmosException>();
         ex.Which.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Handler_FaultInjection_NullReturn_ProceedsNormally()
     {
-        _handler.FaultInjector = _ => null!;
+        var (handler, client, container) = CreateInMemoryStack("fault-null");
+        using var _h = handler;
+        using var _c = client;
+
+        handler.FaultInjector = _ => null!;
 
         var doc = new TestDocument { Id = "fi-null", PartitionKey = "pk1", Name = "Normal" };
-        var response = await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+        var response = await container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
@@ -1220,25 +1189,35 @@ public class FakeCosmosHandlerCrudTests : IDisposable
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Handler_RequestLog_RecordsPatchOperation()
     {
-        var doc = new TestDocument { Id = "rl-patch", PartitionKey = "pk1", Name = "ToPatch" };
-        await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
+        var (handler, client, container) = CreateInMemoryStack("log-patch");
+        using var _h = handler;
+        using var _c = client;
 
-        await _container.PatchItemAsync<TestDocument>("rl-patch", new PartitionKey("pk1"),
+        var doc = new TestDocument { Id = "rl-patch", PartitionKey = "pk1", Name = "ToPatch" };
+        await container.CreateItemAsync(doc, new PartitionKey("pk1"));
+
+        await container.PatchItemAsync<TestDocument>("rl-patch", new PartitionKey("pk1"),
             [PatchOperation.Set("/name", "Patched")]);
 
-        _handler.RequestLog.Should().Contain(e => e.Contains("PATCH") || e.Contains("patch"));
+        handler.RequestLog.Should().Contain(e => e.Contains("PATCH") || e.Contains("patch"));
     }
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Handler_RequestLog_RecordsUpsertOperation()
     {
+        var (handler, client, container) = CreateInMemoryStack("log-upsert");
+        using var _h = handler;
+        using var _c = client;
+
         var doc = new TestDocument { Id = "rl-upsert", PartitionKey = "pk1", Name = "ToUpsert" };
 
-        await _container.UpsertItemAsync(doc, new PartitionKey("pk1"));
+        await container.UpsertItemAsync(doc, new PartitionKey("pk1"));
 
-        _handler.RequestLog.Should().Contain(e => e.StartsWith("POST") && e.Contains("/docs"));
+        handler.RequestLog.Should().Contain(e => e.StartsWith("POST") && e.Contains("/docs"));
     }
 
     // ── IX: Error Path Edge Cases ───────────────────────────────────────────

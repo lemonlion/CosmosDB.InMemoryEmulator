@@ -8,7 +8,10 @@ using Xunit;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
-
+/// <summary>
+/// Gap tests that seed data via InMemoryContainer directly.
+/// Cannot run against the real emulator.
+/// </summary>
 public class FakeCosmosHandlerGapTests
 {
     private static CosmosClient CreateClient(FakeCosmosHandler handler) =>

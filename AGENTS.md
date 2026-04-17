@@ -21,3 +21,25 @@
 - All three packages must use the same version number.
 - **On `main`:** Commit, create a git tag (`v{version}`), and push both the commit and the tag to origin.
 - **On any other branch:** Commit and push the code changes and version bump only. Do not create or push a tag.
+
+## Test Classification Rules
+
+Tests are split into two projects. When creating or moving tests, follow these rules:
+
+### Tests.Integration
+- Uses `TestFixtureFactory.Create()` / `ITestContainerFixture` to obtain a container
+- Goes through the real CosmosClient SDK HTTP pipeline via `FakeCosmosHandler`
+- Must **not** use `new InMemoryCosmosClient()`, `new FaultInjector()`, `FaultInjection`, or any `internal` API
+- Can run against in-memory, Linux emulator, or Windows emulator via `COSMOS_TEST_TARGET`
+
+### Tests.Unit
+- Uses `new InMemoryContainer()`, `new InMemoryCosmosClient()`, or any `internal` API directly
+- Tests that use `FakeCosmosHandler` but also touch internal APIs (e.g. cache internals, `FaultInjection`) belong here
+- Only runs in-memory — never against a real emulator
+
+### Tests.Shared
+- Class library (not a test project) — shared infrastructure, fixtures, traits, and models
+- Referenced by both Unit and Integration projects
+
+### Key constraint
+The Integration project does **not** have `InternalsVisibleTo` access. If a test needs internal APIs, it belongs in Unit.

@@ -9,6 +9,8 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Tests for ReadMany operations through FakeCosmosHandler.
 /// ReadMany is a direct method on Container — verify it works when the
 /// Container is backed by FakeCosmosHandler/InMemoryContainer.
+/// All tests use BackingContainer.ReadManyItemsAsync directly and cannot run
+/// against the real emulator.
 /// </summary>
 public class FakeCosmosHandlerReadManyTests : IDisposable
 {

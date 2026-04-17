@@ -10,6 +10,9 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Tests for container management, stored procedures, UDFs, triggers, and
 /// computed properties through FakeCosmosHandler.
 /// Features are configured via backing container, then exercised through the SDK pipeline.
+/// All tests in this class use InMemoryContainer-specific APIs (BackingContainer,
+/// RegisterUdf, RegisterStoredProcedure, ClearItems, CreateRouter) and cannot run
+/// against the real emulator.
 /// </summary>
 public class FakeCosmosHandlerAdvancedFeatureTests : IDisposable
 {

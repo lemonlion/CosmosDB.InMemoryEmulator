@@ -20,6 +20,8 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// 5 projects to fall back to InMemoryCosmosClient (which doesn't support
 /// custom serializers via CosmosClientOptions) instead of the recommended
 /// FakeCosmosHandler approach (which preserves the full SDK pipeline).
+/// Tests verify FakeCosmosHandler-specific route stubs and cannot meaningfully
+/// parity-validate against the real emulator (which supports these natively).
 /// </summary>
 public class FakeCosmosHandlerDatabaseRoutesBugReproduction
 {
