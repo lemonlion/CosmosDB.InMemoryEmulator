@@ -75,16 +75,53 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
 
     private async Task<Container> CreateRealContainerAsync(ContainerProperties props)
     {
-        // TODO: Add retry + exponential backoff here for transient 503 (ServiceUnavailable)
-        // errors. The Linux emulator's write path can take extra time to become available
-        // after the HTTP health endpoint (port 8081) starts responding. Without retries,
-        // tests that run immediately after emulator startup can fail with 503/1007 during
-        // container creation. See: https://github.com/lemonlion/CosmosDB.InMemoryEmulator/actions/runs/24558311367
-        _database ??= (await _client.CreateDatabaseIfNotExistsAsync(DatabaseName)).Database;
-        var response = await _database.CreateContainerIfNotExistsAsync(props);
+        const int maxRetries = 5;
+
+        _database ??= await CreateDatabaseWithRetryAsync(maxRetries);
+        var response = await CreateContainerWithRetryAsync(props, maxRetries);
         _containersToCleanup.Add(response.Container);
         return response.Container;
     }
+
+    private async Task<Database> CreateDatabaseWithRetryAsync(int maxRetries)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return (await _client.CreateDatabaseIfNotExistsAsync(DatabaseName)).Database;
+            }
+            catch (CosmosException ex) when (attempt < maxRetries && IsTransient(ex))
+            {
+                await Task.Delay(GetBackoff(attempt));
+            }
+        }
+    }
+
+    private async Task<ContainerResponse> CreateContainerWithRetryAsync(ContainerProperties props, int maxRetries)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await _database!.CreateContainerIfNotExistsAsync(props);
+            }
+            catch (CosmosException ex) when (attempt < maxRetries && IsTransient(ex))
+            {
+                await Task.Delay(GetBackoff(attempt));
+            }
+        }
+    }
+
+    private static bool IsTransient(CosmosException ex) =>
+        ex.StatusCode is
+            System.Net.HttpStatusCode.ServiceUnavailable or  // 503
+            System.Net.HttpStatusCode.InternalServerError or // 500
+            System.Net.HttpStatusCode.RequestTimeout or      // 408
+            System.Net.HttpStatusCode.TooManyRequests;       // 429
+
+    private static TimeSpan GetBackoff(int attempt) =>
+        TimeSpan.FromSeconds(Math.Pow(2, attempt)); // 1s, 2s, 4s, 8s, 16s
 
     public async ValueTask DisposeAsync()
     {
