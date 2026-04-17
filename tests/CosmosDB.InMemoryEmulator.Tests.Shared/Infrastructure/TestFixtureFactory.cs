@@ -1,26 +1,18 @@
 namespace CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 /// <summary>
-/// Creates the appropriate <see cref="ITestContainerFixture"/> based on
-/// the <c>COSMOS_TEST_TARGET</c> environment variable.
+/// Creates the per-test-class <see cref="ITestContainerFixture"/> backed by
+/// the shared <see cref="EmulatorSession"/>.
 /// </summary>
 public static class TestFixtureFactory
 {
     /// <summary>
-    /// Creates a fixture for the target specified by <c>COSMOS_TEST_TARGET</c>.
-    /// Defaults to <see cref="TestTarget.InMemory"/> when the variable is unset.
+    /// Creates a per-test-class fixture. The target (in-memory vs emulator)
+    /// is determined by the session, which reads <c>COSMOS_TEST_TARGET</c>
+    /// once at construction.
     /// </summary>
-    public static ITestContainerFixture Create()
-    {
-        var target = Environment.GetEnvironmentVariable("COSMOS_TEST_TARGET")?.ToLowerInvariant() switch
-        {
-            "emulator-linux" => TestTarget.EmulatorLinux,
-            "emulator-windows" => TestTarget.EmulatorWindows,
-            _ => TestTarget.InMemory
-        };
-
-        return target == TestTarget.InMemory
-            ? new InMemoryTestFixture()
-            : new EmulatorTestFixture(target, Environment.GetEnvironmentVariable("COSMOS_EMULATOR_ENDPOINT"));
-    }
+    public static ITestContainerFixture Create(EmulatorSession session) =>
+        session.IsEmulator
+            ? new EmulatorTestFixture(session)
+            : new InMemoryTestFixture();
 }

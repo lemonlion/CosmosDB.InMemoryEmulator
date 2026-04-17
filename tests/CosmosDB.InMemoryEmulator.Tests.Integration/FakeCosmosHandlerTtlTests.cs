@@ -13,9 +13,10 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Parity-validated: runs against both FakeCosmosHandler (in-memory) and real emulator.
 /// Change feed tombstone test is tagged InMemoryOnly.
 /// </summary>
-public class FakeCosmosHandlerTtlTests : IAsyncLifetime
+[Collection(IntegrationCollection.Name)]
+public class FakeCosmosHandlerTtlTests(EmulatorSession session) : IAsyncLifetime
 {
-    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create(session);
     private Container _container = null!;
 
     public async ValueTask InitializeAsync()

@@ -1,0 +1,188 @@
+using System.Net.Sockets;
+using Microsoft.Azure.Cosmos;
+using Xunit;
+
+namespace CosmosDB.InMemoryEmulator.Tests.Infrastructure;
+
+/// <summary>
+/// xUnit collection fixture owning the expensive, long-lived state shared by
+/// every emulator-backed integration test: the <see cref="CosmosClient"/>, the
+/// parity database, warm-up state, and an HTTP-level concurrency gate.
+///
+/// One instance per test run — not per test class. Use in-memory runs create
+/// this fixture too, but all emulator methods short-circuit because the
+/// in-memory path never touches <see cref="EmulatorClient"/> or
+/// <see cref="EmulatorDatabase"/>.
+/// </summary>
+public sealed class EmulatorSession : IAsyncLifetime
+{
+    internal const string DefaultEndpoint = "https://localhost:8081";
+    internal const string Key = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
+    internal const string DatabaseName = "parity-validation";
+
+    // Keep concurrent outbound HTTP requests below the Dockerized Linux
+    // emulator's comfortable saturation point. 8 is well below a 10-partition
+    // emulator's capacity and low enough for CI's 3-partition config to cope.
+    private const int MaxConcurrentHttpRequests = 8;
+
+    private readonly SemaphoreSlim _httpGate = new(MaxConcurrentHttpRequests, MaxConcurrentHttpRequests);
+
+    public TestTarget Target { get; }
+    public string Endpoint { get; }
+    public bool IsEmulator => Target != TestTarget.InMemory;
+
+    // Populated during InitializeAsync when targeting an emulator.
+    public CosmosClient? EmulatorClient { get; private set; }
+    public Database? EmulatorDatabase { get; private set; }
+
+    public EmulatorSession()
+    {
+        Target = Environment.GetEnvironmentVariable("COSMOS_TEST_TARGET")?.ToLowerInvariant() switch
+        {
+            "emulator-linux" => TestTarget.EmulatorLinux,
+            "emulator-windows" => TestTarget.EmulatorWindows,
+            _ => TestTarget.InMemory
+        };
+        Endpoint = Environment.GetEnvironmentVariable("COSMOS_EMULATOR_ENDPOINT") ?? DefaultEndpoint;
+    }
+
+    public async ValueTask InitializeAsync()
+    {
+        if (!IsEmulator) return;
+
+        EmulatorClient = CreateEmulatorClient(Endpoint, _httpGate);
+
+        Console.WriteLine("[EmulatorSession] Warming up emulator write path...");
+
+        // The container-creation retry in EmulatorTestFixture handles 503s from
+        // partition services that are still coming up, so we just need the
+        // database itself here — no probe write / read needed.
+        var response = await EmulatorRetry.RunAsync(
+            () => EmulatorClient.CreateDatabaseIfNotExistsAsync(DatabaseName),
+            "CreateDatabase", maxRetries: 30, maxBackoffSeconds: 15);
+
+        EmulatorDatabase = response.Database;
+        Console.WriteLine("[EmulatorSession] Emulator database ready.");
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        EmulatorClient?.Dispose();
+        _httpGate.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    private static CosmosClient CreateEmulatorClient(string endpoint, SemaphoreSlim httpGate)
+    {
+        var isHttps = endpoint.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+
+        var options = new CosmosClientOptions
+        {
+            ConnectionMode = ConnectionMode.Gateway,
+            // Bumped from the SDK defaults (9 attempts / 30s) to absorb 429/503
+            // storms from the Linux emulator under concurrent test load.
+            MaxRetryAttemptsOnRateLimitedRequests = 15,
+            MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromSeconds(60),
+            RequestTimeout = TimeSpan.FromSeconds(30),
+            HttpClientFactory = () =>
+            {
+                HttpMessageHandler inner = isHttps
+                    ? new HttpClientHandler
+                    {
+                        ServerCertificateCustomValidationCallback =
+                            HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                    }
+                    : new HttpClientHandler();
+
+                return new HttpClient(new ConcurrencyGateHandler(httpGate, inner))
+                {
+                    Timeout = TimeSpan.FromSeconds(30)
+                };
+            }
+        };
+
+        return new CosmosClient(endpoint, Key, options);
+    }
+
+    /// <summary>
+    /// Limits the number of in-flight HTTP requests to the emulator. The Cosmos
+    /// SDK fans out requests aggressively (bulk writes, query parallelism) and
+    /// the Dockerized Linux emulator 429s or 503s when pushed past its
+    /// partition-service capacity. Rather than tune each test, we cap at the
+    /// HTTP layer — transparent to both SDK retry and individual tests.
+    /// </summary>
+    private sealed class ConcurrencyGateHandler : DelegatingHandler
+    {
+        private readonly SemaphoreSlim _gate;
+
+        public ConcurrencyGateHandler(SemaphoreSlim gate, HttpMessageHandler inner) : base(inner)
+        {
+            _gate = gate;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+    }
+}
+
+/// <summary>
+/// Collection name for tests that share the session. The actual
+/// <c>[CollectionDefinition]</c> lives in each test assembly so xUnit's
+/// analyzer can see both the attribute and the consumers in one compilation.
+/// </summary>
+public static class IntegrationCollection
+{
+    public const string Name = "Integration";
+}
+
+/// <summary>
+/// Shared retry helper. Covers the transient errors the emulator produces
+/// while partition services are still spinning up or while temporarily
+/// saturated. <b>NotFound is intentionally excluded</b> — masking real
+/// "resource doesn't exist" errors behind 88s of retries hides bugs.
+/// </summary>
+internal static class EmulatorRetry
+{
+    public static async Task<T> RunAsync<T>(
+        Func<Task<T>> operation, string operationName, int maxRetries = 10, double maxBackoffSeconds = 10)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await operation();
+            }
+            catch (Exception ex) when (attempt < maxRetries && IsTransient(ex))
+            {
+                var delay = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt), maxBackoffSeconds));
+                Console.WriteLine(
+                    $"[EmulatorRetry] {operationName} attempt {attempt + 1}/{maxRetries} failed " +
+                    $"({ex.GetType().Name}), retrying in {delay.TotalSeconds:F0}s...");
+                await Task.Delay(delay);
+            }
+        }
+    }
+
+    private static bool IsTransient(Exception ex) => ex switch
+    {
+        CosmosException ce => ce.StatusCode is
+            System.Net.HttpStatusCode.ServiceUnavailable or
+            System.Net.HttpStatusCode.InternalServerError or
+            System.Net.HttpStatusCode.RequestTimeout or
+            System.Net.HttpStatusCode.TooManyRequests,
+        HttpRequestException => true,
+        SocketException => true,
+        _ => ex.InnerException != null && IsTransient(ex.InnerException),
+    };
+}

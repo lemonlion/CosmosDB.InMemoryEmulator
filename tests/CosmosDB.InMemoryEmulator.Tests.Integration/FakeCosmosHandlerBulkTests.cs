@@ -10,9 +10,10 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Exercises concurrent SDK operations through the handler pipeline.
 /// Parity-validated: runs against both FakeCosmosHandler (in-memory) and real emulator.
 /// </summary>
-public class FakeCosmosHandlerBulkTests : IAsyncLifetime
+[Collection(IntegrationCollection.Name)]
+public class FakeCosmosHandlerBulkTests(EmulatorSession session) : IAsyncLifetime
 {
-    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create(session);
     private Container _container = null!;
 
     public async ValueTask InitializeAsync()
