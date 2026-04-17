@@ -36,7 +36,7 @@ jobs:
 
   test-emulator-linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     services:
       cosmosdb:
@@ -84,10 +84,8 @@ jobs:
           # The HTTP health endpoint being up does NOT mean the write path is ready.
           # The emulator's partition services need extra time. We warm up by:
           #   1. Creating the test database
-          #   2. Creating a throwaway container (this exercises the partition/write path)
-          #   3. Deleting the throwaway container
-          # This ensures partition services are fully initialized before tests start.
-          # Without this, parallel container creation from tests can crash the emulator.
+          #   2. Pre-creating ALL test containers so no container creation happens during tests
+          # This avoids the 503 errors that occur when the emulator degrades under sustained load.
 
           key="C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
           endpoint="https://localhost:8081"
@@ -105,8 +103,33 @@ jobs:
               | python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read()))"
           }
 
+          # Helper: create a container with retry
+          create_container() {
+            local name="$1" body="$2"
+            local elapsed=0
+            while [ $elapsed -lt $timeout ]; do
+              now=$(date -u +"%a, %d %b %Y %H:%M:%S GMT")
+              auth=$(cosmos_auth "post" "colls" "dbs/parity-validation" "$now")
+              http_code=$(curl -sk -o /tmp/cosmos-warmup.json -w "%{http_code}" \
+                -X POST "${endpoint}/dbs/parity-validation/colls" \
+                -H "Authorization: ${auth}" \
+                -H "x-ms-version: 2018-12-31" \
+                -H "x-ms-date: ${now}" \
+                -H "Content-Type: application/json" \
+                -d "$body" 2>/dev/null || echo "000")
+              if [ "$http_code" = "201" ] || [ "$http_code" = "409" ]; then
+                echo "  ✓ ${name} (HTTP $http_code)"
+                return 0
+              fi
+              sleep 5
+              elapsed=$((elapsed + 5))
+            done
+            echo "  ✗ ${name} FAILED after ${timeout}s"
+            return 1
+          }
+
           # Step 1: Create the database
-          echo "Step 1/3: Creating parity-validation database..."
+          echo "Step 1/2: Creating parity-validation database..."
           elapsed=0
           while [ $elapsed -lt $timeout ]; do
             now=$(date -u +"%a, %d %b %Y %H:%M:%S GMT")
@@ -124,8 +147,6 @@ jobs:
               break
             fi
             echo "  Not ready yet (HTTP $http_code), retrying... (${elapsed}s)"
-            cat /tmp/cosmos-warmup.json 2>/dev/null || true
-            echo ""
             sleep 5
             elapsed=$((elapsed + 5))
           done
@@ -134,46 +155,40 @@ jobs:
             exit 1
           fi
 
-          # Step 2: Create a throwaway container (proves partition services are ready)
-          echo "Step 2/3: Creating warmup container (partition service check)..."
-          elapsed=0
-          while [ $elapsed -lt $timeout ]; do
-            now=$(date -u +"%a, %d %b %Y %H:%M:%S GMT")
-            auth=$(cosmos_auth "post" "colls" "dbs/parity-validation" "$now")
-            http_code=$(curl -sk -o /tmp/cosmos-warmup.json -w "%{http_code}" \
-              -X POST "${endpoint}/dbs/parity-validation/colls" \
-              -H "Authorization: ${auth}" \
-              -H "x-ms-version: 2018-12-31" \
-              -H "x-ms-date: ${now}" \
-              -H "Content-Type: application/json" \
-              -d '{"id":"_warmup","partitionKey":{"paths":["/id"],"kind":"Hash"}}' 2>/dev/null || echo "000")
+          # Step 2: Pre-create all test containers
+          # This eliminates container creation during the test run, avoiding 503 errors
+          # that occur when the emulator degrades under sustained load.
+          echo "Step 2/2: Pre-creating test containers..."
+          failed=0
+          pk='{"paths":["/partitionKey"],"kind":"Hash"}'
 
-            if [ "$http_code" = "201" ] || [ "$http_code" = "409" ]; then
-              echo "  Container ready (HTTP $http_code) after ${elapsed}s"
-              break
-            fi
-            echo "  Partition services not ready yet (HTTP $http_code), retrying... (${elapsed}s)"
-            cat /tmp/cosmos-warmup.json 2>/dev/null || true
-            echo ""
-            sleep 5
-            elapsed=$((elapsed + 5))
-          done
-          if [ $elapsed -ge $timeout ]; then
-            echo "::error::Cosmos DB Emulator partition services did not become ready within ${timeout}s"
+          create_container "test-crud"      "{\"id\":\"test-crud\",\"partitionKey\":${pk}}"      || failed=1
+          create_container "harden-crud"    "{\"id\":\"harden-crud\",\"partitionKey\":${pk}}"    || failed=1
+          create_container "test-query-adv" "{\"id\":\"test-query-adv\",\"partitionKey\":${pk}}" || failed=1
+          create_container "test-linq"      "{\"id\":\"test-linq\",\"partitionKey\":${pk}}"      || failed=1
+          create_container "test-batch"     "{\"id\":\"test-batch\",\"partitionKey\":${pk}}"     || failed=1
+          create_container "test-bulk"      "{\"id\":\"test-bulk\",\"partitionKey\":${pk}}"      || failed=1
+          create_container "test-pk"        "{\"id\":\"test-pk\",\"partitionKey\":${pk}}"        || failed=1
+          create_container "containerA"     "{\"id\":\"containerA\",\"partitionKey\":${pk}}"     || failed=1
+          create_container "containerB"     "{\"id\":\"containerB\",\"partitionKey\":${pk}}"     || failed=1
+          create_container "pknone-test"    "{\"id\":\"pknone-test\",\"partitionKey\":${pk}}"    || failed=1
+
+          create_container "test-ttl" \
+            "{\"id\":\"test-ttl\",\"partitionKey\":${pk},\"defaultTtl\":2}" || failed=1
+
+          create_container "num-pk-test" \
+            '{"id":"num-pk-test","partitionKey":{"paths":["/numericPk"],"kind":"Hash"}}' || failed=1
+          create_container "bool-pk-test" \
+            '{"id":"bool-pk-test","partitionKey":{"paths":["/boolPk"],"kind":"Hash"}}' || failed=1
+
+          create_container "composite-test" \
+            '{"id":"composite-test","partitionKey":{"paths":["/tenantId","/userId"],"kind":"MultiHash","version":2}}' || failed=1
+
+          if [ $failed -ne 0 ]; then
+            echo "::error::Some containers failed to create"
             exit 1
           fi
-
-          # Step 3: Delete the warmup container
-          echo "Step 3/3: Cleaning up warmup container..."
-          now=$(date -u +"%a, %d %b %Y %H:%M:%S GMT")
-          auth=$(cosmos_auth "delete" "colls" "dbs/parity-validation/colls/_warmup" "$now")
-          curl -sk -o /dev/null -w "  Cleanup HTTP %{http_code}\n" \
-            -X DELETE "${endpoint}/dbs/parity-validation/colls/_warmup" \
-            -H "Authorization: ${auth}" \
-            -H "x-ms-version: 2018-12-31" \
-            -H "x-ms-date: ${now}" 2>/dev/null || true
-
-          echo "Emulator is fully warmed up and ready for tests."
+          echo "All 14 test containers pre-created. Emulator is ready."
 
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
@@ -191,7 +206,7 @@ jobs:
 
   test-windows:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v5
@@ -233,8 +248,8 @@ jobs:
         shell: pwsh
         run: |
           # The HTTP health endpoint being up does NOT mean the write path is ready.
-          # We warm up by: 1) creating the database, 2) creating a throwaway container
-          # (proves partition services are ready), 3) deleting the throwaway container.
+          # We warm up by: 1) creating the database, 2) pre-creating ALL test containers.
+          # This eliminates container creation during the test run, avoiding 503 errors.
           $key = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
           $endpoint = "https://localhost:8081"
           $timeout = 120
@@ -247,8 +262,34 @@ jobs:
             return [Uri]::EscapeDataString("type=master&ver=1.0&sig=$sig")
           }
 
+          function New-Container($name, $body) {
+            $elapsed = 0
+            while ($elapsed -lt $timeout) {
+              try {
+                $now = [DateTime]::UtcNow.ToString("r")
+                $auth = Get-CosmosAuth "post" "colls" "dbs/parity-validation" $now
+                $headers = @{
+                  "Authorization" = $auth
+                  "x-ms-version"  = "2018-12-31"
+                  "x-ms-date"     = $now
+                  "Content-Type"  = "application/json"
+                }
+                $r = Invoke-WebRequest -Uri "$endpoint/dbs/parity-validation/colls" -Method POST `
+                  -Headers $headers -Body $body `
+                  -SkipCertificateCheck -SkipHttpErrorCheck -TimeoutSec 10 -ErrorAction Stop
+                if ($r.StatusCode -in 201, 409) {
+                  Write-Host "  ✓ ${name} (HTTP $($r.StatusCode))"
+                  return $true
+                }
+              } catch { }
+              Start-Sleep 5; $elapsed += 5
+            }
+            Write-Host "  ✗ ${name} FAILED after ${timeout}s"
+            return $false
+          }
+
           # Step 1: Create the database
-          Write-Host "Step 1/3: Creating parity-validation database..."
+          Write-Host "Step 1/2: Creating parity-validation database..."
           $elapsed = 0
           while ($elapsed -lt $timeout) {
             try {
@@ -275,52 +316,31 @@ jobs:
           }
           if ($elapsed -ge $timeout) { Write-Error "Database creation did not succeed within ${timeout}s"; exit 1 }
 
-          # Step 2: Create a throwaway container (proves partition services are ready)
-          Write-Host "Step 2/3: Creating warmup container (partition service check)..."
-          $elapsed = 0
-          while ($elapsed -lt $timeout) {
-            try {
-              $now = [DateTime]::UtcNow.ToString("r")
-              $auth = Get-CosmosAuth "post" "colls" "dbs/parity-validation" $now
-              $headers = @{
-                "Authorization" = $auth
-                "x-ms-version"  = "2018-12-31"
-                "x-ms-date"     = $now
-                "Content-Type"  = "application/json"
-              }
-              $body = '{"id":"_warmup","partitionKey":{"paths":["/id"],"kind":"Hash"}}'
-              $r = Invoke-WebRequest -Uri "$endpoint/dbs/parity-validation/colls" -Method POST `
-                -Headers $headers -Body $body `
-                -SkipCertificateCheck -SkipHttpErrorCheck -TimeoutSec 10 -ErrorAction Stop
-              if ($r.StatusCode -in 201, 409) {
-                Write-Host "  Container ready (HTTP $($r.StatusCode)) after ${elapsed}s"
-                break
-              }
-              Write-Host "  Partition services not ready (HTTP $($r.StatusCode)), retrying... (${elapsed}s)"
-            } catch {
-              Write-Host "  Request failed: $($_.Exception.Message), retrying... (${elapsed}s)"
-            }
-            Start-Sleep 5; $elapsed += 5
-          }
-          if ($elapsed -ge $timeout) { Write-Error "Partition services did not become ready within ${timeout}s"; exit 1 }
+          # Step 2: Pre-create all test containers
+          Write-Host "Step 2/2: Pre-creating test containers..."
+          $failed = $false
+          $pk = '{"paths":["/partitionKey"],"kind":"Hash"}'
 
-          # Step 3: Delete warmup container
-          Write-Host "Step 3/3: Cleaning up warmup container..."
-          try {
-            $now = [DateTime]::UtcNow.ToString("r")
-            $auth = Get-CosmosAuth "delete" "colls" "dbs/parity-validation/colls/_warmup" $now
-            $headers = @{
-              "Authorization" = $auth
-              "x-ms-version"  = "2018-12-31"
-              "x-ms-date"     = $now
-            }
-            $r = Invoke-WebRequest -Uri "$endpoint/dbs/parity-validation/colls/_warmup" -Method DELETE `
-              -Headers $headers -SkipCertificateCheck -SkipHttpErrorCheck -TimeoutSec 10 -ErrorAction Stop
-            Write-Host "  Cleanup HTTP $($r.StatusCode)"
-          } catch {
-            Write-Host "  Cleanup failed (non-critical): $($_.Exception.Message)"
-          }
-          Write-Host "Emulator is fully warmed up and ready for tests."
+          if (-not (New-Container "test-crud"      "{`"id`":`"test-crud`",`"partitionKey`":${pk}}"))      { $failed = $true }
+          if (-not (New-Container "harden-crud"    "{`"id`":`"harden-crud`",`"partitionKey`":${pk}}"))    { $failed = $true }
+          if (-not (New-Container "test-query-adv" "{`"id`":`"test-query-adv`",`"partitionKey`":${pk}}")) { $failed = $true }
+          if (-not (New-Container "test-linq"      "{`"id`":`"test-linq`",`"partitionKey`":${pk}}"))      { $failed = $true }
+          if (-not (New-Container "test-batch"     "{`"id`":`"test-batch`",`"partitionKey`":${pk}}"))     { $failed = $true }
+          if (-not (New-Container "test-bulk"      "{`"id`":`"test-bulk`",`"partitionKey`":${pk}}"))      { $failed = $true }
+          if (-not (New-Container "test-pk"        "{`"id`":`"test-pk`",`"partitionKey`":${pk}}"))        { $failed = $true }
+          if (-not (New-Container "containerA"     "{`"id`":`"containerA`",`"partitionKey`":${pk}}"))     { $failed = $true }
+          if (-not (New-Container "containerB"     "{`"id`":`"containerB`",`"partitionKey`":${pk}}"))     { $failed = $true }
+          if (-not (New-Container "pknone-test"    "{`"id`":`"pknone-test`",`"partitionKey`":${pk}}"))    { $failed = $true }
+
+          if (-not (New-Container "test-ttl" "{`"id`":`"test-ttl`",`"partitionKey`":${pk},`"defaultTtl`":2}")) { $failed = $true }
+
+          if (-not (New-Container "num-pk-test"  '{"id":"num-pk-test","partitionKey":{"paths":["/numericPk"],"kind":"Hash"}}'))  { $failed = $true }
+          if (-not (New-Container "bool-pk-test" '{"id":"bool-pk-test","partitionKey":{"paths":["/boolPk"],"kind":"Hash"}}'))    { $failed = $true }
+
+          if (-not (New-Container "composite-test" '{"id":"composite-test","partitionKey":{"paths":["/tenantId","/userId"],"kind":"MultiHash","version":2}}')) { $failed = $true }
+
+          if ($failed) { Write-Error "Some containers failed to create"; exit 1 }
+          Write-Host "All 14 test containers pre-created. Emulator is ready."
 
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release

@@ -49,8 +49,7 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
             if (_containerCache.TryGetValue(containerName, out cached))
                 return cached;
 
-            var uniqueName = $"{containerName}-{Guid.NewGuid():N}";
-            var props = new ContainerProperties(uniqueName, partitionKeyPath);
+            var props = new ContainerProperties(containerName, partitionKeyPath);
             configure?.Invoke(props);
             var container = await CreateRealContainerAsync(props);
             _containerCache.TryAdd(containerName, container);
@@ -76,8 +75,7 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
             if (_containerCache.TryGetValue(containerName, out cached))
                 return cached;
 
-            var uniqueName = $"{containerName}-{Guid.NewGuid():N}";
-            var props = new ContainerProperties(uniqueName, partitionKeyPaths);
+            var props = new ContainerProperties(containerName, partitionKeyPaths);
             configure?.Invoke(props);
             var container = await CreateRealContainerAsync(props);
             _containerCache.TryAdd(containerName, container);
