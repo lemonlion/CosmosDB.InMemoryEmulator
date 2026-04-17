@@ -75,6 +75,11 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
 
     private async Task<Container> CreateRealContainerAsync(ContainerProperties props)
     {
+        // TODO: Add retry + exponential backoff here for transient 503 (ServiceUnavailable)
+        // errors. The Linux emulator's write path can take extra time to become available
+        // after the HTTP health endpoint (port 8081) starts responding. Without retries,
+        // tests that run immediately after emulator startup can fail with 503/1007 during
+        // container creation. See: https://github.com/lemonlion/CosmosDB.InMemoryEmulator/actions/runs/24558311367
         _database ??= (await _client.CreateDatabaseIfNotExistsAsync(DatabaseName)).Database;
         var response = await _database.CreateContainerIfNotExistsAsync(props);
         _containersToCleanup.Add(response.Container);

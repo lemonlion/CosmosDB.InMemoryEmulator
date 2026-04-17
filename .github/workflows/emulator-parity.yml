@@ -61,13 +61,13 @@ jobs:
 
       - name: Wait for Cosmos DB Emulator
         run: |
-          echo "Waiting for Cosmos DB Emulator to be ready..."
+          echo "Waiting for Cosmos DB Emulator HTTP endpoint..."
           timeout=300
           elapsed=0
           while [ $elapsed -lt $timeout ]; do
             status=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8081/ 2>/dev/null || echo "000")
             if [ "$status" = "200" ] || [ "$status" = "401" ]; then
-              echo "Emulator ready after ${elapsed}s (HTTP $status)"
+              echo "HTTP endpoint ready after ${elapsed}s (HTTP $status)"
               break
             fi
             sleep 5
@@ -78,8 +78,56 @@ jobs:
             echo "::error::Cosmos DB Emulator did not start within ${timeout}s"
             exit 1
           fi
-          echo "Waiting 15s for internal initialization..."
-          sleep 15
+
+      - name: Warm up Cosmos DB Emulator
+        run: |
+          # The HTTP health endpoint being up does NOT mean the write path is ready.
+          # The emulator's partition services need extra time. We warm up by actually
+          # creating the test database — this exercises the write path and will retry
+          # until the emulator is fully initialized.
+          echo "Warming up emulator — creating parity-validation database..."
+          key="C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+          endpoint="https://localhost:8081"
+          timeout=120
+          elapsed=0
+          while [ $elapsed -lt $timeout ]; do
+            # Try to create the database via REST API
+            now=$(date -u +"%a, %d %b %Y %H:%M:%S GMT")
+            now_lower=$(echo -n "$now" | tr '[:upper:]' '[:lower:]')
+            # Generate authorization signature for "dbs" resource (date must be lowercase in sig)
+            sig=$(printf "post\ndbs\n\n${now_lower}\n\n" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(echo -n "$key" | base64 -d | xxd -p -c 256)" -binary | base64 -w 0)
+            auth=$(printf "type=master&ver=1.0&sig=${sig}" | python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read()))")
+
+            http_code=$(curl -sk -o /tmp/cosmos-warmup.json -w "%{http_code}" \
+              -X POST "${endpoint}/dbs" \
+              -H "Authorization: ${auth}" \
+              -H "x-ms-version: 2018-12-31" \
+              -H "x-ms-date: ${now}" \
+              -H "Content-Type: application/json" \
+              -d '{"id":"parity-validation"}' 2>/dev/null || echo "000")
+
+            if [ "$http_code" = "201" ]; then
+              echo "Database created successfully after ${elapsed}s"
+              break
+            elif [ "$http_code" = "409" ]; then
+              echo "Database already exists after ${elapsed}s — emulator is ready"
+              break
+            elif [ "$http_code" = "200" ]; then
+              echo "Database request succeeded after ${elapsed}s (HTTP 200)"
+              break
+            else
+              echo "Write path not ready yet (HTTP $http_code), retrying... (${elapsed}s)"
+              cat /tmp/cosmos-warmup.json 2>/dev/null || true
+              echo ""
+              sleep 5
+              elapsed=$((elapsed + 5))
+            fi
+          done
+          if [ $elapsed -ge $timeout ]; then
+            echo "::error::Cosmos DB Emulator write path did not become ready within ${timeout}s"
+            exit 1
+          fi
+          echo "Emulator is fully warmed up and ready for tests."
 
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
@@ -134,6 +182,48 @@ jobs:
             Write-Host "  Waiting... (${elapsed}s)"
           }
           if ($elapsed -ge $timeout) { Write-Error "Emulator did not start"; exit 1 }
+
+      - name: Warm up Cosmos DB Emulator
+        shell: pwsh
+        run: |
+          # The HTTP health endpoint being up does NOT mean the write path is ready.
+          # Warm up by creating the test database with retries.
+          Write-Host "Warming up emulator — creating parity-validation database..."
+          $key = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+          $endpoint = "https://localhost:8081"
+          $timeout = 120; $elapsed = 0
+          while ($elapsed -lt $timeout) {
+            try {
+              $now = [DateTime]::UtcNow.ToString("r")
+              $payload = "post`ndbs`n`n$($now.ToLowerInvariant())`n`n"
+              $hmac = New-Object System.Security.Cryptography.HMACSHA256
+              $hmac.Key = [Convert]::FromBase64String($key)
+              $sig = [Convert]::ToBase64String($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($payload)))
+              $auth = [Uri]::EscapeDataString("type=master&ver=1.0&sig=$sig")
+
+              $headers = @{
+                "Authorization"  = $auth
+                "x-ms-version"   = "2018-12-31"
+                "x-ms-date"      = $now
+                "Content-Type"   = "application/json"
+              }
+              $r = Invoke-WebRequest -Uri "$endpoint/dbs" -Method POST `
+                -Headers $headers -Body '{"id":"parity-validation"}' `
+                -SkipCertificateCheck -SkipHttpErrorCheck -TimeoutSec 10 -ErrorAction Stop
+
+              if ($r.StatusCode -in 201, 409, 200) {
+                $msg = if ($r.StatusCode -eq 201) { "created" } elseif ($r.StatusCode -eq 409) { "already exists" } else { "OK" }
+                Write-Host "Database $msg after ${elapsed}s — emulator is ready"
+                break
+              }
+              Write-Host "Write path not ready yet (HTTP $($r.StatusCode)), retrying... (${elapsed}s)"
+            } catch {
+              Write-Host "Request failed: $($_.Exception.Message), retrying... (${elapsed}s)"
+            }
+            Start-Sleep 5; $elapsed += 5
+          }
+          if ($elapsed -ge $timeout) { Write-Error "Emulator write path did not become ready within ${timeout}s"; exit 1 }
+          Write-Host "Emulator is fully warmed up and ready for tests."
 
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
