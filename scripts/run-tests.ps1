@@ -85,6 +85,16 @@ foreach ($proj in $projects) {
         $testArgs += $filterExpr
     }
 
+    # Disable xUnit test-collection parallelism for emulator targets.
+    # The emulator (especially Linux) can crash when many test classes
+    # simultaneously create containers during startup. Running collections
+    # sequentially avoids this burst while tests within each class still
+    # run normally. In-memory targets keep full parallelism.
+    if ($Target -ne 'inmemory') {
+        $testArgs += '--'
+        $testArgs += 'xunit.parallelizeTestCollections=false'
+    }
+
     & dotnet @testArgs
     if ($LASTEXITCODE -ne 0) { $overallExit = $LASTEXITCODE }
 
