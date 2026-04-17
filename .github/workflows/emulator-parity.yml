@@ -36,7 +36,7 @@ jobs:
 
   test-emulator-linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
 
     services:
       cosmosdb:
@@ -84,9 +84,7 @@ jobs:
 
       - name: Run Tests (emulator-linux)
         shell: pwsh
-        run: >-
-          ./scripts/run-tests.ps1 -Target emulator-linux -Project integration
-          -Filter "FullyQualifiedName~Handler_CreateItem_And_ReadItem|FullyQualifiedName~Handler_DeleteItem|FullyQualifiedName~Handler_ReplaceItem|FullyQualifiedName~Query_InOperator|FullyQualifiedName~Linq_Where_Equal"
+        run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration
 
       - name: Upload TRX
         if: always()

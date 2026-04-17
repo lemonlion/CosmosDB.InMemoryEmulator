@@ -303,8 +303,15 @@ public class FakeCosmosHandlerCrudHardeningTests : IAsyncLifetime
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.KnownDivergence)]
     public async Task Handler_ReplaceItem_BodyIdMismatch_Throws400()
     {
+        // Known divergence: real Cosmos DB silently replaces the doc when body ID ≠ URL ID,
+        // while our in-memory emulator throws 400. Skip when running against a real emulator.
+        var target = Environment.GetEnvironmentVariable("COSMOS_TEST_TARGET")?.ToLowerInvariant();
+        if (target is "emulator-linux" or "emulator-windows")
+            Assert.Skip("Real Cosmos DB does not throw when body ID mismatches URL ID (known divergence).");
+
         var doc = new TestDocument { Id = "r1", PartitionKey = "pk1", Name = "Original" };
         await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
