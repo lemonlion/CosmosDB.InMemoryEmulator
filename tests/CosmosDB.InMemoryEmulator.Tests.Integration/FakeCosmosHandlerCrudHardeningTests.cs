@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text;
 using AwesomeAssertions;
-using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;

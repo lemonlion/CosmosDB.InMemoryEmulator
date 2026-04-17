@@ -24,6 +24,10 @@
 </ItemGroup>
 
 <ItemGroup>
+<Using Include="CosmosDB.InMemoryEmulator.Tests.Infrastructure" />
+</ItemGroup>
+
+<ItemGroup>
 <ProjectReference Include="..\CosmosDB.InMemoryEmulator.Tests.Shared\CosmosDB.InMemoryEmulator.Tests.Shared.csproj" />
 </ItemGroup>
 

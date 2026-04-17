@@ -5,7 +5,6 @@ using CosmosDB.InMemoryEmulator.ProductionExtensions;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
 using Xunit;
-using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 

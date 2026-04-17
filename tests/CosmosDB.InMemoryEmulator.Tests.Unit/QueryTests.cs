@@ -4,7 +4,6 @@ using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using Xunit;
 using System.Text;
-using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 

@@ -7,7 +7,6 @@ using Newtonsoft.Json;
 using Xunit;
 using System.Text;
 using Newtonsoft.Json.Linq;
-using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 

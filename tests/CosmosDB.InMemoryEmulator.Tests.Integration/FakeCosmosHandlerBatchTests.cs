@@ -1,7 +1,6 @@
 using System.Net;
 using System.Reflection;
 using AwesomeAssertions;
-using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Serialization.HybridRow;
 using Microsoft.Azure.Cosmos.Serialization.HybridRow.IO;

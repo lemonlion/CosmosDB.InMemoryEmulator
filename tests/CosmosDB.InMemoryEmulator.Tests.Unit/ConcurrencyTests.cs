@@ -5,7 +5,6 @@ using System.Collections.ObjectModel;
 using System.Net;
 using System.Text;
 using Xunit;
-using CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 namespace CosmosDB.InMemoryEmulator.Tests;
 
