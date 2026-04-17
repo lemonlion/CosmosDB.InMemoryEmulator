@@ -47,7 +47,7 @@ public class FakeCosmosHandlerQueryAdvancedTests : IAsyncLifetime
             new QueryDoc { Id = "5", PartitionKey = "pk1", Name = "Eve", Score = 40, Tags = [] },
         };
         foreach (var doc in docs)
-            await _container.UpsertItemAsync(doc, new PartitionKey(doc.PartitionKey));
+            await _container.CreateItemAsync(doc, new PartitionKey(doc.PartitionKey));
     }
 
     public async ValueTask DisposeAsync()
