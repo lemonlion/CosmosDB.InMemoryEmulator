@@ -1,7 +1,5 @@
-using System.Collections.Concurrent;
 using System.Net.Sockets;
 using Microsoft.Azure.Cosmos;
-using Newtonsoft.Json.Linq;
 
 namespace CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
@@ -12,12 +10,11 @@ namespace CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 ///
 /// Key strategies:
 ///   • Single shared CosmosClient for the entire test run
-///   • Container cache by name (one create per test class, not per method)
-///   • DisposeAsync deletes all items from containers used by this instance,
-///     so each test method starts with a clean container (consistent with
-///     InMemoryTestFixture which creates a fresh backing store per test)
-///   • Self-warm-up: proves write-path readiness by creating a throwaway
-///     container before any real test containers are created
+///   • Each test gets a uniquely-named container (base name + short GUID),
+///     so no per-test item cleanup is needed and queries like
+///     "SELECT * FROM c" always see only the current test's data
+///   • Self-warm-up: proves write-path readiness by writing and reading
+///     a document before any real test containers are created
 ///   • Patient retry with exponential backoff for all transient emulator errors
 /// </summary>
 public sealed class EmulatorTestFixture : ITestContainerFixture
@@ -25,18 +22,19 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
     private const string DefaultEndpoint = "https://localhost:8081";
     private const string Key = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
     private const string DatabaseName = "parity-validation";
-    private const int MaxRetries = 30;
+    private const int MaxRetries = 10;
     private const double MaxBackoffSeconds = 10;
-    private static readonly TimeSpan ContainerCreationCooldown = TimeSpan.FromSeconds(2);
+    private const int WarmupMaxRetries = 30;
+    private const double WarmupMaxBackoffSeconds = 15;
 
     private static CosmosClient? _sharedClient;
     private static Database? _sharedDatabase;
     private static bool _warmUpComplete;
-    private static readonly ConcurrentDictionary<string, CachedContainer> _containerCache = new();
+    private static Exception? _warmUpFailure;
     private static readonly SemaphoreSlim _initLock = new(1, 1);
     private static string _resolvedEndpoint = DefaultEndpoint;
 
-    private readonly List<string> _usedContainers = [];
+    private readonly List<string> _createdContainers = [];
 
     public TestTarget Target { get; }
     public bool IsEmulator => true;
@@ -48,108 +46,92 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
             _resolvedEndpoint = endpoint;
     }
 
-    public async Task<Container> CreateContainerAsync(
+    public Task<Container> CreateContainerAsync(
         string containerName,
         string partitionKeyPath,
         Action<ContainerProperties>? configure = null)
-    {
-        _usedContainers.Add(containerName);
+        => CreateContainerCoreAsync(containerName, name => new ContainerProperties(name, partitionKeyPath), configure);
 
-        if (_containerCache.TryGetValue(containerName, out var cached))
-            return cached.Container;
-
-        await _initLock.WaitAsync();
-        try
-        {
-            if (_containerCache.TryGetValue(containerName, out cached))
-                return cached.Container;
-
-            await EnsureWarmAsync();
-
-            var props = new ContainerProperties(containerName, partitionKeyPath);
-            configure?.Invoke(props);
-            var container = await CreateContainerCoreAsync(props);
-            _containerCache.TryAdd(containerName, new CachedContainer(container, [partitionKeyPath]));
-            return container;
-        }
-        finally
-        {
-            _initLock.Release();
-        }
-    }
-
-    public async Task<Container> CreateContainerAsync(
+    public Task<Container> CreateContainerAsync(
         string containerName,
         IReadOnlyList<string> partitionKeyPaths,
         Action<ContainerProperties>? configure = null)
-    {
-        _usedContainers.Add(containerName);
-
-        if (_containerCache.TryGetValue(containerName, out var cached))
-            return cached.Container;
-
-        await _initLock.WaitAsync();
-        try
-        {
-            if (_containerCache.TryGetValue(containerName, out cached))
-                return cached.Container;
-
-            await EnsureWarmAsync();
-
-            var props = new ContainerProperties(containerName, partitionKeyPaths);
-            configure?.Invoke(props);
-            var container = await CreateContainerCoreAsync(props);
-            _containerCache.TryAdd(containerName, new CachedContainer(container, partitionKeyPaths));
-            return container;
-        }
-        finally
-        {
-            _initLock.Release();
-        }
-    }
+        => CreateContainerCoreAsync(containerName, name => new ContainerProperties(name, partitionKeyPaths), configure);
 
     /// <summary>
     /// Ensures the emulator's write path is fully ready. Creates the database
-    /// and a throwaway container, absorbing the initial 503s that the emulator
-    /// returns while its partition services are still starting up.
+    /// and a warmup container, then writes and reads a document to prove the
+    /// full read/write path is operational — absorbing the initial 503s that
+    /// the emulator returns while its partition services are still starting up.
     /// </summary>
     private static async Task EnsureWarmAsync()
     {
         if (_warmUpComplete) return;
+        if (_warmUpFailure != null)
+            throw new InvalidOperationException("Emulator warmup failed previously. See inner exception.", _warmUpFailure);
 
-        var client = GetOrCreateClient();
-
-        Console.WriteLine("[EmulatorTestFixture] Warming up emulator write path...");
-
-        _sharedDatabase = (await RetryAsync(
-            () => client.CreateDatabaseIfNotExistsAsync(DatabaseName),
-            "CreateDatabase")).Database;
-
-        var warmupProps = new ContainerProperties("_warmup", "/id");
-        await RetryAsync(
-            () => _sharedDatabase.CreateContainerIfNotExistsAsync(warmupProps),
-            "WarmupContainer");
-
+        await _initLock.WaitAsync();
         try
         {
-            await _sharedDatabase.GetContainer("_warmup").DeleteContainerAsync();
-        }
-        catch
-        {
-            // Best-effort cleanup
-        }
+            if (_warmUpComplete) return;
+            if (_warmUpFailure != null)
+                throw new InvalidOperationException("Emulator warmup failed previously. See inner exception.", _warmUpFailure);
 
-        Console.WriteLine("[EmulatorTestFixture] Emulator write path is ready.");
-        _warmUpComplete = true;
+            var client = GetOrCreateClient();
+
+            Console.WriteLine("[EmulatorTestFixture] Warming up emulator write path...");
+
+            _sharedDatabase = (await RetryAsync(
+                () => client.CreateDatabaseIfNotExistsAsync(DatabaseName),
+                "CreateDatabase", WarmupMaxRetries, WarmupMaxBackoffSeconds)).Database;
+
+            // Use a unique container name to force a real creation, not a no-op IfNotExists
+            var warmupName = $"_warmup-{Guid.NewGuid():N}";
+            var warmupProps = new ContainerProperties(warmupName, "/id");
+            var warmup = (await RetryAsync(
+                () => _sharedDatabase.CreateContainerIfNotExistsAsync(warmupProps),
+                "WarmupContainer", WarmupMaxRetries, WarmupMaxBackoffSeconds)).Container;
+
+            // Prove the full read/write path is operational
+            await RetryAsync(
+                () => warmup.UpsertItemAsync(new { id = "probe", value = 1 }),
+                "WarmupWrite", WarmupMaxRetries, WarmupMaxBackoffSeconds);
+            await RetryAsync(
+                () => warmup.ReadItemAsync<object>("probe", new PartitionKey("probe")),
+                "WarmupRead", WarmupMaxRetries, WarmupMaxBackoffSeconds);
+
+            // Clean up the warmup container
+            try { await warmup.DeleteContainerAsync(); } catch { }
+
+            Console.WriteLine("[EmulatorTestFixture] Emulator write path is ready.");
+            _warmUpComplete = true;
+        }
+        catch (Exception ex)
+        {
+            _warmUpFailure = ex;
+            Console.WriteLine($"[EmulatorTestFixture] Warmup FAILED after exhausting retries: {ex.Message}");
+            throw;
+        }
+        finally
+        {
+            _initLock.Release();
+        }
     }
 
-    private static async Task<Container> CreateContainerCoreAsync(ContainerProperties props)
+    private async Task<Container> CreateContainerCoreAsync(
+        string containerName, Func<string, ContainerProperties> propsFactory, Action<ContainerProperties>? configure)
     {
-        var container = (await RetryAsync(
+        await EnsureWarmAsync();
+
+        var uniqueName = $"{containerName}-{Guid.NewGuid():N}";
+        _createdContainers.Add(uniqueName);
+
+        var props = propsFactory(uniqueName);
+        configure?.Invoke(props);
+
+        return (await RetryAsync(
             () => _sharedDatabase!.CreateContainerIfNotExistsAsync(props),
             $"CreateContainer({props.Id})")).Container;
-        await Task.Delay(ContainerCreationCooldown);
-        return container;
     }
 
     private static CosmosClient GetOrCreateClient()
@@ -163,8 +145,8 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
         {
             ConnectionMode = ConnectionMode.Gateway,
             MaxRetryAttemptsOnRateLimitedRequests = 5,
-            MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromSeconds(30),
-            RequestTimeout = TimeSpan.FromSeconds(65),
+            MaxRetryWaitTimeOnRateLimitedRequests = TimeSpan.FromSeconds(20),
+            RequestTimeout = TimeSpan.FromSeconds(10),
         };
 
         if (isHttps)
@@ -175,14 +157,18 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
                     ServerCertificateCustomValidationCallback =
                         HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
                 })
-            { Timeout = TimeSpan.FromSeconds(65) };
+            { Timeout = TimeSpan.FromSeconds(10) };
         }
 
         _sharedClient = new CosmosClient(endpoint, Key, options);
         return _sharedClient;
     }
 
-    private static async Task<T> RetryAsync<T>(Func<Task<T>> operation, string operationName)
+    private static Task<T> RetryAsync<T>(Func<Task<T>> operation, string operationName) =>
+        RetryAsync(operation, operationName, MaxRetries, MaxBackoffSeconds);
+
+    private static async Task<T> RetryAsync<T>(
+        Func<Task<T>> operation, string operationName, int maxRetries, double maxBackoffSeconds)
     {
         for (var attempt = 0; ; attempt++)
         {
@@ -190,11 +176,11 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
             {
                 return await operation();
             }
-            catch (Exception ex) when (attempt < MaxRetries && IsTransient(ex))
+            catch (Exception ex) when (attempt < maxRetries && IsTransient(ex))
             {
-                var delay = GetBackoff(attempt);
+                var delay = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt), maxBackoffSeconds));
                 Console.WriteLine(
-                    $"[EmulatorTestFixture] {operationName} attempt {attempt + 1} failed " +
+                    $"[EmulatorTestFixture] {operationName} attempt {attempt + 1}/{maxRetries} failed " +
                     $"({ex.GetType().Name}), retrying in {delay.TotalSeconds:F0}s...");
                 await Task.Delay(delay);
             }
@@ -214,71 +200,19 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
         _ => ex.InnerException != null && IsTransient(ex.InnerException),
     };
 
-    private static TimeSpan GetBackoff(int attempt) =>
-        TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt), MaxBackoffSeconds));
-
     public async ValueTask DisposeAsync()
     {
-        foreach (var name in _usedContainers)
+        foreach (var name in _createdContainers)
         {
-            if (_containerCache.TryGetValue(name, out var entry))
+            try
             {
-                try
-                {
-                    await DeleteAllItemsAsync(entry.Container, entry.PartitionKeyPaths);
-                }
-                catch
-                {
-                    // Best-effort cleanup
-                }
+                await _sharedDatabase!.GetContainer(name).DeleteContainerAsync();
+            }
+            catch
+            {
+                // Best-effort cleanup — container may already be gone
             }
         }
-        _usedContainers.Clear();
+        _createdContainers.Clear();
     }
-
-    private static async Task DeleteAllItemsAsync(Container container, IReadOnlyList<string> partitionKeyPaths)
-    {
-        var iterator = container.GetItemQueryIterator<JObject>("SELECT * FROM c");
-        while (iterator.HasMoreResults)
-        {
-            var page = await iterator.ReadNextAsync();
-            foreach (var item in page)
-            {
-                var id = item["id"]!.Value<string>()!;
-                var pk = BuildPartitionKey(item, partitionKeyPaths);
-                await container.DeleteItemStreamAsync(id, pk);
-            }
-        }
-    }
-
-    private static PartitionKey BuildPartitionKey(JObject item, IReadOnlyList<string> paths)
-    {
-        if (paths.Count == 1)
-        {
-            var token = item[paths[0].TrimStart('/')]!;
-            return token.Type switch
-            {
-                JTokenType.String => new PartitionKey(token.Value<string>()),
-                JTokenType.Integer or JTokenType.Float => new PartitionKey(token.Value<double>()),
-                JTokenType.Boolean => new PartitionKey(token.Value<bool>()),
-                _ => PartitionKey.Null,
-            };
-        }
-
-        var builder = new PartitionKeyBuilder();
-        foreach (var path in paths)
-        {
-            var token = item[path.TrimStart('/')];
-            switch (token?.Type)
-            {
-                case JTokenType.String: builder.Add(token.Value<string>()); break;
-                case JTokenType.Integer or JTokenType.Float: builder.Add(token.Value<double>()); break;
-                case JTokenType.Boolean: builder.Add(token.Value<bool>()); break;
-                default: builder.AddNullValue(); break;
-            }
-        }
-        return builder.Build();
-    }
-
-    private record CachedContainer(Container Container, IReadOnlyList<string> PartitionKeyPaths);
 }
