@@ -1,21 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFrameworks>net8.0;net10.0</TargetFrameworks>
-		<Nullable>enable</Nullable>
-		<ImplicitUsings>enable</ImplicitUsings>
-		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-		<IsPackable>true</IsPackable>
 		<PackageId>CosmosDB.InMemoryEmulator.ProductionExtensions</PackageId>
-		<Version>2.0.189</Version>
 		<Description>Production-safe extension methods for Azure Cosmos DB that enable seamless in-memory testing via CosmosDB.InMemoryEmulator.</Description>
 		<AzureCosmosDisableNewtonsoftJsonCheck>true</AzureCosmosDisableNewtonsoftJsonCheck>
-		<PackageIcon>icon.png</PackageIcon>
 	</PropertyGroup>
-
-	<ItemGroup>
-		<None Include="..\..\icon.png" Pack="true" PackagePath="\" />
-	</ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.58.0" />
