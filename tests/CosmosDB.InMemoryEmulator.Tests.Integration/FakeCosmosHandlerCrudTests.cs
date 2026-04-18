@@ -367,7 +367,7 @@ public class FakeCosmosHandlerCrudTests(EmulatorSession session) : IAsyncLifetim
     [Fact]
     public async Task Handler_MultiContainer_CrudIsolated()
     {
-        var cA = await _fixture.CreateContainerAsync("containerA", "/partitionKey");
+        var cA = _container; // reuse per-test container to stay within CI's 3-partition limit
         var cB = await _fixture.CreateContainerAsync("containerB", "/partitionKey");
 
         // Create in A
