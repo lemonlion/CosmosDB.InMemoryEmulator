@@ -105,15 +105,26 @@ public sealed class EmulatorSession : IAsyncLifetime
     }
 
     /// <summary>
-    /// Limits the number of in-flight HTTP requests to the emulator. The Cosmos
-    /// SDK fans out requests aggressively (bulk writes, query parallelism) and
-    /// the Dockerized Linux emulator 429s or 503s when pushed past its
-    /// partition-service capacity. Rather than tune each test, we cap at the
-    /// HTTP layer — transparent to both SDK retry and individual tests.
+    /// Limits the number of in-flight HTTP requests to the emulator and
+    /// short-circuits all requests once the emulator is confirmed dead.
+    /// The Cosmos SDK fans out requests aggressively (bulk writes, query
+    /// parallelism) and the Dockerized Linux emulator 429s or 503s when
+    /// pushed past its partition-service capacity. Rather than tune each
+    /// test, we cap at the HTTP layer — transparent to both SDK retry and
+    /// individual tests.
+    ///
+    /// When the emulator crashes, the SDK's own retry loop (15 attempts,
+    /// 60s wait) burns through minutes per test. The circuit breaker here
+    /// detects consecutive connection-refused errors and immediately fails
+    /// all subsequent requests so the test run aborts quickly.
     /// </summary>
     private sealed class ConcurrencyGateHandler : DelegatingHandler
     {
+        private const int CircuitBreakerThreshold = 3;
+
         private readonly SemaphoreSlim _gate;
+        private int _consecutiveConnectionRefused;
+        private volatile bool _emulatorDead;
 
         public ConcurrencyGateHandler(SemaphoreSlim gate, HttpMessageHandler inner) : base(inner)
         {
@@ -123,16 +134,38 @@ public sealed class EmulatorSession : IAsyncLifetime
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (_emulatorDead)
+                throw new HttpRequestException(
+                    "Emulator circuit breaker tripped — the emulator process has crashed. " +
+                    "All further requests are short-circuited.");
+
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                Interlocked.Exchange(ref _consecutiveConnectionRefused, 0);
+                return response;
+            }
+            catch (HttpRequestException ex) when (IsConnectionRefused(ex))
+            {
+                if (Interlocked.Increment(ref _consecutiveConnectionRefused) >= CircuitBreakerThreshold)
+                {
+                    _emulatorDead = true;
+                    Console.WriteLine(
+                        "[ConcurrencyGateHandler] Circuit breaker tripped after " +
+                        $"{CircuitBreakerThreshold} consecutive connection-refused errors. " +
+                        "The emulator process appears to have crashed.");
+                }
+                throw;
             }
             finally
             {
                 _gate.Release();
             }
         }
+
+        private static bool IsConnectionRefused(HttpRequestException ex) =>
+            ex.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionRefused };
     }
 }
 
