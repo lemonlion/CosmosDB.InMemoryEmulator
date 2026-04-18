@@ -74,4 +74,6 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ steps.version.outputs.PRERELEASE == 'true' }}
           make_latest: ${{ steps.version.outputs.PRERELEASE != 'true' }}
-          files: ./nupkgs/*.nupkg
+          files: |
+            ./nupkgs/*.nupkg
+            ./nupkgs/*.snupkg
