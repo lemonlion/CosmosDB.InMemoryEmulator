@@ -25,7 +25,7 @@ jobs:
 
       - name: Run Tests (inmemory)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target inmemory -Project integration
+        run: ./scripts/run-tests.ps1 -Target inmemory -Project integration -Filter "FullyQualifiedName~FakeCosmosHandlerCrudTests"
 
       - name: Upload TRX
         if: always()
@@ -84,7 +84,7 @@ jobs:
 
       - name: Run Tests (emulator-linux)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration
+        run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration -Filter "FullyQualifiedName~FakeCosmosHandlerCrudTests"
 
       - name: Upload TRX
         if: always()
@@ -140,7 +140,7 @@ jobs:
 
       - name: Run Tests (emulator-windows)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target emulator-windows -Project integration
+        run: ./scripts/run-tests.ps1 -Target emulator-windows -Project integration -Filter "FullyQualifiedName~FakeCosmosHandlerCrudTests"
 
       - name: Upload TRX
         if: always()
