@@ -154,17 +154,44 @@ public static class IntegrationCollection
 /// </summary>
 internal static class EmulatorRetry
 {
+    /// <summary>
+    /// Number of consecutive connection-refused errors before we assume the
+    /// emulator has crashed and abort immediately instead of burning through
+    /// the full retry budget against a dead process.
+    /// </summary>
+    private const int ConnectionRefusedCircuitBreakerThreshold = 3;
+
     public static async Task<T> RunAsync<T>(
         Func<Task<T>> operation, string operationName, int maxRetries = 10, double maxBackoffSeconds = 10)
     {
+        var consecutiveConnectionRefused = 0;
+
         for (var attempt = 0; ; attempt++)
         {
             try
             {
-                return await operation();
+                var result = await operation();
+                consecutiveConnectionRefused = 0;
+                return result;
             }
             catch (Exception ex) when (attempt < maxRetries && IsTransient(ex))
             {
+                if (IsConnectionRefused(ex))
+                {
+                    consecutiveConnectionRefused++;
+                    if (consecutiveConnectionRefused >= ConnectionRefusedCircuitBreakerThreshold)
+                    {
+                        throw new InvalidOperationException(
+                            $"[EmulatorRetry] {operationName}: aborting after " +
+                            $"{consecutiveConnectionRefused} consecutive connection-refused errors. " +
+                            "The emulator process appears to have crashed.", ex);
+                    }
+                }
+                else
+                {
+                    consecutiveConnectionRefused = 0;
+                }
+
                 var delay = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt), maxBackoffSeconds));
                 Console.WriteLine(
                     $"[EmulatorRetry] {operationName} attempt {attempt + 1}/{maxRetries} failed " +
@@ -181,8 +208,23 @@ internal static class EmulatorRetry
             System.Net.HttpStatusCode.InternalServerError or
             System.Net.HttpStatusCode.RequestTimeout or
             System.Net.HttpStatusCode.TooManyRequests,
-        HttpRequestException => true,
-        SocketException => true,
+        HttpRequestException hre => !IsConnectionRefusedCore(hre),
+        SocketException se => se.SocketErrorCode is not SocketError.ConnectionRefused,
         _ => ex.InnerException != null && IsTransient(ex.InnerException),
     };
+
+    /// <summary>
+    /// Checks the full exception chain for connection-refused indicators.
+    /// Connection refused means the emulator port has no listener — the
+    /// process is dead, not temporarily overloaded.
+    /// </summary>
+    private static bool IsConnectionRefused(Exception ex) => ex switch
+    {
+        HttpRequestException hre => IsConnectionRefusedCore(hre),
+        SocketException se => se.SocketErrorCode is SocketError.ConnectionRefused,
+        _ => ex.InnerException != null && IsConnectionRefused(ex.InnerException),
+    };
+
+    private static bool IsConnectionRefusedCore(HttpRequestException hre) =>
+        hre.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionRefused };
 }
