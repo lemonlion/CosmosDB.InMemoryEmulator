@@ -85,6 +85,12 @@ foreach ($proj in $projects) {
         $testArgs += $filterExpr
     }
 
+    # Disable parallel test collections for emulator targets to avoid overwhelming the emulator
+    if ($Target -ne 'inmemory') {
+        $testArgs += '--'
+        $testArgs += 'xunit.parallelizeTestCollections=false'
+    }
+
     & dotnet @testArgs
     if ($LASTEXITCODE -ne 0) { $overallExit = $LASTEXITCODE }
 

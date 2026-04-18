@@ -12,9 +12,10 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Parity-validated: runs against both FakeCosmosHandler (in-memory) and real emulator.
 /// Tests tagged [Trait(TestTraits.Target, TestTraits.InMemoryOnly)] are excluded from emulator runs.
 /// </summary>
-public class FakeCosmosHandlerCrudTests : IAsyncLifetime
+[Collection(IntegrationCollection.Name)]
+public class FakeCosmosHandlerCrudTests(EmulatorSession session) : IAsyncLifetime
 {
-    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create(session);
     private Container _container = null!;
 
     public async ValueTask InitializeAsync()
@@ -366,7 +367,7 @@ public class FakeCosmosHandlerCrudTests : IAsyncLifetime
     [Fact]
     public async Task Handler_MultiContainer_CrudIsolated()
     {
-        var cA = await _fixture.CreateContainerAsync("containerA", "/partitionKey");
+        var cA = _container; // reuse per-test container to stay within CI's 3-partition limit
         var cB = await _fixture.CreateContainerAsync("containerB", "/partitionKey");
 
         // Create in A

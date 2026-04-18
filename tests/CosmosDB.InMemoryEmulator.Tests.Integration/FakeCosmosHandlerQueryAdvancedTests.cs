@@ -14,7 +14,8 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Parity-validated: string/math/array/type/aggregate/subquery/parameterized tests run against both backends.
 /// Vector, FTS, and geospatial tests create inline containers and are tagged InMemoryOnly.
 /// </summary>
-public class FakeCosmosHandlerQueryAdvancedTests : IAsyncLifetime
+[Collection(IntegrationCollection.Name)]
+public class FakeCosmosHandlerQueryAdvancedTests(EmulatorSession session) : IAsyncLifetime
 {
     private class QueryDoc
     {
@@ -27,7 +28,7 @@ public class FakeCosmosHandlerQueryAdvancedTests : IAsyncLifetime
         [JsonProperty("nested")] public NestedObject? Nested { get; set; }
     }
 
-    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create(session);
     private Container _container = null!;
 
     public async ValueTask InitializeAsync()

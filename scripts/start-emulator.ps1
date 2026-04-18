@@ -1,6 +1,8 @@
 <#
 .SYNOPSIS
-    Starts the Cosmos DB emulator in Docker and waits for readiness.
+    Starts the Cosmos DB emulator in Docker and waits for the HTTP endpoint.
+    The test fixture (EmulatorSession) handles data-plane warmup — this script
+    intentionally does not probe database / container creation.
 .PARAMETER Image
     Docker image to use. Defaults to legacy emulator (HTTPS).
     Use 'mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview' for the vnext HTTP variant.
@@ -30,19 +32,28 @@ if ($existing -eq $ContainerName) {
     return
 }
 
-# Remove stopped container with same name
-docker rm -f $ContainerName 2>$null | Out-Null
+# Remove stopped container with same name. `docker rm` writes to stderr when
+# the container does not exist, which under Windows PowerShell 5.1 with
+# $ErrorActionPreference=Stop is treated as a terminating error — so we
+# wrap in try/catch and swallow it.
+try {
+    docker rm -f -v $ContainerName 2>$null | Out-Null
+} catch {
+    # Container didn't exist — nothing to remove.
+}
 
 Write-Host "Starting emulator ($Image)..." -ForegroundColor Cyan
 docker run --detach --name $ContainerName `
     --publish "${Port}:8081" `
     --publish "20250-20256:10250-10256" `
-    --env AZURE_COSMOS_EMULATOR_PARTITION_COUNT=3 `
+    --env AZURE_COSMOS_EMULATOR_PARTITION_COUNT=10 `
     --env AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE=false `
     --env AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE=127.0.0.1 `
     $Image | Out-Null
 
-# Wait for readiness — detect protocol from image name
+# Wait for HTTP endpoint readiness — detect protocol from image name.
+# Data-plane readiness (database / container creation) is the fixture's job:
+# the first CreateContainer call retries through partition-service startup.
 $protocol = if ($Image -like '*vnext*') { 'http' } else { 'https' }
 $elapsed = 0
 while ($elapsed -lt $TimeoutSeconds) {
@@ -50,8 +61,7 @@ while ($elapsed -lt $TimeoutSeconds) {
         $response = Invoke-WebRequest -Uri "${protocol}://localhost:${Port}/" `
             -SkipCertificateCheck -SkipHttpErrorCheck -TimeoutSec 3 -ErrorAction Stop
         if ($response.StatusCode -in 200, 401) {
-            Write-Host "Emulator ready after ${elapsed}s (HTTP $($response.StatusCode))" -ForegroundColor Green
-            Start-Sleep 5  # Small buffer for internal initialization
+            Write-Host "HTTP endpoint ready after ${elapsed}s (HTTP $($response.StatusCode))" -ForegroundColor Green
             return
         }
     } catch {
@@ -62,5 +72,5 @@ while ($elapsed -lt $TimeoutSeconds) {
     Write-Host "  Waiting for emulator... (${elapsed}s / ${TimeoutSeconds}s)"
 }
 
-Write-Error "Emulator did not become ready within ${TimeoutSeconds}s"
+Write-Error "Emulator HTTP endpoint did not become ready within ${TimeoutSeconds}s"
 exit 1

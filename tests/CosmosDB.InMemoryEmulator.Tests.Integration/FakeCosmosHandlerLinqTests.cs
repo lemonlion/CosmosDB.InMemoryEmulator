@@ -11,9 +11,10 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Tests for LINQ queries through FakeCosmosHandler (SDK translates LINQ → SQL → HTTP → handler).
 /// Parity-validated: runs against both FakeCosmosHandler (in-memory) and real emulator.
 /// </summary>
-public class FakeCosmosHandlerLinqTests : IAsyncLifetime
+[Collection(IntegrationCollection.Name)]
+public class FakeCosmosHandlerLinqTests(EmulatorSession session) : IAsyncLifetime
 {
-    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create(session);
     private Container _container = null!;
 
     public async ValueTask InitializeAsync()
