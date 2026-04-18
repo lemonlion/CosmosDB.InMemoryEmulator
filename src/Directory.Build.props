@@ -14,8 +14,19 @@
 		<PackageIcon>icon.png</PackageIcon>
 	</PropertyGroup>
 
+	<!-- Source Link: let consumers step into our source while debugging -->
+	<PropertyGroup>
+		<PublishRepositoryUrl>true</PublishRepositoryUrl>
+		<EmbedUntrackedSources>true</EmbedUntrackedSources>
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<!-- Normalize embedded source paths + enforce deterministic pack on CI only; local builds keep absolute paths so IDE F5 debugging works -->
+		<ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+	</PropertyGroup>
+
 	<ItemGroup>
 		<None Include="$(MSBuildThisFileDirectory)..\icon.png" Pack="true" PackagePath="\" />
+		<PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
 	</ItemGroup>
 
 </Project>

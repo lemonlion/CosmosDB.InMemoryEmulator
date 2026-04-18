@@ -1,10 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-	<PropertyGroup>
-		<NoWarn>xUnit1051</NoWarn>
-		<IsPackable>false</IsPackable>
-	</PropertyGroup>
-
 	<ItemGroup>
 		<Using Include="CosmosDB.InMemoryEmulator.Tests.Infrastructure" />
 	</ItemGroup>
