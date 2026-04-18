@@ -1,4 +1,4 @@
-# CosmosDB InMemoryEmulator
+# <img src="icon.svg" width="32" height="32" alt="CosmosDB.InMemoryEmulator icon" style="vertical-align: middle;"> CosmosDB.InMemoryEmulator
 
 [![NuGet](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator.svg)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/CosmosDB.InMemoryEmulator.svg)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator)
