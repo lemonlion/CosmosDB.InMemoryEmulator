@@ -1,0 +1,21 @@
+<Project>
+
+	<Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..'))" />
+
+	<!-- Shared NuGet package metadata for all source (packable) projects -->
+	<PropertyGroup>
+		<IsPackable>true</IsPackable>
+		<Version>2.0.189</Version>
+		<Authors>lemonlion</Authors>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageProjectUrl>https://github.com/lemonlion/CosmosDB.InMemoryEmulator</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/lemonlion/CosmosDB.InMemoryEmulator</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageIcon>icon.png</PackageIcon>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<None Include="$(MSBuildThisFileDirectory)..\icon.png" Pack="true" PackagePath="\" />
+	</ItemGroup>
+
+</Project>
