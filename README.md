@@ -51,7 +51,7 @@ using var client = new CosmosClient(
 var cosmosContainer = client.GetContainer("db", "my-container");
 ```
 
-Alternatively - the following to are slightly more limited usages, but still fully functional.
+Alternatively - the following two are slightly more limited usages, but still fully functional.
 They require the use of `.ToFeedIteratorOverrideable()` wherever `.ToFeedIterator()` is used, 
 and have some minor differences (e.g. use of LINQ to objects for querying) - [see here for more details](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Integration-Approaches).
 
@@ -111,8 +111,8 @@ For the full feature list see [Features](https://github.com/lemonlion/CosmosDB.I
 | Framework | Package | Description | NuGet |
 |---|---|---|---|
 | **Core library** | `CosmosDB.InMemoryEmulator` | Primary Features | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator) |
-| **JavaScript Triggers** | `CosmosDB.InMemoryEmulator.JsTriggers` | Support for JS Triggers | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.JsTriggers) |
-| **Production Extensions** | `CosmosDB.InMemoryEmulator.ProductionExtensions` | Support for use of the *optional* `.ToFeedIteratorOverridable()` alternative to the native `.ToFeedIterator()`* | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.ProductionExtensions) |
+| **JavaScript Triggers** | `CosmosDB.InMemoryEmulator.JsTriggers` | Support for JS Triggers | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator.JsTriggers)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.JsTriggers) |
+| **Production Extensions** | `CosmosDB.InMemoryEmulator.ProductionExtensions` | Support for use of the *optional* `.ToFeedIteratorOverridable()` alternative to the native `.ToFeedIterator()`* | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator.ProductionExtensions)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.ProductionExtensions) |
 
 * Native `.ToFeedIterator()` method works without any problems, there are just occasionally some advantages to using `.ToFeedIteratorOverridable()`, hence why this optional package is supplied.  See [Feed Iterator Usage](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feed-Iterator-Usage-Guide).
 

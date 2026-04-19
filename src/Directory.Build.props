@@ -1,0 +1,12 @@
+<Project>
+
+	<PropertyGroup>
+		<Authors>lemonlion</Authors>
+		<Copyright>Copyright (c) 2026 lemonlion</Copyright>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageProjectUrl>https://github.com/lemonlion/CosmosDB.InMemoryEmulator</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/lemonlion/CosmosDB.InMemoryEmulator</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+	</PropertyGroup>
+
+</Project>
