@@ -289,6 +289,7 @@ public class InMemoryCosmosClient : CosmosClient
                     container.Dispose();
         }
         _disposed = true;
+        base.Dispose(disposing);
     }
 
     private void ThrowIfDisposed()
