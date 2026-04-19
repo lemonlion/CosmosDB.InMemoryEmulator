@@ -1,0 +1,11 @@
+<Project>
+
+	<Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..'))" />
+
+	<!-- Shared settings for all test projects -->
+	<PropertyGroup>
+		<IsPackable>false</IsPackable>
+		<NoWarn>$(NoWarn);xUnit1051</NoWarn>
+	</PropertyGroup>
+
+</Project>

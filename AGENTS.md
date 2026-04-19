@@ -14,11 +14,7 @@
 
 ## Versioning & Release
 
-- After every session of bug fixes is complete and the full test suite has passed, increment the patch version in **all** packages (not just the main one):
-  - `src/CosmosDB.InMemoryEmulator/CosmosDB.InMemoryEmulator.csproj`
-  - `src/CosmosDB.InMemoryEmulator.JsTriggers/CosmosDB.InMemoryEmulator.JsTriggers.csproj`
-  - `src/CosmosDB.InMemoryEmulator.ProductionExtensions/CosmosDB.InMemoryEmulator.ProductionExtensions.csproj`
-- All three packages must use the same version number.
+- After every session of bug fixes is complete and the full test suite has passed, increment the patch version in `src/Directory.Build.props` (the single `<Version>` property shared by all three packages).
 - **On `main`:** Commit, create a git tag (`v{version}`), and push both the commit and the tag to origin.
 - **On any other branch:** Commit and push the code changes and version bump only. Do not create or push a tag.
 
