@@ -10,7 +10,7 @@ on:
 # workflow still completes without infra failures (partition exhaustion,
 # connection-refused storms, timeouts) before adding the next.
 env:
-  PARITY_FILTER: "FullyQualifiedName~FakeCosmosHandlerCrudTests|FullyQualifiedName~FakeCosmosHandlerTtlTests"
+  PARITY_FILTER: "FullyQualifiedName~FakeCosmosHandlerCrudTests|FullyQualifiedName~FakeCosmosHandlerTtlTests|FullyQualifiedName~FakeCosmosHandlerBatchTests"
   # Excluded (overloads Linux emulator with ServiceUnavailable 503/1007 — see run 24628925580):
   #   FakeCosmosHandlerPartitionKeyTests
 
