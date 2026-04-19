@@ -5,6 +5,13 @@ on:
     - cron: '0 6 * * 1'  # Weekly Monday 6am UTC
   workflow_dispatch:
 
+# Single source of truth for which integration test classes run against the
+# emulators. Expand this filter (OR with `|`) one class at a time and verify the
+# workflow still completes without infra failures (partition exhaustion,
+# connection-refused storms, timeouts) before adding the next.
+env:
+  PARITY_FILTER: "FullyQualifiedName~FakeCosmosHandlerCrudTests"
+
 jobs:
   test-inmemory:
     runs-on: ubuntu-latest
@@ -25,7 +32,7 @@ jobs:
 
       - name: Run Tests (inmemory)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target inmemory -Project integration -Filter "FullyQualifiedName~FakeCosmosHandlerCrudTests"
+        run: ./scripts/run-tests.ps1 -Target inmemory -Project integration -Filter $env:PARITY_FILTER
 
       - name: Upload TRX
         if: always()
@@ -84,7 +91,7 @@ jobs:
 
       - name: Run Tests (emulator-linux)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration -Filter "FullyQualifiedName~FakeCosmosHandlerCrudTests"
+        run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration -Filter $env:PARITY_FILTER
 
       - name: Upload TRX
         if: always()
@@ -140,7 +147,7 @@ jobs:
 
       - name: Run Tests (emulator-windows)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target emulator-windows -Project integration -Filter "FullyQualifiedName~FakeCosmosHandlerCrudTests"
+        run: ./scripts/run-tests.ps1 -Target emulator-windows -Project integration -Filter $env:PARITY_FILTER
 
       - name: Upload TRX
         if: always()
