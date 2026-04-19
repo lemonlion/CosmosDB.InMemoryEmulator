@@ -73,11 +73,12 @@ foreach ($test in $allTestNames) {
 }
 
 # --- Classify each test ---
-$fullParity = @()       # same outcome across ALL targets
-$suspects = @()         # inmemory passes, at least one emulator fails
-$emulatorGaps = @()     # inmemory fails, at least one emulator passes
-$platformDiverge = @()  # emulators disagree with each other (but not suspect/gap)
-$bothFail = @()         # fails everywhere
+$fullParity = @()              # same outcome across ALL targets
+$suspects = @()                # inmemory passes, at least one emulator fails
+$emulatorGaps = @()            # inmemory fails, at least one emulator passes
+$platformDiverge = @()         # emulators disagree with each other (but not suspect/gap)
+$skippedOnEmulators = @()      # inmemory ran the test but every emulator was filtered (e.g. InMemoryOnly trait)
+$other = @()                   # any leftover combination not covered above
 
 foreach ($row in $rows) {
     $im = $row.$baselineName
@@ -88,6 +89,7 @@ foreach ($row in $rows) {
     $anyEmFail = $emOutcomes | Where-Object { $_ -ne 'Passed' -and $_ -ne '-' }
     $anyEmPass = $emOutcomes | Where-Object { $_ -eq 'Passed' }
     $emulatorsDisagree = ($emOutcomes | Where-Object { $_ -ne '-' } | Sort-Object -Unique).Count -gt 1
+    $allEmSkipped = @($emOutcomes | Where-Object { $_ -ne '-' }).Count -eq 0
 
     if ($allSame) {
         $fullParity += $row
@@ -97,13 +99,19 @@ foreach ($row in $rows) {
         $emulatorGaps += $row
     } elseif ($emulatorsDisagree) {
         $platformDiverge += $row
+    } elseif ($allEmSkipped -and $im -ne '-') {
+        $skippedOnEmulators += $row
     } else {
-        $bothFail += $row
+        $other += $row
     }
 }
 
+# Parity % is computed over tests that actually ran on at least one emulator.
+# Tests excluded from emulator runs by trait (e.g. InMemoryOnly) are not eligible
+# for parity comparison and would otherwise dilute the score.
 $totalTests = $allTestNames.Count
-$parityPct = if ($totalTests -gt 0) { [math]::Round(($fullParity.Count / $totalTests) * 100, 1) } else { 0 }
+$applicableTests = $totalTests - $skippedOnEmulators.Count
+$parityPct = if ($applicableTests -gt 0) { [math]::Round(($fullParity.Count / $applicableTests) * 100, 1) } else { 0 }
 
 # --- Helper to format a row for the divergence table ---
 function Format-Outcome([string]$outcome) {
@@ -133,11 +141,14 @@ if ($OutputFormat -eq 'markdown') {
     Write-Output "| Metric | Count |"
     Write-Output "|--------|-------|"
     Write-Output "| Total tests | $totalTests |"
-    Write-Output "| ✅ Full parity (all targets agree) | $($fullParity.Count) ($parityPct%) |"
+    Write-Output "| ✅ Full parity (all targets agree) | $($fullParity.Count) of $applicableTests ($parityPct%) |"
     Write-Output "| 🔍 Suspects (in-memory passes, emulator fails) | $($suspects.Count) |"
     Write-Output "| ⚠️ Emulator gaps (emulator passes, in-memory fails) | $($emulatorGaps.Count) |"
     Write-Output "| 🔀 Platform divergence (emulators disagree) | $($platformDiverge.Count) |"
-    Write-Output "| ❌ All fail | $($bothFail.Count) |"
+    Write-Output "| 🚫 Skipped on emulators (e.g. InMemoryOnly trait) | $($skippedOnEmulators.Count) |"
+    Write-Output "| ❓ Other (uncategorised) | $($other.Count) |"
+    Write-Output ""
+    Write-Output "_Parity % is computed over the $applicableTests tests that ran on at least one emulator. The $($skippedOnEmulators.Count) tests excluded from emulator runs by trait do not count toward the parity score._"
     Write-Output ""
 
     # Per-target breakdown
@@ -202,11 +213,12 @@ if ($OutputFormat -eq 'markdown') {
     Write-Host "  Targets: $($targets.Keys -join ', ')" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  Total tests:            $totalTests"
-    Write-Host "  ✅ Full parity:          $($fullParity.Count) ($parityPct%)" -ForegroundColor Green
+    Write-Host "  ✅ Full parity:          $($fullParity.Count) of $applicableTests ($parityPct%)" -ForegroundColor Green
     Write-Host "  🔍 Suspects:             $($suspects.Count)" -ForegroundColor $(if ($suspects.Count -gt 0) { 'Red' } else { 'Green' })
     Write-Host "  ⚠️  Emulator gaps:       $($emulatorGaps.Count)" -ForegroundColor $(if ($emulatorGaps.Count -gt 0) { 'Yellow' } else { 'Green' })
     Write-Host "  🔀 Platform divergence:  $($platformDiverge.Count)" -ForegroundColor $(if ($platformDiverge.Count -gt 0) { 'Yellow' } else { 'Green' })
-    Write-Host "  ❌ All fail:             $($bothFail.Count)" -ForegroundColor $(if ($bothFail.Count -gt 0) { 'Yellow' } else { 'Green' })
+    Write-Host "  🚫 Skipped on emulators: $($skippedOnEmulators.Count) (filtered by trait, e.g. InMemoryOnly)" -ForegroundColor DarkGray
+    Write-Host "  ❓ Other:                $($other.Count)" -ForegroundColor $(if ($other.Count -gt 0) { 'Yellow' } else { 'Green' })
 
     # Per-target breakdown
     Write-Host ""
