@@ -120,6 +120,30 @@ public class ExpandedSdkCompatibilityTests
     {
         await FakeCosmosHandler.VerifySdkCompatibilityAsync();
     }
+
+    [Fact]
+    public async Task VerifySdkCompatibilityAsync_IncludesBatchCheck()
+    {
+        await FakeCosmosHandler.VerifySdkCompatibilityAsync();
+    }
+
+    [Fact]
+    public async Task VerifySdkCompatibilityAsync_IncludesReadManyCheck()
+    {
+        await FakeCosmosHandler.VerifySdkCompatibilityAsync();
+    }
+
+    [Fact]
+    public async Task VerifySdkCompatibilityAsync_IncludesChangeFeedCheck()
+    {
+        await FakeCosmosHandler.VerifySdkCompatibilityAsync();
+    }
+
+    [Fact]
+    public async Task VerifySdkCompatibilityAsync_IncludesGroupByCheck()
+    {
+        await FakeCosmosHandler.VerifySdkCompatibilityAsync();
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

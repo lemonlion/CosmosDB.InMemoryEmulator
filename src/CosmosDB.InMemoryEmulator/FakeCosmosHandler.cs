@@ -174,6 +174,8 @@ public class FakeCosmosHandler : HttpMessageHandler
         "x-ms-cosmos-physical-partition-count",
         "x-ms-documentdb-responsecontinuationtokenlimitinkb",
         "x-ms-documentdb-content-serialization-format",
+        "x-ms-cosmos-query-optimisticdirectexecute",
+        "x-ms-cosmos-supported-serialization-formats",
     };
 
     /// <summary>
@@ -2460,6 +2462,80 @@ public class FakeCosmosHandler : HttpMessageHandler
 
         // Clean up upsert-test doc
         await cosmosContainer.DeleteItemAsync<CompatibilityDocument>("upsert-test", new PartitionKey("pk"));
+
+        // Transactional batch roundtrip
+        var batchDoc1 = new CompatibilityDocument { Id = "batch-1", PartitionKey = "pk", Name = "B1", Value = 1 };
+        var batchDoc2 = new CompatibilityDocument { Id = "batch-2", PartitionKey = "pk", Name = "B2", Value = 2 };
+        var batchResponse = await cosmosContainer.CreateTransactionalBatch(new PartitionKey("pk"))
+            .CreateItem(batchDoc1)
+            .CreateItem(batchDoc2)
+            .ExecuteAsync();
+
+        if (!batchResponse.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): TransactionalBatch returned " +
+                $"{batchResponse.StatusCode}. The Cosmos SDK may have changed its batch wire format " +
+                "(HybridRow schemas or RecordIO encoding).");
+        }
+
+        if (batchResponse.Count != 2)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): batch returned {batchResponse.Count} " +
+                "results instead of 2.");
+        }
+
+        // Clean up batch docs
+        await cosmosContainer.DeleteItemAsync<CompatibilityDocument>("batch-1", new PartitionKey("pk"));
+        await cosmosContainer.DeleteItemAsync<CompatibilityDocument>("batch-2", new PartitionKey("pk"));
+
+        // ReadMany roundtrip
+        var readManyResult = await cosmosContainer.ReadManyItemsAsync<CompatibilityDocument>(
+            new[] { ("1", new PartitionKey("pk")), ("2", new PartitionKey("pk")) });
+
+        if (readManyResult.StatusCode != HttpStatusCode.OK)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): ReadManyItemsAsync returned " +
+                $"{readManyResult.StatusCode}. The Cosmos SDK may have changed its ReadMany HTTP contract.");
+        }
+
+        if (readManyResult.Count != 2)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): ReadMany returned {readManyResult.Count} " +
+                "items instead of 2.");
+        }
+
+        // Change feed roundtrip (uses backing container API since GetChangeFeedIterator
+        // doesn't work through FakeCosmosHandler — it doesn't implement A-IM protocol)
+        var changeFeedIterator = container.GetChangeFeedIterator<CompatibilityDocument>(0);
+        var changeFeedItems = new List<CompatibilityDocument>();
+        while (changeFeedIterator.HasMoreResults)
+        {
+            var page = await changeFeedIterator.ReadNextAsync();
+            changeFeedItems.AddRange(page);
+        }
+
+        if (changeFeedItems.Count < 3)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): Change feed returned {changeFeedItems.Count} " +
+                "items instead of at least 3. The change feed infrastructure may be broken.");
+        }
+
+        // GROUP BY query
+        var groupByItems = await DrainFeedIteratorAsync(
+            cosmosContainer.GetItemQueryIterator<dynamic>(
+                new QueryDefinition("SELECT c.partitionKey, COUNT(1) AS cnt FROM c GROUP BY c.partitionKey")));
+
+        if (groupByItems.Count < 1)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): GROUP BY query returned no results. " +
+                "The Cosmos SDK may have changed its GROUP BY handling.");
+        }
 
         // Verify no unrecognised headers were seen during the test
         if (handler.UnrecognisedHeaders.Count > 0)
