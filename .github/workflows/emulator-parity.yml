@@ -10,7 +10,7 @@ on:
 # workflow still completes without infra failures (partition exhaustion,
 # connection-refused storms, timeouts) before adding the next.
 env:
-  PARITY_FILTER: "FullyQualifiedName~FakeCosmosHandlerCrudTests"
+  PARITY_FILTER: "FullyQualifiedName~FakeCosmosHandlerCrudTests|FullyQualifiedName~FakeCosmosHandlerPartitionKeyTests"
 
 jobs:
   test-inmemory:
