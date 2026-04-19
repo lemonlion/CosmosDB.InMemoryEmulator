@@ -115,15 +115,17 @@ public sealed class EmulatorSession : IAsyncLifetime
     ///
     /// When the emulator crashes, the SDK's own retry loop (15 attempts,
     /// 60s wait) burns through minutes per test. The circuit breaker here
-    /// detects consecutive connection-refused errors and immediately fails
-    /// all subsequent requests so the test run aborts quickly.
+    /// detects consecutive fatal socket errors (connection refused before the
+    /// process has bound the port; connection aborted / reset / shutdown after
+    /// the process has died mid-connection) and immediately fails all
+    /// subsequent requests so the test run aborts quickly.
     /// </summary>
     private sealed class ConcurrencyGateHandler : DelegatingHandler
     {
         private const int CircuitBreakerThreshold = 3;
 
         private readonly SemaphoreSlim _gate;
-        private int _consecutiveConnectionRefused;
+        private int _consecutiveDeadSocketErrors;
         private volatile bool _emulatorDead;
 
         public ConcurrencyGateHandler(SemaphoreSlim gate, HttpMessageHandler inner) : base(inner)
@@ -143,17 +145,17 @@ public sealed class EmulatorSession : IAsyncLifetime
             try
             {
                 var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
-                Interlocked.Exchange(ref _consecutiveConnectionRefused, 0);
+                Interlocked.Exchange(ref _consecutiveDeadSocketErrors, 0);
                 return response;
             }
-            catch (HttpRequestException ex) when (IsConnectionRefused(ex))
+            catch (HttpRequestException ex) when (IsEmulatorUnreachable(ex))
             {
-                if (Interlocked.Increment(ref _consecutiveConnectionRefused) >= CircuitBreakerThreshold)
+                if (Interlocked.Increment(ref _consecutiveDeadSocketErrors) >= CircuitBreakerThreshold)
                 {
                     _emulatorDead = true;
                     Console.WriteLine(
                         "[ConcurrencyGateHandler] Circuit breaker tripped after " +
-                        $"{CircuitBreakerThreshold} consecutive connection-refused errors. " +
+                        $"{CircuitBreakerThreshold} consecutive dead-socket errors. " +
                         "The emulator process appears to have crashed.");
                 }
                 throw;
@@ -164,9 +166,21 @@ public sealed class EmulatorSession : IAsyncLifetime
             }
         }
 
-        private static bool IsConnectionRefused(HttpRequestException ex) =>
-            ex.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionRefused };
+        private static bool IsEmulatorUnreachable(HttpRequestException ex) =>
+            ex.InnerException is SocketException se && IsDeadSocketError(se.SocketErrorCode);
     }
+
+    /// <summary>
+    /// Socket errors that mean the emulator process is no longer reachable —
+    /// either the port has no listener (refused) or an established connection
+    /// was severed by the peer (aborted / reset / shutdown). Treated as
+    /// "emulator dead" by the circuit breakers.
+    /// </summary>
+    internal static bool IsDeadSocketError(SocketError code) => code is
+        SocketError.ConnectionRefused or
+        SocketError.ConnectionAborted or
+        SocketError.ConnectionReset or
+        SocketError.Shutdown;
 }
 
 /// <summary>
@@ -188,41 +202,41 @@ public static class IntegrationCollection
 internal static class EmulatorRetry
 {
     /// <summary>
-    /// Number of consecutive connection-refused errors before we assume the
-    /// emulator has crashed and abort immediately instead of burning through
-    /// the full retry budget against a dead process.
+    /// Number of consecutive dead-socket errors before we assume the emulator
+    /// has crashed and abort immediately instead of burning through the full
+    /// retry budget against a dead process.
     /// </summary>
-    private const int ConnectionRefusedCircuitBreakerThreshold = 3;
+    private const int EmulatorDownCircuitBreakerThreshold = 3;
 
     public static async Task<T> RunAsync<T>(
         Func<Task<T>> operation, string operationName, int maxRetries = 10, double maxBackoffSeconds = 10)
     {
-        var consecutiveConnectionRefused = 0;
+        var consecutiveEmulatorDownErrors = 0;
 
         for (var attempt = 0; ; attempt++)
         {
             try
             {
                 var result = await operation();
-                consecutiveConnectionRefused = 0;
+                consecutiveEmulatorDownErrors = 0;
                 return result;
             }
             catch (Exception ex) when (attempt < maxRetries && IsTransient(ex))
             {
-                if (IsConnectionRefused(ex))
+                if (IsEmulatorUnreachable(ex))
                 {
-                    consecutiveConnectionRefused++;
-                    if (consecutiveConnectionRefused >= ConnectionRefusedCircuitBreakerThreshold)
+                    consecutiveEmulatorDownErrors++;
+                    if (consecutiveEmulatorDownErrors >= EmulatorDownCircuitBreakerThreshold)
                     {
                         throw new InvalidOperationException(
                             $"[EmulatorRetry] {operationName}: aborting after " +
-                            $"{consecutiveConnectionRefused} consecutive connection-refused errors. " +
+                            $"{consecutiveEmulatorDownErrors} consecutive dead-socket errors. " +
                             "The emulator process appears to have crashed.", ex);
                     }
                 }
                 else
                 {
-                    consecutiveConnectionRefused = 0;
+                    consecutiveEmulatorDownErrors = 0;
                 }
 
                 var delay = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt), maxBackoffSeconds));
@@ -241,23 +255,23 @@ internal static class EmulatorRetry
             System.Net.HttpStatusCode.InternalServerError or
             System.Net.HttpStatusCode.RequestTimeout or
             System.Net.HttpStatusCode.TooManyRequests,
-        HttpRequestException hre => !IsConnectionRefusedCore(hre),
-        SocketException se => se.SocketErrorCode is not SocketError.ConnectionRefused,
+        HttpRequestException hre => !IsEmulatorUnreachableCore(hre),
+        SocketException se => !EmulatorSession.IsDeadSocketError(se.SocketErrorCode),
         _ => ex.InnerException != null && IsTransient(ex.InnerException),
     };
 
     /// <summary>
-    /// Checks the full exception chain for connection-refused indicators.
-    /// Connection refused means the emulator port has no listener — the
-    /// process is dead, not temporarily overloaded.
+    /// Checks the full exception chain for indicators that the emulator
+    /// process is unreachable (refused / aborted / reset / shutdown).
+    /// All of these mean the process is dead, not temporarily overloaded.
     /// </summary>
-    private static bool IsConnectionRefused(Exception ex) => ex switch
+    private static bool IsEmulatorUnreachable(Exception ex) => ex switch
     {
-        HttpRequestException hre => IsConnectionRefusedCore(hre),
-        SocketException se => se.SocketErrorCode is SocketError.ConnectionRefused,
-        _ => ex.InnerException != null && IsConnectionRefused(ex.InnerException),
+        HttpRequestException hre => IsEmulatorUnreachableCore(hre),
+        SocketException se => EmulatorSession.IsDeadSocketError(se.SocketErrorCode),
+        _ => ex.InnerException != null && IsEmulatorUnreachable(ex.InnerException),
     };
 
-    private static bool IsConnectionRefusedCore(HttpRequestException hre) =>
-        hre.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionRefused };
+    private static bool IsEmulatorUnreachableCore(HttpRequestException hre) =>
+        hre.InnerException is SocketException se && EmulatorSession.IsDeadSocketError(se.SocketErrorCode);
 }
