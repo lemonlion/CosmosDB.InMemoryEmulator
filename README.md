@@ -14,7 +14,7 @@ Client encryption keys are deliberately not implemented as they require Azure Ke
 
 ## Usage
 
-Works by replacing either `Microsoft.Azure.Cosmos.Container` or `Microsoft.Azure.Cosmos.CosmosClient`.
+Works by intercepting the Azure Cosmos DB SDK at the HTTP layer — a real `CosmosClient` is created with a custom `HttpMessageHandler` (`FakeCosmosHandler`) that serves responses from in-memory storage. Your production code stays completely untouched.
 
 ### Dependency Injection
 
@@ -25,8 +25,10 @@ serviceCollection.UseInMemoryCosmosDB(); // Replaces all Cosmos Clients and Cont
 ```
 OR
 ```csharp
-serviceCollection.UseInMemoryCosmosContainers(); // Replaces only Cosmos Containers (lower fidelity, needs .ToFeedIteratorOverridable() for LINQ)
+serviceCollection.UseInMemoryCosmosContainers(); // Replaces only Cosmos Containers — same SDK fidelity, keeps production CosmosClient
 ```
+
+Both methods use `FakeCosmosHandler` internally — full SDK fidelity, `.ToFeedIterator()` works natively, no production code changes needed.
 
 ### Direct Instantiation
 
@@ -80,18 +82,6 @@ cosmos.SetupContainer("orders").RegisterUdf("myUdf", args => args[0]);
 cosmos.Handler.FaultInjector = req => new HttpResponseMessage((HttpStatusCode)429);
 ```
 
-Alternatively - the following two are slightly more limited usages, but still fully functional.
-They require the use of `.ToFeedIteratorOverrideable()` wherever `.ToFeedIterator()` is used, 
-and have some minor differences (e.g. use of LINQ to objects for querying) - [see here for more details](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Integration-Approaches).
-
-```csharp
-var cosmosClient = new InMemoryCosmosClient();
-```
-OR
-```csharp
-var cosmosContainer = new InMemoryContainer();
-```
-
 ## Motivation
 
 Designed for super fast feedback from your Integration/Component tests in a local or CI environment, to avoid relying completely on the official Cosmos emulator or official Cosmos DB or inaccurate high level abstractions. 
@@ -141,13 +131,13 @@ For the full feature list see [Features](https://github.com/lemonlion/CosmosDB.I
 |---|---|---|---|
 | **Core library** | `CosmosDB.InMemoryEmulator` | Primary Features | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator) |
 | **JavaScript Triggers** | `CosmosDB.InMemoryEmulator.JsTriggers` | Support for JS Triggers | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator.JsTriggers)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.JsTriggers) |
-| **Production Extensions** | `CosmosDB.InMemoryEmulator.ProductionExtensions` | Support for use of the *optional* `.ToFeedIteratorOverridable()` alternative to the native `.ToFeedIterator()`* | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator.ProductionExtensions)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.ProductionExtensions) |
-
-* Native `.ToFeedIterator()` method works without any problems, there are just occasionally some advantages to using `.ToFeedIteratorOverridable()`, hence why this optional package is supplied.  See [Feed Iterator Usage](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feed-Iterator-Usage-Guide).
+| **Production Extensions** | `CosmosDB.InMemoryEmulator.ProductionExtensions` | `.ToFeedIteratorOverridable()` — no longer needed since 4.0 (all approaches use `FakeCosmosHandler` natively) | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator.ProductionExtensions)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.ProductionExtensions) |
 
 ## Documentation
 
 Full documentation is available on the **[Wiki](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki)**.
+
+See **[What's New in 4.0](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Whats-New-In-4.0)** for the latest changes.
 
 ## Emulator Parity Validation
 
