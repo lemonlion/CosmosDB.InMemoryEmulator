@@ -142,59 +142,6 @@ See **[What's New in 4.0](https://github.com/lemonlion/CosmosDB.InMemoryEmulator
 
 The test suite includes infrastructure to validate that the in-memory implementation produces identical results to the real Cosmos DB emulator. Integration tests use the same SDK HTTP pipeline as a real emulator, making comparison meaningful.
 
-### Test Project Structure
-
-| Project | Description |
-|---------|-------------|
-| `Tests.Unit` | Direct `InMemoryContainer`/`InMemoryCosmosClient` tests — fast, in-memory only |
-| `Tests.Integration` | `FakeCosmosHandler` tests via `ITestContainerFixture` — run against in-memory, Linux emulator, or Windows emulator |
-| `Tests.Shared` | Shared infrastructure (fixtures, traits, models) used by both projects |
-
-### Quick Start
-
-```powershell
-# Run full parity validation (starts emulator, runs integration tests, compares)
-.\scripts\validate-parity.ps1
-
-# Run only CRUD tests
-.\scripts\validate-parity.ps1 -Filter "FullyQualifiedName~Crud"
-
-# Run unit tests only
-.\scripts\run-tests.ps1 -Target inmemory -Project unit
-
-# Run integration tests against emulator
-.\scripts\run-tests.ps1 -Target emulator-linux -Project integration
-```
-
-### Environment Variable
-
-Set `COSMOS_TEST_TARGET` to switch test backends:
-
-| Value | Backend |
-|-------|---------|
-| `inmemory` (default) | FakeCosmosHandler + InMemoryContainer |
-| `emulator-linux` | Docker legacy `azure-cosmos-emulator:latest` |
-
-### Test Traits
-
-Tests are categorized with xUnit traits:
-
-| Trait | Meaning |
-|-------|---------|
-| `Target=InMemoryOnly` | Uses in-memory-only APIs (BackingContainer, FaultInjector, etc.) — skipped on emulator |
-| `Target=KnownDivergence` | Documents known behavioral differences |
-| *(no Target trait)* | Parity test — runs against both backends |
-
-### Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `scripts/validate-parity.ps1` | One-command orchestrator |
-| `scripts/start-emulator.ps1` | Start Docker emulator |
-| `scripts/run-tests.ps1` | Run tests with a given target and project |
-| `scripts/compare-trx.ps1` | Compare TRX files and output parity report |
-
-
 ### CI
 
 The `emulator-parity.yml` workflow runs weekly (Monday 6am UTC) or on manual trigger, executing integration tests against all backends and producing a parity report in the GitHub Actions step summary.
