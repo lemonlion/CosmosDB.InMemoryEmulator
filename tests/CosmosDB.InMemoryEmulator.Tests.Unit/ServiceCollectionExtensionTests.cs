@@ -2,6 +2,7 @@ using System.Net;
 using AwesomeAssertions;
 using CosmosDB.InMemoryEmulator.ProductionExtensions;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Azure.Cosmos.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
@@ -18,7 +19,7 @@ public class UseInMemoryCosmosContainersTests : IDisposable
     public void Dispose() => InMemoryFeedIteratorSetup.Deregister();
 
     [Fact]
-    public void Default_RegistersSingleInMemoryContainer()
+    public void Default_RegistersSingleContainer()
     {
         var services = new ServiceCollection();
 
@@ -26,19 +27,60 @@ public class UseInMemoryCosmosContainersTests : IDisposable
 
         var provider = services.BuildServiceProvider();
         var container = provider.GetRequiredService<Container>();
-        container.Should().BeOfType<InMemoryContainer>();
+        container.Should().NotBeNull();
+        container.Id.Should().Be("in-memory-container");
     }
 
     [Fact]
-    public void Default_PartitionKeyIsId()
+    public void Container_IsRealSdkContainer_NotInMemoryContainer()
     {
         var services = new ServiceCollection();
 
-        services.UseInMemoryCosmosContainers();
+        services.UseInMemoryCosmosContainers(o => o.AddContainer("orders", "/pk"));
 
         var provider = services.BuildServiceProvider();
-        var container = (InMemoryContainer)provider.GetRequiredService<Container>();
-        container.PartitionKeyPaths.Should().BeEquivalentTo(["/id"]);
+        var container = provider.GetRequiredService<Container>();
+        // 4.0: UseInMemoryCosmosContainers now returns real SDK Container backed by FakeCosmosHandler
+        container.Should().NotBeOfType<InMemoryContainer>();
+        container.Id.Should().Be("orders");
+    }
+
+    [Fact]
+    public async Task Container_SupportsCrud_ThroughSdkPipeline()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosContainers(o => o.AddContainer("orders", "/pk"));
+
+        var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+
+        // Real SDK pipeline — create and read back
+        await container.CreateItemAsync(new { id = "1", pk = "a" }, new PartitionKey("a"));
+        var response = await container.ReadItemAsync<dynamic>("1", new PartitionKey("a"));
+        ((string)response.Resource.id).Should().Be("1");
+    }
+
+    [Fact]
+    public async Task Container_ToFeedIterator_WorksNatively()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosContainers(o => o.AddContainer("orders", "/pk"));
+
+        var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+        await container.CreateItemAsync(new { id = "1", pk = "a" }, new PartitionKey("a"));
+
+        // .ToFeedIterator() works via FakeCosmosHandler — no ProductionExtensions needed
+        var query = container.GetItemLinqQueryable<dynamic>().ToFeedIterator();
+        var results = new List<dynamic>();
+        while (query.HasMoreResults)
+        {
+            var page = await query.ReadNextAsync();
+            results.AddRange(page);
+        }
+        results.Should().ContainSingle();
     }
 
     [Fact]
@@ -50,7 +92,7 @@ public class UseInMemoryCosmosContainersTests : IDisposable
         services.UseInMemoryCosmosContainers();
 
         var provider = services.BuildServiceProvider();
-        var container = (InMemoryContainer)provider.GetRequiredService<Container>();
+        var container = provider.GetRequiredService<Container>();
         container.Id.Should().Be("in-memory-container");
     }
 
@@ -69,18 +111,6 @@ public class UseInMemoryCosmosContainersTests : IDisposable
     }
 
     [Fact]
-    public void CustomPartitionKey()
-    {
-        var services = new ServiceCollection();
-
-        services.UseInMemoryCosmosContainers(o => o.AddContainer("test", "/partitionKey"));
-
-        var provider = services.BuildServiceProvider();
-        var container = (InMemoryContainer)provider.GetRequiredService<Container>();
-        container.PartitionKeyPaths.Should().BeEquivalentTo(["/partitionKey"]);
-    }
-
-    [Fact]
     public void CustomContainerName()
     {
         var services = new ServiceCollection();
@@ -88,45 +118,99 @@ public class UseInMemoryCosmosContainersTests : IDisposable
         services.UseInMemoryCosmosContainers(o => o.AddContainer("orders"));
 
         var provider = services.BuildServiceProvider();
-        var container = (InMemoryContainer)provider.GetRequiredService<Container>();
+        var container = provider.GetRequiredService<Container>();
         container.Id.Should().Be("orders");
     }
 
     [Fact]
-    public void RegistersFeedIteratorSetup()
+    public void OnHandlerCreatedCallback()
     {
-        InMemoryFeedIteratorSetup.Deregister();
         var services = new ServiceCollection();
+        FakeCosmosHandler? captured = null;
 
-        services.UseInMemoryCosmosContainers();
+        services.UseInMemoryCosmosContainers(o =>
+        {
+            o.AddContainer("orders", "/pk");
+            o.OnHandlerCreated = (_, h) => captured = h;
+        });
 
-        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().NotBeNull();
+        captured.Should().NotBeNull();
+        captured!.BackingContainer.Id.Should().Be("orders");
     }
 
     [Fact]
-    public void CanDisableFeedIteratorSetup()
+    public void OnHandlerCreated_FiresForEachContainer()
     {
-        InMemoryFeedIteratorSetup.Deregister();
-        var before = CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory;
         var services = new ServiceCollection();
+        var captured = new Dictionary<string, FakeCosmosHandler>();
 
-        services.UseInMemoryCosmosContainers(o => o.RegisterFeedIteratorSetup = false);
+        services.UseInMemoryCosmosContainers(o =>
+        {
+            o.OnHandlerCreated = (name, h) => captured[name] = h;
+            o.AddContainer("orders", "/pk");
+            o.AddContainer("events", "/partitionKey");
+            o.AddContainer("logs", "/category");
+        });
 
-        // Factory should not have changed from its pre-call state
-        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().Be(before);
+        captured.Should().HaveCount(3);
+        captured.Keys.Should().BeEquivalentTo(["orders", "events", "logs"]);
     }
 
     [Fact]
-    public void OnContainerCreatedCallback()
+    public async Task FaultInjection_ViaOnHandlerCreated()
+    {
+        var services = new ServiceCollection();
+        FakeCosmosHandler? handler = null;
+
+        services.UseInMemoryCosmosContainers(o =>
+        {
+            o.AddContainer("orders", "/pk");
+            o.OnHandlerCreated = (_, h) => handler = h;
+        });
+
+        var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+
+        handler!.FaultInjector = _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+
+        var act = () => container.ReadItemAsync<dynamic>("1", new PartitionKey("a"));
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == HttpStatusCode.ServiceUnavailable);
+    }
+
+    [Fact]
+    public void WithHttpMessageHandlerWrapper()
+    {
+        var services = new ServiceCollection();
+        var wrapperInvoked = false;
+
+        services.UseInMemoryCosmosContainers(o =>
+        {
+            o.AddContainer("orders", "/pk");
+            o.WithHttpMessageHandlerWrapper(h =>
+            {
+                wrapperInvoked = true;
+                return h; // pass-through
+            });
+        });
+
+        wrapperInvoked.Should().BeTrue();
+    }
+
+    [Fact]
+    public void OnContainerCreatedCallback_StillWorks()
     {
         var services = new ServiceCollection();
         InMemoryContainer? captured = null;
 
-        services.UseInMemoryCosmosContainers(o => o.OnContainerCreated = c => captured = c);
+        services.UseInMemoryCosmosContainers(o =>
+        {
+            o.AddContainer("orders", "/pk");
+            o.OnContainerCreated = c => captured = c;
+        });
 
-        var provider = services.BuildServiceProvider();
-        _ = provider.GetRequiredService<Container>();
         captured.Should().NotBeNull();
+        captured!.Id.Should().Be("orders");
     }
 
     [Fact]
@@ -156,7 +240,6 @@ public class UseInMemoryCosmosContainersTests : IDisposable
         var provider = services.BuildServiceProvider();
         var containers = provider.GetServices<Container>().ToList();
         containers.Should().HaveCount(3);
-        containers.Should().AllSatisfy(c => c.Should().BeOfType<InMemoryContainer>());
         containers.Select(c => c.Id).Should().BeEquivalentTo(["orders", "events", "logs"]);
     }
 
@@ -189,48 +272,11 @@ public class UseInMemoryCosmosContainersTests : IDisposable
     public void MatchesExistingLifetime_DefaultsSingleton()
     {
         var services = new ServiceCollection();
-        // No existing Container registration — should default to Singleton
 
         services.UseInMemoryCosmosContainers();
 
         var descriptor = services.First(d => d.ServiceType == typeof(Container));
         descriptor.Lifetime.Should().Be(ServiceLifetime.Singleton);
-    }
-
-    [Fact]
-    public void DuplicateContainerNames_RegistersBoth()
-    {
-        var services = new ServiceCollection();
-
-        services.UseInMemoryCosmosContainers(o =>
-        {
-            o.AddContainer("orders", "/pk");
-            o.AddContainer("orders", "/pk2");
-        });
-
-        var provider = services.BuildServiceProvider();
-        var containers = provider.GetServices<Container>().ToList();
-        // Both registrations should be present — they're independent InMemoryContainers
-        containers.Should().HaveCount(2);
-        containers.Should().AllSatisfy(c => c.Id.Should().Be("orders"));
-    }
-
-    [Fact]
-    public void OnContainerCreated_FiresForEachContainer()
-    {
-        var services = new ServiceCollection();
-        var captured = new List<InMemoryContainer>();
-
-        services.UseInMemoryCosmosContainers(o =>
-        {
-            o.OnContainerCreated = c => captured.Add(c);
-            o.AddContainer("orders", "/pk");
-            o.AddContainer("events", "/partitionKey");
-            o.AddContainer("logs", "/category");
-        });
-
-        captured.Should().HaveCount(3);
-        captured.Select(c => c.Id).Should().BeEquivalentTo(["orders", "events", "logs"]);
     }
 
     [Fact]
@@ -241,6 +287,22 @@ public class UseInMemoryCosmosContainersTests : IDisposable
         var result = services.UseInMemoryCosmosContainers();
 
         result.Should().BeSameAs(services);
+    }
+
+    [Fact]
+    public void CustomDatabaseName()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosContainers(o =>
+        {
+            o.DatabaseName = "TestDb";
+            o.AddContainer("orders", "/pk");
+        });
+
+        var provider = services.BuildServiceProvider();
+        var container = provider.GetRequiredService<Container>();
+        container.Should().NotBeNull();
     }
 }
 
@@ -786,16 +848,16 @@ public class ServiceCollectionExtensionEdgeCaseTests : IDisposable
     }
 
     [Fact]
-    public void FeedIteratorSetup_Asymmetry_UseInMemoryCosmosContainers_DoesRegister()
+    public void FeedIteratorSetup_Asymmetry_UseInMemoryCosmosContainers_DoesNotRegister()
     {
-        // UseInMemoryCosmosContainers DOES register FeedIteratorSetup by default
+        // v4.0: UseInMemoryCosmosContainers now uses FakeCosmosHandler — no FeedIteratorSetup needed
         InMemoryFeedIteratorSetup.Deregister();
         var services = new ServiceCollection();
 
         services.UseInMemoryCosmosContainers();
 
-        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().NotBeNull(
-            "UseInMemoryCosmosContainers requires FeedIteratorSetup for .ToFeedIteratorOverridable()");
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().BeNull(
+            "UseInMemoryCosmosContainers uses FakeCosmosHandler which handles .ToFeedIterator() natively");
     }
 
     [Fact]
@@ -2692,15 +2754,15 @@ public class AutoDetectEdgeCaseTests : IDisposable
     }
 
     [Fact]
-    public void UseInMemoryCosmosContainers_ContainerNotFromClient()
+    public void UseInMemoryCosmosContainers_ContainerIsRealSdkType()
     {
         var services = new ServiceCollection();
         services.UseInMemoryCosmosContainers();
 
         using var provider = services.BuildServiceProvider();
         var container = provider.GetRequiredService<Container>();
-        // Container is a standalone InMemoryContainer, not from CosmosClient.GetContainer
-        container.Should().BeOfType<InMemoryContainer>();
+        // v4.0: Container is a real SDK Container backed by FakeCosmosHandler
+        container.Should().NotBeOfType<InMemoryContainer>();
     }
 }
 

@@ -1792,7 +1792,6 @@ public class WafDivergentBehaviorDeepTests : IDisposable
                 services.UseInMemoryCosmosContainers(o =>
                 {
                     o.AddContainer("items", "/partitionKey");
-                    o.RegisterFeedIteratorSetup = false;
                 }));
 
         var container = app.Services.GetRequiredService<Container>();

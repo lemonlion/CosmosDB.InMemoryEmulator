@@ -136,9 +136,10 @@ public static class ServiceCollectionExtensions
 
     /// <summary>
     /// Replaces all registered <see cref="Container"/> instances in the service collection
-    /// with in-memory equivalents. Does NOT replace <see cref="CosmosClient"/>.
-    /// Also registers <see cref="InMemoryFeedIteratorSetup"/> so that
-    /// <c>.ToFeedIteratorOverridable()</c> works correctly.
+    /// with in-memory equivalents backed by <see cref="FakeCosmosHandler"/>.
+    /// Does NOT replace <see cref="CosmosClient"/> — any existing client registration is preserved.
+    /// A hidden internal <see cref="CosmosClient"/> is created for the in-memory containers
+    /// so that <c>.ToFeedIterator()</c> works without any production code changes.
     /// </summary>
     public static IServiceCollection UseInMemoryCosmosContainers(
         this IServiceCollection services,
@@ -146,6 +147,8 @@ public static class ServiceCollectionExtensions
     {
         var options = new InMemoryContainerOptions();
         configure?.Invoke(options);
+
+        var databaseName = options.DatabaseName ?? DefaultDatabaseName;
 
         // Determine existing lifetime
         var existingDescriptor = services.FirstOrDefault(d => d.ServiceType == typeof(Container));
@@ -155,33 +158,62 @@ public static class ServiceCollectionExtensions
         services.RemoveAll<Container>();
 
         // Determine container configs
-        var containers = options.Containers.Count > 0
+        var containerConfigs = options.Containers.Count > 0
             ? options.Containers
             : [new ContainerConfig("in-memory-container")];
 
-        // Register InMemoryContainers
-        foreach (var containerConfig in containers)
+        // Create InMemoryContainers and FakeCosmosHandlers
+        var handlers = new Dictionary<string, FakeCosmosHandler>();
+        foreach (var config in containerConfigs)
         {
-            var container = containerConfig.ContainerProperties != null
-                ? new InMemoryContainer(containerConfig.ContainerProperties)
-                : new InMemoryContainer(
-                    containerConfig.ContainerName,
-                    containerConfig.PartitionKeyPath);
+            var container = config.ContainerProperties != null
+                ? new InMemoryContainer(config.ContainerProperties)
+                : new InMemoryContainer(config.ContainerName, config.PartitionKeyPath);
 
             if (options.StatePersistenceDirectory is not null)
             {
-                var fileName = $"{containerConfig.ContainerName}.json";
+                var fileName = $"{config.ContainerName}.json";
                 container.StateFilePath = Path.Combine(options.StatePersistenceDirectory, fileName);
                 container.LoadPersistedState();
             }
 
             options.OnContainerCreated?.Invoke(container);
 
-            services.Add(new ServiceDescriptor(typeof(Container), _ => container, lifetime));
+            var handler = new FakeCosmosHandler(container);
+            if (!handlers.ContainsKey(config.ContainerName))
+            {
+                handlers[config.ContainerName] = handler;
+            }
+            options.OnHandlerCreated?.Invoke(config.ContainerName, handler);
         }
 
-        if (options.RegisterFeedIteratorSetup)
-            InMemoryFeedIteratorSetup.Register();
+        // Build the HTTP handler (single or router)
+        HttpMessageHandler httpHandler = handlers.Count == 1
+            ? handlers.Values.First()
+            : FakeCosmosHandler.CreateRouter(handlers);
+
+        // Apply optional wrapper (e.g. DelegatingHandler for logging/tracking)
+        var finalHandler = options.HttpMessageHandlerWrapper?.Invoke(httpHandler) ?? httpHandler;
+
+        // Create a hidden internal CosmosClient with the FakeCosmosHandler
+        var innerClient = new CosmosClient(
+            FakeConnectionString,
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                HttpClientFactory = () => new HttpClient(finalHandler)
+            });
+        var client = FakeCosmosHandler.WrapClient(innerClient, handlers);
+
+        // Register Container(s) in DI — but NOT the CosmosClient
+        foreach (var config in containerConfigs)
+        {
+            var containerName = config.ContainerName;
+            services.Add(new ServiceDescriptor(
+                typeof(Container),
+                _ => client.GetContainer(databaseName, containerName),
+                lifetime));
+        }
 
         return services;
     }
@@ -207,6 +239,7 @@ public static class ServiceCollectionExtensions
     /// type — each typed client is independent.
     /// </para>
     /// </summary>
+#pragma warning disable CS0618 // TClient constraint references obsolete InMemoryCosmosClient for backward compatibility
     public static IServiceCollection UseInMemoryCosmosDB<TClient>(
         this IServiceCollection services,
         Action<InMemoryCosmosOptions>? configure = null)
@@ -260,4 +293,5 @@ public static class ServiceCollectionExtensions
 
         return services;
     }
+#pragma warning restore CS0618
 }

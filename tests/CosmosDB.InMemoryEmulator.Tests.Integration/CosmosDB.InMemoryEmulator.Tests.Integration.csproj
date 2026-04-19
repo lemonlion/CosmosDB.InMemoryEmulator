@@ -1,5 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+	<PropertyGroup>
+		<NoWarn>$(NoWarn);CS0618</NoWarn>
+	</PropertyGroup>
+
 	<ItemGroup>
 		<Using Include="CosmosDB.InMemoryEmulator.Tests.Infrastructure" />
 	</ItemGroup>

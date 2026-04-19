@@ -1,4 +1,5 @@
 #nullable disable
+#pragma warning disable CS0618 // InMemoryCosmosClient is obsolete but InMemoryDatabase still depends on it
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Net;

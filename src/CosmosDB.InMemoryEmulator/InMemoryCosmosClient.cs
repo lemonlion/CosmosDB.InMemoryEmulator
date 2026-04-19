@@ -38,6 +38,9 @@ namespace CosmosDB.InMemoryEmulator;
 /// are synthetic. No network calls are made.
 /// </para>
 /// </remarks>
+[Obsolete("Use UseInMemoryCosmosDB() or UseInMemoryCosmosContainers() instead. " +
+          "InMemoryCosmosClient bypasses the SDK HTTP pipeline. " +
+          "FakeCosmosHandler-based methods provide higher fidelity and native .ToFeedIterator() support.")]
 public class InMemoryCosmosClient : CosmosClient
 {
     private readonly ConcurrentDictionary<string, InMemoryDatabase> _databases = new();
