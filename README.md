@@ -30,25 +30,54 @@ serviceCollection.UseInMemoryCosmosContainers(); // Replaces only Cosmos Contain
 
 ### Direct Instantiation
 
-Ideal with highest fidelity:
+Recommended — highest fidelity, zero production code changes:
 
 ```csharp
-// 1. Create an InMemoryContainer as the backing store
-var container = new InMemoryContainer("my-container", "/partitionKey");
+// Single container — one-liner
+using var cosmos = InMemoryCosmos.Create("my-container", "/partitionKey");
 
-// 2. Wire up FakeCosmosHandler → CosmosClient
-using var handler = new FakeCosmosHandler(container);
-using var client = new CosmosClient(
-    "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-    new CosmosClientOptions
-    {
-        ConnectionMode = ConnectionMode.Gateway,
-        LimitToEndpoint = true,
-        HttpClientFactory = () => new HttpClient(handler)
-    });
+// Use the real SDK — all calls are intercepted in-memory
+await cosmos.Container.CreateItemAsync(
+    new { id = "1", partitionKey = "pk1", name = "Alice" },
+    new PartitionKey("pk1"));
+```
 
-// 3. Use the real SDK — all calls are intercepted by the handler
-var cosmosContainer = client.GetContainer("db", "my-container");
+Multi-container:
+
+```csharp
+using var cosmos = InMemoryCosmos.Builder()
+    .AddContainer("orders", "/customerId")
+    .AddContainer("products", "/categoryId")
+    .Build();
+
+var orders = cosmos.Client.GetContainer("default", "orders");
+var products = cosmos.Client.GetContainer("default", "products");
+```
+
+Multi-database (overlapping container names):
+
+```csharp
+using var cosmos = InMemoryCosmos.Builder()
+    .AddDatabase("users-db", db => {
+        db.AddContainer("events", "/userId");
+    })
+    .AddDatabase("orders-db", db => {
+        db.AddContainer("events", "/orderId");
+    })
+    .Build();
+
+var userEvents = cosmos.Database("users-db").Containers["events"];
+var orderEvents = cosmos.Database("orders-db").Containers["events"];
+```
+
+Test setup and fault injection:
+
+```csharp
+// Seed data, register UDFs, stored procedures
+cosmos.SetupContainer("orders").RegisterUdf("myUdf", args => args[0]);
+
+// Inject faults (429s, 503s, timeouts)
+cosmos.Handler.FaultInjector = req => new HttpResponseMessage((HttpStatusCode)429);
 ```
 
 Alternatively - the following two are slightly more limited usages, but still fully functional.
@@ -102,7 +131,7 @@ See the **[Feature Comparison With Alternatives](https://github.com/lemonlion/Co
 - **Vector search** — `VECTORDISTANCE` with cosine, dot product, and Euclidean distance; works in `SELECT`, `WHERE`, and `ORDER BY`
 - **Users & permissions** — stub user/permission CRUD with synthetic tokens (no authorization enforced)
 - **Computed properties** — virtual container-level properties evaluated at query time; usable in `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `DISTINCT`, `HAVING`, with aliases, aggregates, and all expression types
-- **7500+ tests** covering all features and performance, ensuring feature consistency and parity with real CosmosDB
+- **7600+ tests** covering all features and performance, ensuring feature consistency and parity with real CosmosDB
 
 For the full feature list see [Features](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Features). For a side-by-side comparison with the official Microsoft emulator see [Feature Comparison With Alternatives](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Feature-Comparison-With-Alternatives). For behavioural differences from a real CosmosDB see [Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)
 

@@ -577,11 +577,8 @@ public class FakeCosmosHandlerTests
 
         var act = () => unknown.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
 
-        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
-        ex.Which.Message.Should().Contain("unknown-container");
-        ex.Which.Message.Should().Contain("CreateRouter");
-        ex.Which.Message.Should().Contain("customers");
-        ex.Which.Message.Should().Contain("orders");
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     [Fact]

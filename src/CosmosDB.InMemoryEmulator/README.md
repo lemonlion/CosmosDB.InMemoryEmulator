@@ -8,6 +8,7 @@ A high-fidelity, in-memory implementation of the Azure Cosmos DB SDK for .NET â€
 
 | Type | Purpose |
 |------|---------|
+| `InMemoryCosmos` | **Recommended entry point** â€” one-liner setup with full SDK fidelity, test setup, and fault injection |
 | `InMemoryContainer` | Drop-in `Container` replacement with full CRUD, queries, patch, batches, change feed |
 | `FakeCosmosHandler` | HTTP-level interceptor â€” zero production code changes, full SDK fidelity |
 | `InMemoryCosmosClient` | Drop-in `CosmosClient` replacement with database/container management |
@@ -18,38 +19,37 @@ A high-fidelity, in-memory implementation of the Azure Cosmos DB SDK for .NET â€
 using CosmosDB.InMemoryEmulator;
 using Microsoft.Azure.Cosmos;
 
-// Direct usage
-var container = new InMemoryContainer("my-container", "/partitionKey");
+// Recommended: InMemoryCosmos â€” one-liner, full SDK fidelity
+using var cosmos = InMemoryCosmos.Create("my-container", "/partitionKey");
 
-await container.CreateItemAsync(
+await cosmos.Container.CreateItemAsync(
     new { id = "1", partitionKey = "pk1", name = "Alice" },
     new PartitionKey("pk1"));
 
-var iterator = container.GetItemQueryIterator<dynamic>(
+var iterator = cosmos.Container.GetItemQueryIterator<dynamic>(
     "SELECT * FROM c WHERE c.name = 'Alice'");
 ```
 
-## FakeCosmosHandler (Zero Code Changes)
+## Multi-Container
 
 ```csharp
-var inMemoryContainer = new InMemoryContainer("orders", "/customerId");
-var handler = new FakeCosmosHandler(inMemoryContainer);
+using var cosmos = InMemoryCosmos.Builder()
+    .AddContainer("orders", "/customerId")
+    .AddContainer("products", "/categoryId")
+    .Build();
 
-var client = new CosmosClient(
-    "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-    new CosmosClientOptions
-    {
-        ConnectionMode = ConnectionMode.Gateway,
-        HttpClientFactory = () => new HttpClient(handler)
-    });
+var orders = cosmos.Containers["orders"];
+var products = cosmos.Containers["products"];
+```
 
-var container = client.GetContainer("db", "orders");
+## Test Setup & Fault Injection
 
-// All operations work through the same Container reference:
-await container.CreateItemAsync(order, new PartitionKey(order.CustomerId));
-var query = container.GetItemLinqQueryable<Order>()
-    .Where(o => o.Status == "active")
-    .ToFeedIterator();
+```csharp
+// Register UDFs, stored procedures, seed data
+cosmos.SetupContainer("orders").RegisterUdf("myUdf", args => args[0]);
+
+// Inject faults: 429 throttling, 503 errors, timeouts
+cosmos.Handler.FaultInjector = req => new HttpResponseMessage((HttpStatusCode)429);
 ```
 
 ## Features

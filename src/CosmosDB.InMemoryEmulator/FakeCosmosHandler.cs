@@ -2186,13 +2186,13 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// A dictionary mapping container names to their handlers. The first entry is used
     /// as the default for account-level requests (e.g. GET /).
     /// </param>
-    public static HttpMessageHandler CreateRouter(
+    internal static HttpMessageHandler CreateRouter(
         IReadOnlyDictionary<string, FakeCosmosHandler> handlers)
     {
         return new RoutingHandler(handlers);
     }
 
-    private const string FakeConnectionString = "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;";
+    internal const string FakeConnectionString = "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;";
 
     /// <summary>
     /// Wraps an existing <see cref="CosmosClient"/> so that containers returned by
@@ -2219,7 +2219,7 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// A <see cref="CosmosClient"/> whose <see cref="CosmosClient.GetContainer"/>
     /// returns containers with automatic prefix PK capturing.
     /// </returns>
-    public CosmosClient WrapClient(CosmosClient innerClient)
+    internal CosmosClient WrapClient(CosmosClient innerClient)
         => WrapClient(innerClient, new Dictionary<string, FakeCosmosHandler> { [_container.Id] = this });
 
     /// <summary>
@@ -2232,7 +2232,7 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// <param name="handlers">
     /// A dictionary mapping container names (or "database/container" keys) to their handlers.
     /// </param>
-    public static CosmosClient WrapClient(
+    internal static CosmosClient WrapClient(
         CosmosClient innerClient,
         IReadOnlyDictionary<string, FakeCosmosHandler> handlers)
         => new PkAwareCosmosClient(innerClient, handlers);
@@ -2246,7 +2246,7 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// <see cref="CosmosClient"/> yourself and use <see cref="WrapClient(CosmosClient)"/> instead.
     /// </para>
     /// </summary>
-    public CosmosClient CreateClient()
+    internal CosmosClient CreateClient()
         => CreateClient(new Dictionary<string, FakeCosmosHandler> { [_container.Id] = this });
 
     /// <summary>
@@ -2259,7 +2259,7 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// <see cref="WrapClient(CosmosClient, IReadOnlyDictionary{string, FakeCosmosHandler})"/> instead.
     /// </para>
     /// </summary>
-    public static CosmosClient CreateClient(
+    internal static CosmosClient CreateClient(
         Dictionary<string, FakeCosmosHandler> handlers)
     {
         HttpMessageHandler httpHandler = handlers.Count == 1
@@ -2570,27 +2570,86 @@ public class FakeCosmosHandler : HttpMessageHandler
         base.Dispose(disposing);
     }
 
-    private sealed class RoutingHandler : HttpMessageHandler
+    /// <summary>
+    /// Shared registry for dynamic container management. Holds the mutable dictionaries
+    /// that both RoutingHandler and InMemoryCosmosResult reference.
+    /// </summary>
+    internal sealed class DynamicContainerRegistry
     {
-        private readonly Dictionary<string, FakeCosmosHandler> _handlers;
+        public ConcurrentDictionary<string, FakeCosmosHandler> Handlers { get; } = new(StringComparer.Ordinal);
+        public ConcurrentDictionary<string, InMemoryContainer> BackingContainers { get; } = new(StringComparer.Ordinal);
+        public ConcurrentDictionary<string, Container> SdkContainers { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> KnownDatabases { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Maps database name → (container name → registry key).
+        /// Registry keys are plain container names for default DB, compound "db/container" for explicit databases.
+        /// </summary>
+        public ConcurrentDictionary<string, ConcurrentDictionary<string, string>> DatabaseContainerKeys { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Set of database names that use compound registry keys (added via AddDatabase).</summary>
+        public HashSet<string> CompoundKeyDatabases { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Client reference set after client creation so dynamic containers can register SDK containers.</summary>
+        public CosmosClient? Client { get; set; }
+
+        /// <summary>Database name used for dynamic container registration.</summary>
+        public string DatabaseName { get; set; } = "default";
+    }
+
+    internal sealed class RoutingHandler : HttpMessageHandler
+    {
+        private readonly DynamicContainerRegistry _registry;
         private readonly FakeCosmosHandler _default;
 
         public RoutingHandler(IReadOnlyDictionary<string, FakeCosmosHandler> handlers)
+            : this(handlers, new DynamicContainerRegistry())
+        {
+        }
+
+        public RoutingHandler(IReadOnlyDictionary<string, FakeCosmosHandler> handlers, DynamicContainerRegistry registry)
         {
             if (!handlers.Any())
-                throw new ArgumentException("At least one handler must be registered with CreateRouter().", nameof(handlers));
-            _handlers = new(handlers, StringComparer.Ordinal);
+                throw new ArgumentException("At least one handler must be registered.", nameof(handlers));
+            _registry = registry;
+            foreach (var kvp in handlers)
+                _registry.Handlers[kvp.Key] = kvp.Value;
             _default = handlers.Values.First();
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? "";
+            var method = request.Method.Method;
 
             if (path is "/" or "")
             {
-                return InvokeHandlerAsync(_default, request, cancellationToken);
+                return await InvokeHandlerAsync(_default, request, cancellationToken);
+            }
+
+            // Container creation: POST /dbs/{db}/colls
+            // Container listing: GET /dbs/{db}/colls
+            var collsMatch = Regex.Match(path, @"^/dbs/([^/]+)/colls/?$");
+            if (collsMatch.Success)
+            {
+                var dbNameForColls = collsMatch.Groups[1].Value;
+                if (method == "POST")
+                    return await HandleCreateContainerAsync(request, dbNameForColls, cancellationToken);
+                if (method == "GET")
+                    return HandleListContainers(dbNameForColls);
+            }
+
+            // Database management: /dbs
+            if (Regex.IsMatch(path, @"^/dbs/?$"))
+            {
+                return await HandleDatabaseListOrCreate(request, method, cancellationToken);
+            }
+
+            // Database CRUD: /dbs/{id}
+            if (Regex.IsMatch(path, @"^/dbs/[^/]+/?$") && !path.Contains("/colls"))
+            {
+                return HandleDatabaseCrud(request, path, method);
             }
 
             var match = Regex.Match(path, @"/dbs/([^/]+)/colls/([^/]+)");
@@ -2599,16 +2658,40 @@ public class FakeCosmosHandler : HttpMessageHandler
                 var dbName = match.Groups[1].Value;
                 var containerName = match.Groups[2].Value;
 
-                // Try database+container compound key first, then fall back to container-only
-                var compoundKey = $"{dbName}/{containerName}";
-                if (_handlers.TryGetValue(compoundKey, out var compoundHandler))
+                // Container-level operations (not sub-resources)
+                if (Regex.IsMatch(path, @"/colls/[^/]+/?$"))
                 {
-                    return InvokeHandlerAsync(compoundHandler, request, cancellationToken);
+                    // DELETE container
+                    if (method == "DELETE")
+                    {
+                        return HandleDeleteContainer(dbName, containerName);
+                    }
+
+                    // GET container metadata
+                    if (method == "GET")
+                    {
+                        return HandleReadContainer(dbName, containerName);
+                    }
+
+                    // PUT container (replace)
+                    if (method == "PUT")
+                    {
+                        return await HandleReplaceContainer(request, dbName, containerName, cancellationToken);
+                    }
                 }
 
-                if (_handlers.TryGetValue(containerName, out var handler))
+                // Container listing: GET /dbs/{db}/colls (handled above, but also match here for safety)
+
+                // Try database+container compound key first, then fall back to container-only
+                var compoundKey = $"{dbName}/{containerName}";
+                if (_registry.Handlers.TryGetValue(compoundKey, out var compoundHandler))
                 {
-                    return InvokeHandlerAsync(handler, request, cancellationToken);
+                    return await InvokeHandlerAsync(compoundHandler, request, cancellationToken);
+                }
+
+                if (_registry.Handlers.TryGetValue(containerName, out var handler))
+                {
+                    return await InvokeHandlerAsync(handler, request, cancellationToken);
                 }
 
                 // SDK internal routes use base64-encoded RIDs (e.g. "AQAAAA==") for
@@ -2616,16 +2699,257 @@ public class FakeCosmosHandler : HttpMessageHandler
                 // default handler for these rather than throwing.
                 if (containerName.Contains('=') || path.Contains("/pkranges"))
                 {
-                    return InvokeHandlerAsync(_default, request, cancellationToken);
+                    return await InvokeHandlerAsync(_default, request, cancellationToken);
                 }
 
-                throw new InvalidOperationException(
-                    $"Container '{containerName}' is not registered with CreateRouter(). " +
-                    $"Registered containers: {string.Join(", ", _handlers.Keys.OrderBy(k => k))}. " +
-                    $"Add it to the dictionary passed to FakeCosmosHandler.CreateRouter().");
+                return new HttpResponseMessage(HttpStatusCode.NotFound)
+                {
+                    Content = new StringContent(
+                        $"{{\"message\":\"Container '{containerName}' not found. " +
+                        $"Available containers: {string.Join(", ", _registry.Handlers.Keys.OrderBy(k => k))}\"}}",
+                        Encoding.UTF8, "application/json")
+                };
             }
 
-            return InvokeHandlerAsync(_default, request, cancellationToken);
+            return await InvokeHandlerAsync(_default, request, cancellationToken);
+        }
+
+        private async Task<HttpResponseMessage> HandleCreateContainerAsync(
+            HttpRequestMessage request, string dbName, CancellationToken cancellationToken)
+        {
+            var body = request.Content is not null
+                ? await request.Content.ReadAsStringAsync(cancellationToken)
+                : "{}";
+            var containerProps = JsonConvert.DeserializeObject<ContainerProperties>(body)
+                ?? new ContainerProperties("unknown", "/id");
+
+            var containerName = containerProps.Id;
+            var registryKey = GetNewRegistryKey(dbName, containerName);
+
+            // IfNotExists: check x-ms-cosmos-is-upsert or use existence check
+            var isIfNotExists = request.Headers.TryGetValues("x-ms-documentdb-is-upsert", out var upsertValues) &&
+                                upsertValues.Any(v => v.Equals("True", StringComparison.OrdinalIgnoreCase));
+
+            if (_registry.Handlers.ContainsKey(registryKey))
+            {
+                if (isIfNotExists)
+                {
+                    // Return existing container metadata
+                    if (_registry.Handlers.TryGetValue(registryKey, out var existingHandler))
+                    {
+                        return CreateContainerMetadataResponse(existingHandler, HttpStatusCode.OK);
+                    }
+                }
+                // If not IfNotExists, SDK sends 409 Conflict
+                return new HttpResponseMessage(HttpStatusCode.Conflict)
+                {
+                    Content = new StringContent(
+                        $"{{\"message\":\"Container '{containerName}' already exists.\"}}",
+                        Encoding.UTF8, "application/json")
+                };
+            }
+
+            // Create the new container
+            var newContainer = new InMemoryContainer(containerProps);
+            var newHandler = new FakeCosmosHandler(newContainer);
+
+            _registry.Handlers[registryKey] = newHandler;
+            _registry.BackingContainers[registryKey] = newContainer;
+
+            // Track in database container keys
+            var dbMap = _registry.DatabaseContainerKeys.GetOrAdd(dbName, _ => new(StringComparer.Ordinal));
+            dbMap[containerName] = registryKey;
+
+            // Register the SDK container if client is available
+            if (_registry.Client is not null)
+            {
+                _registry.SdkContainers[registryKey] =
+                    _registry.Client.GetContainer(dbName, containerName);
+            }
+
+            return CreateContainerMetadataResponse(newHandler, HttpStatusCode.Created);
+        }
+
+        private HttpResponseMessage HandleDeleteContainer(string dbName, string containerName)
+        {
+            var registryKey = ResolveExistingRegistryKey(dbName, containerName);
+            if (registryKey is null || !_registry.Handlers.TryRemove(registryKey, out var handler))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound)
+                {
+                    Content = new StringContent(
+                        $"{{\"message\":\"Container '{containerName}' not found.\"}}",
+                        Encoding.UTF8, "application/json")
+                };
+            }
+
+            _registry.BackingContainers.TryRemove(registryKey, out _);
+            _registry.SdkContainers.TryRemove(registryKey, out _);
+
+            // Remove from database container keys
+            if (_registry.DatabaseContainerKeys.TryGetValue(dbName, out var dbMap))
+                dbMap.TryRemove(containerName, out _);
+
+            // Mark the backing container as deleted so future operations through
+            // any cached handler reference return 404
+            handler.BackingContainer._isDeleted = true;
+
+            return new HttpResponseMessage(HttpStatusCode.NoContent)
+            {
+                Headers = { { "x-ms-request-charge", "1" } }
+            };
+        }
+
+        private HttpResponseMessage HandleReadContainer(string dbName, string containerName)
+        {
+            var registryKey = ResolveExistingRegistryKey(dbName, containerName);
+            if (registryKey is not null && _registry.Handlers.TryGetValue(registryKey, out var handler))
+            {
+                return CreateContainerMetadataResponse(handler, HttpStatusCode.OK);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound)
+            {
+                Content = new StringContent(
+                    $"{{\"message\":\"Container '{containerName}' not found.\"}}",
+                    Encoding.UTF8, "application/json")
+            };
+        }
+
+        private HttpResponseMessage HandleListContainers(string dbName)
+        {
+            var containerArray = new JArray();
+
+            if (_registry.DatabaseContainerKeys.TryGetValue(dbName, out var containerKeys))
+            {
+                foreach (var (_, registryKey) in containerKeys)
+                {
+                    if (_registry.Handlers.TryGetValue(registryKey, out var h))
+                        containerArray.Add(JObject.Parse(h.GetCollectionMetadata()));
+                }
+            }
+            else
+            {
+                // Fallback for backward compatibility (no DatabaseContainerKeys populated)
+                foreach (var handler in _registry.Handlers.Values)
+                {
+                    containerArray.Add(JObject.Parse(handler.GetCollectionMetadata()));
+                }
+            }
+
+            var result = new JObject
+            {
+                ["_rid"] = _default._databaseRid,
+                ["DocumentCollections"] = containerArray,
+                ["_count"] = containerArray.Count
+            };
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(result.ToString(Formatting.None), Encoding.UTF8, "application/json")
+            };
+            response.Headers.TryAddWithoutValidation("x-ms-request-charge", "1");
+            return response;
+        }
+
+        private async Task<HttpResponseMessage> HandleReplaceContainer(
+            HttpRequestMessage request, string dbName, string containerName, CancellationToken cancellationToken)
+        {
+            var registryKey = ResolveExistingRegistryKey(dbName, containerName);
+            if (registryKey is null || !_registry.Handlers.TryGetValue(registryKey, out var handler))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            // Parse the request body to check for PK path changes
+            if (request.Content is not null)
+            {
+                var body = await request.Content.ReadAsStringAsync(cancellationToken);
+                var props = JObject.Parse(body);
+                var newPkPath = props.SelectToken("partitionKey.paths[0]")?.ToString();
+                if (newPkPath is not null)
+                {
+                    var existingPkPath = handler.BackingContainer.PartitionKeyPaths.FirstOrDefault();
+                    if (existingPkPath is not null && !string.Equals(newPkPath, existingPkPath, StringComparison.Ordinal))
+                    {
+                        return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                        {
+                            Content = new StringContent(
+                                $"{{\"message\":\"Partition key path cannot be changed. " +
+                                $"Existing: '{existingPkPath}', Requested: '{newPkPath}'\"}}",
+                                Encoding.UTF8, "application/json")
+                        };
+                    }
+                }
+
+                // Apply mutable properties
+                var container = handler.BackingContainer;
+                if (props["defaultTtl"] is { Type: JTokenType.Integer } ttlToken)
+                {
+                    var ttl = ttlToken.Value<int>();
+                    if (ttl != 0) container.DefaultTimeToLive = ttl;
+                }
+                else if (props["defaultTtl"] is { Type: JTokenType.Null })
+                {
+                    container.DefaultTimeToLive = null;
+                }
+            }
+
+            return CreateContainerMetadataResponse(handler, HttpStatusCode.OK);
+        }
+
+        private async Task<HttpResponseMessage> HandleDatabaseListOrCreate(
+            HttpRequestMessage request, string method, CancellationToken cancellationToken)
+        {
+            // Delegate to the default handler for database operations
+            return await InvokeHandlerAsync(_default, request, cancellationToken);
+        }
+
+        private HttpResponseMessage HandleDatabaseCrud(
+            HttpRequestMessage request, string path, string method)
+        {
+            var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var dbName = segments.Length > 1 ? Uri.UnescapeDataString(segments[1]) : "fake-db";
+            _registry.KnownDatabases.Add(dbName);
+
+            return method switch
+            {
+                "GET" or "PUT" => _default.CreateJsonResponse(_default.GetDatabaseMetadata(dbName)),
+                "DELETE" => new HttpResponseMessage(HttpStatusCode.NoContent) { Headers = { { "x-ms-request-charge", "1" } } },
+                _ => new HttpResponseMessage(HttpStatusCode.MethodNotAllowed)
+            };
+        }
+
+        /// <summary>Finds the registry key for an existing container, trying compound then plain.</summary>
+        private string? ResolveExistingRegistryKey(string dbName, string containerName)
+        {
+            var compoundKey = $"{dbName}/{containerName}";
+            if (_registry.Handlers.ContainsKey(compoundKey))
+                return compoundKey;
+            if (_registry.Handlers.ContainsKey(containerName))
+                return containerName;
+            return null;
+        }
+
+        /// <summary>Determines the registry key for a new container registration.</summary>
+        private string GetNewRegistryKey(string dbName, string containerName)
+        {
+            return _registry.CompoundKeyDatabases.Contains(dbName)
+                ? $"{dbName}/{containerName}"
+                : containerName;
+        }
+
+        private static HttpResponseMessage CreateContainerMetadataResponse(
+            FakeCosmosHandler handler, HttpStatusCode statusCode)
+        {
+            var metadata = handler.GetCollectionMetadata();
+            var response = new HttpResponseMessage(statusCode)
+            {
+                Content = new StringContent(metadata, Encoding.UTF8, "application/json")
+            };
+            response.Headers.TryAddWithoutValidation("x-ms-request-charge", "1");
+            response.Headers.TryAddWithoutValidation("etag", $"\"{Guid.NewGuid()}\"");
+            return response;
         }
 
         private static Task<HttpResponseMessage> InvokeHandlerAsync(
@@ -2639,7 +2963,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         {
             if (disposing)
             {
-                foreach (var handler in _handlers.Values)
+                foreach (var handler in _registry.Handlers.Values)
                 {
                     handler.Dispose();
                 }

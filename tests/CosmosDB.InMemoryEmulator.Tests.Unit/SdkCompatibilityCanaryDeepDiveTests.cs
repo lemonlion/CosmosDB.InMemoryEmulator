@@ -733,8 +733,8 @@ public class MultiContainerRoutingCanaryTests : IDisposable
     {
         var unknown = _client.GetContainer("db", "unknown");
         var act = () => unknown.ReadItemAsync<TestDocument>("1", new PartitionKey("pk"));
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*not registered*");
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => e.StatusCode == System.Net.HttpStatusCode.NotFound);
     }
 }
 
