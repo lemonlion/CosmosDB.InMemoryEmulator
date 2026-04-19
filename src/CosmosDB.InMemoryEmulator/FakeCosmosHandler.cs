@@ -176,6 +176,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         "x-ms-documentdb-content-serialization-format",
         "x-ms-cosmos-query-optimisticdirectexecute",
         "x-ms-cosmos-supported-serialization-formats",
+        "x-ms-cosmos-supported-query-features",
     };
 
     /// <summary>
