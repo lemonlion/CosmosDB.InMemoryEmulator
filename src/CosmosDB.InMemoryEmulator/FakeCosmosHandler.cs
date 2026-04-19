@@ -70,6 +70,20 @@ public sealed class FakeCosmosHandlerOptions
     /// Defaults to 1.
     /// </summary>
     public int PartitionKeyRangeCount { get; init; } = 1;
+
+    /// <summary>
+    /// Strategy for building query plan responses. Override to customise or fix
+    /// query plan generation if a new SDK version changes the expected format.
+    /// Defaults to <see cref="DefaultQueryPlanStrategy"/>.
+    /// </summary>
+    public IQueryPlanStrategy QueryPlanStrategy { get; init; } = new DefaultQueryPlanStrategy();
+
+    /// <summary>
+    /// Strategy for resolving HybridRow batch schemas. Override to customise
+    /// batch schema resolution if a new SDK version changes the batch wire format.
+    /// Defaults to <see cref="DefaultBatchSchemaStrategy"/>.
+    /// </summary>
+    public IBatchSchemaStrategy BatchSchemaStrategy { get; init; } = new DefaultBatchSchemaStrategy();
 }
 
 /// <summary>
@@ -97,13 +111,73 @@ public class FakeCosmosHandler : HttpMessageHandler
     private readonly InMemoryContainer _container;
     private readonly ConcurrentBag<string> _requestLog = new();
     private readonly ConcurrentBag<string> _queryLog = new();
+    private readonly ConcurrentBag<string> _unrecognisedHeaders = new();
+    private readonly List<string> _sdkVersionWarnings = new();
     private readonly QueryResultCache _queryResultCache;
     private readonly string _collectionRid;
     private readonly string _databaseRid;
     private readonly int _partitionKeyRangeCount;
     private readonly string _partitionKeyPath;
+    private readonly IQueryPlanStrategy _queryPlanStrategy;
+    private readonly IBatchSchemaStrategy _batchSchemaStrategy;
     private static int _ridCounter;
     private const string PkRangesEtag = "\"pk-etag-1\"";
+
+    /// <summary>
+    /// The version of the <c>PartitionedQueryExecutionInfo</c> format returned by query plan responses.
+    /// If the SDK starts expecting a different version, queries may fail.
+    /// </summary>
+    public const int QueryPlanVersion = 2;
+
+    /// <summary>Minimum Cosmos SDK version that has been tested with this handler.</summary>
+    public static readonly Version MinTestedSdkVersion = new(3, 35, 0, 0);
+
+    /// <summary>Maximum Cosmos SDK version that has been tested with this handler.</summary>
+    public static readonly Version MaxTestedSdkVersion = new(3, 58, 0, 0);
+
+    /// <summary>
+    /// Set of <c>x-ms-*</c> request headers that this handler recognises and processes.
+    /// Any <c>x-ms-*</c> header not in this set is recorded in <see cref="UnrecognisedHeaders"/>.
+    /// </summary>
+    private static readonly HashSet<string> KnownRequestHeaders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "x-ms-documentdb-partitionkey",
+        "x-ms-documentdb-isquery",
+        "x-ms-documentdb-is-upsert",
+        "x-ms-cosmos-is-batch-request",
+        "x-ms-cosmos-is-query-plan-request",
+        "x-ms-max-item-count",
+        "x-ms-continuation",
+        "x-ms-documentdb-partitionkeyrangeid",
+        "x-ms-date",
+        "x-ms-version",
+        "x-ms-documentdb-query-enablecrosspartition",
+        "x-ms-documentdb-query-iscontinuationexpected",
+        "x-ms-documentdb-query-parallelizecrosspartitionquery",
+        "x-ms-documentdb-populatequerymetrics",
+        "x-ms-cosmos-correlated-activityid",
+        "x-ms-activity-id",
+        "x-ms-cosmos-sdk-supportedcapabilities",
+        "x-ms-session-token",
+        "x-ms-consistency-level",
+        "x-ms-request-charge",
+        "x-ms-cosmos-internal-is-query",
+        "x-ms-cosmos-query-version",
+        "x-ms-documentdb-collection-rid",
+        "x-ms-cosmos-batch-ordered-response",
+        "x-ms-cosmos-batch-atomic",
+        "x-ms-cosmos-batch-continue-on-error",
+        "x-ms-cosmos-sdk-version",
+        "x-ms-cosmos-intended-collection-rid",
+        "x-ms-cosmos-priority-level",
+        "x-ms-cosmos-allow-tentative-writes",
+        "x-ms-cosmos-physical-partition-count",
+        "x-ms-documentdb-responsecontinuationtokenlimitinkb",
+        "x-ms-documentdb-content-serialization-format",
+        "x-ms-cosmos-query-optimisticdirectexecute",
+        "x-ms-cosmos-supported-serialization-formats",
+        "x-ms-cosmos-supported-query-features",
+    };
 
     /// <summary>
     /// AsyncLocal override for partition key. When set, <see cref="HandleQueryAsync"/>
@@ -163,6 +237,20 @@ public class FakeCosmosHandler : HttpMessageHandler
     public IReadOnlyCollection<string> QueryLog => _queryLog;
 
     /// <summary>
+    /// <c>x-ms-*</c> request headers seen during request processing that are not in the
+    /// known headers set. Populated as requests flow through <see cref="SendAsync"/>.
+    /// Check this collection after a test run to detect new SDK headers that may need handling.
+    /// </summary>
+    public IReadOnlyCollection<string> UnrecognisedHeaders => _unrecognisedHeaders;
+
+    /// <summary>
+    /// Warnings generated during handler construction if the current Cosmos SDK version
+    /// falls outside the tested range (<see cref="MinTestedSdkVersion"/> to
+    /// <see cref="MaxTestedSdkVersion"/>).
+    /// </summary>
+    public IReadOnlyList<string> SdkVersionWarnings => _sdkVersionWarnings;
+
+    /// <summary>
     /// Optional fault injection delegate. When set, it is called before normal request
     /// handling. If it returns a non-null response, that response is used immediately.
     /// By default, metadata requests (account, collection, pkranges) are excluded to avoid
@@ -190,6 +278,45 @@ public class FakeCosmosHandler : HttpMessageHandler
         _queryResultCache = new QueryResultCache(options.CacheTtl, options.CacheMaxEntries);
         (_databaseRid, _collectionRid) = GenerateResourceIds(container.Id);
         _partitionKeyPath = container.PartitionKeyPaths.FirstOrDefault()?.TrimStart('/') ?? "id";
+        _queryPlanStrategy = options.QueryPlanStrategy;
+        _batchSchemaStrategy = options.BatchSchemaStrategy;
+        CheckSdkVersion();
+    }
+
+    private void CheckSdkVersion()
+    {
+        var sdkVersion = typeof(CosmosClient).Assembly.GetName().Version;
+        if (sdkVersion is null) return;
+
+        if (sdkVersion < MinTestedSdkVersion)
+        {
+            var warning = $"FakeCosmosHandler: Cosmos SDK {sdkVersion} is older than the minimum tested version " +
+                $"({MinTestedSdkVersion}). Some features may not work correctly. " +
+                $"Call VerifySdkCompatibilityAsync() to check for compatibility.";
+            _sdkVersionWarnings.Add(warning);
+            System.Diagnostics.Trace.TraceWarning(warning);
+        }
+        else if (sdkVersion > MaxTestedSdkVersion)
+        {
+            var warning = $"FakeCosmosHandler: Cosmos SDK {sdkVersion} is newer than the last tested version " +
+                $"({MaxTestedSdkVersion}). Call VerifySdkCompatibilityAsync() in your test setup " +
+                $"to check for compatibility.";
+            _sdkVersionWarnings.Add(warning);
+            System.Diagnostics.Trace.TraceWarning(warning);
+        }
+    }
+
+    /// <summary>
+    /// Returns true if the HybridRow batch schemas could be resolved. Used by
+    /// <see cref="DefaultBatchSchemaStrategy"/> to probe availability without throwing.
+    /// </summary>
+    internal static bool BatchSchemasAvailable
+    {
+        get
+        {
+            _ = BatchSchemas.OperationLayout;
+            return true;
+        }
     }
 
     private static (string DbRid, string CollRid) GenerateResourceIds(string containerId)
@@ -212,6 +339,16 @@ public class FakeCosmosHandler : HttpMessageHandler
         var path = request.RequestUri?.AbsolutePath ?? "";
         var method = request.Method.Method;
         _requestLog.Add($"{method} {path}");
+
+        // Detect unrecognised x-ms-* headers for SDK compatibility diagnostics.
+        foreach (var header in request.Headers)
+        {
+            if (header.Key.StartsWith("x-ms-", StringComparison.OrdinalIgnoreCase) &&
+                !KnownRequestHeaders.Contains(header.Key))
+            {
+                _unrecognisedHeaders.Add(header.Key);
+            }
+        }
 
         // Buffer request content so FaultInjector can safely read it without
         // consuming the stream that the handler needs later.
@@ -593,6 +730,17 @@ public class FakeCosmosHandler : HttpMessageHandler
     private async Task<HttpResponseMessage> HandleBatchAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        // Check if batch schemas are available before attempting to parse
+        if (!_batchSchemaStrategy.IsAvailable)
+        {
+            return new HttpResponseMessage(HttpStatusCode.NotImplemented)
+            {
+                Content = new StringContent(
+                    $"{{\"message\":\"{(_batchSchemaStrategy.UnavailableReason ?? "Batch schemas unavailable").Replace("\"", "\\\"")}\"}}", 
+                    Encoding.UTF8, "application/json")
+            };
+        }
+
         var pk = ExtractPartitionKey(request) ?? PartitionKey.None;
 
         // Parse the HybridRow/RecordIO binary request body to extract batch operations.
@@ -946,269 +1094,9 @@ public class FakeCosmosHandler : HttpMessageHandler
         var queryBody = JsonParseHelpers.ParseJson(body);
         var sqlQuery = queryBody["query"]?.ToString() ?? "SELECT * FROM c";
 
-        var queryInfo = new JObject
-        {
-            ["distinctType"] = "None",
-            ["top"] = null,
-            ["offset"] = null,
-            ["limit"] = null,
-            ["orderBy"] = new JArray(),
-            ["orderByExpressions"] = new JArray(),
-            ["groupByExpressions"] = new JArray(),
-            ["groupByAliases"] = new JArray(),
-            ["aggregates"] = new JArray(),
-            ["groupByAliasToAggregateType"] = new JObject(),
-            ["rewrittenQuery"] = "",
-            ["hasSelectValue"] = false,
-            ["hasNonStreamingOrderBy"] = false
-        };
-
-        if (CosmosSqlParser.TryParse(sqlQuery, out var parsed))
-        {
-            // ORDER BY
-            if (parsed.OrderByFields is { Length: > 0 })
-            {
-                var orderByArr = new JArray();
-                var orderByExprArr = new JArray();
-                foreach (var field in parsed.OrderByFields)
-                {
-                    orderByArr.Add(field.Ascending ? "Ascending" : "Descending");
-                    orderByExprArr.Add(field.Field ?? CosmosSqlParser.ExprToString(field.Expression));
-                }
-
-                queryInfo["orderBy"] = orderByArr;
-                queryInfo["orderByExpressions"] = orderByExprArr;
-                queryInfo["hasNonStreamingOrderBy"] = true;
-            }
-
-            // TOP
-            if (parsed.TopCount.HasValue)
-            {
-                queryInfo["top"] = parsed.TopCount.Value;
-            }
-
-            // OFFSET / LIMIT
-            if (parsed.Offset.HasValue)
-            {
-                queryInfo["offset"] = parsed.Offset.Value;
-            }
-
-            if (parsed.Limit.HasValue)
-            {
-                queryInfo["limit"] = parsed.Limit.Value;
-            }
-
-            // DISTINCT
-            if (parsed.IsDistinct)
-            {
-                // "Ordered" only when SELECT DISTINCT VALUE <expr> ORDER BY <same-expr>
-                var isOrdered = false;
-                if (parsed.IsValueSelect && parsed.OrderByFields is { Length: > 0 } && parsed.SelectFields.Length == 1)
-                {
-                    var selectExpr = CosmosSqlParser.ExprToString(parsed.SelectFields[0].SqlExpr);
-                    var orderExpr = parsed.OrderByFields[0].Field ?? CosmosSqlParser.ExprToString(parsed.OrderByFields[0].Expression);
-                    isOrdered = string.Equals(selectExpr, orderExpr, StringComparison.OrdinalIgnoreCase);
-                }
-                queryInfo["distinctType"] = isOrdered ? "Ordered" : "Unordered";
-            }
-
-            // GROUP BY
-            if (parsed.GroupByFields is { Length: > 0 })
-            {
-                queryInfo["groupByExpressions"] = new JArray(parsed.GroupByFields);
-                // Populate groupByAliases from SELECT fields
-                var aliases = new JArray();
-                foreach (var sf in parsed.SelectFields)
-                {
-                    if (sf.Alias is not null)
-                        aliases.Add(sf.Alias);
-                    else if (sf.Expression is not null)
-                        aliases.Add(sf.Expression);
-                }
-                queryInfo["groupByAliases"] = aliases;
-            }
-
-            // Aggregates — detect COUNT, SUM, MIN, MAX, AVG in SELECT fields
-            var aggregates = new JArray();
-            var groupByAliasToAgg = new JObject();
-            foreach (var field in parsed.SelectFields)
-            {
-                DetectAggregates(field.SqlExpr, aggregates, groupByAliasToAgg, field.Alias);
-            }
-
-            if (aggregates.Count > 0)
-            {
-                queryInfo["aggregates"] = aggregates;
-            }
-
-            if (groupByAliasToAgg.Count > 0)
-            {
-                queryInfo["groupByAliasToAggregateType"] = groupByAliasToAgg;
-            }
-
-            // SELECT VALUE
-            if (parsed.IsValueSelect)
-            {
-                queryInfo["hasSelectValue"] = true;
-            }
-
-            // Suppress SDK pipeline for GROUP BY, multi-aggregate, and VALUE aggregate
-            // queries. InMemoryContainer evaluates these fully; return pre-computed results.
-            // On Linux (no ServiceInterop), the SDK would otherwise activate
-            // GroupByQueryPipelineStage / AggregateQueryPipelineStage which expect
-            // undocumented wire formats (groupByItems/payload wrapping, [{"item":...}]
-            // arrays). By clearing aggregates from the query plan, the SDK treats the
-            // response as raw documents and the pre-computed result passes through.
-            var isGroupByBypass = parsed.GroupByFields is { Length: > 0 };
-            var aggregateFieldCount = parsed.SelectFields.Count(f => ContainsAggregate(f.SqlExpr));
-            var isMultiAggregateBypass = !isGroupByBypass && !parsed.IsValueSelect
-                && (aggregateFieldCount > 1 || aggregates.Count > 1);
-            var isValueAggregateBypass = !isGroupByBypass && parsed.IsValueSelect && aggregateFieldCount > 0;
-
-            if (isGroupByBypass || isMultiAggregateBypass || isValueAggregateBypass)
-            {
-                queryInfo["groupByExpressions"] = new JArray();
-                queryInfo["groupByAliases"] = new JArray();
-                queryInfo["groupByAliasToAggregateType"] = new JObject();
-                queryInfo["aggregates"] = new JArray();
-                if (isGroupByBypass)
-                {
-                    queryInfo["hasNonStreamingOrderBy"] = false;
-                    queryInfo["orderBy"] = new JArray();
-                    queryInfo["orderByExpressions"] = new JArray();
-                }
-            }
-
-            // Rewritten query — on non-Windows platforms the SDK uses this verbatim.
-            // For ORDER BY queries the SDK expects documents wrapped with
-            // orderByItems + payload as separate SELECT fields (not SELECT VALUE).
-            // For OFFSET/LIMIT queries, the SDK pipeline applies OFFSET/LIMIT
-            // from the queryInfo fields, so the rewritten query must NOT include them
-            // (otherwise they'd be applied twice: once by the container and once by the SDK).
-            if (parsed.OrderByFields is { Length: > 0 })
-            {
-                queryInfo["rewrittenQuery"] = BuildOrderByRewrittenQuery(parsed);
-            }
-            else if (parsed.Offset.HasValue || parsed.Limit.HasValue)
-            {
-                queryInfo["rewrittenQuery"] = StripOffsetLimit(sqlQuery);
-            }
-            else
-            {
-                queryInfo["rewrittenQuery"] = sqlQuery;
-            }
-        }
-        else
-        {
-            queryInfo["rewrittenQuery"] = sqlQuery;
-        }
-
-        // COUNT(DISTINCT ...) — dCountInfo (regex-based, works even when parser
-        // cannot handle the DISTINCT keyword inside a function call)
-        var countDistinctMatch = Regex.Match(sqlQuery,
-            @"COUNT\s*\(\s*DISTINCT\s+(.+?)\s*\)", RegexOptions.IgnoreCase);
-        if (countDistinctMatch.Success)
-        {
-            var distinctExpr = countDistinctMatch.Groups[1].Value.Trim();
-
-            // Extract the FROM alias. Handles:
-            //   FROM c              → alias "c"
-            //   FROM root c         → alias "c"  (EF Core style)
-            //   FROM root AS c      → alias "c"
-            var aliasMatch = Regex.Match(sqlQuery,
-                @"\bFROM\s+\w+\s+(?:AS\s+)?(\w+)", RegexOptions.IgnoreCase);
-            if (!aliasMatch.Success)
-                aliasMatch = Regex.Match(sqlQuery, @"\bFROM\s+(\w+)", RegexOptions.IgnoreCase);
-            var fromAlias = aliasMatch.Success ? aliasMatch.Groups[1].Value : "c";
-
-            // Try to extract a simple property path; for complex expressions use the expression as-is
-            var distinctPath = distinctExpr;
-            if (distinctPath.StartsWith(fromAlias + ".", StringComparison.OrdinalIgnoreCase))
-                distinctPath = distinctPath[(fromAlias.Length + 1)..];
-
-            // Determine kind: simple property ref or expression
-            var isSimplePath = Regex.IsMatch(distinctPath, @"^[\w.]+$");
-            queryInfo["dCountInfo"] = new JObject
-            {
-                ["dCountAlias"] = "$1",
-                ["dCountExpressionBase"] = isSimplePath
-                    ? new JObject { ["kind"] = "PropertyRef", ["propertyPath"] = distinctPath }
-                    : new JObject { ["kind"] = "Expression", ["expression"] = distinctExpr }
-            };
-        }
-
-        var queryPlan = new JObject
-        {
-            ["partitionedQueryExecutionInfoVersion"] = 2,
-            ["queryInfo"] = queryInfo,
-            ["queryRanges"] = new JArray(new JObject
-            {
-                ["min"] = "",
-                ["max"] = "FF",
-                ["isMinInclusive"] = true,
-                ["isMaxInclusive"] = false
-            })
-        };
-
+        CosmosSqlQuery? parsed = CosmosSqlParser.TryParse(sqlQuery, out var p) ? p : null;
+        var queryPlan = _queryPlanStrategy.BuildQueryPlan(sqlQuery, parsed, _collectionRid);
         return CreateJsonResponse(queryPlan.ToString(Formatting.None));
-    }
-
-    private static void DetectAggregates(
-        SqlExpression? expr, JArray aggregates, JObject groupByAliasToAgg, string? alias)
-    {
-        if (expr is FunctionCallExpression func)
-        {
-            var name = func.FunctionName.ToUpperInvariant();
-            string? aggType = name switch
-            {
-                "COUNT" => "Count",
-                "SUM" => "Sum",
-                "MIN" => "Min",
-                "MAX" => "Max",
-                "AVG" => "Average",
-                _ => null
-            };
-
-            if (aggType is not null)
-            {
-                if (!aggregates.Any(a => a.ToString() == aggType))
-                {
-                    aggregates.Add(aggType);
-                }
-
-                if (alias is not null)
-                {
-                    groupByAliasToAgg[alias] = aggType;
-                }
-            }
-            else
-            {
-                foreach (var arg in func.Arguments)
-                {
-                    DetectAggregates(arg, aggregates, groupByAliasToAgg, alias);
-                }
-            }
-        }
-        else if (expr is BinaryExpression bin)
-        {
-            DetectAggregates(bin.Left, aggregates, groupByAliasToAgg, alias);
-            DetectAggregates(bin.Right, aggregates, groupByAliasToAgg, alias);
-        }
-        else if (expr is UnaryExpression unary)
-        {
-            DetectAggregates(unary.Operand, aggregates, groupByAliasToAgg, alias);
-        }
-        else if (expr is TernaryExpression ternary)
-        {
-            DetectAggregates(ternary.Condition, aggregates, groupByAliasToAgg, alias);
-            DetectAggregates(ternary.IfTrue, aggregates, groupByAliasToAgg, alias);
-            DetectAggregates(ternary.IfFalse, aggregates, groupByAliasToAgg, alias);
-        }
-        else if (expr is CoalesceExpression coalesce)
-        {
-            DetectAggregates(coalesce.Left, aggregates, groupByAliasToAgg, alias);
-            DetectAggregates(coalesce.Right, aggregates, groupByAliasToAgg, alias);
-        }
     }
 
     private static bool HasAggregateInSelect(CosmosSqlQuery parsed)
@@ -1676,6 +1564,9 @@ public class FakeCosmosHandler : HttpMessageHandler
         return Regex.Replace(sql, @"\s*OFFSET\s+\S+\s+LIMIT\s+\S+", "", RegexOptions.IgnoreCase).TrimEnd();
     }
 
+    /// <summary>Static accessor for <see cref="DefaultQueryPlanStrategy"/>.</summary>
+    internal static string StripOffsetLimitStatic(string sql) => StripOffsetLimit(sql);
+
     /// <summary>
     /// Builds the ORDER BY rewritten query in the format the SDK expects:
     /// <c>SELECT c._rid, [{"item": c.field}] AS orderByItems, c AS payload FROM c ... ORDER BY c.field ASC</c>
@@ -1743,6 +1634,9 @@ public class FakeCosmosHandler : HttpMessageHandler
 
         return sb.ToString();
     }
+
+    /// <summary>Static accessor for <see cref="DefaultQueryPlanStrategy"/>.</summary>
+    internal static string BuildOrderByRewrittenQueryStatic(CosmosSqlQuery parsed) => BuildOrderByRewrittenQuery(parsed);
 
     /// <summary>
     /// Builds a SQL query that includes both the full document and computed ORDER BY
@@ -2293,13 +2187,13 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// A dictionary mapping container names to their handlers. The first entry is used
     /// as the default for account-level requests (e.g. GET /).
     /// </param>
-    public static HttpMessageHandler CreateRouter(
+    internal static HttpMessageHandler CreateRouter(
         IReadOnlyDictionary<string, FakeCosmosHandler> handlers)
     {
         return new RoutingHandler(handlers);
     }
 
-    private const string FakeConnectionString = "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;";
+    internal const string FakeConnectionString = "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;";
 
     /// <summary>
     /// Wraps an existing <see cref="CosmosClient"/> so that containers returned by
@@ -2326,7 +2220,7 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// A <see cref="CosmosClient"/> whose <see cref="CosmosClient.GetContainer"/>
     /// returns containers with automatic prefix PK capturing.
     /// </returns>
-    public CosmosClient WrapClient(CosmosClient innerClient)
+    internal CosmosClient WrapClient(CosmosClient innerClient)
         => WrapClient(innerClient, new Dictionary<string, FakeCosmosHandler> { [_container.Id] = this });
 
     /// <summary>
@@ -2339,7 +2233,7 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// <param name="handlers">
     /// A dictionary mapping container names (or "database/container" keys) to their handlers.
     /// </param>
-    public static CosmosClient WrapClient(
+    internal static CosmosClient WrapClient(
         CosmosClient innerClient,
         IReadOnlyDictionary<string, FakeCosmosHandler> handlers)
         => new PkAwareCosmosClient(innerClient, handlers);
@@ -2353,7 +2247,7 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// <see cref="CosmosClient"/> yourself and use <see cref="WrapClient(CosmosClient)"/> instead.
     /// </para>
     /// </summary>
-    public CosmosClient CreateClient()
+    internal CosmosClient CreateClient()
         => CreateClient(new Dictionary<string, FakeCosmosHandler> { [_container.Id] = this });
 
     /// <summary>
@@ -2366,7 +2260,7 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// <see cref="WrapClient(CosmosClient, IReadOnlyDictionary{string, FakeCosmosHandler})"/> instead.
     /// </para>
     /// </summary>
-    public static CosmosClient CreateClient(
+    internal static CosmosClient CreateClient(
         Dictionary<string, FakeCosmosHandler> handlers)
     {
         HttpMessageHandler httpHandler = handlers.Count == 1
@@ -2523,6 +2417,135 @@ public class FakeCosmosHandler : HttpMessageHandler
                 $"SDK compatibility check failed (v{sdkVersion}): DeleteItemAsync returned {deleteResponse.StatusCode} instead of NoContent. " +
                 "The Cosmos SDK may have changed its delete HTTP contract.");
         }
+
+        // DISTINCT query (before upsert so item count is deterministic)
+        var distinctItems = await DrainFeedIteratorAsync(
+            cosmosContainer.GetItemQueryIterator<dynamic>(
+                new QueryDefinition("SELECT DISTINCT c.name FROM c")));
+        if (distinctItems.Count != 3)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): DISTINCT query returned {distinctItems.Count} items instead of 3. " +
+                "The Cosmos SDK may have changed its DISTINCT query handling.");
+        }
+
+        // OFFSET/LIMIT query (before upsert so item count is deterministic)
+        var offsetLimitItems = await DrainFeedIteratorAsync(
+            cosmosContainer.GetItemQueryIterator<CompatibilityDocument>(
+                new QueryDefinition("SELECT * FROM c OFFSET 1 LIMIT 2")));
+        if (offsetLimitItems.Count != 2)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): OFFSET/LIMIT query returned {offsetLimitItems.Count} items instead of 2. " +
+                "The Cosmos SDK may have changed its OFFSET/LIMIT handling.");
+        }
+
+        // Upsert roundtrip
+        var upsertDoc = new CompatibilityDocument { Id = "upsert-test", PartitionKey = "pk", Name = "Upserted", Value = 42 };
+        var upsertResponse = await cosmosContainer.UpsertItemAsync(upsertDoc, new PartitionKey("pk"));
+        if (upsertResponse.StatusCode is not (HttpStatusCode.Created or HttpStatusCode.OK))
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): UpsertItemAsync returned {upsertResponse.StatusCode}. " +
+                "The Cosmos SDK may have changed its upsert HTTP contract.");
+        }
+
+        // Patch roundtrip
+        var patchOps = new[] { PatchOperation.Set("/value", 99) };
+        var patchResponse = await cosmosContainer.PatchItemAsync<CompatibilityDocument>(
+            "upsert-test", new PartitionKey("pk"), patchOps);
+        if (patchResponse.Resource?.Value != 99)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): PatchItemAsync returned unexpected value. " +
+                "The Cosmos SDK may have changed its patch HTTP contract.");
+        }
+
+        // Clean up upsert-test doc
+        await cosmosContainer.DeleteItemAsync<CompatibilityDocument>("upsert-test", new PartitionKey("pk"));
+
+        // Transactional batch roundtrip
+        var batchDoc1 = new CompatibilityDocument { Id = "batch-1", PartitionKey = "pk", Name = "B1", Value = 1 };
+        var batchDoc2 = new CompatibilityDocument { Id = "batch-2", PartitionKey = "pk", Name = "B2", Value = 2 };
+        var batchResponse = await cosmosContainer.CreateTransactionalBatch(new PartitionKey("pk"))
+            .CreateItem(batchDoc1)
+            .CreateItem(batchDoc2)
+            .ExecuteAsync();
+
+        if (!batchResponse.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): TransactionalBatch returned " +
+                $"{batchResponse.StatusCode}. The Cosmos SDK may have changed its batch wire format " +
+                "(HybridRow schemas or RecordIO encoding).");
+        }
+
+        if (batchResponse.Count != 2)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): batch returned {batchResponse.Count} " +
+                "results instead of 2.");
+        }
+
+        // Clean up batch docs
+        await cosmosContainer.DeleteItemAsync<CompatibilityDocument>("batch-1", new PartitionKey("pk"));
+        await cosmosContainer.DeleteItemAsync<CompatibilityDocument>("batch-2", new PartitionKey("pk"));
+
+        // ReadMany roundtrip
+        var readManyResult = await cosmosContainer.ReadManyItemsAsync<CompatibilityDocument>(
+            new[] { ("1", new PartitionKey("pk")), ("2", new PartitionKey("pk")) });
+
+        if (readManyResult.StatusCode != HttpStatusCode.OK)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): ReadManyItemsAsync returned " +
+                $"{readManyResult.StatusCode}. The Cosmos SDK may have changed its ReadMany HTTP contract.");
+        }
+
+        if (readManyResult.Count != 2)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): ReadMany returned {readManyResult.Count} " +
+                "items instead of 2.");
+        }
+
+        // Change feed roundtrip (uses backing container API since GetChangeFeedIterator
+        // doesn't work through FakeCosmosHandler — it doesn't implement A-IM protocol)
+        var changeFeedIterator = container.GetChangeFeedIterator<CompatibilityDocument>(0);
+        var changeFeedItems = new List<CompatibilityDocument>();
+        while (changeFeedIterator.HasMoreResults)
+        {
+            var page = await changeFeedIterator.ReadNextAsync();
+            changeFeedItems.AddRange(page);
+        }
+
+        if (changeFeedItems.Count < 3)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): Change feed returned {changeFeedItems.Count} " +
+                "items instead of at least 3. The change feed infrastructure may be broken.");
+        }
+
+        // GROUP BY query
+        var groupByItems = await DrainFeedIteratorAsync(
+            cosmosContainer.GetItemQueryIterator<dynamic>(
+                new QueryDefinition("SELECT c.partitionKey, COUNT(1) AS cnt FROM c GROUP BY c.partitionKey")));
+
+        if (groupByItems.Count < 1)
+        {
+            throw new InvalidOperationException(
+                $"SDK compatibility check failed (v{sdkVersion}): GROUP BY query returned no results. " +
+                "The Cosmos SDK may have changed its GROUP BY handling.");
+        }
+
+        // Verify no unrecognised headers were seen during the test
+        if (handler.UnrecognisedHeaders.Count > 0)
+        {
+            var unknownHeaders = string.Join(", ", handler.UnrecognisedHeaders.Distinct());
+            System.Diagnostics.Trace.TraceWarning(
+                $"FakeCosmosHandler: SDK v{sdkVersion} sent unrecognised x-ms-* headers: {unknownHeaders}. " +
+                "These may indicate new SDK features that are not yet handled.");
+        }
     }
 
     private static async Task<List<T>> DrainFeedIteratorAsync<T>(FeedIterator<T> iterator)
@@ -2548,27 +2571,86 @@ public class FakeCosmosHandler : HttpMessageHandler
         base.Dispose(disposing);
     }
 
-    private sealed class RoutingHandler : HttpMessageHandler
+    /// <summary>
+    /// Shared registry for dynamic container management. Holds the mutable dictionaries
+    /// that both RoutingHandler and InMemoryCosmosResult reference.
+    /// </summary>
+    internal sealed class DynamicContainerRegistry
     {
-        private readonly Dictionary<string, FakeCosmosHandler> _handlers;
+        public ConcurrentDictionary<string, FakeCosmosHandler> Handlers { get; } = new(StringComparer.Ordinal);
+        public ConcurrentDictionary<string, InMemoryContainer> BackingContainers { get; } = new(StringComparer.Ordinal);
+        public ConcurrentDictionary<string, Container> SdkContainers { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> KnownDatabases { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Maps database name → (container name → registry key).
+        /// Registry keys are plain container names for default DB, compound "db/container" for explicit databases.
+        /// </summary>
+        public ConcurrentDictionary<string, ConcurrentDictionary<string, string>> DatabaseContainerKeys { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Set of database names that use compound registry keys (added via AddDatabase).</summary>
+        public HashSet<string> CompoundKeyDatabases { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Client reference set after client creation so dynamic containers can register SDK containers.</summary>
+        public CosmosClient? Client { get; set; }
+
+        /// <summary>Database name used for dynamic container registration.</summary>
+        public string DatabaseName { get; set; } = "default";
+    }
+
+    internal sealed class RoutingHandler : HttpMessageHandler
+    {
+        private readonly DynamicContainerRegistry _registry;
         private readonly FakeCosmosHandler _default;
 
         public RoutingHandler(IReadOnlyDictionary<string, FakeCosmosHandler> handlers)
+            : this(handlers, new DynamicContainerRegistry())
+        {
+        }
+
+        public RoutingHandler(IReadOnlyDictionary<string, FakeCosmosHandler> handlers, DynamicContainerRegistry registry)
         {
             if (!handlers.Any())
-                throw new ArgumentException("At least one handler must be registered with CreateRouter().", nameof(handlers));
-            _handlers = new(handlers, StringComparer.Ordinal);
+                throw new ArgumentException("At least one handler must be registered.", nameof(handlers));
+            _registry = registry;
+            foreach (var kvp in handlers)
+                _registry.Handlers[kvp.Key] = kvp.Value;
             _default = handlers.Values.First();
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? "";
+            var method = request.Method.Method;
 
             if (path is "/" or "")
             {
-                return InvokeHandlerAsync(_default, request, cancellationToken);
+                return await InvokeHandlerAsync(_default, request, cancellationToken);
+            }
+
+            // Container creation: POST /dbs/{db}/colls
+            // Container listing: GET /dbs/{db}/colls
+            var collsMatch = Regex.Match(path, @"^/dbs/([^/]+)/colls/?$");
+            if (collsMatch.Success)
+            {
+                var dbNameForColls = collsMatch.Groups[1].Value;
+                if (method == "POST")
+                    return await HandleCreateContainerAsync(request, dbNameForColls, cancellationToken);
+                if (method == "GET")
+                    return HandleListContainers(dbNameForColls);
+            }
+
+            // Database management: /dbs
+            if (Regex.IsMatch(path, @"^/dbs/?$"))
+            {
+                return await HandleDatabaseListOrCreate(request, method, cancellationToken);
+            }
+
+            // Database CRUD: /dbs/{id}
+            if (Regex.IsMatch(path, @"^/dbs/[^/]+/?$") && !path.Contains("/colls"))
+            {
+                return HandleDatabaseCrud(request, path, method);
             }
 
             var match = Regex.Match(path, @"/dbs/([^/]+)/colls/([^/]+)");
@@ -2577,16 +2659,40 @@ public class FakeCosmosHandler : HttpMessageHandler
                 var dbName = match.Groups[1].Value;
                 var containerName = match.Groups[2].Value;
 
-                // Try database+container compound key first, then fall back to container-only
-                var compoundKey = $"{dbName}/{containerName}";
-                if (_handlers.TryGetValue(compoundKey, out var compoundHandler))
+                // Container-level operations (not sub-resources)
+                if (Regex.IsMatch(path, @"/colls/[^/]+/?$"))
                 {
-                    return InvokeHandlerAsync(compoundHandler, request, cancellationToken);
+                    // DELETE container
+                    if (method == "DELETE")
+                    {
+                        return HandleDeleteContainer(dbName, containerName);
+                    }
+
+                    // GET container metadata
+                    if (method == "GET")
+                    {
+                        return HandleReadContainer(dbName, containerName);
+                    }
+
+                    // PUT container (replace)
+                    if (method == "PUT")
+                    {
+                        return await HandleReplaceContainer(request, dbName, containerName, cancellationToken);
+                    }
                 }
 
-                if (_handlers.TryGetValue(containerName, out var handler))
+                // Container listing: GET /dbs/{db}/colls (handled above, but also match here for safety)
+
+                // Try database+container compound key first, then fall back to container-only
+                var compoundKey = $"{dbName}/{containerName}";
+                if (_registry.Handlers.TryGetValue(compoundKey, out var compoundHandler))
                 {
-                    return InvokeHandlerAsync(handler, request, cancellationToken);
+                    return await InvokeHandlerAsync(compoundHandler, request, cancellationToken);
+                }
+
+                if (_registry.Handlers.TryGetValue(containerName, out var handler))
+                {
+                    return await InvokeHandlerAsync(handler, request, cancellationToken);
                 }
 
                 // SDK internal routes use base64-encoded RIDs (e.g. "AQAAAA==") for
@@ -2594,16 +2700,257 @@ public class FakeCosmosHandler : HttpMessageHandler
                 // default handler for these rather than throwing.
                 if (containerName.Contains('=') || path.Contains("/pkranges"))
                 {
-                    return InvokeHandlerAsync(_default, request, cancellationToken);
+                    return await InvokeHandlerAsync(_default, request, cancellationToken);
                 }
 
-                throw new InvalidOperationException(
-                    $"Container '{containerName}' is not registered with CreateRouter(). " +
-                    $"Registered containers: {string.Join(", ", _handlers.Keys.OrderBy(k => k))}. " +
-                    $"Add it to the dictionary passed to FakeCosmosHandler.CreateRouter().");
+                return new HttpResponseMessage(HttpStatusCode.NotFound)
+                {
+                    Content = new StringContent(
+                        $"{{\"message\":\"Container '{containerName}' not found. " +
+                        $"Available containers: {string.Join(", ", _registry.Handlers.Keys.OrderBy(k => k))}\"}}",
+                        Encoding.UTF8, "application/json")
+                };
             }
 
-            return InvokeHandlerAsync(_default, request, cancellationToken);
+            return await InvokeHandlerAsync(_default, request, cancellationToken);
+        }
+
+        private async Task<HttpResponseMessage> HandleCreateContainerAsync(
+            HttpRequestMessage request, string dbName, CancellationToken cancellationToken)
+        {
+            var body = request.Content is not null
+                ? await request.Content.ReadAsStringAsync(cancellationToken)
+                : "{}";
+            var containerProps = JsonConvert.DeserializeObject<ContainerProperties>(body)
+                ?? new ContainerProperties("unknown", "/id");
+
+            var containerName = containerProps.Id;
+            var registryKey = GetNewRegistryKey(dbName, containerName);
+
+            // IfNotExists: check x-ms-cosmos-is-upsert or use existence check
+            var isIfNotExists = request.Headers.TryGetValues("x-ms-documentdb-is-upsert", out var upsertValues) &&
+                                upsertValues.Any(v => v.Equals("True", StringComparison.OrdinalIgnoreCase));
+
+            if (_registry.Handlers.ContainsKey(registryKey))
+            {
+                if (isIfNotExists)
+                {
+                    // Return existing container metadata
+                    if (_registry.Handlers.TryGetValue(registryKey, out var existingHandler))
+                    {
+                        return CreateContainerMetadataResponse(existingHandler, HttpStatusCode.OK);
+                    }
+                }
+                // If not IfNotExists, SDK sends 409 Conflict
+                return new HttpResponseMessage(HttpStatusCode.Conflict)
+                {
+                    Content = new StringContent(
+                        $"{{\"message\":\"Container '{containerName}' already exists.\"}}",
+                        Encoding.UTF8, "application/json")
+                };
+            }
+
+            // Create the new container
+            var newContainer = new InMemoryContainer(containerProps);
+            var newHandler = new FakeCosmosHandler(newContainer);
+
+            _registry.Handlers[registryKey] = newHandler;
+            _registry.BackingContainers[registryKey] = newContainer;
+
+            // Track in database container keys
+            var dbMap = _registry.DatabaseContainerKeys.GetOrAdd(dbName, _ => new(StringComparer.Ordinal));
+            dbMap[containerName] = registryKey;
+
+            // Register the SDK container if client is available
+            if (_registry.Client is not null)
+            {
+                _registry.SdkContainers[registryKey] =
+                    _registry.Client.GetContainer(dbName, containerName);
+            }
+
+            return CreateContainerMetadataResponse(newHandler, HttpStatusCode.Created);
+        }
+
+        private HttpResponseMessage HandleDeleteContainer(string dbName, string containerName)
+        {
+            var registryKey = ResolveExistingRegistryKey(dbName, containerName);
+            if (registryKey is null || !_registry.Handlers.TryRemove(registryKey, out var handler))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound)
+                {
+                    Content = new StringContent(
+                        $"{{\"message\":\"Container '{containerName}' not found.\"}}",
+                        Encoding.UTF8, "application/json")
+                };
+            }
+
+            _registry.BackingContainers.TryRemove(registryKey, out _);
+            _registry.SdkContainers.TryRemove(registryKey, out _);
+
+            // Remove from database container keys
+            if (_registry.DatabaseContainerKeys.TryGetValue(dbName, out var dbMap))
+                dbMap.TryRemove(containerName, out _);
+
+            // Mark the backing container as deleted so future operations through
+            // any cached handler reference return 404
+            handler.BackingContainer._isDeleted = true;
+
+            return new HttpResponseMessage(HttpStatusCode.NoContent)
+            {
+                Headers = { { "x-ms-request-charge", "1" } }
+            };
+        }
+
+        private HttpResponseMessage HandleReadContainer(string dbName, string containerName)
+        {
+            var registryKey = ResolveExistingRegistryKey(dbName, containerName);
+            if (registryKey is not null && _registry.Handlers.TryGetValue(registryKey, out var handler))
+            {
+                return CreateContainerMetadataResponse(handler, HttpStatusCode.OK);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound)
+            {
+                Content = new StringContent(
+                    $"{{\"message\":\"Container '{containerName}' not found.\"}}",
+                    Encoding.UTF8, "application/json")
+            };
+        }
+
+        private HttpResponseMessage HandleListContainers(string dbName)
+        {
+            var containerArray = new JArray();
+
+            if (_registry.DatabaseContainerKeys.TryGetValue(dbName, out var containerKeys))
+            {
+                foreach (var (_, registryKey) in containerKeys)
+                {
+                    if (_registry.Handlers.TryGetValue(registryKey, out var h))
+                        containerArray.Add(JObject.Parse(h.GetCollectionMetadata()));
+                }
+            }
+            else
+            {
+                // Fallback for backward compatibility (no DatabaseContainerKeys populated)
+                foreach (var handler in _registry.Handlers.Values)
+                {
+                    containerArray.Add(JObject.Parse(handler.GetCollectionMetadata()));
+                }
+            }
+
+            var result = new JObject
+            {
+                ["_rid"] = _default._databaseRid,
+                ["DocumentCollections"] = containerArray,
+                ["_count"] = containerArray.Count
+            };
+
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(result.ToString(Formatting.None), Encoding.UTF8, "application/json")
+            };
+            response.Headers.TryAddWithoutValidation("x-ms-request-charge", "1");
+            return response;
+        }
+
+        private async Task<HttpResponseMessage> HandleReplaceContainer(
+            HttpRequestMessage request, string dbName, string containerName, CancellationToken cancellationToken)
+        {
+            var registryKey = ResolveExistingRegistryKey(dbName, containerName);
+            if (registryKey is null || !_registry.Handlers.TryGetValue(registryKey, out var handler))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+
+            // Parse the request body to check for PK path changes
+            if (request.Content is not null)
+            {
+                var body = await request.Content.ReadAsStringAsync(cancellationToken);
+                var props = JObject.Parse(body);
+                var newPkPath = props.SelectToken("partitionKey.paths[0]")?.ToString();
+                if (newPkPath is not null)
+                {
+                    var existingPkPath = handler.BackingContainer.PartitionKeyPaths.FirstOrDefault();
+                    if (existingPkPath is not null && !string.Equals(newPkPath, existingPkPath, StringComparison.Ordinal))
+                    {
+                        return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                        {
+                            Content = new StringContent(
+                                $"{{\"message\":\"Partition key path cannot be changed. " +
+                                $"Existing: '{existingPkPath}', Requested: '{newPkPath}'\"}}",
+                                Encoding.UTF8, "application/json")
+                        };
+                    }
+                }
+
+                // Apply mutable properties
+                var container = handler.BackingContainer;
+                if (props["defaultTtl"] is { Type: JTokenType.Integer } ttlToken)
+                {
+                    var ttl = ttlToken.Value<int>();
+                    if (ttl != 0) container.DefaultTimeToLive = ttl;
+                }
+                else if (props["defaultTtl"] is { Type: JTokenType.Null })
+                {
+                    container.DefaultTimeToLive = null;
+                }
+            }
+
+            return CreateContainerMetadataResponse(handler, HttpStatusCode.OK);
+        }
+
+        private async Task<HttpResponseMessage> HandleDatabaseListOrCreate(
+            HttpRequestMessage request, string method, CancellationToken cancellationToken)
+        {
+            // Delegate to the default handler for database operations
+            return await InvokeHandlerAsync(_default, request, cancellationToken);
+        }
+
+        private HttpResponseMessage HandleDatabaseCrud(
+            HttpRequestMessage request, string path, string method)
+        {
+            var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var dbName = segments.Length > 1 ? Uri.UnescapeDataString(segments[1]) : "fake-db";
+            _registry.KnownDatabases.Add(dbName);
+
+            return method switch
+            {
+                "GET" or "PUT" => _default.CreateJsonResponse(_default.GetDatabaseMetadata(dbName)),
+                "DELETE" => new HttpResponseMessage(HttpStatusCode.NoContent) { Headers = { { "x-ms-request-charge", "1" } } },
+                _ => new HttpResponseMessage(HttpStatusCode.MethodNotAllowed)
+            };
+        }
+
+        /// <summary>Finds the registry key for an existing container, trying compound then plain.</summary>
+        private string? ResolveExistingRegistryKey(string dbName, string containerName)
+        {
+            var compoundKey = $"{dbName}/{containerName}";
+            if (_registry.Handlers.ContainsKey(compoundKey))
+                return compoundKey;
+            if (_registry.Handlers.ContainsKey(containerName))
+                return containerName;
+            return null;
+        }
+
+        /// <summary>Determines the registry key for a new container registration.</summary>
+        private string GetNewRegistryKey(string dbName, string containerName)
+        {
+            return _registry.CompoundKeyDatabases.Contains(dbName)
+                ? $"{dbName}/{containerName}"
+                : containerName;
+        }
+
+        private static HttpResponseMessage CreateContainerMetadataResponse(
+            FakeCosmosHandler handler, HttpStatusCode statusCode)
+        {
+            var metadata = handler.GetCollectionMetadata();
+            var response = new HttpResponseMessage(statusCode)
+            {
+                Content = new StringContent(metadata, Encoding.UTF8, "application/json")
+            };
+            response.Headers.TryAddWithoutValidation("x-ms-request-charge", "1");
+            response.Headers.TryAddWithoutValidation("etag", $"\"{Guid.NewGuid()}\"");
+            return response;
         }
 
         private static Task<HttpResponseMessage> InvokeHandlerAsync(
@@ -2617,7 +2964,7 @@ public class FakeCosmosHandler : HttpMessageHandler
         {
             if (disposing)
             {
-                foreach (var handler in _handlers.Values)
+                foreach (var handler in _registry.Handlers.Values)
                 {
                     handler.Dispose();
                 }

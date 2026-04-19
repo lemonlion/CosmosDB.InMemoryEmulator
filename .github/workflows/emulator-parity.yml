@@ -5,6 +5,9 @@ on:
     - cron: '0 6 * * 1'  # Weekly Monday 6am UTC
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # Single source of truth for which integration test classes run against the
 # emulators. Expand this filter (OR with `|`) one class at a time and verify the
 # workflow still completes without infra failures (partition exhaustion,

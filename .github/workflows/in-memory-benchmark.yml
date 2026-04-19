@@ -3,6 +3,9 @@ name: In-Memory Benchmark
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   performance-tests:
     runs-on: ubuntu-latest
