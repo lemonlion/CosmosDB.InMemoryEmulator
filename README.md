@@ -131,7 +131,6 @@ For the full feature list see [Features](https://github.com/lemonlion/CosmosDB.I
 |---|---|---|---|
 | **Core library** | `CosmosDB.InMemoryEmulator` | Primary Features | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator) |
 | **JavaScript Triggers** | `CosmosDB.InMemoryEmulator.JsTriggers` | Support for JS Triggers | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator.JsTriggers)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.JsTriggers) |
-| **Production Extensions** | `CosmosDB.InMemoryEmulator.ProductionExtensions` | `.ToFeedIteratorOverridable()` — no longer needed since 4.0 (all approaches use `FakeCosmosHandler` natively) | [![NuGet Version](https://img.shields.io/nuget/v/CosmosDB.InMemoryEmulator.ProductionExtensions)](https://www.nuget.org/packages/CosmosDB.InMemoryEmulator.ProductionExtensions) |
 
 ## Documentation
 

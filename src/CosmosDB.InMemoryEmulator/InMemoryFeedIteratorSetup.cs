@@ -4,6 +4,8 @@ using System.Reflection;
 using System.Threading;
 using CosmosDB.InMemoryEmulator.ProductionExtensions;
 
+#pragma warning disable CS0618 // Obsolete members - InMemoryFeedIteratorSetup must reference the deprecated ProductionExtensions for backward compat
+
 namespace CosmosDB.InMemoryEmulator;
 
 /// <summary>
