@@ -520,6 +520,15 @@ public class InMemoryCosmosSetupOperationsTests
     }
 
     [Fact]
+    public void ClearItems_ConvenienceMethod_Works()
+    {
+        using var cosmos = InMemoryCosmos.Create("orders", "/partitionKey");
+
+        cosmos.ClearItems();
+        // Should not throw - convenience method on InMemoryCosmosResult
+    }
+
+    [Fact]
     public async Task SetupContainer_ExportImportState_Works()
     {
         using var cosmos = InMemoryCosmos.Create("orders", "/partitionKey");
@@ -528,15 +537,37 @@ public class InMemoryCosmosSetupOperationsTests
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
             new PartitionKey("pk1"));
 
-        var state = cosmos.SetupContainer().ExportState();
+        var state = cosmos.ExportState();
         state.Should().Contain("\"id\"");
         state.Should().Contain("Test");
 
-        cosmos.SetupContainer().ClearItems();
-        cosmos.SetupContainer().ImportState(state);
+        cosmos.ClearItems();
+        cosmos.ImportState(state);
 
         var response = await cosmos.Container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
         response.Resource.Name.Should().Be("Test");
+    }
+
+    [Fact]
+    public async Task ExportImportState_NamedContainer_Works()
+    {
+        using var cosmos = InMemoryCosmos.Builder()
+            .AddContainer("orders", "/partitionKey")
+            .AddContainer("products", "/categoryId")
+            .Build();
+
+        await cosmos.Containers["orders"].CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Order1" },
+            new PartitionKey("pk1"));
+
+        var state = cosmos.ExportState("orders");
+        state.Should().Contain("Order1");
+
+        cosmos.ClearItems("orders");
+        cosmos.ImportState(state, "orders");
+
+        var response = await cosmos.Containers["orders"].ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        response.Resource.Name.Should().Be("Order1");
     }
 
     [Fact]

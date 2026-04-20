@@ -406,6 +406,35 @@ public sealed class InMemoryCosmosResult : IDisposable, IAsyncDisposable
         return _registry.BackingContainers[registryKey];
     }
 
+    // ─── State management convenience methods ─────────────────────────────────
+
+    /// <summary>Exports the current container state as a JSON string.</summary>
+    public string ExportState(string? containerName = null) =>
+        SetupContainer(containerName).ExportState();
+
+    /// <summary>Exports the current container state to a file.</summary>
+    public void ExportStateToFile(string path, string? containerName = null) =>
+        SetupContainer(containerName).ExportStateToFile(path);
+
+    /// <summary>Imports container state from a JSON string, replacing all existing data.</summary>
+    public void ImportState(string json, string? containerName = null) =>
+        SetupContainer(containerName).ImportState(json);
+
+    /// <summary>Imports container state from a file, replacing all existing data.</summary>
+    public void ImportStateFromFile(string filePath, string? containerName = null) =>
+        SetupContainer(containerName).ImportStateFromFile(filePath);
+
+    /// <summary>
+    /// Restores the container to its state at the specified point in time
+    /// by replaying the change feed.
+    /// </summary>
+    public void RestoreToPointInTime(DateTimeOffset timestamp, string? containerName = null) =>
+        SetupContainer(containerName).RestoreToPointInTime(timestamp);
+
+    /// <summary>Removes all items, ETags, timestamps, and change feed entries.</summary>
+    public void ClearItems(string? containerName = null) =>
+        SetupContainer(containerName).ClearItems();
+
     // ─── Tier 3: Fault injection & diagnostics ────────────────────────────────
 
     /// <summary>
@@ -662,6 +691,35 @@ public sealed class InMemoryDatabaseResult
                 $"Container '{containerName}' not found in database '{DatabaseName}'.");
         return _registry.BackingContainers[registryKey];
     }
+
+    // ─── State management convenience methods ─────────────────────────────────
+
+    /// <summary>Exports the current container state as a JSON string.</summary>
+    public string ExportState(string containerName) =>
+        SetupContainer(containerName).ExportState();
+
+    /// <summary>Exports the current container state to a file.</summary>
+    public void ExportStateToFile(string containerName, string path) =>
+        SetupContainer(containerName).ExportStateToFile(path);
+
+    /// <summary>Imports container state from a JSON string, replacing all existing data.</summary>
+    public void ImportState(string containerName, string json) =>
+        SetupContainer(containerName).ImportState(json);
+
+    /// <summary>Imports container state from a file, replacing all existing data.</summary>
+    public void ImportStateFromFile(string containerName, string filePath) =>
+        SetupContainer(containerName).ImportStateFromFile(filePath);
+
+    /// <summary>
+    /// Restores the container to its state at the specified point in time
+    /// by replaying the change feed.
+    /// </summary>
+    public void RestoreToPointInTime(string containerName, DateTimeOffset timestamp) =>
+        SetupContainer(containerName).RestoreToPointInTime(timestamp);
+
+    /// <summary>Removes all items, ETags, timestamps, and change feed entries.</summary>
+    public void ClearItems(string containerName) =>
+        SetupContainer(containerName).ClearItems();
 
     /// <summary>
     /// Returns the <see cref="FakeCosmosHandler"/> for the specified container in this database.

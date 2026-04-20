@@ -30,6 +30,8 @@ serviceCollection.UseInMemoryCosmosContainers(); // Replaces only Cosmos Contain
 
 Both methods use `FakeCosmosHandler` internally — full SDK fidelity, `.ToFeedIterator()` works natively, no production code changes needed.
 
+See **[Dependency Injection](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Dependency-Injection)** for all registration patterns and **[Integration Approaches](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Integration-Approaches)** for a comparison of the available approaches.
+
 ### Direct Instantiation
 
 Recommended — highest fidelity, zero production code changes:
@@ -55,6 +57,8 @@ using var cosmos = InMemoryCosmos.Builder()
 var orders = cosmos.Client.GetContainer("default", "orders");
 var products = cosmos.Client.GetContainer("default", "products");
 ```
+
+See **[Multi-Database](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Multi-Database)** for more details on multi-database setups.
 
 Multi-database (overlapping container names):
 
@@ -82,6 +86,8 @@ cosmos.SetupContainer("orders").RegisterUdf("myUdf", args => args[0]);
 cosmos.Handler.FaultInjector = req => new HttpResponseMessage((HttpStatusCode)429);
 ```
 
+See **[Getting Started](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Getting-Started)** for a full walkthrough and **[API Reference](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/API-Reference)** for all available methods.
+
 ## Motivation
 
 Designed for super fast feedback from your Integration/Component tests in a local or CI environment, to avoid relying completely on the official Cosmos emulator or official Cosmos DB or inaccurate high level abstractions. 
@@ -99,21 +105,21 @@ See the **[Feature Comparison With Alternatives](https://github.com/lemonlion/Co
 ## Features
 
 - **Full CRUD** — typed and stream variants with proper status codes and ETags
-- **Feature Complete SQL query engine** — 125+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries, full-text search, vector search
+- **Feature Complete SQL query engine** — 125+ built-in functions, `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING`, `JOIN`, `TOP`, `DISTINCT`, `OFFSET/LIMIT`, subqueries, full-text search, vector search — see **[SQL Queries](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/SQL-Queries)**
 - **Full LINQ support** — `GetItemLinqQueryable<T>()` with `.ToFeedIterator()` interception
 - **Triggers** — pre-trigger and post-trigger execution via C# handlers, with optional JavaScript body interpretation via the `CosmosDB.InMemoryEmulator.JsTriggers` package
 - **Bulk operations** — `AllowBulkExecution = true` with concurrent `Task.WhenAll` patterns
 - **Transactional batches** — atomic execution with rollback on failure
-- **Change feed** — iterators, checkpoints, delete tombstones, `ChangeFeedProcessor`, and manual checkpoint processor
-- **Point-in-time restore** — restore a container to any previous point in time via change feed replay
+- **Change feed** — iterators, checkpoints, delete tombstones, `ChangeFeedProcessor`, and manual checkpoint processor — see **[Features](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Features)**
+- **Point-in-time restore** — restore a container to any previous point in time via change feed replay — see **[State Persistence](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/State-Persistence)**
 - **Partition keys** — single and composite, auto-extraction from documents
-- **State persistence** — export/import container state as JSON; automatic save/restore between test runs via `StatePersistenceDirectory`
+- **State persistence** — export/import container state as JSON; automatic save/restore between test runs via `StatePersistenceDirectory` — see **[State Persistence](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/State-Persistence)**
 - **TTL / expiration** — container-level and per-item with lazy eviction
 - **ETag / optimistic concurrency** — `IfMatchEtag`, `IfNoneMatchEtag`, wildcard `*`
 - **System metadata** — `_ts` and `_etag` injected into stored items, matching real Cosmos DB
 - **Patch operations** — all 6 types with deep nested paths and filter predicates
-- **Fault injection** — simulate 429 throttling, 503 errors, timeouts
-- **DI integration** — `UseInMemoryCosmosDB()` extension methods for `IServiceCollection`
+- **Fault injection** — simulate 429 throttling, 503 errors, timeouts — see **[Features](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Features)**
+- **DI integration** — `UseInMemoryCosmosDB()` extension methods for `IServiceCollection` — see **[Dependency Injection](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Dependency-Injection)**
 - **HTTP-level interception** — `FakeCosmosHandler` for zero-code-change integration
 - **Custom handler wrapping** — insert `DelegatingHandler` middleware (logging, tracking, metrics) via `HttpMessageHandlerWrapper`
 - **Unique key policies** — constraint enforcement on Create, Upsert, Replace, and Patch (typed and stream)
@@ -136,7 +142,19 @@ For the full feature list see [Features](https://github.com/lemonlion/CosmosDB.I
 
 Full documentation is available on the **[Wiki](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki)**.
 
-See **[What's New in 4.0](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Whats-New-In-4.0)** for the latest changes.
+| Guide | Description |
+|---|---|
+| **[Getting Started](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Getting-Started)** | Quick start walkthrough |
+| **[What's New in 4.0](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Whats-New-In-4.0)** | Latest changes and migration notes |
+| **[Integration Approaches](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Integration-Approaches)** | Comparison of DI, direct, and handler-based setups |
+| **[Dependency Injection](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Dependency-Injection)** | All DI registration patterns |
+| **[SQL Queries](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/SQL-Queries)** | SQL engine capabilities and supported functions |
+| **[Seeding Data](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Seeding-Data)** | Populating containers for tests |
+| **[State Persistence](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/State-Persistence)** | Export/import and automatic persistence |
+| **[API Reference](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/API-Reference)** | Full API surface documentation |
+| **[Troubleshooting](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Troubleshooting)** | Common issues and fixes |
+| **[Known Limitations](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Known-Limitations)** | Behavioural differences from real Cosmos DB |
+| **[Migration Guide](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/Migration-Guide)** | Upgrading between major versions |
 
 ## Emulator Parity Validation
 
