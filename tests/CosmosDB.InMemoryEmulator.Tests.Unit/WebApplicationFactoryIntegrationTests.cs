@@ -1323,7 +1323,7 @@ public class WafCallbackTests : IDisposable
                 services.UseInMemoryCosmosContainers(o =>
                 {
                     o.AddContainer("items", "/partitionKey");
-                    o.OnContainerCreated = c => captured = c;
+                    o.OnContainerCreated = c => captured = (InMemoryContainer)c;
                 }));
 
         captured.Should().NotBeNull();
@@ -1415,7 +1415,7 @@ public class WafSeedingPatternTests : IDisposable
                     o.AddContainer("items", "/partitionKey");
                     o.OnContainerCreated = container =>
                     {
-                        container.CreateItemAsync(
+                        ((InMemoryContainer)container).CreateItemAsync(
                             new CosmosTestItem("seed1", "seed1", "SeededViaContainer"),
                             new PartitionKey("seed1")).GetAwaiter().GetResult();
                     };
@@ -1466,7 +1466,7 @@ public class WafSeedingPatternTests : IDisposable
                     o.AddContainer("items", "/partitionKey");
                     o.OnHandlerCreated = (_, handler) =>
                     {
-                        handler.BackingContainer.ImportState(state);
+                        handler.BackingInMemoryContainer.ImportState(state);
                     };
                 }));
 
@@ -1493,7 +1493,7 @@ public class WafSeedingPatternTests : IDisposable
             new CosmosTestItem("1", "1", "ToBeCleared"),
             new PartitionKey("1"));
 
-        capturedHandler!.BackingContainer.ClearItems();
+        capturedHandler!.BackingInMemoryContainer.ClearItems();
 
         var response = await app.HttpClient.GetAsync("/items");
         var items = await response.Content.ReadFromJsonAsync<List<CosmosTestItem>>(JsonOptions);
@@ -1585,7 +1585,7 @@ public class WafAdvancedFeatureTests : IDisposable
                     o.OnHandlerCreated = (_, h) =>
                     {
                         handler = h;
-                        h.BackingContainer.DefaultTimeToLive = 1;
+                        h.BackingInMemoryContainer.DefaultTimeToLive = 1;
                     };
                 }));
 
@@ -1637,7 +1637,7 @@ public class WafAdvancedFeatureTests : IDisposable
         await app1.HttpClient.PostAsJsonAsync("/items", new CosmosTestItem("s1", "s1", "State1"));
         await app1.HttpClient.PostAsJsonAsync("/items", new CosmosTestItem("s2", "s2", "State2"));
 
-        var exportedState = handler1!.BackingContainer.ExportState();
+        var exportedState = handler1!.BackingInMemoryContainer.ExportState();
 
         FakeCosmosHandler? handler2 = null;
         await using var app2 = await TestAppHost.CreateAsync(
@@ -1648,7 +1648,7 @@ public class WafAdvancedFeatureTests : IDisposable
                     o.OnHandlerCreated = (_, h) =>
                     {
                         handler2 = h;
-                        h.BackingContainer.ImportState(exportedState);
+                        h.BackingInMemoryContainer.ImportState(exportedState);
                     };
                 }));
 
@@ -2233,7 +2233,7 @@ public class WafStateLifecycleTests : IDisposable
                     o.OnHandlerCreated = (_, h) =>
                     {
                         handler = h;
-                        h.BackingContainer.DefaultTimeToLive = 1;
+                        h.BackingInMemoryContainer.DefaultTimeToLive = 1;
                     };
                 }));
 
@@ -2270,7 +2270,7 @@ public class WafStateLifecycleTests : IDisposable
                 var container = app1.Services.GetRequiredService<Container>();
                 await container.CreateItemAsync(new CosmosTestItem("persist1", "pk1", "Persisted"), new PartitionKey("pk1"));
                 // Explicitly persist — host disposal may not reliably trigger InMemoryContainer.Dispose()
-                handler1!.BackingContainer.Dispose();
+                handler1!.BackingInMemoryContainer.Dispose();
             }
 
             // Host 2: should auto-load from same directory
@@ -2511,7 +2511,7 @@ public class WafStatePersistenceContainerPatternTests : IDisposable
         try
         {
             // Host 1: create items via container-only pattern, explicitly persist
-            InMemoryContainer? capturedContainer = null;
+            IContainerTestSetup? capturedContainer = null;
             await using (var app1 = await TestAppHost.CreateAsync(
                 configureBaseServices: services =>
                 {
@@ -2532,7 +2532,7 @@ public class WafStatePersistenceContainerPatternTests : IDisposable
                     new CosmosTestItem("p1", "pk1", "ContainerPersisted"),
                     new PartitionKey("pk1"));
                 // Explicitly persist — container pattern may not auto-dispose
-                capturedContainer!.Dispose();
+                ((InMemoryContainer)capturedContainer!).Dispose();
             }
 
             // Host 2: should auto-load

@@ -9,7 +9,7 @@ namespace CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 /// </summary>
 public sealed class InMemoryTestFixture : ITestContainerFixture
 {
-    private readonly List<(CosmosClient Client, FakeCosmosHandler Handler)> _tracked = [];
+    private readonly List<InMemoryCosmosResult> _tracked = [];
 
     public TestTarget Target => TestTarget.InMemory;
     public bool IsEmulator => false;
@@ -19,9 +19,10 @@ public sealed class InMemoryTestFixture : ITestContainerFixture
         string partitionKeyPath,
         Action<ContainerProperties>? configure = null)
     {
-        var props = new ContainerProperties(containerName, partitionKeyPath);
-        configure?.Invoke(props);
-        return Task.FromResult(BuildContainer(props));
+        var result = InMemoryCosmos.Create(containerName, partitionKeyPath,
+            configureContainer: setup => ApplyContainerProperties(setup, containerName, partitionKeyPath, configure));
+        _tracked.Add(result);
+        return Task.FromResult(result.Container);
     }
 
     public Task<Container> CreateContainerAsync(
@@ -29,36 +30,35 @@ public sealed class InMemoryTestFixture : ITestContainerFixture
         IReadOnlyList<string> partitionKeyPaths,
         Action<ContainerProperties>? configure = null)
     {
-        var props = new ContainerProperties(containerName, partitionKeyPaths);
-        configure?.Invoke(props);
-        return Task.FromResult(BuildContainer(props));
+        var result = InMemoryCosmos.Create(containerName, partitionKeyPaths.ToArray(),
+            configureContainer: setup => ApplyContainerProperties(setup, containerName, partitionKeyPaths, configure));
+        _tracked.Add(result);
+        return Task.FromResult(result.Container);
     }
 
-    private Container BuildContainer(ContainerProperties props)
+    private static void ApplyContainerProperties(
+        IContainerTestSetup setup,
+        string containerName,
+        object partitionKeyPaths,
+        Action<ContainerProperties>? configure)
     {
-        var inMemory = new InMemoryContainer(props);
-        var handler = new FakeCosmosHandler(inMemory);
-        var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                RequestTimeout = TimeSpan.FromSeconds(10),
-                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        _tracked.Add((client, handler));
-        return client.GetContainer("db", props.Id);
+        if (configure is null) return;
+
+        // Create a ContainerProperties to capture what the configure callback wants to set
+        var props = partitionKeyPaths is IReadOnlyList<string> paths
+            ? new ContainerProperties(containerName, paths)
+            : new ContainerProperties(containerName, (string)partitionKeyPaths);
+        configure(props);
+
+        // Apply the captured settings to the IContainerTestSetup
+        if (props.DefaultTimeToLive.HasValue)
+            setup.DefaultTimeToLive = props.DefaultTimeToLive;
     }
 
     public ValueTask DisposeAsync()
     {
-        foreach (var (client, handler) in _tracked)
-        {
-            client.Dispose();
-            handler.Dispose();
-        }
+        foreach (var result in _tracked)
+            result.Dispose();
         _tracked.Clear();
         return ValueTask.CompletedTask;
     }

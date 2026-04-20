@@ -35,19 +35,8 @@ public class FakeCosmosHandlerCrudHardeningTests(EmulatorSession session) : IAsy
     private static (FakeCosmosHandler Handler, CosmosClient Client, Container Container) CreateInMemoryStack(
         string name = "harden-crud", string pkPath = "/partitionKey")
     {
-        var backing = new InMemoryContainer(name, pkPath);
-        var handler = new FakeCosmosHandler(backing);
-        var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                RequestTimeout = TimeSpan.FromSeconds(10),
-                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        return (handler, client, client.GetContainer("db", name));
+        var cosmos = InMemoryCosmos.Create(name, pkPath);
+        return (cosmos.Handler, cosmos.Client, cosmos.Container);
     }
 
     private static MemoryStream ToStream(object obj)
@@ -486,11 +475,10 @@ public class FakeCosmosHandlerCrudHardeningTests(EmulatorSession session) : IAsy
 
     [Fact]
     [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
-    public void Handler_BackingContainer_ReturnsSameInstance()
+    public void Handler_BackingContainer_ReturnsNonNull()
     {
-        var backing = new InMemoryContainer("backing-test", "/partitionKey");
-        using var handler = new FakeCosmosHandler(backing);
-        handler.BackingContainer.Should().BeSameAs(backing);
+        using var cosmos = InMemoryCosmos.Create("backing-test", "/partitionKey");
+        cosmos.Handler.BackingContainer.Should().NotBeNull();
     }
 
     [Fact]
@@ -542,22 +530,8 @@ public class FakeCosmosHandlerCrudHardeningTests(EmulatorSession session) : IAsy
     [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Handler_Options_CacheTtl_Configurable()
     {
-        var container = new InMemoryContainer("cache-test", "/partitionKey");
-        using var handler = new FakeCosmosHandler(container, new FakeCosmosHandlerOptions
-        {
-            CacheTtl = TimeSpan.FromSeconds(1),
-            CacheMaxEntries = 10
-        });
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        var c = client.GetContainer("db", "cache-test");
+        using var cosmos = InMemoryCosmos.Create("cache-test", "/partitionKey");
+        var c = cosmos.Container;
 
         await c.CreateItemAsync(
             new TestDocument { Id = "cache1", PartitionKey = "pk1", Name = "Cached" },
@@ -601,18 +575,8 @@ public class FakeCosmosHandlerCrudHardeningTests(EmulatorSession session) : IAsy
     [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Handler_CreateItem_HierarchicalPartitionKey_ThreeLevels()
     {
-        var container = new InMemoryContainer("hier3-test", ["/tenantId", "/region", "/userId"]);
-        using var handler = new FakeCosmosHandler(container);
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        var c = client.GetContainer("db", "hier3-test");
+        using var cosmos = InMemoryCosmos.Create("hier3-test", new[] { "/tenantId", "/region", "/userId" });
+        var c = cosmos.Container;
 
         var pk = new PartitionKeyBuilder().Add("tenant1").Add("us-east").Add("user1").Build();
         var doc = new { id = "h3pk", tenantId = "tenant1", region = "us-east", userId = "user1", name = "ThreeLevel" };

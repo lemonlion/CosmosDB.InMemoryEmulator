@@ -21,7 +21,7 @@ namespace CosmosDB.InMemoryEmulator;
 /// <see cref="HttpStatusCode.FailedDependency"/>, matching real Cosmos DB behaviour.
 /// </para>
 /// </remarks>
-public class InMemoryTransactionalBatch : TransactionalBatch
+internal class InMemoryTransactionalBatch : TransactionalBatch
 {
     private static readonly JsonSerializerSettings JsonSettings = new()
     {

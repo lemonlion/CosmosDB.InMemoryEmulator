@@ -90,7 +90,7 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
             new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20 },
             new PartitionKey("pk1"));
 
-        var iterator = _handler.BackingContainer.GetChangeFeedIterator<TestDocument>(0);
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<TestDocument>(0);
         var items = await DrainIterator(iterator);
         items.Should().HaveCount(2);
     }
@@ -102,13 +102,13 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
             new PartitionKey("pk1"));
 
-        var checkpoint = _handler.BackingContainer.GetChangeFeedCheckpoint();
+        var checkpoint = _inMemoryContainer.GetChangeFeedCheckpoint();
 
         await _container.CreateItemAsync(
             new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob" },
             new PartitionKey("pk1"));
 
-        var iterator = _handler.BackingContainer.GetChangeFeedIterator<TestDocument>(checkpoint);
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<TestDocument>(checkpoint);
         var newItems = await DrainIterator(iterator);
         newItems.Should().HaveCount(1);
         newItems[0].Name.Should().Be("Bob");
@@ -121,13 +121,13 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Before" },
             new PartitionKey("pk1"));
 
-        var checkpoint = _handler.BackingContainer.GetChangeFeedCheckpoint();
+        var checkpoint = _inMemoryContainer.GetChangeFeedCheckpoint();
 
         await _container.UpsertItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "After" },
             new PartitionKey("pk1"));
 
-        var iterator = _handler.BackingContainer.GetChangeFeedIterator<TestDocument>(checkpoint);
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<TestDocument>(checkpoint);
         var changes = await DrainIterator(iterator);
         changes.Should().HaveCount(1);
         changes[0].Name.Should().Be("After");
@@ -140,11 +140,11 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "ToDelete" },
             new PartitionKey("pk1"));
 
-        var checkpoint = _handler.BackingContainer.GetChangeFeedCheckpoint();
+        var checkpoint = _inMemoryContainer.GetChangeFeedCheckpoint();
 
         await _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk1"));
 
-        var newCheckpoint = _handler.BackingContainer.GetChangeFeedCheckpoint();
+        var newCheckpoint = _inMemoryContainer.GetChangeFeedCheckpoint();
         newCheckpoint.Should().BeGreaterThan(checkpoint);
     }
 
@@ -155,12 +155,12 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Before", Value = 10 },
             new PartitionKey("pk1"));
 
-        var checkpoint = _handler.BackingContainer.GetChangeFeedCheckpoint();
+        var checkpoint = _inMemoryContainer.GetChangeFeedCheckpoint();
 
         await _container.PatchItemAsync<TestDocument>("1", new PartitionKey("pk1"),
             [PatchOperation.Set("/name", "After")]);
 
-        var iterator = _handler.BackingContainer.GetChangeFeedIterator<TestDocument>(checkpoint);
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<TestDocument>(checkpoint);
         var changes = await DrainIterator(iterator);
         changes.Should().HaveCount(1);
         changes[0].Name.Should().Be("After");
@@ -173,13 +173,13 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Before" },
             new PartitionKey("pk1"));
 
-        var checkpoint = _handler.BackingContainer.GetChangeFeedCheckpoint();
+        var checkpoint = _inMemoryContainer.GetChangeFeedCheckpoint();
 
         await _container.ReplaceItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "After", Value = 99 },
             "1", new PartitionKey("pk1"));
 
-        var iterator = _handler.BackingContainer.GetChangeFeedIterator<TestDocument>(checkpoint);
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<TestDocument>(checkpoint);
         var changes = await DrainIterator(iterator);
         changes.Should().HaveCount(1);
         changes[0].Name.Should().Be("After");
@@ -194,7 +194,7 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
         batch.CreateItem(new TestDocument { Id = "b2", PartitionKey = "pk1", Name = "Batch2" });
         await batch.ExecuteAsync();
 
-        var iterator = _handler.BackingContainer.GetChangeFeedIterator<TestDocument>(0);
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<TestDocument>(0);
         var changes = await DrainIterator(iterator);
         changes.Should().HaveCount(2);
         changes.Select(c => c.Name).Should().BeEquivalentTo("Batch1", "Batch2");
@@ -210,7 +210,7 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
                 new PartitionKey("pk1"));
         }
 
-        var iterator = _handler.BackingContainer.GetChangeFeedIterator<TestDocument>(0);
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<TestDocument>(0);
         var allChanges = await DrainIterator(iterator);
         allChanges.Should().HaveCount(20);
     }
@@ -229,7 +229,7 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
             new TestDocument { Id = "2", PartitionKey = "pk2", Name = "Bob" },
             new PartitionKey("pk2"));
 
-        var iterator = _handler.BackingContainer.GetChangeFeedIterator<TestDocument>(
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<TestDocument>(
             ChangeFeedStartFrom.Beginning(),
             ChangeFeedMode.Incremental);
 
@@ -242,7 +242,7 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
     [Fact]
     public async Task ChangeFeed_BackingContainerSdkIterator_EmptyContainer_Returns304()
     {
-        var iterator = _handler.BackingContainer.GetChangeFeedIterator<TestDocument>(
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<TestDocument>(
             ChangeFeedStartFrom.Beginning(),
             ChangeFeedMode.Incremental);
 
@@ -260,7 +260,7 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
             new TestDocument { Id = "2", PartitionKey = "pk2", Name = "Bob" },
             new PartitionKey("pk2"));
 
-        var iterator = _handler.BackingContainer.GetChangeFeedIterator<TestDocument>(
+        var iterator = _inMemoryContainer.GetChangeFeedIterator<TestDocument>(
             ChangeFeedStartFrom.Beginning(FeedRange.FromPartitionKey(new PartitionKey("pk1"))),
             ChangeFeedMode.Incremental);
 
@@ -276,7 +276,7 @@ public class FakeCosmosHandlerChangeFeedTests : IDisposable
     public async Task ChangeFeed_Processor_ReceivesItemsCreatedThroughHandler()
     {
         var received = new List<TestDocument>();
-        var processor = _handler.BackingContainer.GetChangeFeedProcessorBuilder<TestDocument>(
+        var processor = _inMemoryContainer.GetChangeFeedProcessorBuilder<TestDocument>(
                 "test-processor",
                 (context, changes, ct) =>
                 {

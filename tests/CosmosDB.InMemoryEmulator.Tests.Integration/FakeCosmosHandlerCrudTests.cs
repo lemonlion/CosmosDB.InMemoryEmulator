@@ -35,19 +35,8 @@ public class FakeCosmosHandlerCrudTests(EmulatorSession session) : IAsyncLifetim
     private static (FakeCosmosHandler Handler, CosmosClient Client, Container Container) CreateInMemoryStack(
         string name = "test", string pkPath = "/partitionKey")
     {
-        var backing = new InMemoryContainer(name, pkPath);
-        var handler = new FakeCosmosHandler(backing);
-        var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                RequestTimeout = TimeSpan.FromSeconds(10),
-                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        return (handler, client, client.GetContainer("db", name));
+        var cosmos = InMemoryCosmos.Create(name, pkPath);
+        return (cosmos.Handler, cosmos.Client, cosmos.Container);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1128,9 +1117,10 @@ public class FakeCosmosHandlerCrudTests(EmulatorSession session) : IAsyncLifetim
     [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Handler_FaultInjection_ThrottlesReadRequest()
     {
-        var (handler, client, container) = CreateInMemoryStack("fault-read");
-        using var _h = handler;
-        using var _c = client;
+        using var cosmos = InMemoryCosmos.Create("fault-read", "/partitionKey",
+            configureOptions: o => o.MaxRetryAttemptsOnRateLimitedRequests = 0);
+        var handler = cosmos.Handler;
+        var container = cosmos.Container;
 
         var doc = new TestDocument { Id = "fi-read", PartitionKey = "pk1", Name = "Throttled" };
         await container.CreateItemAsync(doc, new PartitionKey("pk1"));

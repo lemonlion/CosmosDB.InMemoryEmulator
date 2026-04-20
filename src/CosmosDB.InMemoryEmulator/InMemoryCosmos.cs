@@ -26,7 +26,7 @@ public static class InMemoryCosmos
         string partitionKeyPath = "/id",
         Func<HttpMessageHandler, HttpMessageHandler>? wrapHandler = null,
         Action<CosmosClientOptions>? configureOptions = null,
-        Action<InMemoryContainer>? configureContainer = null)
+        Action<IContainerTestSetup>? configureContainer = null)
     {
         ValidateContainerName(containerName);
         ValidatePartitionKeyPath(partitionKeyPath);
@@ -46,7 +46,7 @@ public static class InMemoryCosmos
         string[] partitionKeyPaths,
         Func<HttpMessageHandler, HttpMessageHandler>? wrapHandler = null,
         Action<CosmosClientOptions>? configureOptions = null,
-        Action<InMemoryContainer>? configureContainer = null)
+        Action<IContainerTestSetup>? configureContainer = null)
     {
         ValidateContainerName(containerName);
         if (partitionKeyPaths is null || partitionKeyPaths.Length == 0)
@@ -97,7 +97,7 @@ public sealed class InMemoryCosmosBuilder
     /// Adds a container with a single partition key path.
     /// </summary>
     public InMemoryCosmosBuilder AddContainer(string name, string partitionKeyPath,
-        Action<InMemoryContainer>? configure = null)
+        Action<IContainerTestSetup>? configure = null)
     {
         InMemoryCosmos.ValidateContainerName(name);
         InMemoryCosmos.ValidatePartitionKeyPath(partitionKeyPath);
@@ -110,7 +110,7 @@ public sealed class InMemoryCosmosBuilder
     /// Adds a container with hierarchical (composite) partition key paths.
     /// </summary>
     public InMemoryCosmosBuilder AddContainer(string name, string[] partitionKeyPaths,
-        Action<InMemoryContainer>? configure = null)
+        Action<IContainerTestSetup>? configure = null)
     {
         InMemoryCosmos.ValidateContainerName(name);
         if (partitionKeyPaths is null || partitionKeyPaths.Length == 0)
@@ -325,7 +325,7 @@ public sealed class InMemoryCosmosBuilder
     internal sealed record ContainerSpec(
         string Name,
         string[] PartitionKeyPaths,
-        Action<InMemoryContainer>? Configure);
+        Action<IContainerTestSetup>? Configure);
 
     private sealed record DatabaseSpec(
         string Name,
@@ -611,7 +611,7 @@ public sealed class InMemoryDatabaseBuilder
     /// Adds a container with a single partition key path.
     /// </summary>
     public InMemoryDatabaseBuilder AddContainer(string name, string partitionKeyPath,
-        Action<InMemoryContainer>? configure = null)
+        Action<IContainerTestSetup>? configure = null)
     {
         InMemoryCosmos.ValidateContainerName(name);
         InMemoryCosmos.ValidatePartitionKeyPath(partitionKeyPath);
@@ -624,7 +624,7 @@ public sealed class InMemoryDatabaseBuilder
     /// Adds a container with hierarchical (composite) partition key paths.
     /// </summary>
     public InMemoryDatabaseBuilder AddContainer(string name, string[] partitionKeyPaths,
-        Action<InMemoryContainer>? configure = null)
+        Action<IContainerTestSetup>? configure = null)
     {
         InMemoryCosmos.ValidateContainerName(name);
         if (partitionKeyPaths is null || partitionKeyPaths.Length == 0)

@@ -33,7 +33,7 @@ namespace CosmosDB.InMemoryEmulator;
 /// <see cref="ConcurrentDictionary{TKey,TValue}"/> collections keyed by (id, partitionKey).
 /// </para>
 /// </remarks>
-public class InMemoryContainer : Container, IContainerTestSetup
+internal class InMemoryContainer : Container, IContainerTestSetup
 {
     private static readonly JsonSerializerSettings JsonSettings = new()
     {

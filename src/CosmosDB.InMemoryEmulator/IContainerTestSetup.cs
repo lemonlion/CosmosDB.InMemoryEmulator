@@ -85,4 +85,49 @@ public interface IContainerTestSetup
 
     /// <summary>Removes all items, ETags, timestamps, and change feed entries.</summary>
     void ClearItems();
+
+    // ─── Container configuration ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Container-level default TTL in seconds. When set, items expire after this duration
+    /// unless overridden by a per-item <c>_ttl</c> property. Set to <c>null</c> to disable.
+    /// Setting to 0 throws BadRequest — use -1 for "enabled, no default expiry".
+    /// </summary>
+    int? DefaultTimeToLive { get; set; }
+
+    /// <summary>
+    /// Number of feed ranges returned by <c>GetFeedRangesAsync</c>. Defaults to 1.
+    /// Set to a higher value to simulate multiple physical partitions.
+    /// </summary>
+    int FeedRangeCount { get; set; }
+
+    /// <summary>
+    /// Maximum number of entries retained in the change feed log. Defaults to 1000.
+    /// Set to 0 to disable eviction (unbounded growth).
+    /// </summary>
+    int MaxChangeFeedSize { get; set; }
+
+    /// <summary>
+    /// When set, the container automatically saves its state to this file path on
+    /// disposal and loads state from it on creation.
+    /// </summary>
+    string StateFilePath { get; set; }
+
+    /// <summary>Returns the number of non-expired items currently stored.</summary>
+    int ItemCount { get; }
+
+    /// <summary>The partition key path(s) for this container.</summary>
+    IReadOnlyList<string> PartitionKeyPaths { get; }
+
+    /// <summary>
+    /// Sets the JavaScript trigger engine. Requires the
+    /// <c>CosmosDB.InMemoryEmulator.JsTriggers</c> package.
+    /// </summary>
+    IJsTriggerEngine JsTriggerEngine { get; set; }
+
+    /// <summary>
+    /// Sets the stored procedure engine. Requires the
+    /// <c>CosmosDB.InMemoryEmulator.JsTriggers</c> package.
+    /// </summary>
+    ISprocEngine SprocEngine { get; set; }
 }

@@ -231,7 +231,10 @@ public class FakeCosmosHandler : HttpMessageHandler
     public IReadOnlyCollection<string> RequestLog => _requestLog;
 
     /// <summary>The backing in-memory container that stores all data for this handler.</summary>
-    public InMemoryContainer BackingContainer => _container;
+    public Container BackingContainer => _container;
+
+    /// <summary>Internal typed access to the backing container.</summary>
+    internal InMemoryContainer BackingInMemoryContainer => _container;
 
     /// <summary>Recorded SQL query strings that were executed.</summary>
     public IReadOnlyCollection<string> QueryLog => _queryLog;
@@ -266,12 +269,12 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// </summary>
     public bool FaultInjectorIncludesMetadata { get; set; }
 
-    public FakeCosmosHandler(InMemoryContainer container)
+    internal FakeCosmosHandler(InMemoryContainer container)
         : this(container, new FakeCosmosHandlerOptions())
     {
     }
 
-    public FakeCosmosHandler(InMemoryContainer container, FakeCosmosHandlerOptions options)
+    internal FakeCosmosHandler(InMemoryContainer container, FakeCosmosHandlerOptions options)
     {
         _container = container;
         _partitionKeyRangeCount = Math.Max(1, options.PartitionKeyRangeCount);
@@ -2793,7 +2796,7 @@ public class FakeCosmosHandler : HttpMessageHandler
 
             // Mark the backing container as deleted so future operations through
             // any cached handler reference return 404
-            handler.BackingContainer._isDeleted = true;
+            handler.BackingInMemoryContainer._isDeleted = true;
 
             return new HttpResponseMessage(HttpStatusCode.NoContent)
             {
@@ -2870,7 +2873,7 @@ public class FakeCosmosHandler : HttpMessageHandler
                 var newPkPath = props.SelectToken("partitionKey.paths[0]")?.ToString();
                 if (newPkPath is not null)
                 {
-                    var existingPkPath = handler.BackingContainer.PartitionKeyPaths.FirstOrDefault();
+                    var existingPkPath = handler.BackingInMemoryContainer.PartitionKeyPaths.FirstOrDefault();
                     if (existingPkPath is not null && !string.Equals(newPkPath, existingPkPath, StringComparison.Ordinal))
                     {
                         return new HttpResponseMessage(HttpStatusCode.BadRequest)
@@ -2884,7 +2887,7 @@ public class FakeCosmosHandler : HttpMessageHandler
                 }
 
                 // Apply mutable properties
-                var container = handler.BackingContainer;
+                var container = handler.BackingInMemoryContainer;
                 if (props["defaultTtl"] is { Type: JTokenType.Integer } ttlToken)
                 {
                     var ttl = ttlToken.Value<int>();

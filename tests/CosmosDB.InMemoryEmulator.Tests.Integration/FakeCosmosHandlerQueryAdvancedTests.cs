@@ -584,18 +584,8 @@ public class FakeCosmosHandlerQueryAdvancedTests(EmulatorSession session) : IAsy
     public async Task Query_VectorDistance_Cosine_OrdersByDistance()
     {
         // VectorDistance ORDER BY goes through the full SDK → HTTP → handler pipeline
-        var backing = new InMemoryContainer("test-vector", "/pk");
-        using var handler = new FakeCosmosHandler(backing);
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler)
-            });
-        var container = client.GetContainer("db", "test-vector");
+        using var cosmos = InMemoryCosmos.Create("test-vector", "/pk");
+        var container = cosmos.Container;
 
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "v1", pk = "a", embedding = new[] { 1.0, 0.0, 0.0 } }),
@@ -630,18 +620,8 @@ public class FakeCosmosHandlerQueryAdvancedTests(EmulatorSession session) : IAsy
     public async Task Query_VectorDistance_Euclidean_Works()
     {
         // VectorDistance without ORDER BY goes through the full SDK pipeline
-        var backing = new InMemoryContainer("test-vec-euc", "/pk");
-        using var handler = new FakeCosmosHandler(backing);
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler)
-            });
-        var container = client.GetContainer("db", "test-vec-euc");
+        using var cosmos = InMemoryCosmos.Create("test-vec-euc", "/pk");
+        var container = cosmos.Container;
 
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "e1", pk = "a", emb = new[] { 0.0, 0.0 } }),
@@ -678,18 +658,8 @@ public class FakeCosmosHandlerQueryAdvancedTests(EmulatorSession session) : IAsy
     {
         // FullTextContains is rejected by SDK ServiceInterop (SC2005),
         // so enable distributed query gateway mode to bypass ServiceInterop
-        var backing = new InMemoryContainer("test-fts", "/pk");
-        using var handler = new FakeCosmosHandler(backing);
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler)
-            });
-        var container = client.GetContainer("db", "test-fts");
+        using var cosmos = InMemoryCosmos.Create("test-fts", "/pk");
+        var container = cosmos.Container;
 
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "f1", pk = "a", text = "Azure Cosmos DB is a NoSQL database" }),
@@ -713,18 +683,8 @@ public class FakeCosmosHandlerQueryAdvancedTests(EmulatorSession session) : IAsy
     [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_FullTextContainsAll_RequiresAllTerms()
     {
-        var backing = new InMemoryContainer("test-fts-all", "/pk");
-        using var handler = new FakeCosmosHandler(backing);
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler)
-            });
-        var container = client.GetContainer("db", "test-fts-all");
+        using var cosmos = InMemoryCosmos.Create("test-fts-all", "/pk");
+        var container = cosmos.Container;
 
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "f1", pk = "a", text = "Azure Cosmos DB is a NoSQL database" }),
@@ -745,18 +705,8 @@ public class FakeCosmosHandlerQueryAdvancedTests(EmulatorSession session) : IAsy
     [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_FullTextContainsAny_MatchesAnyTerm()
     {
-        var backing = new InMemoryContainer("test-fts-any", "/pk");
-        using var handler = new FakeCosmosHandler(backing);
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler)
-            });
-        var container = client.GetContainer("db", "test-fts-any");
+        using var cosmos = InMemoryCosmos.Create("test-fts-any", "/pk");
+        var container = cosmos.Container;
 
         await container.CreateItemAsync(
             JObject.FromObject(new { id = "f1", pk = "a", text = "Azure Cosmos DB" }),
@@ -784,18 +734,8 @@ public class FakeCosmosHandlerQueryAdvancedTests(EmulatorSession session) : IAsy
     [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_StDistance_CalculatesDistanceBetweenPoints()
     {
-        var backing = new InMemoryContainer("test-geo", "/pk");
-        using var handler = new FakeCosmosHandler(backing);
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler)
-            });
-        var container = client.GetContainer("db", "test-geo");
+        using var cosmos = InMemoryCosmos.Create("test-geo", "/pk");
+        var container = cosmos.Container;
 
         await container.CreateItemAsync(
             JObject.Parse("""{"id":"g1","pk":"a","location":{"type":"Point","coordinates":[-122.12,47.67]}}"""),
@@ -825,18 +765,8 @@ public class FakeCosmosHandlerQueryAdvancedTests(EmulatorSession session) : IAsy
     [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_StWithin_ChecksPointInPolygon()
     {
-        var backing = new InMemoryContainer("test-geo-within", "/pk");
-        using var handler = new FakeCosmosHandler(backing);
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler)
-            });
-        var container = client.GetContainer("db", "test-geo-within");
+        using var cosmos = InMemoryCosmos.Create("test-geo-within", "/pk");
+        var container = cosmos.Container;
 
         // Point inside polygon (Seattle area)
         await container.CreateItemAsync(
@@ -865,18 +795,8 @@ public class FakeCosmosHandlerQueryAdvancedTests(EmulatorSession session) : IAsy
     [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     public async Task Query_StIsValid_ValidatesGeoJson()
     {
-        var backing = new InMemoryContainer("test-geo-valid", "/pk");
-        using var handler = new FakeCosmosHandler(backing);
-        using var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                HttpClientFactory = () => new HttpClient(handler)
-            });
-        var container = client.GetContainer("db", "test-geo-valid");
+        using var cosmos = InMemoryCosmos.Create("test-geo-valid", "/pk");
+        var container = cosmos.Container;
 
         await container.CreateItemAsync(
             JObject.Parse("""{"id":"valid","pk":"a","loc":{"type":"Point","coordinates":[-122.12,47.67]}}"""),

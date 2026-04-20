@@ -29,10 +29,10 @@ public class InMemoryContainerOptions
     public bool RegisterFeedIteratorSetup { get; set; } = true;
 
     /// <summary>
-    /// Callback invoked with each <see cref="InMemoryContainer"/> after it is created.
-    /// Use this to seed data or capture references for direct access in tests.
+    /// Callback invoked with each container's <see cref="IContainerTestSetup"/> after it is created.
+    /// Use this to configure container properties (TTL, feed ranges), seed data, or capture references.
     /// </summary>
-    public Action<InMemoryContainer>? OnContainerCreated { get; set; }
+    public Action<IContainerTestSetup>? OnContainerCreated { get; set; }
 
     /// <summary>
     /// Callback invoked with each <see cref="FakeCosmosHandler"/> after it is created.

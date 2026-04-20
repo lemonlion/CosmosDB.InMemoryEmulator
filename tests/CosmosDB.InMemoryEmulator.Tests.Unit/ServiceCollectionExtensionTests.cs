@@ -206,7 +206,7 @@ public class UseInMemoryCosmosContainersTests : IDisposable
         services.UseInMemoryCosmosContainers(o =>
         {
             o.AddContainer("orders", "/pk");
-            o.OnContainerCreated = c => captured = c;
+            o.OnContainerCreated = c => captured = (InMemoryContainer)c;
         });
 
         captured.Should().NotBeNull();
@@ -1983,7 +1983,7 @@ public class ServiceCollectionCallbackTests : IDisposable
         var services = new ServiceCollection();
         services.UseInMemoryCosmosContainers(o =>
         {
-            o.OnContainerCreated = c => captured = c;
+            o.OnContainerCreated = c => captured = (InMemoryContainer)c;
         });
 
         using var provider = services.BuildServiceProvider();

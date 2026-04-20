@@ -51,19 +51,8 @@ public class FakeCosmosHandlerPartitionKeyTests(EmulatorSession session) : IAsyn
     private static (FakeCosmosHandler Handler, CosmosClient Client, Container Container) CreateInMemoryStack(
         string name = "test-pk", string pkPath = "/partitionKey")
     {
-        var backing = new InMemoryContainer(name, pkPath);
-        var handler = new FakeCosmosHandler(backing);
-        var client = new CosmosClient(
-            "AccountEndpoint=https://localhost:9999/;AccountKey=dGVzdGtleQ==;",
-            new CosmosClientOptions
-            {
-                ConnectionMode = ConnectionMode.Gateway,
-                LimitToEndpoint = true,
-                MaxRetryAttemptsOnRateLimitedRequests = 0,
-                RequestTimeout = TimeSpan.FromSeconds(10),
-                HttpClientFactory = () => new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }
-            });
-        return (handler, client, client.GetContainer("db", name));
+        var cosmos = InMemoryCosmos.Create(name, pkPath);
+        return (cosmos.Handler, cosmos.Client, cosmos.Container);
     }
 
     [Fact]
@@ -115,14 +104,20 @@ public class FakeCosmosHandlerPartitionKeyTests(EmulatorSession session) : IAsyn
         {
             await container.CreateItemAsync(
                 new TestDocument { Id = "1", PartitionKey = "pk1", Name = "A" }, new PartitionKey("pk1"));
+            await container.CreateItemAsync(
+                new TestDocument { Id = "2", PartitionKey = "pk1", Name = "B" }, new PartitionKey("pk1"));
 
-            var checkpoint = handler.BackingContainer.GetChangeFeedCheckpoint();
-
+            // DeleteAllByPK is not handled via HTTP routing, so call on backing container
             await handler.BackingContainer.DeleteAllItemsByPartitionKeyStreamAsync(
                 new PartitionKey("pk1"));
 
-            var newCheckpoint = handler.BackingContainer.GetChangeFeedCheckpoint();
-            newCheckpoint.Should().BeGreaterThan(checkpoint);
+            // Verify all items in the partition were deleted
+            var iterator = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+            var remaining = new List<TestDocument>();
+            while (iterator.HasMoreResults)
+                remaining.AddRange(await iterator.ReadNextAsync());
+
+            remaining.Should().BeEmpty();
         }
     }
 

@@ -75,7 +75,7 @@ public class FakeCosmosHandlerAdvancedFeatureTests : IDisposable
     [Fact]
     public async Task UDF_RegisteredOnBackingContainer_UsableInQueryThroughHandler()
     {
-        _handler.BackingContainer.RegisterUdf("doubleIt", args => (double)args[0] * 2);
+        _inMemoryContainer.RegisterUdf("doubleIt", args => (double)args[0] * 2);
 
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice", Value = 5,
@@ -92,7 +92,7 @@ public class FakeCosmosHandlerAdvancedFeatureTests : IDisposable
     [Fact]
     public async Task UDF_InWhereClause_FiltersCorrectly()
     {
-        _handler.BackingContainer.RegisterUdf("isLongName", args => args[0]?.ToString()?.Length > 3);
+        _inMemoryContainer.RegisterUdf("isLongName", args => args[0]?.ToString()?.Length > 3);
 
         await _container.CreateItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
@@ -115,10 +115,10 @@ public class FakeCosmosHandlerAdvancedFeatureTests : IDisposable
     [Fact]
     public async Task StoredProc_RegisteredOnBackingContainer_ExecutableThroughHandler()
     {
-        _handler.BackingContainer.RegisterStoredProcedure("echo",
+        _inMemoryContainer.RegisterStoredProcedure("echo",
             (pk, args) => JsonConvert.SerializeObject(new { echo = args[0]?.ToString() }));
 
-        var response = await _handler.BackingContainer.Scripts.ExecuteStoredProcedureAsync<string>(
+        var response = await _inMemoryContainer.Scripts.ExecuteStoredProcedureAsync<string>(
             "echo", new PartitionKey("pk1"), new dynamic[] { "hello" });
 
         var parsed = JObject.Parse(response.Resource);
@@ -135,11 +135,11 @@ public class FakeCosmosHandlerAdvancedFeatureTests : IDisposable
             new TestDocument { Id = "2", PartitionKey = "pk1", Name = "Bob", Value = 20 },
             new PartitionKey("pk1"));
 
-        _handler.BackingContainer.RegisterStoredProcedure("countItems",
+        _inMemoryContainer.RegisterStoredProcedure("countItems",
             (pk, args) =>
             {
                 // Use query to count items in the container
-                var iterator = _handler.BackingContainer.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
+                var iterator = _inMemoryContainer.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
                 var items = new List<TestDocument>();
                 while (iterator.HasMoreResults)
                 {
@@ -149,7 +149,7 @@ public class FakeCosmosHandlerAdvancedFeatureTests : IDisposable
                 return items.Count.ToString();
             });
 
-        var response = await _handler.BackingContainer.Scripts.ExecuteStoredProcedureAsync<string>(
+        var response = await _inMemoryContainer.Scripts.ExecuteStoredProcedureAsync<string>(
             "countItems", new PartitionKey("pk1"), new dynamic[] { });
 
         response.Resource.Should().Be("2");
@@ -233,7 +233,7 @@ public class FakeCosmosHandlerAdvancedFeatureTests : IDisposable
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
             new PartitionKey("pk1"));
 
-        _handler.BackingContainer.ClearItems();
+        _inMemoryContainer.ClearItems();
 
         var results = await DrainQuery<TestDocument>("SELECT * FROM c");
         results.Should().BeEmpty();
