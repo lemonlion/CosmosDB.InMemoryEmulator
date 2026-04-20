@@ -8,6 +8,19 @@ on:
 permissions:
   contents: read
 
+# Single source of truth for which integration test classes run against the
+# emulators. Expand this filter (OR with `|`) one class at a time and verify the
+# workflow still completes without infra failures (partition exhaustion,
+# connection-refused storms, timeouts) before adding the next.
+env:
+  PARITY_FILTER: "FullyQualifiedName~FakeCosmosHandlerCrudTests|FullyQualifiedName~FakeCosmosHandlerTtlTests|FullyQualifiedName~FakeCosmosHandlerBatchTests|FullyQualifiedName~FakeCosmosHandlerQueryAdvancedTests"
+  # Excluded — overload Linux emulator infra (timeouts, 503s). Re-evaluate after
+  # the critical-review items for fixture lifetime / partition count land.
+  #   FakeCosmosHandlerPartitionKeyTests   — 22m33s, ServiceUnavailable 503/1007 (run 24628925580)
+  #   FakeCosmosHandlerLinqTests           — Linux job cancelled at 45-min timeout (run 24629750138)
+  #   FakeCosmosHandlerCrudHardeningTests  — Linux job cancelled at 45-min timeout (run 24630621582)
+  #   FakeCosmosHandlerBulkTests           — Linux job cancelled at 45-min timeout (run 24631630911)
+
 jobs:
   test-inmemory:
     runs-on: ubuntu-latest
@@ -28,7 +41,7 @@ jobs:
 
       - name: Run Tests (inmemory)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target inmemory -Project integration
+        run: ./scripts/run-tests.ps1 -Target inmemory -Project integration -Filter $env:PARITY_FILTER
 
       - name: Upload TRX
         if: always()
@@ -39,7 +52,7 @@ jobs:
 
   test-emulator-linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     services:
       cosmosdb:
@@ -48,7 +61,7 @@ jobs:
           - 8081:8081
           - 10250-10256:10250-10256
         env:
-          AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 3
+          AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 5
           AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
           AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: "127.0.0.1"
 
@@ -64,13 +77,13 @@ jobs:
 
       - name: Wait for Cosmos DB Emulator
         run: |
-          echo "Waiting for Cosmos DB Emulator to be ready..."
+          echo "Waiting for Cosmos DB Emulator HTTP endpoint..."
           timeout=300
           elapsed=0
           while [ $elapsed -lt $timeout ]; do
             status=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8081/ 2>/dev/null || echo "000")
             if [ "$status" = "200" ] || [ "$status" = "401" ]; then
-              echo "Emulator ready after ${elapsed}s (HTTP $status)"
+              echo "HTTP endpoint ready after ${elapsed}s (HTTP $status)"
               break
             fi
             sleep 5
@@ -81,15 +94,13 @@ jobs:
             echo "::error::Cosmos DB Emulator did not start within ${timeout}s"
             exit 1
           fi
-          echo "Waiting 15s for internal initialization..."
-          sleep 15
 
       - name: Build
         run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
 
       - name: Run Tests (emulator-linux)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration
+        run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration -Filter $env:PARITY_FILTER
 
       - name: Upload TRX
         if: always()
@@ -100,7 +111,7 @@ jobs:
 
   test-windows:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v5
@@ -112,15 +123,17 @@ jobs:
             8.0.x
             10.0.x
 
-      - name: Install & Start Cosmos DB Windows Emulator
+      - name: Start Cosmos DB Windows Emulator
         shell: pwsh
         run: |
-          Write-Host "Installing Azure Cosmos DB Emulator..."
-          choco install azure-cosmosdb-emulator -y --no-progress
           Write-Host "Starting emulator..."
           $emulatorExe = "C:\Program Files\Azure Cosmos DB Emulator\Microsoft.Azure.Cosmos.Emulator.exe"
           if (-not (Test-Path $emulatorExe)) {
             $emulatorExe = "C:\Program Files\Azure Cosmos DB Emulator\CosmosDB.Emulator.exe"
+          }
+          if (-not (Test-Path $emulatorExe)) {
+            Write-Error "Cosmos DB Emulator not found on runner image"
+            exit 1
           }
           Start-Process -FilePath $emulatorExe -ArgumentList "/NoExplorer /NoFirewall /PartitionCount=3"
           # Wait for readiness
@@ -143,7 +156,7 @@ jobs:
 
       - name: Run Tests (emulator-windows)
         shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target emulator-windows -Project integration
+        run: ./scripts/run-tests.ps1 -Target emulator-windows -Project integration -Filter $env:PARITY_FILTER
 
       - name: Upload TRX
         if: always()

@@ -3,92 +3,78 @@ using Microsoft.Azure.Cosmos;
 namespace CosmosDB.InMemoryEmulator.Tests.Infrastructure;
 
 /// <summary>
-/// Fixture that creates real containers on a running Cosmos DB emulator.
-/// Uses unique container names (UUID suffix) to avoid cross-test pollution.
-/// Cleans up containers on dispose.
+/// Per-test-class fixture that creates real containers on the emulator shared
+/// via <see cref="EmulatorSession"/>. Each test gets a uniquely-named container
+/// (base name + short GUID) so queries like <c>SELECT * FROM c</c> only see
+/// the current test's data and there is no cross-test bleed.
 /// </summary>
 public sealed class EmulatorTestFixture : ITestContainerFixture
 {
-    private const string DefaultEndpoint = "https://localhost:8081";
-    private const string Key = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
-    private const string DatabaseName = "parity-validation";
+    private readonly EmulatorSession _session;
+    private readonly List<string> _createdContainers = [];
 
-    private readonly CosmosClient _client;
-    private readonly List<Container> _containersToCleanup = [];
-    private Database? _database;
-
-    public TestTarget Target { get; }
+    public TestTarget Target => _session.Target;
     public bool IsEmulator => true;
 
-    public EmulatorTestFixture(TestTarget target = TestTarget.EmulatorLinux, string? endpoint = null)
+    public EmulatorTestFixture(EmulatorSession session)
     {
-        Target = target;
-        var resolvedEndpoint = endpoint ?? DefaultEndpoint;
-        var isHttps = resolvedEndpoint.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
-
-        var options = new CosmosClientOptions
-        {
-            ConnectionMode = ConnectionMode.Gateway,
-            MaxRetryAttemptsOnRateLimitedRequests = 3,
-            RequestTimeout = TimeSpan.FromSeconds(30),
-        };
-
-        if (isHttps)
-        {
-            options.HttpClientFactory = () => new HttpClient(
-                new HttpClientHandler
-                {
-                    ServerCertificateCustomValidationCallback =
-                        HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-                })
-            { Timeout = TimeSpan.FromSeconds(30) };
-        }
-
-        _client = new CosmosClient(resolvedEndpoint, Key, options);
-
-        // TODO: Consider adding a readiness check here (like EmulatorDetector) so that
-        // tests fail fast with a clear message when the emulator endpoint is unreachable,
-        // instead of timing out with opaque connection errors.
+        _session = session;
+        if (!session.IsEmulator || session.EmulatorClient is null || session.EmulatorDatabase is null)
+            throw new InvalidOperationException(
+                $"EmulatorTestFixture requires an initialised emulator session. Target={session.Target}");
     }
 
-    public async Task<Container> CreateContainerAsync(
+    public Task<Container> CreateContainerAsync(
         string containerName,
         string partitionKeyPath,
         Action<ContainerProperties>? configure = null)
-    {
-        var uniqueName = $"{containerName}-{Guid.NewGuid():N}";
-        var props = new ContainerProperties(uniqueName, partitionKeyPath);
-        configure?.Invoke(props);
-        return await CreateRealContainerAsync(props);
-    }
+        => CreateContainerCoreAsync(containerName, name => new ContainerProperties(name, partitionKeyPath), configure);
 
-    public async Task<Container> CreateContainerAsync(
+    public Task<Container> CreateContainerAsync(
         string containerName,
         IReadOnlyList<string> partitionKeyPaths,
         Action<ContainerProperties>? configure = null)
+        => CreateContainerCoreAsync(containerName, name => new ContainerProperties(name, partitionKeyPaths), configure);
+
+    private async Task<Container> CreateContainerCoreAsync(
+        string containerName, Func<string, ContainerProperties> propsFactory, Action<ContainerProperties>? configure)
     {
         var uniqueName = $"{containerName}-{Guid.NewGuid():N}";
-        var props = new ContainerProperties(uniqueName, partitionKeyPaths);
-        configure?.Invoke(props);
-        return await CreateRealContainerAsync(props);
-    }
+        _createdContainers.Add(uniqueName);
 
-    private async Task<Container> CreateRealContainerAsync(ContainerProperties props)
-    {
-        _database ??= (await _client.CreateDatabaseIfNotExistsAsync(DatabaseName)).Database;
-        var response = await _database.CreateContainerIfNotExistsAsync(props);
-        _containersToCleanup.Add(response.Container);
+        var props = propsFactory(uniqueName);
+        configure?.Invoke(props);
+
+        // Partition services can return 503 when the emulator is still starting
+        // up a new container. The SDK does not retry those automatically for
+        // control-plane ops, so we do it here.
+        var response = await EmulatorRetry.RunAsync(
+            () => _session.EmulatorDatabase!.CreateContainerIfNotExistsAsync(props),
+            $"CreateContainer({props.Id})");
         return response.Container;
     }
 
+    // Cleanup matters even with unique per-test names: the emulator's partition
+    // pool is finite (PARTITION_COUNT=10 locally, 3 in CI), so leaving dozens
+    // of test containers alive across a run will exhaust slots and cause
+    // subsequent CreateContainer calls to 503. Locally the Docker container is
+    // usually thrown away, but in CI the same emulator service serves every
+    // test class in the job.
     public async ValueTask DisposeAsync()
     {
-        foreach (var container in _containersToCleanup)
+        if (_session.EmulatorDatabase is null) return;
+
+        foreach (var name in _createdContainers)
         {
-            try { await container.DeleteContainerAsync(); }
-            catch { /* best effort cleanup */ }
+            try
+            {
+                await _session.EmulatorDatabase.GetContainer(name).DeleteContainerAsync();
+            }
+            catch
+            {
+                // Best-effort cleanup — container may already be gone.
+            }
         }
-        _containersToCleanup.Clear();
-        _client.Dispose();
+        _createdContainers.Clear();
     }
 }

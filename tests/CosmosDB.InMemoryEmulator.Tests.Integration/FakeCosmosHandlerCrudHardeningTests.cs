@@ -16,9 +16,10 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// Parity-validated: Phases 1-5, 7 (standard PK), 8, 9 run against both backends.
 /// Phase 6 (handler properties), hierarchical PK, Phase 10 (fault injection) are InMemoryOnly.
 /// </summary>
-public class FakeCosmosHandlerCrudHardeningTests : IAsyncLifetime
+[Collection(IntegrationCollection.Name)]
+public class FakeCosmosHandlerCrudHardeningTests(EmulatorSession session) : IAsyncLifetime
 {
-    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create();
+    private readonly ITestContainerFixture _fixture = TestFixtureFactory.Create(session);
     private Container _container = null!;
 
     public async ValueTask InitializeAsync()

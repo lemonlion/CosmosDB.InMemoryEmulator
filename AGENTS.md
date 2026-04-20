@@ -24,7 +24,7 @@
 Tests are split into two projects. When creating or moving tests, follow these rules:
 
 ### Tests.Integration
-- Uses `TestFixtureFactory.Create()` / `ITestContainerFixture` to obtain a container
+- Uses `TestFixtureFactory.Create(session)` / `ITestContainerFixture` to obtain a container, where `session` is an injected `EmulatorSession` (xUnit collection fixture — decorate the test class with `[Collection(IntegrationCollection.Name)]`)
 - Goes through the real CosmosClient SDK HTTP pipeline via `FakeCosmosHandler`
 - Must **not** use `new InMemoryCosmosClient()`, `new FaultInjector()`, `FaultInjection`, or any `internal` API
 - Can run against in-memory, Linux emulator, or Windows emulator via `COSMOS_TEST_TARGET`
