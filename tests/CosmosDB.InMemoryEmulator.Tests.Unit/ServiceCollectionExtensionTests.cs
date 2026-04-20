@@ -861,16 +861,16 @@ public class ServiceCollectionExtensionEdgeCaseTests : IDisposable
     }
 
     [Fact]
-    public void FeedIteratorSetup_Asymmetry_TypedClient_DoesRegister()
+    public void FeedIteratorSetup_NotRegistered_TypedClient()
     {
-        // UseInMemoryCosmosDB<T> DOES register FeedIteratorSetup by default
+        // UseInMemoryCosmosDB<T> now uses FakeCosmosHandler, so FeedIteratorSetup is not needed
         InMemoryFeedIteratorSetup.Deregister();
         var services = new ServiceCollection();
 
         services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
 
-        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().NotBeNull(
-            "UseInMemoryCosmosDB<T> uses InMemoryCosmosClient (not FakeCosmosHandler) so needs FeedIteratorSetup");
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().BeNull(
+            "UseInMemoryCosmosDB<T> uses FakeCosmosHandler which handles .ToFeedIterator() natively");
     }
 
     [Fact]
@@ -915,29 +915,23 @@ public class ServiceCollectionExtensionEdgeCaseTests : IDisposable
 // Pattern 2: Typed CosmosClient Subclasses (UseInMemoryCosmosDB<TClient>)
 // ════════════════════════════════════════════════════════════════════════════════
 
-// Simulated PRODUCTION typed clients (extend CosmosClient, NOT InMemoryCosmosClient)
-// These mirror the real SCA.Common pattern — each domain gets its own CosmosClient subclass
-public class ProductionEmployeeCosmosClient : CosmosClient
+// Simulated PRODUCTION typed clients (extend CosmosClient, NOT InMemoryCosmosClient).
+// These mirror the real SCA.Common pattern — each domain gets its own CosmosClient subclass.
+// With the new Castle.Core proxy approach, these are used DIRECTLY in UseInMemoryCosmosDB<T>()
+// — no shadow types needed.
+public class EmployeeCosmosClient : CosmosClient
 {
-    public ProductionEmployeeCosmosClient(string connectionString, CosmosClientOptions? options = null)
+    public EmployeeCosmosClient(string connectionString, CosmosClientOptions? options = null)
         : base(connectionString, options) { }
 }
 
-public class ProductionCustomerCosmosClient : CosmosClient
+public class CustomerCosmosClient : CosmosClient
 {
-    public ProductionCustomerCosmosClient(string connectionString, CosmosClientOptions? options = null)
+    public CustomerCosmosClient(string connectionString, CosmosClientOptions? options = null)
         : base(connectionString, options) { }
 }
-
-// TEST-PROJECT typed clients (extend InMemoryCosmosClient, created by test authors)
-// This is the one-liner per typed client that users must add in their test project.
-// No changes to production code — these exist only in the test assembly.
-public class EmployeeCosmosClient : InMemoryCosmosClient { }
-public class CustomerCosmosClient : InMemoryCosmosClient { }
 
 // Simulated repos that take typed clients — exactly as in production code.
-// In real code these would reference the production types. In this test assembly,
-// the test types shadow the production names by design.
 public class BiometricRepository
 {
     public Container Container { get; }
@@ -992,7 +986,7 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
     }
 
     [Fact]
-    public void DefaultDatabase_IsInMemoryDb()
+    public async Task DefaultDatabase_IsInMemoryDb()
     {
         var services = new ServiceCollection();
 
@@ -1001,11 +995,16 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
         var provider = services.BuildServiceProvider();
         var client = provider.GetRequiredService<EmployeeCosmosClient>();
         var container = client.GetContainer("in-memory-db", "in-memory-container");
-        container.Should().BeOfType<InMemoryContainer>();
+        container.Should().NotBeNull();
+
+        // Verify it's functional (backed by FakeCosmosHandler)
+        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
+        var response = await container.CreateItemAsync(item, new PartitionKey("pk1"));
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     [Fact]
-    public void CustomDatabaseName()
+    public async Task CustomDatabaseName()
     {
         var services = new ServiceCollection();
 
@@ -1018,7 +1017,12 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
         var provider = services.BuildServiceProvider();
         var client = provider.GetRequiredService<EmployeeCosmosClient>();
         var container = client.GetContainer("BiometricDb", "biometrics");
-        container.Should().BeOfType<InMemoryContainer>();
+        container.Should().NotBeNull();
+
+        // Verify it's functional
+        var response = await container.CreateItemAsync(
+            new { id = "1", pk = "pk1" }, new PartitionKey("pk1"));
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     [Fact]
@@ -1080,7 +1084,7 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
         var provider = services.BuildServiceProvider();
         var repo = provider.GetRequiredService<BiometricRepository>();
 
-        repo.Container.Should().BeOfType<InMemoryContainer>();
+        repo.Container.Should().NotBeNull();
         repo.Container.Id.Should().Be("biometrics");
     }
 
@@ -1138,26 +1142,28 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
     }
 
     [Fact]
-    public void RegistersFeedIteratorSetup()
+    public void FeedIteratorSetup_NotNeeded_TypedClient()
     {
         InMemoryFeedIteratorSetup.Deregister();
         var services = new ServiceCollection();
 
         services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
 
-        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().NotBeNull();
+        // FakeCosmosHandler handles .ToFeedIterator() natively — no FeedIteratorSetup needed
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().BeNull(
+            "UseInMemoryCosmosDB<T> now uses FakeCosmosHandler which handles .ToFeedIterator() natively");
     }
 
     [Fact]
-    public void CanDisableFeedIteratorSetup()
+    public void RegisterFeedIteratorSetupOption_Ignored_TypedClient()
     {
         InMemoryFeedIteratorSetup.Deregister();
-        var before = CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory;
         var services = new ServiceCollection();
 
-        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o => o.RegisterFeedIteratorSetup = false);
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o => o.RegisterFeedIteratorSetup = true);
 
-        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().Be(before);
+        // Even with RegisterFeedIteratorSetup = true, it's ignored — FakeCosmosHandler handles natively
+        CosmosOverridableFeedIteratorExtensions.StaticFallbackFactory.Should().BeNull();
     }
 
     [Fact]
@@ -1168,16 +1174,16 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
 
         services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o => o.OnClientCreated = c => captured = c);
 
-        // The callback receives the typed InMemoryCosmosClient subclass
+        // The callback receives a Castle proxy assignable to the typed client
         captured.Should().NotBeNull();
-        captured.Should().BeOfType<EmployeeCosmosClient>();
+        captured.Should().BeAssignableTo<EmployeeCosmosClient>();
     }
 
     [Fact]
     public void MatchesExistingLifetime_Scoped()
     {
         var services = new ServiceCollection();
-        services.AddScoped<EmployeeCosmosClient>(_ => new EmployeeCosmosClient());
+        services.AddScoped<EmployeeCosmosClient>(_ => new EmployeeCosmosClient("AccountEndpoint=https://x.documents.azure.com:443/;AccountKey=dGVzdA=="));
 
         services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
 
@@ -1258,7 +1264,7 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
     public void MatchesExistingLifetime_Transient()
     {
         var services = new ServiceCollection();
-        services.AddTransient<EmployeeCosmosClient>(_ => new EmployeeCosmosClient());
+        services.AddTransient<EmployeeCosmosClient>(_ => new EmployeeCosmosClient("AccountEndpoint=https://x.documents.azure.com:443/;AccountKey=dGVzdA=="));
 
         services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
 
@@ -1267,7 +1273,7 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
     }
 
     [Fact]
-    public void MultipleContainersOnSameTypedClient()
+    public async Task MultipleContainersOnSameTypedClient()
     {
         var services = new ServiceCollection();
 
@@ -1283,19 +1289,21 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
 
         // Both containers should be accessible via GetContainer
         var bioContainer = client.GetContainer("BiometricDb", "biometrics");
-        bioContainer.Should().BeOfType<InMemoryContainer>();
+        bioContainer.Should().NotBeNull();
         bioContainer.Id.Should().Be("biometrics");
 
         var auditContainer = client.GetContainer("BiometricDb", "audit-logs");
-        auditContainer.Should().BeOfType<InMemoryContainer>();
+        auditContainer.Should().NotBeNull();
         auditContainer.Id.Should().Be("audit-logs");
 
-        // They should be independent containers
-        bioContainer.Should().NotBeSameAs(auditContainer);
+        // They should be independent — writing to one doesn't affect the other
+        await bioContainer.CreateItemAsync(new { id = "1", pk = "a" }, new PartitionKey("a"));
+        var act = () => auditContainer.ReadItemAsync<dynamic>("1", new PartitionKey("a"));
+        await act.Should().ThrowAsync<CosmosException>();
     }
 
     [Fact]
-    public void PerContainerDatabaseOverride_TypedClient()
+    public async Task PerContainerDatabaseOverride_TypedClient()
     {
         var services = new ServiceCollection();
 
@@ -1309,38 +1317,43 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
         var client = provider.GetRequiredService<EmployeeCosmosClient>();
 
         var c1 = client.GetContainer("db1", "c1");
-        c1.Should().BeOfType<InMemoryContainer>();
+        c1.Should().NotBeNull();
         c1.Id.Should().Be("c1");
 
         var c2 = client.GetContainer("db2", "c2");
-        c2.Should().BeOfType<InMemoryContainer>();
+        c2.Should().NotBeNull();
         c2.Id.Should().Be("c2");
+
+        // Verify both are functional
+        await c1.CreateItemAsync(new { id = "1", pk = "a" }, new PartitionKey("a"));
+        await c2.CreateItemAsync(new { id = "1", pk = "a" }, new PartitionKey("a"));
     }
 
     [Fact]
-    public void OnHandlerCreated_SilentlyIgnored_TypedClient()
+    public void OnHandlerCreated_Fires_TypedClient()
     {
-        // UseInMemoryCosmosDB<T> uses InMemoryCosmosClient, not FakeCosmosHandler.
-        // OnHandlerCreated is on InMemoryCosmosOptions but only used by UseInMemoryCosmosDB().
-        // The typed client method silently ignores it — no crash, no callback.
         var services = new ServiceCollection();
         var callbackInvoked = false;
+        string? callbackContainerName = null;
 
         services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o =>
         {
-            o.OnHandlerCreated = (_, _) => callbackInvoked = true;
+            o.OnHandlerCreated = (name, handler) =>
+            {
+                callbackInvoked = true;
+                callbackContainerName = name;
+            };
             o.AddContainer("bio", "/pk");
         });
 
-        callbackInvoked.Should().BeFalse(
-            "UseInMemoryCosmosDB<T> does not use FakeCosmosHandler, so OnHandlerCreated should not fire");
+        callbackInvoked.Should().BeTrue(
+            "UseInMemoryCosmosDB<T> now uses FakeCosmosHandler, so OnHandlerCreated should fire");
+        callbackContainerName.Should().Be("bio");
     }
 
     [Fact]
-    public void HttpMessageHandlerWrapper_Ignored_TypedClient()
+    public void HttpMessageHandlerWrapper_Invoked_TypedClient()
     {
-        // UseInMemoryCosmosDB<T> uses InMemoryCosmosClient (no HTTP pipeline).
-        // HttpMessageHandlerWrapper is silently ignored — should not crash.
         var services = new ServiceCollection();
         var wrapperInvoked = false;
 
@@ -1354,8 +1367,8 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
             o.AddContainer("bio", "/pk");
         });
 
-        wrapperInvoked.Should().BeFalse(
-            "UseInMemoryCosmosDB<T> does not create an HTTP pipeline, so HttpMessageHandlerWrapper should not fire");
+        wrapperInvoked.Should().BeTrue(
+            "UseInMemoryCosmosDB<T> now uses FakeCosmosHandler, so HttpMessageHandlerWrapper should fire");
 
         // Client should still work fine
         var provider = services.BuildServiceProvider();
@@ -1371,6 +1384,130 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
         var result = services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
 
         result.Should().BeSameAs(services);
+    }
+
+    [Fact]
+    public async Task TypedClient_FaultInjection_Works()
+    {
+        var services = new ServiceCollection();
+        FakeCosmosHandler? capturedHandler = null;
+
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o =>
+        {
+            o.AddContainer("bio", "/partitionKey");
+            o.OnHandlerCreated = (_, handler) =>
+            {
+                capturedHandler = handler;
+                handler.FaultInjector = req =>
+                {
+                    if (req.Method == HttpMethod.Post)
+                        return new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+                    return null;
+                };
+            };
+        });
+
+        capturedHandler.Should().NotBeNull();
+
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<EmployeeCosmosClient>();
+        var container = client.GetContainer("in-memory-db", "bio");
+
+        var act = () => container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
+            new PartitionKey("pk1"));
+        await act.Should().ThrowAsync<CosmosException>()
+            .Where(e => (int)e.StatusCode == 429);
+    }
+
+    [Fact]
+    public async Task TypedClient_QueryLogging_Works()
+    {
+        var services = new ServiceCollection();
+        FakeCosmosHandler? capturedHandler = null;
+
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o =>
+        {
+            o.AddContainer("bio", "/partitionKey");
+            o.OnHandlerCreated = (_, handler) => capturedHandler = handler;
+        });
+
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<EmployeeCosmosClient>();
+        var container = client.GetContainer("in-memory-db", "bio");
+
+        var iterator = container.GetItemQueryIterator<TestDocument>(
+            new QueryDefinition("SELECT * FROM c WHERE c.name = 'Test'"));
+        while (iterator.HasMoreResults)
+            await iterator.ReadNextAsync();
+
+        capturedHandler!.QueryLog.Should().Contain("SELECT * FROM c WHERE c.name = 'Test'");
+    }
+
+    [Fact]
+    public async Task TypedClient_LinqToFeedIterator_WorksNatively()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o =>
+            o.AddContainer("bio", "/partitionKey"));
+
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<EmployeeCosmosClient>();
+        var container = client.GetContainer("in-memory-db", "bio");
+
+        await container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Alice" },
+            new PartitionKey("pk1"));
+
+        // LINQ .ToFeedIterator() should work without FeedIteratorSetup
+        var iterator = container.GetItemLinqQueryable<TestDocument>()
+            .Where(d => d.Name == "Alice")
+            .ToFeedIterator();
+
+        var results = new List<TestDocument>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle().Which.Name.Should().Be("Alice");
+    }
+
+    [Fact]
+    public async Task TypedClient_HierarchicalPkPrefix_ScopesCorrectly()
+    {
+        var services = new ServiceCollection();
+
+        services.UseInMemoryCosmosDB<EmployeeCosmosClient>(o =>
+            o.AddContainer(new ContainerProperties("events", new List<string> { "/tenantId", "/category", "/region" })));
+
+        var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<EmployeeCosmosClient>();
+        var container = client.GetContainer("in-memory-db", "events");
+
+        await container.CreateItemAsync(
+            new { id = "1", tenantId = "t1", category = "A", region = "eu" },
+            new PartitionKeyBuilder().Add("t1").Add("A").Add("eu").Build());
+        await container.CreateItemAsync(
+            new { id = "2", tenantId = "t2", category = "B", region = "us" },
+            new PartitionKeyBuilder().Add("t2").Add("B").Add("us").Build());
+
+        // Query with 1-component prefix PK should scope correctly
+        var prefixPk = new PartitionKeyBuilder().Add("t1").Build();
+        var iterator = container.GetItemQueryIterator<dynamic>(
+            new QueryDefinition("SELECT * FROM c"),
+            requestOptions: new QueryRequestOptions { PartitionKey = prefixPk });
+
+        var results = new List<dynamic>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            results.AddRange(page);
+        }
+
+        results.Should().ContainSingle();
     }
 }
 
@@ -2899,13 +3036,14 @@ public class ServiceCollectionClientPropertyTests : IDisposable
     }
 
     [Fact]
-    public void TypedClient_IsInMemoryCosmosClientSubclass()
+    public void TypedClient_IsCastleProxy()
     {
         var services = new ServiceCollection();
         services.UseInMemoryCosmosDB<EmployeeCosmosClient>();
 
         using var provider = services.BuildServiceProvider();
         var client = provider.GetRequiredService<EmployeeCosmosClient>();
-        client.Should().BeAssignableTo<InMemoryCosmosClient>();
+        client.Should().BeAssignableTo<EmployeeCosmosClient>();
+        client.GetType().Should().NotBe(typeof(EmployeeCosmosClient), "Castle proxy creates a subclass");
     }
 }

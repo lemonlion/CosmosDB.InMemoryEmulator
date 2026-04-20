@@ -167,7 +167,11 @@ public class ClientResolvedRepository
 // Typed CosmosClient for Pattern 2 testing
 // ════════════════════════════════════════════════════════════════════════════════
 
-public class TestCosmosClient : InMemoryCosmosClient { }
+public class TestCosmosClient : CosmosClient
+{
+    public TestCosmosClient(string connectionString, CosmosClientOptions? options = null)
+        : base(connectionString, options) { }
+}
 
 /// <summary>
 /// Repository that resolves a typed InMemoryCosmosClient — simulates Pattern 2.
@@ -2671,7 +2675,7 @@ public class WafTypedClientDeepTests : IDisposable
             configureBaseServices: services =>
             {
                 services.AddSingleton<TestCosmosClient>(_ =>
-                    new TestCosmosClient());
+                    new TestCosmosClient("AccountEndpoint=https://x.documents.azure.com:443/;AccountKey=dGVzdA=="));
             },
             configureTestServices: services =>
                 services.UseInMemoryCosmosDB<TestCosmosClient>(o =>
