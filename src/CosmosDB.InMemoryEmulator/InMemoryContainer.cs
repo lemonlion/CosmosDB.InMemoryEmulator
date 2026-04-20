@@ -1190,6 +1190,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         if (itemId.Length == 0)
             return CreateResponseMessage(HttpStatusCode.BadRequest);
 
+        var pkMismatch = ValidatePartitionKeyConsistencyStream(partitionKey, jObj);
+        if (pkMismatch is not null) return pkMismatch;
+
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
         TrackBatchWrite(key);
@@ -1288,6 +1291,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         var itemId = jObj["id"]?.ToString();
         if (itemId is null)
             return CreateResponseMessage(HttpStatusCode.BadRequest);
+        var pkMismatch = ValidatePartitionKeyConsistencyStream(partitionKey, jObj);
+        if (pkMismatch is not null) return pkMismatch;
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
         TrackBatchWrite(key);
@@ -1396,6 +1401,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         {
             return CreateResponseMessage(HttpStatusCode.BadRequest);
         }
+
+        var pkMismatch = ValidatePartitionKeyConsistencyStream(partitionKey, jObj);
+        if (pkMismatch is not null) return pkMismatch;
 
         var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
@@ -2585,9 +2593,38 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         if (bodyPk != explicitPk)
         {
             throw new InMemoryCosmosException(
-                "Partition key provided either doesn't correspond to definition in the collection or doesn't match partition key field values specified in the document.",
-                HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                "PartitionKey extracted from document doesn't match the one specified in the header. " +
+                "Learn more: https://aka.ms/CosmosDB/sql/errors/wrong-pk-value",
+                HttpStatusCode.BadRequest, 1001, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
+    }
+
+    /// <summary>
+    /// Stream-API variant of <see cref="ValidatePartitionKeyConsistency"/> that returns
+    /// a <see cref="ResponseMessage"/> instead of throwing, matching the stream API convention.
+    /// </summary>
+    private ResponseMessage ValidatePartitionKeyConsistencyStream(PartitionKey? explicitKey, JObject jObj)
+    {
+        if (!explicitKey.HasValue || explicitKey.Value == PartitionKey.None || explicitKey.Value == PartitionKey.Null)
+            return null;
+
+        if (PartitionKeyPaths is not { Count: 1 })
+            return null;
+
+        var pkPath = PartitionKeyPaths[0].TrimStart('/');
+        var bodyToken = jObj.SelectToken(pkPath);
+        if (bodyToken is null)
+            return null;
+
+        var explicitPk = PartitionKeyToString(explicitKey.Value);
+        var bodyPk = JTokenToTypedKey(bodyToken);
+
+        if (bodyPk != explicitPk)
+        {
+            return CreateResponseMessage(HttpStatusCode.BadRequest, subStatusCode: 1001);
+        }
+
+        return null;
     }
 
     private void ValidatePatchPaths(IReadOnlyList<PatchOperation> operations)
@@ -3208,7 +3245,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         public override string ETag => _etag;
     }
 
-    private ResponseMessage CreateResponseMessage(HttpStatusCode statusCode, string json = null, string etag = null)
+    private ResponseMessage CreateResponseMessage(HttpStatusCode statusCode, string json = null, string etag = null, int subStatusCode = 0)
     {
         var errorMessage = (int)statusCode >= 400
             ? $"Response status code does not indicate success: {statusCode} ({(int)statusCode})"
@@ -3220,6 +3257,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         msg.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
         msg.Headers["x-ms-request-charge"] = SyntheticRequestCharge.ToString(CultureInfo.InvariantCulture);
         msg.Headers["x-ms-session-token"] = CurrentSessionToken;
+        if (subStatusCode != 0)
+        {
+            msg.Headers["x-ms-substatus"] = subStatusCode.ToString(CultureInfo.InvariantCulture);
+        }
         if (etag is not null)
         {
             msg.Headers["ETag"] = etag;

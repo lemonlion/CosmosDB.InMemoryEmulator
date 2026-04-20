@@ -633,7 +633,7 @@ public class FakeCosmosHandlerCaseSensitivePropertyTests(EmulatorSession session
     [Fact]
     public async Task SingleLetterProperties_AllTwentySixPreserved()
     {
-        var jObj = new JObject { ["id"] = "26-1", ["p"] = "p1" };
+        var jObj = new JObject { ["id"] = "26-1", ["p"] = "lower-p" };
 
         for (var c = 'a'; c <= 'z'; c++)
         {
@@ -641,8 +641,8 @@ public class FakeCosmosHandlerCaseSensitivePropertyTests(EmulatorSession session
             jObj[char.ToUpper(c).ToString()] = $"upper-{char.ToUpper(c)}";
         }
 
-        await _container.CreateItemAsync(jObj, new PartitionKey("p1"));
-        var response = await _container.ReadItemAsync<JObject>("26-1", new PartitionKey("p1"));
+        await _container.CreateItemAsync(jObj, new PartitionKey("lower-p"));
+        var response = await _container.ReadItemAsync<JObject>("26-1", new PartitionKey("lower-p"));
         var result = response.Resource;
 
         for (var c = 'a'; c <= 'z'; c++)
