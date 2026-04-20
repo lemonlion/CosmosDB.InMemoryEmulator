@@ -34,7 +34,7 @@ See **[Setup Guide](https://github.com/lemonlion/CosmosDB.InMemoryEmulator/wiki/
 
 ### Direct Instantiation
 
-Recommended — highest fidelity, zero production code changes:
+Single-container:
 
 ```csharp
 // Single container — one-liner
