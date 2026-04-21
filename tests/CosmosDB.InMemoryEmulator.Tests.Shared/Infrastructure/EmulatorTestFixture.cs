@@ -55,7 +55,7 @@ public sealed class EmulatorTestFixture : ITestContainerFixture
     }
 
     // Cleanup matters even with unique per-test names: the emulator's partition
-    // pool is finite (PARTITION_COUNT=10 locally, 3 in CI), so leaving dozens
+    // pool is finite (PARTITION_COUNT=10 locally and in CI), so leaving dozens
     // of test containers alive across a run will exhaust slots and cause
     // subsequent CreateContainer calls to 503. Locally the Docker container is
     // usually thrown away, but in CI the same emulator service serves every
