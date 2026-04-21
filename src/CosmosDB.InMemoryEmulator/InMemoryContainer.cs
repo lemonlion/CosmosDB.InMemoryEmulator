@@ -305,6 +305,16 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     }
     private int? _defaultTimeToLive;
 
+    /// <summary>
+    /// The unique key policy for this container. Set to configure unique key constraints
+    /// that enforce uniqueness of one or more values within a logical partition.
+    /// </summary>
+    public UniqueKeyPolicy UniqueKeyPolicy
+    {
+        get => _containerProperties.UniqueKeyPolicy;
+        set => _containerProperties.UniqueKeyPolicy = value ?? new UniqueKeyPolicy();
+    }
+
     /// <summary>The partition key path(s) for this container.</summary>
     public IReadOnlyList<string> PartitionKeyPaths { get; }
 
