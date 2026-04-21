@@ -46,7 +46,7 @@ jobs:
           name: build-output
 
       - name: Restore executable permissions
-        run: find . -type f -path '*/bin/Release/*' ! -name '*.*' -exec chmod +x {} +
+        run: find . -path '*/bin/Release/*' -type f -exec chmod +x {} +
 
       - name: ${{ matrix.project }} Tests
         run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.${{ matrix.project }} --configuration Release --no-build --verbosity normal --framework ${{ matrix.framework }}
