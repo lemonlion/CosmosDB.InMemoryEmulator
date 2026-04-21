@@ -10,9 +10,10 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-dotnet-build
 
-      - name: Unit Tests (net8.0)
+      - name: Unit Tests(net8.0)
         run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Unit --configuration Release --no-build --verbosity normal --framework net8.0
 
       - name: Integration Tests (net8.0)

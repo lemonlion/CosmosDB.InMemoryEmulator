@@ -36,6 +36,7 @@ jobs:
     name: ${{ matrix.name }}
 
     steps:
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-dotnet-build
         with:
           build: false
@@ -174,6 +175,7 @@ jobs:
     name: Update MaxTestedSdkVersion
 
     steps:
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-dotnet-build
         with:
           dotnet-versions: '8.0.x'

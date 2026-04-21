@@ -74,6 +74,7 @@ jobs:
       matrix:
         run: ${{ fromJson(needs.prepare.outputs.run-matrix) }}
     steps:
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-dotnet-build
 
       - name: Run Benchmark (in-memory, ${{ inputs.framework || 'net8.0' }}, ${{ inputs.rps || '50' }}rps, ${{ inputs.duration || '60' }}s, run ${{ matrix.run }})
@@ -117,6 +118,7 @@ jobs:
           AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: "127.0.0.1"
 
     steps:
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-dotnet-build
 
       - uses: ./.github/actions/wait-for-emulator
