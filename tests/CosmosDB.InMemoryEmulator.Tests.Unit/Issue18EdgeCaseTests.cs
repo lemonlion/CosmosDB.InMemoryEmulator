@@ -630,20 +630,20 @@ public class Issue18EdgeCaseTests
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task ReplaceItem_BodyIdMismatch_ThrowsCosmosException_400()
+    public async Task ReplaceItem_BodyIdMismatch_Succeeds()
     {
+        // Real Cosmos DB silently succeeds when body id differs from route id.
+        // The route id determines which document to replace; the body provides new content.
         var client = new InMemoryCosmosClient();
         var db = (await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
         var container = (await db.CreateContainerAsync("items", "/pk")).Container;
 
         await container.CreateItemAsync(new { id = "1", pk = "pk1" }, new PartitionKey("pk1"));
 
-        var ex = await Assert.ThrowsAsync<CosmosException>(async () =>
-            await container.ReplaceItemAsync(
-                new { id = "DIFFERENT", pk = "pk1" }, "1", new PartitionKey("pk1")));
+        var response = await container.ReplaceItemAsync(
+            new { id = "DIFFERENT", pk = "pk1" }, "1", new PartitionKey("pk1"));
 
-        ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        ex.Diagnostics.Should().BeNull();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -651,19 +651,19 @@ public class Issue18EdgeCaseTests
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task Upsert_IfMatch_NonExistent_ThrowsCosmosException_404()
+    public async Task Upsert_IfMatch_NonExistent_CreatesItem()
     {
+        // Real Cosmos DB creates the item. If-Match is "applicable only on PUT and DELETE"
+        // per the REST API docs. Upsert uses POST, so If-Match is ignored on insert path.
         var client = new InMemoryCosmosClient();
         var db = (await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
         var container = (await db.CreateContainerAsync("items", "/pk")).Container;
 
-        var ex = await Assert.ThrowsAsync<CosmosException>(async () =>
-            await container.UpsertItemAsync(
-                new { id = "noexist", pk = "pk1" }, new PartitionKey("pk1"),
-                new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" }));
+        var response = await container.UpsertItemAsync(
+            new { id = "noexist", pk = "pk1" }, new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
 
-        ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
-        ex.Diagnostics.Should().BeNull();
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

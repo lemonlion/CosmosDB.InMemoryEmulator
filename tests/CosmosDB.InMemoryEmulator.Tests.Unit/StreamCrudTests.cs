@@ -1008,8 +1008,9 @@ public class StreamDivergentBehaviorTests
     private static async Task<string> ReadStreamAsync(Stream s) { using var r = new StreamReader(s); return await r.ReadToEndAsync(); }
 
     [Fact]
-    public async Task ReplaceStream_IdMismatch_Returns400()
+    public async Task ReplaceStream_IdMismatch_Succeeds()
     {
+        // Real Cosmos DB silently succeeds when body id differs from route id.
         var container = new InMemoryContainer("mismatch", "/partitionKey");
         await container.CreateItemStreamAsync(
             ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
@@ -1017,14 +1018,13 @@ public class StreamDivergentBehaviorTests
         using var response = await container.ReplaceItemStreamAsync(
             ToStream("""{"id":"wrong","partitionKey":"pk1"}"""),
             "1", new PartitionKey("pk1"));
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]
-    public async Task Divergent_ReplaceStream_IdMismatch_AlsoReturns400()
+    public async Task ReplaceStream_IdMismatch_AlsoSucceeds()
     {
-        // The emulator now correctly validates body id matches parameter id,
-        // matching real Cosmos DB behavior.
+        // The route id determines which document to replace; body id mismatch is allowed.
         var container = new InMemoryContainer("mismatch-div", "/partitionKey");
         await container.CreateItemStreamAsync(
             ToStream("""{"id":"1","partitionKey":"pk1","name":"orig"}"""), new PartitionKey("pk1"));
@@ -1032,7 +1032,7 @@ public class StreamDivergentBehaviorTests
         using var response = await container.ReplaceItemStreamAsync(
             ToStream("""{"id":"wrong","partitionKey":"pk1","name":"replaced"}"""),
             "1", new PartitionKey("pk1"));
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]
@@ -1305,14 +1305,15 @@ public class StreamETagWildcardTests
     }
 
     [Fact]
-    public async Task UpsertStream_IfMatch_OnNonExistentItem_ReturnsNotFound()
+    public async Task UpsertStream_IfMatch_OnNonExistentItem_CreatesItem()
     {
+        // If-Match is "applicable only on PUT and DELETE" per REST API docs.
+        // Upsert uses POST, so If-Match is ignored on the insert path.
         var container = new InMemoryContainer("wild-test", "/pk");
         var response = await container.UpsertItemStreamAsync(
             ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"),
             new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
-        // IfMatch on non-existent item returns NotFound (matches real Cosmos DB)
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 }
 

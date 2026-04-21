@@ -233,16 +233,17 @@ public class Issue18EdgeCaseIntegrationTests(EmulatorSession session) : IAsyncLi
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)] // Real emulator silently succeeds (uses route ID, ignores body ID mismatch)
-    public async Task ReplaceItem_BodyIdMismatch_ThrowsCosmosException_400()
+    public async Task ReplaceItem_BodyIdMismatch_Succeeds()
     {
+        // Real Cosmos DB silently succeeds when body id differs from route id.
+        // The route id determines which document to replace; the body provides new content.
+        // See REST API docs: PUT .../docs/{doc-id} — body id is not validated against route.
         await _container.CreateItemAsync(new { id = "rep1", pk = "pk1" }, new PartitionKey("pk1"));
 
-        var ex = await Assert.ThrowsAsync<CosmosException>(async () =>
-            await _container.ReplaceItemAsync(
-                new { id = "DIFFERENT", pk = "pk1" }, "rep1", new PartitionKey("pk1")));
+        var response = await _container.ReplaceItemAsync(
+            new { id = "DIFFERENT", pk = "pk1" }, "rep1", new PartitionKey("pk1"));
 
-        ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -250,15 +251,16 @@ public class Issue18EdgeCaseIntegrationTests(EmulatorSession session) : IAsyncLi
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
-    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)] // Real emulator creates the item (upsert semantics win over ETag check on non-existent)
-    public async Task Upsert_IfMatch_NonExistent_ThrowsCosmosException_404()
+    public async Task Upsert_IfMatch_NonExistent_CreatesItem()
     {
-        var ex = await Assert.ThrowsAsync<CosmosException>(async () =>
-            await _container.UpsertItemAsync(
-                new { id = "noexist", pk = "pk1" }, new PartitionKey("pk1"),
-                new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" }));
+        // Real Cosmos DB creates the item. If-Match is "applicable only on PUT and DELETE"
+        // per the REST API common headers docs. Upsert uses POST, so If-Match is ignored
+        // on the insert path.
+        var response = await _container.UpsertItemAsync(
+            new { id = "noexist", pk = "pk1" }, new PartitionKey("pk1"),
+            new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
 
-        ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

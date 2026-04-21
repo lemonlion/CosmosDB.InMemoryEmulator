@@ -521,19 +521,18 @@ public class ReplaceItemGapTests2
     }
 
     [Fact]
-    public async Task Replace_IdParameterDiffersFromBody_ThrowsBadRequest()
+    public async Task Replace_IdParameterDiffersFromBody_Succeeds()
     {
         // Create an item with id "1"
         var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
         await _container.CreateItemAsync(item, new PartitionKey("pk1"));
 
         // Replace with id parameter = "1" but item body has id = "different"
-        // Real Cosmos DB returns 400 BadRequest when body id differs from parameter id
+        // Real Cosmos DB silently succeeds — route id determines which document to replace
         var replacement = new TestDocument { Id = "different", PartitionKey = "pk1", Name = "Replaced" };
-        var act = () => _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
+        var response = await _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
 
-        var ex = await act.Should().ThrowAsync<CosmosException>();
-        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }
 
@@ -851,15 +850,16 @@ public class UpsertItemGapTests3
     }
 
     [Fact]
-    public async Task Upsert_WithIfMatch_OnNewItem_ThrowsPreconditionFailed()
+    public async Task Upsert_WithIfMatch_OnNewItem_CreatesItem()
     {
-        var act = () => _container.UpsertItemAsync(
+        // If-Match is "applicable only on PUT and DELETE" per REST API docs.
+        // Upsert uses POST, so If-Match is ignored on the insert path.
+        var response = await _container.UpsertItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
             new PartitionKey("pk1"),
             new ItemRequestOptions { IfMatchEtag = "\"nonexistent\"" });
 
-        var ex = await act.Should().ThrowAsync<CosmosException>();
-        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     [Fact]
@@ -1032,15 +1032,15 @@ public class CrudNullGuardTests
     }
 
     [Fact]
-    public async Task ReplaceItemAsync_WithEmptyId_ThrowsBadRequest()
+    public async Task ReplaceItemAsync_WithEmptyId_ThrowsNotFound()
     {
         var act = () => _container.ReplaceItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
             "", new PartitionKey("pk1"));
 
-        // Body id "1" differs from parameter id "" — returns BadRequest
+        // Empty id parameter — no item exists with id "" so returns NotFound
         var ex = await act.Should().ThrowAsync<CosmosException>();
-        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     [Fact]

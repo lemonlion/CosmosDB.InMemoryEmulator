@@ -822,12 +822,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         {
             EvictIfExpired(key);
 
-            if (requestOptions?.IfMatchEtag is not null && !_items.ContainsKey(key))
-            {
-                throw InMemoryCosmosException.Create($"Entity with the specified id does not exist. id = {itemId}",
-                    HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-            }
-
+            // Note: If-Match is documented as "applicable only on PUT and DELETE" in the REST API.
+            // Upsert is POST-based, so If-Match is not evaluated for the insert path.
+            // If the item exists, CheckIfMatch will evaluate it on the update path.
             CheckIfMatch(requestOptions, key);
             bool existed;
             string previousJson;
@@ -909,15 +906,6 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         var json = JsonConvert.SerializeObject(item, JsonSettings);
         ValidateDocumentSize(json);
         var jObj = JsonParseHelpers.ParseJson(json);
-
-        // Validate body id matches parameter id (real Cosmos returns 400 on mismatch)
-        var bodyId = jObj["id"]?.ToString();
-        if (bodyId is not null && bodyId != id)
-        {
-            throw InMemoryCosmosException.Create(
-                "The 'id' property in the body does not match the 'id' parameter.",
-                HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
-        }
 
         ValidatePartitionKeyConsistency(partitionKey, jObj);
 
@@ -1303,12 +1291,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         {
             EvictIfExpired(key);
 
-            // IfMatch on non-existent item: return NotFound (matching real Cosmos)
-            if (requestOptions?.IfMatchEtag is not null && !_items.ContainsKey(key))
-            {
-                return CreateResponseMessage(HttpStatusCode.NotFound);
-            }
-
+            // Note: If-Match is documented as "applicable only on PUT and DELETE" in the REST API.
+            // Upsert is POST-based, so If-Match is not evaluated for the insert path.
+            // If the item exists, CheckIfMatchStream will evaluate it on the update path.
             if (!CheckIfMatchStream(requestOptions, key))
             {
                 return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
@@ -1394,13 +1379,6 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         try { jObj = JsonParseHelpers.ParseJson(json); }
         catch (Newtonsoft.Json.JsonReaderException)
         { return CreateResponseMessage(HttpStatusCode.BadRequest); }
-
-        // Validate body id matches parameter id (real Cosmos returns 400 on mismatch)
-        var bodyId = jObj["id"]?.ToString();
-        if (bodyId is not null && bodyId != id)
-        {
-            return CreateResponseMessage(HttpStatusCode.BadRequest);
-        }
 
         var pkMismatch = ValidatePartitionKeyConsistencyStream(partitionKey, jObj);
         if (pkMismatch is not null) return pkMismatch;
