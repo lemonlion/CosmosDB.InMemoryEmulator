@@ -7,19 +7,43 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  build:
+    runs-on: ubuntu-latest
+    name: build
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-dotnet-build
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            src/**/bin/**
+            src/**/obj/**
+            tests/**/bin/**
+            tests/**/obj/**
+          retention-days: 1
+
+  test:
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         framework: [net8.0, net10.0]
-    name: build-and-test (${{ matrix.framework }})
+        project: [Unit, Integration]
+    name: test (${{ matrix.framework }}, ${{ matrix.project }})
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-dotnet-build
+        with:
+          build: false
 
-      - name: Unit Tests
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Unit --configuration Release --no-build --verbosity normal --framework ${{ matrix.framework }}
+      - name: Download build output
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
 
-      - name: Integration Tests
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Integration --configuration Release --no-build --verbosity normal --framework ${{ matrix.framework }}
+      - name: ${{ matrix.project }} Tests
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.${{ matrix.project }} --configuration Release --no-build --verbosity normal --framework ${{ matrix.framework }}
