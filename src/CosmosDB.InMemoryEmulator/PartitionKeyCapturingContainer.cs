@@ -241,10 +241,27 @@ internal sealed class PartitionKeyCapturingContainer : Container
         string processorName, ChangesEstimationHandler estimationDelegate, TimeSpan? estimationPeriod = null)
         => _inner.GetChangeFeedEstimatorBuilder(processorName, estimationDelegate, estimationPeriod);
 
+#if COSMOS_SDK_PREVIEW_METHODS
+    public override ChangeFeedProcessorBuilder GetChangeFeedProcessorBuilderWithAllVersionsAndDeletes<T>(
+        string processorName, ChangeFeedHandler<ChangeFeedItem<T>> onChangesDelegate)
+        => _inner.GetChangeFeedProcessorBuilderWithAllVersionsAndDeletes(processorName, onChangesDelegate);
+#endif
+
     // ── Feed ranges ─────────────────────────────────────────────────
 
     public override Task<IReadOnlyList<FeedRange>> GetFeedRangesAsync(CancellationToken cancellationToken = default)
         => _inner.GetFeedRangesAsync(cancellationToken);
+
+#if COSMOS_SDK_PREVIEW_METHODS
+    public override Task<IEnumerable<string>> GetPartitionKeyRangesAsync(
+        FeedRange feedRange, CancellationToken cancellationToken = default)
+        => _inner.GetPartitionKeyRangesAsync(feedRange, cancellationToken);
+
+    public override Task<SemanticRerankResult> SemanticRerankAsync(
+        string rerankContext, IEnumerable<string> documents,
+        IDictionary<string, object> options, CancellationToken cancellationToken = default)
+        => _inner.SemanticRerankAsync(rerankContext, documents, options, cancellationToken);
+#endif
 
     // ── Batch ───────────────────────────────────────────────────────
 

@@ -8,4 +8,25 @@
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 	</PropertyGroup>
 
+	<PropertyGroup>
+		<!-- Single source of truth for the Cosmos SDK version used across all projects.
+		     The CI compat-check workflow overrides this value to test against different
+		     SDK releases without changing any other file. -->
+		<CosmosSDKVersion>3.58.0</CosmosSDKVersion>
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<!-- Strip any pre-release suffix (e.g. "-preview.0") before version comparisons. -->
+		<_CosmosVersionBase>$([System.Text.RegularExpressions.Regex]::Replace($(CosmosSDKVersion), '-.*$', ''))</_CosmosVersionBase>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="$([MSBuild]::VersionGreaterThanOrEquals('$(_CosmosVersionBase)', '3.59.0'))">
+		<!-- Container gained GetChangeFeedProcessorBuilderWithAllVersionsAndDeletes,
+		     GetPartitionKeyRangesAsync, and SemanticRerankAsync as public abstract members
+		     starting from 3.59.0-preview.0.  Enable their implementations (and matching tests)
+		     only when building against that version or later so the code still compiles with
+		     3.58.x (where those methods are internal/virtual and inaccessible from outside). -->
+		<DefineConstants>$(DefineConstants);COSMOS_SDK_PREVIEW_METHODS</DefineConstants>
+	</PropertyGroup>
+
 </Project>

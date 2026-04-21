@@ -353,6 +353,75 @@ internal sealed class InMemoryManualCheckpointStreamChangeFeedProcessor : Change
     }
 }
 
+#if COSMOS_SDK_PREVIEW_METHODS
+/// <summary>
+/// A <see cref="ChangeFeedProcessor"/> implementation that delivers <b>all versions and deletes</b>
+/// of every change (including intermediate updates) as <see cref="ChangeFeedItem{T}"/> objects,
+/// matching the behaviour of <c>GetChangeFeedProcessorBuilderWithAllVersionsAndDeletes</c>.
+/// </summary>
+internal sealed class InMemoryAllVersionsChangeFeedProcessor<T> : ChangeFeedProcessor
+{
+    private readonly InMemoryContainer _container;
+    private readonly Container.ChangeFeedHandler<ChangeFeedItem<T>> _handler;
+    private CancellationTokenSource _cts;
+    private Task _pollingTask;
+    private long _checkpoint;
+
+    internal InMemoryAllVersionsChangeFeedProcessor(
+        InMemoryContainer container,
+        Container.ChangeFeedHandler<ChangeFeedItem<T>> handler)
+    {
+        _container = container;
+        _handler = handler;
+    }
+
+    public override Task StartAsync()
+    {
+        _checkpoint = _container.GetChangeFeedCheckpoint();
+        _cts = new CancellationTokenSource();
+        _pollingTask = PollAsync(_cts.Token);
+        return Task.CompletedTask;
+    }
+
+    public override async Task StopAsync()
+    {
+        if (_cts != null)
+        {
+            await _cts.CancelAsync();
+            try { await _pollingTask; }
+            catch (OperationCanceledException) { }
+            _cts.Dispose();
+            _cts = null;
+        }
+    }
+
+    private async Task PollAsync(CancellationToken cancellationToken)
+    {
+        var context = new InMemoryChangeFeedProcessorContext();
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+
+            var feedItems = _container.GetAllVersionsChangeFeedItems<T>(_checkpoint);
+
+            if (feedItems.Count > 0)
+            {
+                try
+                {
+                    await _handler(context, feedItems, cancellationToken);
+                    _checkpoint += feedItems.Count;
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Handler threw — do not advance checkpoint so the same batch is redelivered
+                }
+            }
+        }
+    }
+}
+#endif
+
 internal static class ChangeFeedProcessorBuilderFactory
 {
     private static readonly Assembly CosmosAssembly = typeof(Container).Assembly;

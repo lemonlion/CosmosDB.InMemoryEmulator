@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Azure.Cosmos;
@@ -1967,6 +1968,73 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return new InMemoryFeedIterator<T>(items);
     }
 
+#if COSMOS_SDK_PREVIEW_METHODS
+    /// <summary>
+    /// Returns all change feed entries starting from <paramref name="fromCheckpoint"/> as
+    /// <see cref="ChangeFeedItem{T}"/> objects, preserving every version and delete.
+    /// Used by <see cref="InMemoryAllVersionsChangeFeedProcessor{T}"/>.
+    /// </summary>
+    internal IReadOnlyList<ChangeFeedItem<T>> GetAllVersionsChangeFeedItems<T>(long fromCheckpoint)
+    {
+        lock (_changeFeedLock)
+        {
+            var start = (int)Math.Max(0, fromCheckpoint);
+            var result = new List<ChangeFeedItem<T>>(_changeFeed.Count - start);
+
+            for (var i = start; i < _changeFeed.Count; i++)
+            {
+                var entry = _changeFeed[i];
+                var opType = DetermineChangeFeedOperationType(i);
+                var metadata = CreateChangeFeedMetadata(opType, i, entry.Id);
+                var feedItem = new ChangeFeedItem<T> { Metadata = metadata };
+                if (!entry.IsDelete)
+                    feedItem.Current = JsonConvert.DeserializeObject<T>(entry.Json, JsonSettings);
+                result.Add(feedItem);
+            }
+
+            return result;
+        }
+    }
+
+    private static readonly Type ChangeFeedMetadataType = typeof(ChangeFeedMetadata);
+    private static readonly PropertyInfo CfmOperationTypeProp = ChangeFeedMetadataType.GetProperty("OperationType");
+    private static readonly PropertyInfo CfmLsnProp = ChangeFeedMetadataType.GetProperty("Lsn");
+    private static readonly PropertyInfo CfmIdProp = ChangeFeedMetadataType.GetProperty("Id");
+
+    private static ChangeFeedMetadata CreateChangeFeedMetadata(
+        ChangeFeedOperationType operationType, long lsn, string id)
+    {
+        var metadata = (ChangeFeedMetadata)RuntimeHelpers.GetUninitializedObject(ChangeFeedMetadataType);
+        CfmOperationTypeProp?.SetMethod?.Invoke(metadata, new object[] { operationType });
+        CfmLsnProp?.SetMethod?.Invoke(metadata, new object[] { lsn });
+        CfmIdProp?.SetMethod?.Invoke(metadata, new object[] { id });
+        return metadata;
+    }
+
+    /// <summary>
+    /// Determines whether the change feed entry at position <paramref name="index"/> represents
+    /// a Create, Replace, or Delete by scanning prior entries for the same item.
+    /// Must be called while <see cref="_changeFeedLock"/> is held.
+    /// </summary>
+    private ChangeFeedOperationType DetermineChangeFeedOperationType(int index)
+    {
+        var entry = _changeFeed[index];
+        if (entry.IsDelete)
+            return ChangeFeedOperationType.Delete;
+
+        // Scan backwards to find the most recent prior entry for this (Id, PartitionKey)
+        for (var j = index - 1; j >= 0; j--)
+        {
+            var prev = _changeFeed[j];
+            if (prev.Id == entry.Id && prev.PartitionKey == entry.PartitionKey)
+                return prev.IsDelete ? ChangeFeedOperationType.Create : ChangeFeedOperationType.Replace;
+        }
+
+        // No prior entry → this is the first occurrence (Create)
+        return ChangeFeedOperationType.Create;
+    }
+#endif
+
     public override FeedIterator GetChangeFeedStreamIterator(
         ChangeFeedStartFrom changeFeedStartFrom, ChangeFeedMode changeFeedMode,
         ChangeFeedRequestOptions changeFeedRequestOptions = null)
@@ -2229,6 +2297,13 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         TimeSpan? estimationPeriod = null)
         => ChangeFeedProcessorBuilderFactory.Create(processorName, new NoOpChangeFeedProcessor());
 
+#if COSMOS_SDK_PREVIEW_METHODS
+    public override ChangeFeedProcessorBuilder GetChangeFeedProcessorBuilderWithAllVersionsAndDeletes<T>(
+        string processorName, Container.ChangeFeedHandler<ChangeFeedItem<T>> onChangesDelegate)
+        => ChangeFeedProcessorBuilderFactory.Create(processorName,
+            new InMemoryAllVersionsChangeFeedProcessor<T>(this, onChangesDelegate));
+#endif
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  Feed Ranges
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2248,6 +2323,46 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         return Task.FromResult<IReadOnlyList<FeedRange>>(ranges);
     }
+
+#if COSMOS_SDK_PREVIEW_METHODS
+    public override Task<IEnumerable<string>> GetPartitionKeyRangesAsync(
+        FeedRange feedRange, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var count = Math.Max(1, FeedRangeCount);
+        var step = 0x1_0000_0000L / count;
+        var (queryMin, queryMax) = ParseFeedRangeBoundaries(feedRange);
+
+        var rangeIds = new List<string>();
+        for (var i = 0; i < count; i++)
+        {
+            if (queryMin == null || queryMax == null)
+            {
+                rangeIds.Add(i.ToString());
+                continue;
+            }
+
+            var rangeMin = (uint)(i * step);
+            var rangeMax = i == count - 1 ? uint.MaxValue : (uint)((i + 1) * step) - 1u;
+
+            // Overlap check: intervals [rangeMin, rangeMax] and [queryMin, queryMax]
+            if (rangeMin <= queryMax.Value && queryMin.Value <= rangeMax)
+                rangeIds.Add(i.ToString());
+        }
+
+        return Task.FromResult<IEnumerable<string>>(rangeIds);
+    }
+
+    public override Task<SemanticRerankResult> SemanticRerankAsync(
+        string rerankContext,
+        IEnumerable<string> documents,
+        IDictionary<string, object> options,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException(
+            "SemanticRerankAsync is not supported by the in-memory emulator. " +
+            "This API requires a live Cosmos DB endpoint with semantic ranking capabilities.");
+#endif
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Container management

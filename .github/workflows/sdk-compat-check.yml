@@ -63,10 +63,14 @@ jobs:
           echo "## SDK Version: $VERSION" >> $GITHUB_STEP_SUMMARY
 
       - name: Override Cosmos SDK version
+        shell: bash
         run: |
-          dotnet add src/CosmosDB.InMemoryEmulator/CosmosDB.InMemoryEmulator.csproj \
-            package Microsoft.Azure.Cosmos \
-            --version ${{ steps.sdk-version.outputs.version }}
+          VERSION="${{ steps.sdk-version.outputs.version }}"
+          # Update CosmosSDKVersion in the root Directory.Build.props — this single property
+          # drives the PackageReference, the HybridRow hint path, AND the
+          # COSMOS_SDK_PREVIEW_METHODS compile-time symbol across all projects in the repo.
+          sed -i "s|<CosmosSDKVersion>[^<]*</CosmosSDKVersion>|<CosmosSDKVersion>${VERSION}</CosmosSDKVersion>|" \
+            Directory.Build.props
 
       - name: Build
         run: dotnet build --configuration Release
