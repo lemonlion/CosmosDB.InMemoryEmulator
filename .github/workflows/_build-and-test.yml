@@ -45,5 +45,14 @@ jobs:
         with:
           name: build-output
 
+      - name: Debug — verify artifact layout
+        run: |
+          echo "=== test project bin ==="
+          ls -la tests/CosmosDB.InMemoryEmulator.Tests.${{ matrix.project }}/bin/Release/${{ matrix.framework }}/ 2>&1 | head -20
+          echo "=== test project obj ==="
+          ls tests/CosmosDB.InMemoryEmulator.Tests.${{ matrix.project }}/obj/ 2>&1 | head -10
+          echo "=== deps.json snippet ==="
+          head -30 tests/CosmosDB.InMemoryEmulator.Tests.${{ matrix.project }}/bin/Release/${{ matrix.framework }}/CosmosDB.InMemoryEmulator.Tests.${{ matrix.project }}.deps.json 2>&1 || echo "deps.json not found"
+
       - name: ${{ matrix.project }} Tests
         run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.${{ matrix.project }} --configuration Release --no-build --verbosity normal --framework ${{ matrix.framework }}
