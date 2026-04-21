@@ -233,6 +233,7 @@ public class Issue18EdgeCaseIntegrationTests(EmulatorSession session) : IAsyncLi
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)] // Real emulator silently succeeds (uses route ID, ignores body ID mismatch)
     public async Task ReplaceItem_BodyIdMismatch_ThrowsCosmosException_400()
     {
         await _container.CreateItemAsync(new { id = "rep1", pk = "pk1" }, new PartitionKey("pk1"));
@@ -249,6 +250,7 @@ public class Issue18EdgeCaseIntegrationTests(EmulatorSession session) : IAsyncLi
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)] // Real emulator creates the item (upsert semantics win over ETag check on non-existent)
     public async Task Upsert_IfMatch_NonExistent_ThrowsCosmosException_404()
     {
         var ex = await Assert.ThrowsAsync<CosmosException>(async () =>
