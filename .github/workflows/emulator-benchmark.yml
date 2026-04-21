@@ -3,6 +3,9 @@ name: Emulator Benchmark
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   emulator-performance-tests:
     runs-on: ubuntu-latest

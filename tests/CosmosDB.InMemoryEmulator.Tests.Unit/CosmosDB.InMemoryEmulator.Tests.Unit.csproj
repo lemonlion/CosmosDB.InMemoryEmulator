@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<NoWarn>$(NoWarn);CS0618</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="CosmosDB.InMemoryEmulator.Tests.Infrastructure" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="AwesomeAssertions" Version="9.4.0" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
+		<PackageReference Include="NSubstitute" Version="5.3.0" />
+		<PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+			<PrivateAssets>all</PrivateAssets>
+		</PackageReference>
+		<PackageReference Include="xunit.v3" Version="3.2.2" />
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+		<PackageReference Include="Microsoft.AspNetCore.TestHost" Version="8.0.25" />
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+		<PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\CosmosDB.InMemoryEmulator.Tests.Shared\CosmosDB.InMemoryEmulator.Tests.Shared.csproj" />
+	</ItemGroup>
+
+</Project>

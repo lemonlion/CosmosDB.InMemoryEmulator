@@ -82,6 +82,7 @@ namespace CosmosDB.InMemoryEmulator.ProductionExtensions;
 /// InMemoryFeedIteratorSetup.Deregister();
 /// </code>
 /// </summary>
+[Obsolete("No longer needed since 4.0. All recommended approaches (InMemoryCosmos, UseInMemoryCosmosDB, UseInMemoryCosmosContainers) use FakeCosmosHandler which handles .ToFeedIterator() natively. Use .ToFeedIterator() instead of .ToFeedIteratorOverridable().")]
 public static class CosmosOverridableFeedIteratorExtensions
 {
     // ──────────────────────────────────────────────────────────────────────

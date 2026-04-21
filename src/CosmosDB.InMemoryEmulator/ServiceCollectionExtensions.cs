@@ -1,3 +1,5 @@
+using System.Reflection;
+using Castle.DynamicProxy;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -136,9 +138,10 @@ public static class ServiceCollectionExtensions
 
     /// <summary>
     /// Replaces all registered <see cref="Container"/> instances in the service collection
-    /// with in-memory equivalents. Does NOT replace <see cref="CosmosClient"/>.
-    /// Also registers <see cref="InMemoryFeedIteratorSetup"/> so that
-    /// <c>.ToFeedIteratorOverridable()</c> works correctly.
+    /// with in-memory equivalents backed by <see cref="FakeCosmosHandler"/>.
+    /// Does NOT replace <see cref="CosmosClient"/> — any existing client registration is preserved.
+    /// A hidden internal <see cref="CosmosClient"/> is created for the in-memory containers
+    /// so that <c>.ToFeedIterator()</c> works without any production code changes.
     /// </summary>
     public static IServiceCollection UseInMemoryCosmosContainers(
         this IServiceCollection services,
@@ -146,6 +149,8 @@ public static class ServiceCollectionExtensions
     {
         var options = new InMemoryContainerOptions();
         configure?.Invoke(options);
+
+        var databaseName = options.DatabaseName ?? DefaultDatabaseName;
 
         // Determine existing lifetime
         var existingDescriptor = services.FirstOrDefault(d => d.ServiceType == typeof(Container));
@@ -155,51 +160,83 @@ public static class ServiceCollectionExtensions
         services.RemoveAll<Container>();
 
         // Determine container configs
-        var containers = options.Containers.Count > 0
+        var containerConfigs = options.Containers.Count > 0
             ? options.Containers
             : [new ContainerConfig("in-memory-container")];
 
-        // Register InMemoryContainers
-        foreach (var containerConfig in containers)
+        // Create InMemoryContainers and FakeCosmosHandlers
+        var handlers = new Dictionary<string, FakeCosmosHandler>();
+        foreach (var config in containerConfigs)
         {
-            var container = containerConfig.ContainerProperties != null
-                ? new InMemoryContainer(containerConfig.ContainerProperties)
-                : new InMemoryContainer(
-                    containerConfig.ContainerName,
-                    containerConfig.PartitionKeyPath);
+            var container = config.ContainerProperties != null
+                ? new InMemoryContainer(config.ContainerProperties)
+                : new InMemoryContainer(config.ContainerName, config.PartitionKeyPath);
 
             if (options.StatePersistenceDirectory is not null)
             {
-                var fileName = $"{containerConfig.ContainerName}.json";
+                var fileName = $"{config.ContainerName}.json";
                 container.StateFilePath = Path.Combine(options.StatePersistenceDirectory, fileName);
                 container.LoadPersistedState();
             }
 
             options.OnContainerCreated?.Invoke(container);
 
-            services.Add(new ServiceDescriptor(typeof(Container), _ => container, lifetime));
+            var handler = new FakeCosmosHandler(container);
+            if (!handlers.ContainsKey(config.ContainerName))
+            {
+                handlers[config.ContainerName] = handler;
+            }
+            options.OnHandlerCreated?.Invoke(config.ContainerName, handler);
         }
 
-        if (options.RegisterFeedIteratorSetup)
-            InMemoryFeedIteratorSetup.Register();
+        // Build the HTTP handler (single or router)
+        HttpMessageHandler httpHandler = handlers.Count == 1
+            ? handlers.Values.First()
+            : FakeCosmosHandler.CreateRouter(handlers);
+
+        // Apply optional wrapper (e.g. DelegatingHandler for logging/tracking)
+        var finalHandler = options.HttpMessageHandlerWrapper?.Invoke(httpHandler) ?? httpHandler;
+
+        // Create a hidden internal CosmosClient with the FakeCosmosHandler
+        var innerClient = new CosmosClient(
+            FakeConnectionString,
+            new CosmosClientOptions
+            {
+                ConnectionMode = ConnectionMode.Gateway,
+                HttpClientFactory = () => new HttpClient(finalHandler)
+            });
+        var client = FakeCosmosHandler.WrapClient(innerClient, handlers);
+
+        // Register Container(s) in DI — but NOT the CosmosClient
+        foreach (var config in containerConfigs)
+        {
+            var containerName = config.ContainerName;
+            services.Add(new ServiceDescriptor(
+                typeof(Container),
+                _ => client.GetContainer(databaseName, containerName),
+                lifetime));
+        }
 
         return services;
     }
 
     /// <summary>
-    /// Replaces a typed <typeparamref name="TClient"/> registration with an in-memory equivalent.
-    /// Designed for Pattern 2 (SCA.Common style) where multiple typed <see cref="CosmosClient"/>
-    /// subclasses are registered in DI and repos resolve the specific typed client.
+    /// Replaces a typed <typeparamref name="TClient"/> registration with an in-memory equivalent
+    /// backed by <see cref="FakeCosmosHandler"/>. Designed for Pattern 2 (SCA.Common style) where
+    /// multiple typed <see cref="CosmosClient"/> subclasses are registered in DI and repos resolve
+    /// the specific typed client.
     /// <para>
-    /// <typeparamref name="TClient"/> must extend <see cref="InMemoryCosmosClient"/>.
-    /// In your <b>test project</b>, create a one-line subclass that shadows the production type:
+    /// <typeparamref name="TClient"/> must extend <see cref="CosmosClient"/> and have a constructor
+    /// accepting <c>(string connectionString, CosmosClientOptions options)</c>. A Castle.Core
+    /// dynamic proxy is created that intercepts <see cref="CosmosClient.GetContainer"/> to provide
+    /// transparent prefix partition key support for hierarchical partition keys.
+    /// </para>
+    /// <para>
+    /// <b>No production code changes are needed.</b> Pass your real production typed client directly:
     /// <code>
-    /// // In test project — shadows the production EmployeeCosmosClient
-    /// public class EmployeeCosmosClient : InMemoryCosmosClient { }
+    /// services.UseInMemoryCosmosDB&lt;EmployeeCosmosClient&gt;(o =&gt;
+    ///     o.AddContainer("employees", "/id"));
     /// </code>
-    /// No changes to production code are needed. The test subclass must be in the same namespace
-    /// or use a <c>using</c> alias so that DI resolves the test type for repos that depend on
-    /// <c>EmployeeCosmosClient</c>.
     /// </para>
     /// <para>
     /// Does NOT register <see cref="Container"/> in DI — Pattern 2 repos call
@@ -210,7 +247,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection UseInMemoryCosmosDB<TClient>(
         this IServiceCollection services,
         Action<InMemoryCosmosOptions>? configure = null)
-        where TClient : InMemoryCosmosClient, new()
+        where TClient : CosmosClient
     {
         var options = new InMemoryCosmosOptions();
         configure?.Invoke(options);
@@ -224,40 +261,122 @@ public static class ServiceCollectionExtensions
         // Remove existing registration for the typed client
         services.RemoveAll<TClient>();
 
-        // Create the typed client instance
-        var client = new TClient();
-
-        // Pre-create databases and containers
-        var containers = options.Containers.Count > 0
+        // Determine container configs
+        var containerConfigs = options.Containers.Count > 0
             ? options.Containers
             : [new ContainerConfig("in-memory-container")];
 
-        foreach (var containerConfig in containers)
+        // Create InMemoryContainers and FakeCosmosHandlers
+        var handlers = new Dictionary<string, FakeCosmosHandler>();
+        foreach (var config in containerConfigs)
         {
-            var dbName = containerConfig.DatabaseName ?? databaseName;
-            var db = (InMemoryDatabase)client.GetDatabase(dbName);
-            InMemoryContainer container;
-            if (containerConfig.ContainerProperties != null)
-                container = db.GetOrCreateContainer(containerConfig.ContainerProperties);
-            else
-                container = db.GetOrCreateContainer(containerConfig.ContainerName, containerConfig.PartitionKeyPath);
+            var container = config.ContainerProperties != null
+                ? new InMemoryContainer(config.ContainerProperties)
+                : new InMemoryContainer(config.ContainerName, config.PartitionKeyPath);
 
             if (options.StatePersistenceDirectory is not null)
             {
-                var fileName = $"{dbName}_{containerConfig.ContainerName}.json";
+                var dbName = config.DatabaseName ?? databaseName;
+                var fileName = $"{dbName}_{config.ContainerName}.json";
                 container.StateFilePath = Path.Combine(options.StatePersistenceDirectory, fileName);
                 container.LoadPersistedState();
             }
+
+            var handler = new FakeCosmosHandler(container);
+            if (config.DatabaseName is not null)
+            {
+                handlers[$"{config.DatabaseName}/{config.ContainerName}"] = handler;
+            }
+            if (!handlers.ContainsKey(config.ContainerName))
+            {
+                handlers[config.ContainerName] = handler;
+            }
+            options.OnHandlerCreated?.Invoke(config.ContainerName, handler);
+        }
+
+        // Build the HTTP handler (single or router)
+        HttpMessageHandler httpHandler = handlers.Count == 1
+            ? handlers.Values.First()
+            : FakeCosmosHandler.CreateRouter(handlers);
+
+        // Apply optional wrapper (e.g. DelegatingHandler for logging/tracking)
+        var finalHandler = options.HttpMessageHandlerWrapper?.Invoke(httpHandler) ?? httpHandler;
+
+        // Build CosmosClientOptions with the FakeCosmosHandler
+        var cosmosClientOptions = new CosmosClientOptions
+        {
+            ConnectionMode = ConnectionMode.Gateway,
+            HttpClientFactory = () => new HttpClient(finalHandler)
+        };
+
+        // Create a Castle.Core dynamic proxy of TClient that intercepts GetContainer()
+        // to wrap results in PartitionKeyCapturingContainer for hierarchical PK prefix support.
+        TClient client;
+        try
+        {
+            var generator = new ProxyGenerator();
+            var interceptor = new GetContainerInterceptor(handlers);
+            var proxyOptions = new ProxyGenerationOptions(new GetContainerOnlyHook());
+            client = (TClient)generator.CreateClassProxy(
+                typeof(TClient),
+                Type.EmptyTypes,
+                proxyOptions,
+                new object[] { FakeConnectionString, cosmosClientOptions },
+                interceptor);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            throw new InvalidOperationException(
+                $"UseInMemoryCosmosDB<{typeof(TClient).Name}>() failed to create a dynamic proxy. " +
+                $"Ensure that '{typeof(TClient).Name}' is not sealed and has a public constructor " +
+                $"accepting (string connectionString, CosmosClientOptions options). " +
+                $"See inner exception for details.", ex);
         }
 
         options.OnClientCreated?.Invoke(client);
 
-        // Register as the typed client only
+        // Register as the typed client only — not as base CosmosClient
         services.Add(new ServiceDescriptor(typeof(TClient), _ => client, lifetime));
 
-        if (options.RegisterFeedIteratorSetup)
-            InMemoryFeedIteratorSetup.Register();
-
         return services;
+    }
+
+    /// <summary>
+    /// Castle.Core interceptor that wraps <see cref="CosmosClient.GetContainer"/> results
+    /// in <see cref="PartitionKeyCapturingContainer"/> for transparent hierarchical partition
+    /// key prefix support.
+    /// </summary>
+    private sealed class GetContainerInterceptor(
+        IReadOnlyDictionary<string, FakeCosmosHandler> handlers) : IInterceptor
+    {
+        public void Intercept(IInvocation invocation)
+        {
+            invocation.Proceed();
+            if (invocation.Method.Name == nameof(CosmosClient.GetContainer)
+                && invocation.ReturnValue is Container container)
+            {
+                var databaseId = (string)invocation.Arguments[0];
+                var containerId = (string)invocation.Arguments[1];
+                if (handlers.TryGetValue(containerId, out var handler) ||
+                    handlers.TryGetValue($"{databaseId}/{containerId}", out handler))
+                {
+                    invocation.ReturnValue = new PartitionKeyCapturingContainer(container, handler);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Restricts Castle.Core to only proxy the <c>GetContainer</c> method, avoiding
+    /// <see cref="TypeLoadException"/> from <c>internal virtual</c> members on
+    /// <see cref="CosmosClient"/>.
+    /// </summary>
+    private sealed class GetContainerOnlyHook : IProxyGenerationHook
+    {
+        public bool ShouldInterceptMethod(Type type, MethodInfo methodInfo)
+            => methodInfo.Name == nameof(CosmosClient.GetContainer);
+
+        public void NonProxyableMemberNotification(Type type, MemberInfo memberInfo) { }
+        public void MethodsInspected() { }
     }
 }

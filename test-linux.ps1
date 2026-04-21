@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
-    Runs the test suite inside a Linux Docker container to catch platform-specific
-    failures (e.g. Cosmos SDK gateway query plan path) before pushing to CI.
+    Runs the integration test suite inside a Linux Docker container to catch
+    platform-specific failures (e.g. Cosmos SDK gateway query plan path) before
+    pushing to CI.
 
 .DESCRIPTION
     The Cosmos SDK uses a native ServiceInterop DLL on Windows for local query plan
@@ -9,22 +10,30 @@
     which exercises different code paths in FakeCosmosHandler. This script reproduces
     that Linux behavior locally via Docker.
 
+    By default this script runs only the integration test classes that the
+    Emulator Parity workflow validates (Crud, Ttl, Batch, QueryAdvanced) — the
+    other integration test classes (PartitionKey, Linq, CrudHardening, Bulk)
+    overload the Linux Cosmos emulator under per-test container churn and are
+    excluded from CI parity. Pass -Filter to override.
+
     NuGet packages are restored offline from the host's package cache to avoid
     network dependencies.
 
 .PARAMETER Filter
-    Optional xUnit test filter expression (e.g. "FullyQualifiedName~OrderBy").
+    xUnit test filter expression. Defaults to the parity-clean integration
+    classes; pass an explicit value to run a different set
+    (e.g. "FullyQualifiedName~OrderBy").
 
 .EXAMPLE
     .\test-linux.ps1
-    # Runs all tests
+    # Runs the parity-clean integration test classes
 
 .EXAMPLE
-    .\test-linux.ps1 -Filter "FullyQualifiedName~RealToFeedIteratorTests"
-    # Runs only matching tests
+    .\test-linux.ps1 -Filter "FullyQualifiedName~FakeCosmosHandlerLinqTests"
+    # Runs only the Linq integration tests
 #>
 param(
-    [string]$Filter
+    [string]$Filter = "FullyQualifiedName~FakeCosmosHandlerCrudTests|FullyQualifiedName~FakeCosmosHandlerTtlTests|FullyQualifiedName~FakeCosmosHandlerBatchTests|FullyQualifiedName~FakeCosmosHandlerQueryAdvancedTests"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,16 +54,18 @@ if (-not (Test-Path $nugetCache)) {
     return
 }
 
+$testProject = 'tests/CosmosDB.InMemoryEmulator.Tests.Integration'
 $filterArg = if ($Filter) { "--filter '$Filter'" } else { "" }
 
 $testCmd = @(
     "dotnet nuget add source /root/.nuget/packages --name local-cache 2>/dev/null;"
     "find /src -name 'project.assets.json' -delete 2>/dev/null;"
-    "dotnet restore tests/CosmosDB.InMemoryEmulator.Tests -p:TargetFrameworks=net8.0 --source /root/.nuget/packages -p:TreatWarningsAsErrors=false 2>/dev/null;"
-    "dotnet test tests/CosmosDB.InMemoryEmulator.Tests --nologo -c Release -f net8.0 --no-restore -p:TreatWarningsAsErrors=false $filterArg"
+    "dotnet restore $testProject -p:TargetFrameworks=net8.0 --source /root/.nuget/packages -p:TreatWarningsAsErrors=false 2>/dev/null;"
+    "dotnet test $testProject --nologo -c Release -f net8.0 --no-restore -p:TreatWarningsAsErrors=false $filterArg"
 ) -join ' '
 
-Write-Host "Running tests on Linux (mcr.microsoft.com/dotnet/sdk:8.0)..." -ForegroundColor Cyan
+Write-Host "Running integration tests on Linux (mcr.microsoft.com/dotnet/sdk:8.0)..." -ForegroundColor Cyan
+Write-Host "  Filter: $Filter" -ForegroundColor DarkGray
 
 docker run --rm `
     -v "${repoRoot}:/src" `

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="AwesomeAssertions" Version="9.4.0" />
+		<PackageReference Include="xunit.v3.extensibility.core" Version="3.2.2" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\CosmosDB.InMemoryEmulator\CosmosDB.InMemoryEmulator.csproj" />
+		<ProjectReference Include="..\..\src\CosmosDB.InMemoryEmulator.JsTriggers\CosmosDB.InMemoryEmulator.JsTriggers.csproj" />
+		<ProjectReference Include="..\..\src\CosmosDB.InMemoryEmulator.ProductionExtensions\CosmosDB.InMemoryEmulator.ProductionExtensions.csproj" />
+	</ItemGroup>
+
+</Project>

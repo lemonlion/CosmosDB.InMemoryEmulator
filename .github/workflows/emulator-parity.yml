@@ -1,0 +1,198 @@
+name: Emulator Parity Validation
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: 'dotnet test filter expression (overrides default PARITY_FILTER when provided)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# Single source of truth for which integration test classes run against the
+# emulators. Expand this filter (OR with `|`) one class at a time and verify the
+# workflow still completes without infra failures (partition exhaustion,
+# connection-refused storms, timeouts) before adding the next.
+env:
+  PARITY_FILTER: ${{ inputs.filter || 'FullyQualifiedName~FakeCosmosHandlerCrudTests|FullyQualifiedName~FakeCosmosHandlerTtlTests|FullyQualifiedName~FakeCosmosHandlerBatchTests|FullyQualifiedName~FakeCosmosHandlerQueryAdvancedTests' }}
+  # Excluded — overload Linux emulator infra (timeouts, 503s). Re-evaluate after
+  # the critical-review items for fixture lifetime / partition count land.
+  #   FakeCosmosHandlerPartitionKeyTests   — 22m33s, ServiceUnavailable 503/1007 (run 24628925580)
+  #   FakeCosmosHandlerLinqTests           — Linux job cancelled at 45-min timeout (run 24629750138)
+  #   FakeCosmosHandlerCrudHardeningTests  — Linux job cancelled at 45-min timeout (run 24630621582)
+  #   FakeCosmosHandlerBulkTests           — Linux job cancelled at 45-min timeout (run 24631630911)
+
+jobs:
+  test-inmemory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Build
+        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
+
+      - name: Run Tests (inmemory)
+        shell: pwsh
+        run: ./scripts/run-tests.ps1 -Target inmemory -Project integration -Filter $env:PARITY_FILTER
+
+      - name: Upload TRX
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trx-inmemory
+          path: test-results/
+
+  test-emulator-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      cosmosdb:
+        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
+        ports:
+          - 8081:8081
+          - 10250-10256:10250-10256
+        env:
+          AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 5
+          AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
+          AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: "127.0.0.1"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Wait for Cosmos DB Emulator
+        run: |
+          echo "Waiting for Cosmos DB Emulator HTTP endpoint..."
+          timeout=300
+          elapsed=0
+          while [ $elapsed -lt $timeout ]; do
+            status=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8081/ 2>/dev/null || echo "000")
+            if [ "$status" = "200" ] || [ "$status" = "401" ]; then
+              echo "HTTP endpoint ready after ${elapsed}s (HTTP $status)"
+              break
+            fi
+            sleep 5
+            elapsed=$((elapsed + 5))
+            echo "Still waiting... (${elapsed}s)"
+          done
+          if [ $elapsed -ge $timeout ]; then
+            echo "::error::Cosmos DB Emulator did not start within ${timeout}s"
+            exit 1
+          fi
+
+      - name: Build
+        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
+
+      - name: Run Tests (emulator-linux)
+        shell: pwsh
+        run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration -Filter $env:PARITY_FILTER
+
+      - name: Upload TRX
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trx-emulator-linux
+          path: test-results/
+
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Start Cosmos DB Windows Emulator
+        shell: pwsh
+        run: |
+          Write-Host "Starting emulator..."
+          $emulatorExe = "C:\Program Files\Azure Cosmos DB Emulator\Microsoft.Azure.Cosmos.Emulator.exe"
+          if (-not (Test-Path $emulatorExe)) {
+            $emulatorExe = "C:\Program Files\Azure Cosmos DB Emulator\CosmosDB.Emulator.exe"
+          }
+          if (-not (Test-Path $emulatorExe)) {
+            Write-Error "Cosmos DB Emulator not found on runner image"
+            exit 1
+          }
+          Start-Process -FilePath $emulatorExe -ArgumentList "/NoExplorer /NoFirewall /PartitionCount=3"
+          # Wait for readiness
+          $timeout = 300; $elapsed = 0
+          while ($elapsed -lt $timeout) {
+            try {
+              $r = Invoke-WebRequest -Uri "https://localhost:8081/" -SkipCertificateCheck -SkipHttpErrorCheck -TimeoutSec 5 -ErrorAction Stop
+              if ($r.StatusCode -in 200, 401) {
+                Write-Host "Emulator ready after ${elapsed}s"
+                break
+              }
+            } catch {}
+            Start-Sleep 5; $elapsed += 5
+            Write-Host "  Waiting... (${elapsed}s)"
+          }
+          if ($elapsed -ge $timeout) { Write-Error "Emulator did not start"; exit 1 }
+
+      - name: Build
+        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
+
+      - name: Run Tests (emulator-windows)
+        shell: pwsh
+        run: ./scripts/run-tests.ps1 -Target emulator-windows -Project integration -Filter $env:PARITY_FILTER
+
+      - name: Upload TRX
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trx-emulator-windows
+          path: test-results/
+
+  compare:
+    needs: [test-inmemory, test-emulator-linux, test-windows]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all TRX artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: trx-*
+          path: test-results/
+          merge-multiple: true
+
+      - name: Parity Report
+        shell: pwsh
+        run: ./scripts/compare-trx.ps1 -ResultsDir test-results -OutputFormat markdown >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload Combined Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-results
+          path: test-results/

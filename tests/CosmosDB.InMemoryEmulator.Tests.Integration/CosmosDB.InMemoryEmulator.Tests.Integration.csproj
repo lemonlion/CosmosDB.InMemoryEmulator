@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<NoWarn>$(NoWarn);CS0618</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Using Include="CosmosDB.InMemoryEmulator.Tests.Infrastructure" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="AwesomeAssertions" Version="9.4.0" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
+		<PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+			<PrivateAssets>all</PrivateAssets>
+		</PackageReference>
+		<PackageReference Include="xunit.v3" Version="3.2.2" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\CosmosDB.InMemoryEmulator.Tests.Shared\CosmosDB.InMemoryEmulator.Tests.Shared.csproj" />
+	</ItemGroup>
+
+</Project>

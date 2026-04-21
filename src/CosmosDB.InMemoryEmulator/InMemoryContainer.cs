@@ -33,16 +33,13 @@ namespace CosmosDB.InMemoryEmulator;
 /// <see cref="ConcurrentDictionary{TKey,TValue}"/> collections keyed by (id, partitionKey).
 /// </para>
 /// </remarks>
-public class InMemoryContainer : Container
+internal class InMemoryContainer : Container, IContainerTestSetup
 {
     private static readonly JsonSerializerSettings JsonSettings = new()
     {
         TypeNameHandling = TypeNameHandling.None,
         DateParseHandling = DateParseHandling.None,
-        ContractResolver = new DefaultContractResolver
-        {
-            NamingStrategy = new CamelCaseNamingStrategy()
-        },
+        ContractResolver = new DefaultContractResolver(),
         Converters = { new StringEnumConverter { AllowIntegerValues = true } }
     };
 
@@ -85,7 +82,7 @@ public class InMemoryContainer : Container
     private readonly ConcurrentDictionary<(string Id, string PartitionKey), SemaphoreSlim> _itemLocks = new();
     private static readonly AsyncLocal<HashSet<(string Id, string PartitionKey)>> BatchWriteTracker = new();
     private int _throughput = 400;
-    private bool _isDeleted;
+    internal bool _isDeleted;
 
     private bool HasUniqueKeys =>
         _containerProperties.UniqueKeyPolicy?.UniqueKeys.Count > 0;
@@ -598,6 +595,70 @@ public class InMemoryContainer : Container
     {
         ArgumentNullException.ThrowIfNull(triggerId);
         _triggers.Remove(triggerId);
+    }
+
+    // ─── JS body registrations (IContainerTestSetup) ──────────────────────────
+
+    private const string JsTriggersNotInstalled =
+        "JavaScript stored procedure execution requires the CosmosDB.InMemoryEmulator.JsTriggers package. " +
+        "Install it and call container.UseJsTriggers(), or use the C# delegate overload instead.";
+
+    private const string JsUdfNotInstalled =
+        "JavaScript UDF execution requires the CosmosDB.InMemoryEmulator.JsTriggers package. " +
+        "Install it and call container.UseJsTriggers(), or use the C# delegate overload instead.";
+
+    private const string JsTriggerNotInstalled =
+        "JavaScript trigger execution requires the CosmosDB.InMemoryEmulator.JsTriggers package. " +
+        "Install it and call container.UseJsTriggers(), or use the C# delegate overload instead.";
+
+    void IContainerTestSetup.RegisterStoredProcedure(string id, string jsBody)
+    {
+        if (SprocEngine is null)
+            throw new NotImplementedException(JsTriggersNotInstalled);
+
+        RegisterStoredProcedure(id, (pk, args) =>
+        {
+            var result = SprocEngine.Execute(jsBody, pk, args, new PartitionScopedCollectionContext(this, pk));
+            return result ?? "null";
+        });
+
+        _storedProcedureProperties[id] = new StoredProcedureProperties { Id = id, Body = jsBody };
+    }
+
+    void IContainerTestSetup.RegisterUdf(string name, string jsBody)
+    {
+        if (JsTriggerEngine is not IJsUdfEngine)
+            throw new NotImplementedException(JsUdfNotInstalled);
+
+        // Register a placeholder — actual JS execution happens at query time via the UDF properties
+        _userDefinedFunctions["UDF." + name.TrimStart('.')] = UdfPlaceholder;
+        _udfProperties[name] = new UserDefinedFunctionProperties { Id = name, Body = jsBody };
+    }
+
+    void IContainerTestSetup.RegisterTrigger(string id, TriggerType type, TriggerOperation operation,
+        string jsBody)
+    {
+        if (JsTriggerEngine is null)
+            throw new NotImplementedException(JsTriggerNotInstalled);
+
+        _triggerProperties[id] = new TriggerProperties
+        {
+            Id = id,
+            TriggerType = type,
+            TriggerOperation = operation,
+            Body = jsBody
+        };
+
+        if (type == TriggerType.Pre)
+        {
+            _triggers[id] = new RegisteredTrigger(type, operation,
+                doc => JsTriggerEngine.ExecutePreTrigger(jsBody, doc), null);
+        }
+        else
+        {
+            _triggers[id] = new RegisteredTrigger(type, operation, null,
+                doc => JsTriggerEngine.ExecutePostTrigger(jsBody, doc));
+        }
     }
 
     /// <summary>
@@ -1129,6 +1190,9 @@ public class InMemoryContainer : Container
         if (itemId.Length == 0)
             return CreateResponseMessage(HttpStatusCode.BadRequest);
 
+        var pkMismatch = ValidatePartitionKeyConsistencyStream(partitionKey, jObj);
+        if (pkMismatch is not null) return pkMismatch;
+
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
         TrackBatchWrite(key);
@@ -1227,6 +1291,8 @@ public class InMemoryContainer : Container
         var itemId = jObj["id"]?.ToString();
         if (itemId is null)
             return CreateResponseMessage(HttpStatusCode.BadRequest);
+        var pkMismatch = ValidatePartitionKeyConsistencyStream(partitionKey, jObj);
+        if (pkMismatch is not null) return pkMismatch;
         var pk = ExtractPartitionKeyValue(partitionKey, jObj);
         var key = ItemKey(itemId, pk);
         TrackBatchWrite(key);
@@ -1335,6 +1401,9 @@ public class InMemoryContainer : Container
         {
             return CreateResponseMessage(HttpStatusCode.BadRequest);
         }
+
+        var pkMismatch = ValidatePartitionKeyConsistencyStream(partitionKey, jObj);
+        if (pkMismatch is not null) return pkMismatch;
 
         var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);
@@ -2524,9 +2593,38 @@ public class InMemoryContainer : Container
         if (bodyPk != explicitPk)
         {
             throw InMemoryCosmosException.Create(
-                "Partition key provided either doesn't correspond to definition in the collection or doesn't match partition key field values specified in the document.",
-                HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+                "PartitionKey extracted from document doesn't match the one specified in the header. " +
+                "Learn more: https://aka.ms/CosmosDB/sql/errors/wrong-pk-value",
+                HttpStatusCode.BadRequest, 1001, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
+    }
+
+    /// <summary>
+    /// Stream-API variant of <see cref="ValidatePartitionKeyConsistency"/> that returns
+    /// a <see cref="ResponseMessage"/> instead of throwing, matching the stream API convention.
+    /// </summary>
+    private ResponseMessage ValidatePartitionKeyConsistencyStream(PartitionKey? explicitKey, JObject jObj)
+    {
+        if (!explicitKey.HasValue || explicitKey.Value == PartitionKey.None || explicitKey.Value == PartitionKey.Null)
+            return null;
+
+        if (PartitionKeyPaths is not { Count: 1 })
+            return null;
+
+        var pkPath = PartitionKeyPaths[0].TrimStart('/');
+        var bodyToken = jObj.SelectToken(pkPath);
+        if (bodyToken is null)
+            return null;
+
+        var explicitPk = PartitionKeyToString(explicitKey.Value);
+        var bodyPk = JTokenToTypedKey(bodyToken);
+
+        if (bodyPk != explicitPk)
+        {
+            return CreateResponseMessage(HttpStatusCode.BadRequest, subStatusCode: 1001);
+        }
+
+        return null;
     }
 
     private void ValidatePatchPaths(IReadOnlyList<PatchOperation> operations)
@@ -3147,7 +3245,7 @@ public class InMemoryContainer : Container
         public override string ETag => _etag;
     }
 
-    private ResponseMessage CreateResponseMessage(HttpStatusCode statusCode, string json = null, string etag = null)
+    private ResponseMessage CreateResponseMessage(HttpStatusCode statusCode, string json = null, string etag = null, int subStatusCode = 0)
     {
         var errorMessage = (int)statusCode >= 400
             ? $"Response status code does not indicate success: {statusCode} ({(int)statusCode})"
@@ -3159,6 +3257,10 @@ public class InMemoryContainer : Container
         msg.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
         msg.Headers["x-ms-request-charge"] = SyntheticRequestCharge.ToString(CultureInfo.InvariantCulture);
         msg.Headers["x-ms-session-token"] = CurrentSessionToken;
+        if (subStatusCode != 0)
+        {
+            msg.Headers["x-ms-substatus"] = subStatusCode.ToString(CultureInfo.InvariantCulture);
+        }
         if (etag is not null)
         {
             msg.Headers["ETag"] = etag;

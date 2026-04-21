@@ -1,4 +1,5 @@
 #nullable disable
+#pragma warning disable CS0618 // InMemoryCosmosClient is obsolete but InMemoryDatabase still depends on it
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Net;
@@ -21,7 +22,7 @@ namespace CosmosDB.InMemoryEmulator;
 /// User operations return stub responses with synthetic metadata.
 /// Client encryption key operations throw <see cref="System.NotImplementedException"/>.
 /// </remarks>
-public class InMemoryDatabase : Database
+internal class InMemoryDatabase : Database
 {
     private readonly ConcurrentDictionary<string, InMemoryContainer> _containers = new();
     private readonly ConcurrentDictionary<string, bool> _explicitlyCreatedContainers = new();
