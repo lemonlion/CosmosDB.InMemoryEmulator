@@ -19,8 +19,13 @@ permissions:
 # connection-refused storms, timeouts) before adding the next.
 env:
   PARITY_FILTER: ${{ inputs.filter || 'FullyQualifiedName~FakeCosmosHandlerCrudTests|FullyQualifiedName~FakeCosmosHandlerTtlTests|FullyQualifiedName~FakeCosmosHandlerBatchTests|FullyQualifiedName~FakeCosmosHandlerQueryAdvancedTests|FullyQualifiedName~Issue18ExceptionTypeTests|FullyQualifiedName~Issue18EdgeCaseIntegrationTests' }}
-  # Excluded — overload Linux emulator infra (timeouts, 503s). Re-evaluate after
-  # the critical-review items for fixture lifetime / partition count land.
+  # Linux emulator disabled — the Dockerized Linux Cosmos emulator on GitHub
+  # Actions runners produces 65s request timeouts (408) on PATCH and query
+  # operations, causing the job to exceed any reasonable timeout. Re-enable
+  # once the vnext-preview emulator (HTTP-only, lighter) is GA or the legacy
+  # image improves CI stability.
+  #
+  # Previously excluded test classes (also overloaded Linux infra):
   #   FakeCosmosHandlerPartitionKeyTests   — 22m33s, ServiceUnavailable 503/1007 (run 24628925580)
   #   FakeCosmosHandlerLinqTests           — Linux job cancelled at 45-min timeout (run 24629750138)
   #   FakeCosmosHandlerCrudHardeningTests  — Linux job cancelled at 45-min timeout (run 24630621582)
@@ -53,65 +58,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: trx-inmemory
-          path: test-results/
-
-  test-emulator-linux:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    services:
-      cosmosdb:
-        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
-        ports:
-          - 8081:8081
-          - 10250-10256:10250-10256
-        env:
-          AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 10
-          AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
-          AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: "127.0.0.1"
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
-
-      - name: Wait for Cosmos DB Emulator
-        run: |
-          echo "Waiting for Cosmos DB Emulator HTTP endpoint..."
-          timeout=300
-          elapsed=0
-          while [ $elapsed -lt $timeout ]; do
-            status=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8081/ 2>/dev/null || echo "000")
-            if [ "$status" = "200" ] || [ "$status" = "401" ]; then
-              echo "HTTP endpoint ready after ${elapsed}s (HTTP $status)"
-              break
-            fi
-            sleep 5
-            elapsed=$((elapsed + 5))
-            echo "Still waiting... (${elapsed}s)"
-          done
-          if [ $elapsed -ge $timeout ]; then
-            echo "::error::Cosmos DB Emulator did not start within ${timeout}s"
-            exit 1
-          fi
-
-      - name: Build
-        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
-
-      - name: Run Tests (emulator-linux)
-        shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration -Filter $env:PARITY_FILTER
-
-      - name: Upload TRX
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trx-emulator-linux
           path: test-results/
 
   test-windows:
@@ -171,7 +117,7 @@ jobs:
           path: test-results/
 
   compare:
-    needs: [test-inmemory, test-emulator-linux, test-windows]
+    needs: [test-inmemory, test-windows]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
