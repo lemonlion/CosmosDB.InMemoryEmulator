@@ -970,6 +970,12 @@ public class FakeCosmosHandler : HttpMessageHandler
         httpResponse.Headers.Add("x-ms-activity-id", cosmosResponse.Headers["x-ms-activity-id"] ?? Guid.NewGuid().ToString());
         httpResponse.Headers.Add("x-ms-session-token", _container.CurrentSessionToken);
 
+        var subStatus = cosmosResponse.Headers["x-ms-substatus"];
+        if (subStatus is not null)
+        {
+            httpResponse.Headers.Add("x-ms-substatus", subStatus);
+        }
+
         var etag = cosmosResponse.Headers["ETag"];
         if (etag is not null)
         {
@@ -1938,6 +1944,7 @@ public class FakeCosmosHandler : HttpMessageHandler
                             JTokenType.Integer or JTokenType.Float => new PartitionKey(arr[0].Value<double>()),
                             JTokenType.Boolean => new PartitionKey(arr[0].Value<bool>()),
                             JTokenType.Null => PartitionKey.Null,
+                            JTokenType.Object => PartitionKey.None, // SDK sends [{}] for PartitionKey.None
                             _ => new PartitionKey(arr[0].ToString())
                         };
                     }

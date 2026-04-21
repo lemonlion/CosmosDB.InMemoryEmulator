@@ -998,8 +998,8 @@ public class UseInMemoryTypedCosmosDBTests : IDisposable
         container.Should().NotBeNull();
 
         // Verify it's functional (backed by FakeCosmosHandler)
-        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" };
-        var response = await container.CreateItemAsync(item, new PartitionKey("pk1"));
+        var item = new TestDocument { Id = "1", PartitionKey = "1", Name = "Test" };
+        var response = await container.CreateItemAsync(item, new PartitionKey("1"));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
@@ -1566,11 +1566,11 @@ public class AutoDetectContainerTests
         var container = provider.GetRequiredService<Container>();
 
         // CRUD works — the auto-created InMemoryContainer is fully usable
-        var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "AutoDetected" };
-        var response = await container.CreateItemAsync(item, new PartitionKey("pk1"));
+        var item = new TestDocument { Id = "1", PartitionKey = "1", Name = "AutoDetected" };
+        var response = await container.CreateItemAsync(item, new PartitionKey("1"));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        var read = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("pk1"));
+        var read = await container.ReadItemAsync<TestDocument>("1", new PartitionKey("1"));
         read.Resource.Name.Should().Be("AutoDetected");
     }
 
@@ -2579,7 +2579,7 @@ public class AutoDetectModeEdgeCaseTests : IDisposable
 
         // Verify it's functional even with custom db/container names
         var response = await container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+            new TestDocument { Id = "1", PartitionKey = "1", Name = "A" }, new PartitionKey("1"));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
@@ -2598,7 +2598,7 @@ public class AutoDetectModeEdgeCaseTests : IDisposable
         container.Should().NotBeNull();
 
         var response = await container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+            new TestDocument { Id = "1", PartitionKey = "1", Name = "A" }, new PartitionKey("1"));
         response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 }
@@ -2728,7 +2728,7 @@ public class ServiceCollectionQueryIntegrationTests : IDisposable
         using var provider = services.BuildServiceProvider();
         var container = provider.GetRequiredService<Container>();
         await container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+            new TestDocument { Id = "1", PartitionKey = "1", Name = "A" }, new PartitionKey("1"));
 
         var iter = container.GetItemQueryIterator<TestDocument>("SELECT * FROM c");
         var results = await iter.ReadNextAsync();
@@ -2827,11 +2827,11 @@ public class ServiceCollectionQueryIntegrationTests : IDisposable
 
         var createResp = await container.CreateItemStreamAsync(
             new MemoryStream(System.Text.Encoding.UTF8.GetBytes(
-                """{"id":"1","partitionKey":"pk","name":"A"}""")),
-            new PartitionKey("pk"));
+                """{"id":"1","partitionKey":"1","name":"A"}""")),
+            new PartitionKey("1"));
         createResp.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        var readResp = await container.ReadItemStreamAsync("1", new PartitionKey("pk"));
+        var readResp = await container.ReadItemStreamAsync("1", new PartitionKey("1"));
         readResp.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }

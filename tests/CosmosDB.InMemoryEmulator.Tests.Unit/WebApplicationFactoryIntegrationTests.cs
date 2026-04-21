@@ -2110,7 +2110,7 @@ public class WafAdvancedDataPatternTests : IDisposable
     }
 
     [Fact]
-    public async Task PartitionKeyNone_ViaWaf_ItemAccessible()
+    public async Task EmptyStringPartitionKey_ViaWaf_ItemAccessible()
     {
         await using var app = await TestAppHost.CreateAsync(
             configureTestServices: services =>
@@ -2119,9 +2119,9 @@ public class WafAdvancedDataPatternTests : IDisposable
         var container = app.Services.GetRequiredService<Container>();
         await container.CreateItemAsync(
             new CosmosTestItem("none1", "", "NoPartition"),
-            PartitionKey.None);
+            new PartitionKey(""));
 
-        var read = await container.ReadItemAsync<CosmosTestItem>("none1", PartitionKey.None);
+        var read = await container.ReadItemAsync<CosmosTestItem>("none1", new PartitionKey(""));
         read.Resource.Name.Should().Be("NoPartition");
     }
 }

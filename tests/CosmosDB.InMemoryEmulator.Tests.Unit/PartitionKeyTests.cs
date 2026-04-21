@@ -633,7 +633,7 @@ public class PartitionKeyOperationsTests
             "1", new PartitionKey("pk1"));
 
         await act.Should().ThrowAsync<CosmosException>()
-            .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
+            .Where(e => e.StatusCode == HttpStatusCode.BadRequest && e.SubStatusCode == 1001);
     }
 
     [Fact]
@@ -997,7 +997,7 @@ public class PkValidationMismatchTests
             JObject.FromObject(new { id = "1", pk = "body-pk" }),
             new PartitionKey("explicit-pk"));
         await act.Should().ThrowAsync<CosmosException>()
-            .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
+            .Where(e => e.StatusCode == HttpStatusCode.BadRequest && e.SubStatusCode == 1001);
     }
 
     [Fact]
@@ -1008,7 +1008,7 @@ public class PkValidationMismatchTests
             JObject.FromObject(new { id = "1", pk = "body-pk" }),
             new PartitionKey("explicit-pk"));
         await act.Should().ThrowAsync<CosmosException>()
-            .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
+            .Where(e => e.StatusCode == HttpStatusCode.BadRequest && e.SubStatusCode == 1001);
     }
 
     [Fact]
@@ -1322,7 +1322,7 @@ public class PkCrudMismatchTests
             "1", new PartitionKey("a"));
 
         await act.Should().ThrowAsync<CosmosException>()
-            .Where(e => e.StatusCode == HttpStatusCode.BadRequest);
+            .Where(e => e.StatusCode == HttpStatusCode.BadRequest && e.SubStatusCode == 1001);
     }
 
     [Fact]
@@ -1806,29 +1806,44 @@ public class PkTombstoneTypePreservationTests
 public class StreamApiPkMismatchTests
 {
     [Fact]
-    public async Task CreateItemStream_PkMismatchWithBody_EmulatorAcceptsSilently()
+    public async Task CreateItemStream_PkMismatchWithBody_ReturnsBadRequest()
     {
-        // Stream API doesn't call ValidatePartitionKeyConsistency
         var container = new InMemoryContainer("test", "/pk");
 
         var response = await container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"body-pk"}""")),
             new PartitionKey("explicit-pk"));
 
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
-    public async Task UpsertItemStream_PkMismatchWithBody_EmulatorAcceptsSilently()
+    public async Task UpsertItemStream_PkMismatchWithBody_ReturnsBadRequest()
     {
-        // Stream API doesn't call ValidatePartitionKeyConsistency
         var container = new InMemoryContainer("test", "/pk");
 
         var response = await container.UpsertItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"body-pk"}""")),
             new PartitionKey("explicit-pk"));
 
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ReplaceItemStream_PkMismatchWithBody_ReturnsBadRequest()
+    {
+        var container = new InMemoryContainer("test", "/pk");
+        // First create a valid item
+        await container.CreateItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"a"}""")),
+            new PartitionKey("a"));
+
+        // Replace with mismatched PK: header says "a", body says "body-pk"
+        var response = await container.ReplaceItemStreamAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","pk":"body-pk"}""")),
+            "1", new PartitionKey("a"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }
 
