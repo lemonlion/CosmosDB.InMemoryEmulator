@@ -36,13 +36,9 @@ jobs:
     name: ${{ matrix.name }}
 
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-dotnet@v5
+      - uses: ./.github/actions/setup-dotnet-build
         with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
+          build: false
 
       - name: Determine SDK version
         id: sdk-version
@@ -178,11 +174,10 @@ jobs:
     name: Update MaxTestedSdkVersion
 
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-dotnet@v5
+      - uses: ./.github/actions/setup-dotnet-build
         with:
-          dotnet-version: '8.0.x'
+          dotnet-versions: '8.0.x'
+          build: false
 
       - name: Determine latest stable SDK version
         id: sdk-version

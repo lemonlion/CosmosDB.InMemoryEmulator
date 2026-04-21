@@ -1,0 +1,30 @@
+name: Setup .NET & Build
+description: Checkout the repository, install .NET SDKs, and optionally build the solution.
+
+inputs:
+  dotnet-versions:
+    description: '.NET SDK versions to install (newline-separated)'
+    default: |
+      8.0.x
+      10.0.x
+  build:
+    description: 'Whether to build the solution after setup'
+    default: 'true'
+  build-args:
+    description: 'Additional arguments passed to dotnet build'
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v5
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: ${{ inputs.dotnet-versions }}
+
+    - name: Build
+      if: inputs.build == 'true'
+      shell: bash
+      run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release ${{ inputs.build-args }}

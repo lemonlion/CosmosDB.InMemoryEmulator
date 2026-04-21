@@ -1,0 +1,160 @@
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Test target'
+        type: choice
+        options:
+          - inmemory
+          - emulator-linux
+        default: inmemory
+      framework:
+        description: '.NET framework'
+        type: choice
+        options:
+          - net8.0
+          - net10.0
+        default: net8.0
+      rps:
+        description: 'Requests per second'
+        type: string
+        default: '50'
+      duration:
+        description: 'Duration in seconds'
+        type: string
+        default: '60'
+      runs:
+        description: 'Number of runs (for averaging)'
+        type: choice
+        options: ['1', '2', '3', '4', '5']
+        default: '2'
+
+  workflow_call:
+    inputs:
+      target:
+        type: string
+        default: 'inmemory'
+      framework:
+        type: string
+        default: 'net8.0'
+      rps:
+        type: string
+        default: '50'
+      duration:
+        type: string
+        default: '60'
+      runs:
+        type: string
+        default: '2'
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      run-matrix: ${{ steps.matrix.outputs.runs }}
+    steps:
+      - name: Generate run matrix
+        id: matrix
+        shell: bash
+        run: |
+          count=${{ inputs.runs || '2' }}
+          echo "runs=$(python3 -c "import json; print(json.dumps(list(range(1, int($count)+1))))")" >> $GITHUB_OUTPUT
+
+  benchmark-inmemory:
+    if: inputs.target == 'inmemory' || inputs.target == ''
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        run: ${{ fromJson(needs.prepare.outputs.run-matrix) }}
+    steps:
+      - uses: ./.github/actions/setup-dotnet-build
+
+      - name: Run Benchmark (in-memory, ${{ inputs.framework || 'net8.0' }}, ${{ inputs.rps || '50' }}rps, ${{ inputs.duration || '60' }}s, run ${{ matrix.run }})
+        env:
+          LOAD_TEST_RPS: ${{ inputs.rps || '50' }}
+          LOAD_TEST_DURATION_SECONDS: ${{ inputs.duration || '60' }}
+        run: |
+          dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Performance \
+            --configuration Release --no-build --verbosity normal \
+            --logger "console;verbosity=detailed" \
+            --filter "FullyQualifiedName~Performance.LoadTests." \
+            --framework ${{ inputs.framework || 'net8.0' }} \
+            2>&1 | tee test-output.txt
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ inputs.framework || 'net8.0' }}-${{ inputs.rps || '50' }}rps-${{ inputs.duration || '60' }}s-run${{ matrix.run }}
+          path: test-output.txt
+          retention-days: 7
+
+  benchmark-emulator:
+    if: inputs.target == 'emulator-linux'
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        run: ${{ fromJson(needs.prepare.outputs.run-matrix) }}
+
+    services:
+      cosmosdb:
+        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
+        ports:
+          - 8081:8081
+          - 10250-10256:10250-10256
+        env:
+          AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 3
+          AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
+          AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: "127.0.0.1"
+
+    steps:
+      - uses: ./.github/actions/setup-dotnet-build
+
+      - uses: ./.github/actions/wait-for-emulator
+
+      - name: Run Benchmark (emulator, ${{ inputs.framework || 'net8.0' }}, ${{ inputs.rps || '50' }}rps, ${{ inputs.duration || '60' }}s, run ${{ matrix.run }})
+        env:
+          EMULATOR_LOAD_TEST_RPS: ${{ inputs.rps || '50' }}
+          EMULATOR_LOAD_TEST_DURATION_SECONDS: ${{ inputs.duration || '60' }}
+        run: |
+          dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Performance \
+            --configuration Release --no-build --verbosity normal \
+            --logger "console;verbosity=detailed" \
+            --filter "FullyQualifiedName~EmulatorLoadTests" \
+            --framework ${{ inputs.framework || 'net8.0' }} \
+            2>&1 | tee test-output.txt
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-emulator-${{ inputs.framework || 'net8.0' }}-${{ inputs.rps || '50' }}rps-${{ inputs.duration || '60' }}s-run${{ matrix.run }}
+          path: test-output.txt
+          retention-days: 7
+
+  summary:
+    needs: [benchmark-inmemory, benchmark-emulator]
+    if: always() && (needs.benchmark-inmemory.result == 'success' || needs.benchmark-inmemory.result == 'failure' || needs.benchmark-emulator.result == 'success' || needs.benchmark-emulator.result == 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/summarize-benchmarks.py
+
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bench-*
+          path: results
+
+      - name: Summarize averaged results
+        run: python3 scripts/summarize-benchmarks.py results | tee "$GITHUB_STEP_SUMMARY"

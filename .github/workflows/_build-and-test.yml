@@ -1,0 +1,25 @@
+name: Build & Test
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/setup-dotnet-build
+
+      - name: Unit Tests (net8.0)
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Unit --configuration Release --no-build --verbosity normal --framework net8.0
+
+      - name: Integration Tests (net8.0)
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Integration --configuration Release --no-build --verbosity normal --framework net8.0
+
+      - name: Unit Tests (net10.0)
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Unit --configuration Release --no-build --verbosity normal --framework net10.0
+
+      - name: Integration Tests (net10.0)
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Integration --configuration Release --no-build --verbosity normal --framework net10.0
