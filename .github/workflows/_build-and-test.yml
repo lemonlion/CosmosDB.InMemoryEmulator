@@ -9,18 +9,17 @@ permissions:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    name: build-and-test (${{ matrix.framework }})
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-dotnet-build
 
-      - name: Unit Tests(net8.0)
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Unit --configuration Release --no-build --verbosity normal --framework net8.0
+      - name: Unit Tests
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Unit --configuration Release --no-build --verbosity normal --framework ${{ matrix.framework }}
 
-      - name: Integration Tests (net8.0)
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Integration --configuration Release --no-build --verbosity normal --framework net8.0
-
-      - name: Unit Tests (net10.0)
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Unit --configuration Release --no-build --verbosity normal --framework net10.0
-
-      - name: Integration Tests (net10.0)
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Integration --configuration Release --no-build --verbosity normal --framework net10.0
+      - name: Integration Tests
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Integration --configuration Release --no-build --verbosity normal --framework ${{ matrix.framework }}
