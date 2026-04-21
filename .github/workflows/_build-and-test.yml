@@ -37,8 +37,14 @@ jobs:
       fail-fast: false
       matrix:
         framework: [net8.0, net10.0]
-        shard: [1, 2]
-    name: unit (${{ matrix.framework }}, ${{ matrix.shard }}/2)
+        shard:
+          # Shard 1: classes starting with B-R (excluding Q,S,T,V,W) ≈ 3734 tests
+          - id: 1
+            filter: "FullyQualifiedName~.Unit.B|FullyQualifiedName~.Unit.C|FullyQualifiedName~.Unit.D|FullyQualifiedName~.Unit.E|FullyQualifiedName~.Unit.F|FullyQualifiedName~.Unit.H|FullyQualifiedName~.Unit.I|FullyQualifiedName~.Unit.J|FullyQualifiedName~.Unit.L|FullyQualifiedName~.Unit.P|FullyQualifiedName~.Unit.R"
+          # Shard 2: everything else (Q,S,T,V,W + any future letters) ≈ 3757 tests
+          - id: 2
+            filter: "FullyQualifiedName!~.Unit.B&FullyQualifiedName!~.Unit.C&FullyQualifiedName!~.Unit.D&FullyQualifiedName!~.Unit.E&FullyQualifiedName!~.Unit.F&FullyQualifiedName!~.Unit.H&FullyQualifiedName!~.Unit.I&FullyQualifiedName!~.Unit.J&FullyQualifiedName!~.Unit.L&FullyQualifiedName!~.Unit.P&FullyQualifiedName!~.Unit.R"
+    name: unit (${{ matrix.framework }}, ${{ matrix.shard.id }}/2)
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-dotnet-build
@@ -54,7 +60,7 @@ jobs:
         run: find . -path '*/bin/Release/*' -type f -exec chmod +x {} +
 
       - name: Unit Tests
-        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Unit --configuration Release --no-build --verbosity normal --framework ${{ matrix.framework }} --shard ${{ matrix.shard }}/2
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Unit --configuration Release --no-build --verbosity normal --framework ${{ matrix.framework }} --filter "${{ matrix.shard.filter }}"
 
   test-integration:
     needs: build
