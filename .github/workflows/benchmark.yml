@@ -1,6 +1,8 @@
 name: Benchmark
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       target:
@@ -63,7 +65,7 @@ jobs:
         shell: bash
         run: |
           count=${{ inputs.runs || '2' }}
-          echo "runs=$(python3 -c "import json; print(json.dumps(list(range(1, int($count)+1))))")" >> $GITHUB_OUTPUT
+          echo "runs=$(seq 1 $count | jq -s '.')" >> $GITHUB_OUTPUT
 
   benchmark-inmemory:
     if: inputs.target == 'inmemory' || inputs.target == ''
@@ -150,7 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          sparse-checkout: scripts/summarize-benchmarks.py
+          sparse-checkout: scripts/Summarize-Benchmarks.ps1
 
       - name: Download all results
         uses: actions/download-artifact@v4
@@ -159,4 +161,5 @@ jobs:
           path: results
 
       - name: Summarize averaged results
-        run: python3 scripts/summarize-benchmarks.py results | tee "$GITHUB_STEP_SUMMARY"
+        shell: pwsh
+        run: ./scripts/Summarize-Benchmarks.ps1 -ResultsDir results | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY

@@ -8,8 +8,11 @@ jobs:
   test:
     uses: ./.github/workflows/_build-and-test.yml
 
+  windows-parity:
+    uses: ./.github/workflows/_windows-parity.yml
+
   release:
-    needs: [test]
+    needs: [test, windows-parity]
     runs-on: ubuntu-latest
     permissions:
       contents: write
