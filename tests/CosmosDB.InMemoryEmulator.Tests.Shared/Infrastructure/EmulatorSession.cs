@@ -250,6 +250,10 @@ internal static class EmulatorRetry
 
     private static bool IsTransient(Exception ex) => ex switch
     {
+        // 403/1008 = "Database Account does not exist" — the Windows emulator's HTTP server
+        // can become reachable before its account is fully initialised. Retry until ready.
+        CosmosException ce when ce.StatusCode == System.Net.HttpStatusCode.Forbidden
+                              && ce.SubStatusCode == 1008 => true,
         CosmosException ce => ce.StatusCode is
             System.Net.HttpStatusCode.ServiceUnavailable or
             System.Net.HttpStatusCode.InternalServerError or
