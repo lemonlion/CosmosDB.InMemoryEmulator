@@ -27,9 +27,20 @@ function Parse-TrxFile([string]$Path) {
     $results = @{}
     $xml | Select-Xml '//t:UnitTestResult' -Namespace $ns | ForEach-Object {
         $node = $_.Node
-        $results[$node.testName] = $node.outcome
+        $results[$node.testName] = @{
+            Outcome      = $node.outcome
+            ErrorMessage = $node.Output.ErrorInfo.Message
+            StackTrace   = $node.Output.ErrorInfo.StackTrace
+        }
     }
     return $results
+}
+
+function Truncate([string]$text, [int]$maxLength = 100) {
+    if (-not $text) { return '' }
+    $oneLine = ($text -split "`n")[0].Trim()
+    if ($oneLine.Length -le $maxLength) { return $oneLine }
+    return $oneLine.Substring(0, $maxLength) + '…'
 }
 
 # --- Discover all TRX files ---
@@ -67,7 +78,7 @@ $rows = @()
 foreach ($test in $allTestNames) {
     $row = [ordered]@{ Test = $test }
     foreach ($name in $targets.Keys) {
-        $row[$name] = if ($targets[$name].ContainsKey($test)) { $targets[$name][$test] } else { '-' }
+        $row[$name] = if ($targets[$name].ContainsKey($test)) { $targets[$name][$test].Outcome } else { '-' }
     }
     $rows += [PSCustomObject]$row
 }
@@ -158,23 +169,69 @@ if ($OutputFormat -eq 'markdown') {
     Write-Output "|--------|-------|--------|--------|---------|"
     foreach ($name in $targets.Keys) {
         $data = $targets[$name]
-        $passed  = @($data.Values | Where-Object { $_ -eq 'Passed' }).Count
-        $failed  = @($data.Values | Where-Object { $_ -eq 'Failed' }).Count
-        $skipped = @($data.Values | Where-Object { $_ -eq 'NotExecuted' }).Count
+        $passed  = @($data.Values | Where-Object { $_.Outcome -eq 'Passed' }).Count
+        $failed  = @($data.Values | Where-Object { $_.Outcome -eq 'Failed' }).Count
+        $skipped = @($data.Values | Where-Object { $_.Outcome -eq 'NotExecuted' }).Count
         Write-Output "| $name | $($data.Count) | $passed | $failed | $skipped |"
     }
     Write-Output ""
 
-    # Suspects detail
+    # Suspects detail — summary table with short error + collapsible full details
     if ($suspects.Count -gt 0) {
         Write-Output "## 🔍 Suspects — In-Memory Passes, Emulator Fails"
         Write-Output ""
-        Write-Output "| Test | inmemory | $emulatorCols |"
-        Write-Output "|------|----------|$emulatorSep|"
+        Write-Output "| Test | $emulatorCols | Error |"
+        Write-Output "|------|$emulatorSep|-------|"
         foreach ($r in $suspects) {
             $vals = ($emulatorNames | ForEach-Object { Format-Outcome $r.$_ }) -join ' | '
-            Write-Output "| $($r.Test) | $(Format-Outcome $r.$baselineName) | $vals |"
+            # Pick the error message from the first failing emulator target
+            $errSnippet = ''
+            foreach ($eName in $emulatorNames) {
+                if ($r.$eName -eq 'Failed' -and $targets[$eName].ContainsKey($r.Test)) {
+                    $errSnippet = Truncate $targets[$eName][$r.Test].ErrorMessage 100
+                    break
+                }
+            }
+            Write-Output "| $($r.Test) | $vals | $errSnippet |"
         }
+        Write-Output ""
+
+        # Collapsible full error details per suspect
+        Write-Output "<details>"
+        Write-Output "<summary><b>Full error details for suspects</b></summary>"
+        Write-Output ""
+        foreach ($r in $suspects) {
+            $testName = $r.Test
+            Write-Output "### ``$testName``"
+            Write-Output ""
+            foreach ($eName in $emulatorNames) {
+                if ($r.$eName -ne 'Failed') { continue }
+                if (-not $targets[$eName].ContainsKey($testName)) { continue }
+                $info = $targets[$eName][$testName]
+                Write-Output "**$eName**"
+                Write-Output ""
+                if ($info.ErrorMessage) {
+                    Write-Output "``````"
+                    Write-Output $info.ErrorMessage
+                    Write-Output "``````"
+                }
+                if ($info.StackTrace) {
+                    # Show top 8 stack frames to keep it readable
+                    $frames = ($info.StackTrace -split "`n" | Where-Object { $_.Trim() }) | Select-Object -First 8
+                    Write-Output ""
+                    Write-Output "<details><summary>Stack trace</summary>"
+                    Write-Output ""
+                    Write-Output "``````"
+                    $frames | ForEach-Object { Write-Output $_ }
+                    Write-Output "``````"
+                    Write-Output "</details>"
+                }
+                Write-Output ""
+            }
+            Write-Output "---"
+            Write-Output ""
+        }
+        Write-Output "</details>"
         Write-Output ""
     }
 
@@ -225,9 +282,9 @@ if ($OutputFormat -eq 'markdown') {
     Write-Host "  Per-Target:" -ForegroundColor Cyan
     foreach ($name in $targets.Keys) {
         $data = $targets[$name]
-        $passed  = @($data.Values | Where-Object { $_ -eq 'Passed' }).Count
-        $failed  = @($data.Values | Where-Object { $_ -eq 'Failed' }).Count
-        $skipped = @($data.Values | Where-Object { $_ -eq 'NotExecuted' }).Count
+        $passed  = @($data.Values | Where-Object { $_.Outcome -eq 'Passed' }).Count
+        $failed  = @($data.Values | Where-Object { $_.Outcome -eq 'Failed' }).Count
+        $skipped = @($data.Values | Where-Object { $_.Outcome -eq 'NotExecuted' }).Count
         $color = if ($failed -gt 0) { 'Yellow' } else { 'Green' }
         Write-Host "    $($name.PadRight(20)) $passed passed, $failed failed, $skipped skipped" -ForegroundColor $color
     }
@@ -241,6 +298,14 @@ if ($OutputFormat -eq 'markdown') {
                 $o = $r.$eName; if ($o -ne 'Passed') { $parts += "$eName=$o" }
             }
             Write-Host "    - $($r.Test)  [$($parts -join ', ')]" -ForegroundColor Red
+            # Show error message from the first failing emulator
+            foreach ($eName in $emulatorNames) {
+                if ($r.$eName -eq 'Failed' -and $targets[$eName].ContainsKey($r.Test)) {
+                    $errMsg = Truncate $targets[$eName][$r.Test].ErrorMessage 150
+                    if ($errMsg) { Write-Host "      → $errMsg" -ForegroundColor DarkRed }
+                    break
+                }
+            }
         }
     }
 
