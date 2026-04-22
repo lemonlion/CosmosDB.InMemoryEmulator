@@ -1008,9 +1008,10 @@ public class StreamDivergentBehaviorTests
     private static async Task<string> ReadStreamAsync(Stream s) { using var r = new StreamReader(s); return await r.ReadToEndAsync(); }
 
     [Fact]
-    public async Task ReplaceStream_IdMismatch_Succeeds()
+    public async Task ReplaceStream_IdMismatch_Returns400()
     {
-        // Real Cosmos DB silently succeeds when body id differs from route id.
+        // SDK docs state body id must match the id parameter.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
         var container = new InMemoryContainer("mismatch", "/partitionKey");
         await container.CreateItemStreamAsync(
             ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
@@ -1018,13 +1019,14 @@ public class StreamDivergentBehaviorTests
         using var response = await container.ReplaceItemStreamAsync(
             ToStream("""{"id":"wrong","partitionKey":"pk1"}"""),
             "1", new PartitionKey("pk1"));
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
-    public async Task ReplaceStream_IdMismatch_AlsoSucceeds()
+    public async Task ReplaceStream_IdMismatch_AlsoReturns400()
     {
-        // The route id determines which document to replace; body id mismatch is allowed.
+        // SDK docs state body id must match the id parameter.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
         var container = new InMemoryContainer("mismatch-div", "/partitionKey");
         await container.CreateItemStreamAsync(
             ToStream("""{"id":"1","partitionKey":"pk1","name":"orig"}"""), new PartitionKey("pk1"));
@@ -1032,7 +1034,7 @@ public class StreamDivergentBehaviorTests
         using var response = await container.ReplaceItemStreamAsync(
             ToStream("""{"id":"wrong","partitionKey":"pk1","name":"replaced"}"""),
             "1", new PartitionKey("pk1"));
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]

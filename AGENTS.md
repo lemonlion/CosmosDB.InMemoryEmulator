@@ -22,6 +22,35 @@
   - Add a code comment at the reflection site explaining the dependency and what would break if the internal member is renamed or removed.
   - Prefer a graceful fallback (e.g., leave the value as null) over a hard failure if the reflected member is missing.
 
+## Behavioral Source Requirements
+
+Every piece of behavioral logic in the source code — status codes, validation rules, error conditions, side-effect semantics — **must** be backed by a verified source. This prevents accidental divergence from real Cosmos DB behavior.
+
+### Rules
+
+1. **Before implementing any behavioral logic**, find and verify the expected behavior from one of the approved sources listed below.
+2. **Add a code comment** at the implementation site citing the source (a short URL or description is sufficient). Example:
+   ```csharp
+   // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
+   //   "The Container.ReplaceItemAsync<> method requires the provided string for the id
+   //    parameter to match the unique identifier of the item parameter."
+   ```
+3. **If sources conflict** (e.g., the emulator behaves differently from the documentation), prefer the official documentation over observed emulator behavior. Document the discrepancy in a code comment and mark the relevant integration test with `[Trait(TestTraits.Target, TestTraits.InMemoryOnly)]`.
+4. **If no source can be found**, do not guess. Ask for guidance or raise a discussion in the PR.
+
+### Approved Behavioral Sources (in priority order)
+
+| Priority | Source | URL / Location |
+|----------|--------|----------------|
+| 1 | Azure Cosmos DB REST API reference | https://learn.microsoft.com/en-us/rest/api/cosmos-db/ |
+| 2 | Azure Cosmos DB .NET SDK API reference | https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos |
+| 3 | Azure Cosmos DB "How-to" guides | https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/ |
+| 4 | Azure Cosmos DB conceptual docs (OCC, partitioning, indexing, etc.) | https://learn.microsoft.com/en-us/azure/cosmos-db/ |
+| 5 | Azure Cosmos DB .NET SDK source code | https://github.com/Azure/azure-cosmos-dotnet-v3 |
+| 6 | Observed behavior on the Windows Cosmos DB Emulator | (local testing) |
+
+> **Note:** Source 6 (emulator observation) is the weakest evidence. The emulator has known bugs. Always cross-reference with sources 1–5 when possible.
+
 ## Versioning & Release
 
 - After every session of bug fixes is complete and the full test suite has passed, increment the patch version in `src/Directory.Build.props` (the single `<Version>` property shared by all three packages).

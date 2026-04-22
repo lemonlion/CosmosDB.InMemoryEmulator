@@ -521,18 +521,20 @@ public class ReplaceItemGapTests2
     }
 
     [Fact]
-    public async Task Replace_IdParameterDiffersFromBody_Succeeds()
+    public async Task Replace_IdParameterDiffersFromBody_ThrowsBadRequest()
     {
         // Create an item with id "1"
         var item = new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Original" };
         await _container.CreateItemAsync(item, new PartitionKey("pk1"));
 
         // Replace with id parameter = "1" but item body has id = "different"
-        // Real Cosmos DB silently succeeds — route id determines which document to replace
+        // SDK docs state body id must match the id parameter.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
         var replacement = new TestDocument { Id = "different", PartitionKey = "pk1", Name = "Replaced" };
-        var response = await _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
+        var act = () => _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }
 
@@ -1032,15 +1034,15 @@ public class CrudNullGuardTests
     }
 
     [Fact]
-    public async Task ReplaceItemAsync_WithEmptyId_ThrowsNotFound()
+    public async Task ReplaceItemAsync_WithEmptyId_ThrowsBadRequest()
     {
         var act = () => _container.ReplaceItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
             "", new PartitionKey("pk1"));
 
-        // Empty id parameter — no item exists with id "" so returns NotFound
+        // Body id "1" differs from parameter id "" — returns BadRequest
         var ex = await act.Should().ThrowAsync<CosmosException>();
-        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]

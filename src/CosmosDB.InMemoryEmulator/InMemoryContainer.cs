@@ -907,6 +907,18 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         ValidateDocumentSize(json);
         var jObj = JsonParseHelpers.ParseJson(json);
 
+        // Validate body id matches parameter id.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
+        //   "The Container.ReplaceItemAsync<> method requires the provided string for the id
+        //    parameter to match the unique identifier of the item parameter."
+        var bodyId = jObj["id"]?.ToString();
+        if (bodyId is not null && bodyId != id)
+        {
+            throw InMemoryCosmosException.Create(
+                "The 'id' property in the body does not match the 'id' parameter.",
+                HttpStatusCode.BadRequest, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+        }
+
         ValidatePartitionKeyConsistency(partitionKey, jObj);
 
         ValidatePerItemTtl(jObj);
@@ -1382,6 +1394,16 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         var pkMismatch = ValidatePartitionKeyConsistencyStream(partitionKey, jObj);
         if (pkMismatch is not null) return pkMismatch;
+
+        // Validate body id matches parameter id.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
+        //   "The Container.ReplaceItemAsync<> method requires the provided string for the id
+        //    parameter to match the unique identifier of the item parameter."
+        var bodyId = jObj["id"]?.ToString();
+        if (bodyId is not null && bodyId != id)
+        {
+            return CreateResponseMessage(HttpStatusCode.BadRequest);
+        }
 
         var itemLock = _itemLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         await itemLock.WaitAsync(cancellationToken);

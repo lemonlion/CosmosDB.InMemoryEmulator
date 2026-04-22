@@ -233,17 +233,18 @@ public class Issue18EdgeCaseIntegrationTests(EmulatorSession session) : IAsyncLi
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task ReplaceItem_BodyIdMismatch_Succeeds()
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)] // Windows emulator returns 200 (emulator bug); see docs link below
+    public async Task ReplaceItem_BodyIdMismatch_ThrowsBadRequest()
     {
-        // Real Cosmos DB silently succeeds when body id differs from route id.
-        // The route id determines which document to replace; the body provides new content.
-        // See REST API docs: PUT .../docs/{doc-id} — body id is not validated against route.
+        // SDK docs state body id must match the id parameter.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
         await _container.CreateItemAsync(new { id = "rep1", pk = "pk1" }, new PartitionKey("pk1"));
 
-        var response = await _container.ReplaceItemAsync(
+        var act = () => _container.ReplaceItemAsync(
             new { id = "DIFFERENT", pk = "pk1" }, "rep1", new PartitionKey("pk1"));
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

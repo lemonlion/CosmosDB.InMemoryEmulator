@@ -294,17 +294,19 @@ public class FakeCosmosHandlerCrudHardeningTests(EmulatorSession session) : IAsy
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task Handler_ReplaceItem_BodyIdMismatch_Succeeds()
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)] // Windows emulator returns 200 (emulator bug); see docs link below
+    public async Task Handler_ReplaceItem_BodyIdMismatch_Throws400()
     {
         var doc = new TestDocument { Id = "r1", PartitionKey = "pk1", Name = "Original" };
         await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
-        // Real Cosmos DB silently succeeds when body id differs from route id.
-        // The route id determines which document to replace.
+        // The SDK docs state body id must match the id parameter.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
         var mismatch = new TestDocument { Id = "different-id", PartitionKey = "pk1", Name = "Mismatch" };
-        var response = await _container.ReplaceItemAsync(mismatch, "r1", new PartitionKey("pk1"));
+        var act = () => _container.ReplaceItemAsync(mismatch, "r1", new PartitionKey("pk1"));
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]

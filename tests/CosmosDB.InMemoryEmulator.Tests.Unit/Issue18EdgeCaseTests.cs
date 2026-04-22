@@ -630,20 +630,21 @@ public class Issue18EdgeCaseTests
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task ReplaceItem_BodyIdMismatch_Succeeds()
+    public async Task ReplaceItem_BodyIdMismatch_ThrowsBadRequest()
     {
-        // Real Cosmos DB silently succeeds when body id differs from route id.
-        // The route id determines which document to replace; the body provides new content.
+        // SDK docs state body id must match the id parameter.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
         var client = new InMemoryCosmosClient();
         var db = (await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
         var container = (await db.CreateContainerAsync("items", "/pk")).Container;
 
         await container.CreateItemAsync(new { id = "1", pk = "pk1" }, new PartitionKey("pk1"));
 
-        var response = await container.ReplaceItemAsync(
+        var act = () => container.ReplaceItemAsync(
             new { id = "DIFFERENT", pk = "pk1" }, "1", new PartitionKey("pk1"));
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
