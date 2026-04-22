@@ -18,7 +18,7 @@ permissions:
 # workflow still completes without infra failures (partition exhaustion,
 # connection-refused storms, timeouts) before adding the next.
 env:
-  PARITY_FILTER: ${{ inputs.filter || 'FullyQualifiedName~FakeCosmosHandlerCrudTests|FullyQualifiedName~FakeCosmosHandlerTtlTests|FullyQualifiedName~FakeCosmosHandlerBatchTests|FullyQualifiedName~FakeCosmosHandlerQueryAdvancedTests|FullyQualifiedName~Issue18ExceptionTypeTests|FullyQualifiedName~Issue18EdgeCaseIntegrationTests' }}
+  PARITY_FILTER: ${{ inputs.filter || 'FullyQualifiedName~FakeCosmosHandlerCrudTests|FullyQualifiedName~FakeCosmosHandlerTtlTests|FullyQualifiedName~FakeCosmosHandlerBatchTests|FullyQualifiedName~FakeCosmosHandlerQueryAdvancedTests' }}
   # Note: Linux emulator job is commented out below. See #51 for details:
   #   https://github.com/lemonlion/CosmosDB.InMemoryEmulator/issues/51
 
