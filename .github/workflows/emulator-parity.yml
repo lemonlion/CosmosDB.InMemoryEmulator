@@ -23,12 +23,8 @@ permissions:
 # connection-refused storms, timeouts) before adding the next.
 env:
   PARITY_FILTER: ${{ inputs.filter || 'FullyQualifiedName~FakeCosmosHandlerCrudTests|FullyQualifiedName~FakeCosmosHandlerTtlTests|FullyQualifiedName~FakeCosmosHandlerBatchTests|FullyQualifiedName~FakeCosmosHandlerQueryAdvancedTests' }}
-  # Excluded — overload Linux emulator infra (timeouts, 503s). Re-evaluate after
-  # the critical-review items for fixture lifetime / partition count land.
-  #   FakeCosmosHandlerPartitionKeyTests   — 22m33s, ServiceUnavailable 503/1007 (run 24628925580)
-  #   FakeCosmosHandlerLinqTests           — Linux job cancelled at 45-min timeout (run 24629750138)
-  #   FakeCosmosHandlerCrudHardeningTests  — Linux job cancelled at 45-min timeout (run 24630621582)
-  #   FakeCosmosHandlerBulkTests           — Linux job cancelled at 45-min timeout (run 24631630911)
+  # Note: Linux emulator job is commented out below. See #51 for details:
+  #   https://github.com/lemonlion/CosmosDB.InMemoryEmulator/issues/51
 
 jobs:
   test-inmemory:
@@ -50,37 +46,44 @@ jobs:
           name: trx-inmemory
           path: test-results/
 
-  test-emulator-linux:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-
-    services:
-      cosmosdb:
-        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
-        ports:
-          - 8081:8081
-          - 10250-10256:10250-10256
-        env:
-          AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 5
-          AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
-          AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: "127.0.0.1"
-
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/setup-dotnet-build
-
-      - uses: ./.github/actions/wait-for-emulator
-
-      - name: Run Tests (emulator-linux)
-        shell: pwsh
-        run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration -Filter $env:PARITY_FILTER
-
-      - name: Upload TRX
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trx-emulator-linux
-          path: test-results/
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Linux emulator job — DISABLED
+  # The Dockerized Linux Cosmos emulator on GitHub Actions runners produces 65s
+  # request timeouts (HTTP 408) on PATCH and query operations, causing the job to
+  # exceed any reasonable timeout. See #51 for investigation and re-enablement:
+  #   https://github.com/lemonlion/CosmosDB.InMemoryEmulator/issues/51
+  # ──────────────────────────────────────────────────────────────────────────────
+  # test-emulator-linux:
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 45
+  #
+  #   services:
+  #     cosmosdb:
+  #       image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
+  #       ports:
+  #         - 8081:8081
+  #         - 10250-10256:10250-10256
+  #       env:
+  #         AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 10
+  #         AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
+  #         AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: "127.0.0.1"
+  #
+  #   steps:
+  #     - uses: actions/checkout@v5
+  #     - uses: ./.github/actions/setup-dotnet-build
+  #
+  #     - uses: ./.github/actions/wait-for-emulator
+  #
+  #     - name: Run Tests (emulator-linux)
+  #       shell: pwsh
+  #       run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration -Filter $env:PARITY_FILTER
+  #
+  #     - name: Upload TRX
+  #       if: always()
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: trx-emulator-linux
+  #         path: test-results/
 
   test-windows:
     runs-on: windows-latest
@@ -118,7 +121,7 @@ jobs:
           path: test-results/
 
   compare:
-    needs: [test-inmemory, test-emulator-linux, test-windows]
+    needs: [test-inmemory, test-windows]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
