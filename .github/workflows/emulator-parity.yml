@@ -116,7 +116,7 @@ jobs:
           path: test-results/
 
   compare:
-    needs: [test-inmemory, test-windows]
+    needs: [test-inmemory, test-emulator-linux, test-windows]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
