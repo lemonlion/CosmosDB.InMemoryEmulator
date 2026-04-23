@@ -35,6 +35,13 @@ namespace CosmosDB.InMemoryEmulator;
 /// </remarks>
 internal class InMemoryContainer : Container, IContainerTestSetup
 {
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/
+    // Error message constants matching real Cosmos DB REST API response bodies.
+    private const string MessageEntityDoesNotExist = "Entity with the specified id does not exist in the system.";
+    private const string MessageEntityAlreadyExists = "Entity with the specified id already exists in the system.";
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-document (412 response)
+    private const string MessagePreconditionFailed = "One of the specified pre-condition is not met";
+
     private static readonly JsonSerializerSettings JsonSettings = new()
     {
         TypeNameHandling = TypeNameHandling.None,
@@ -717,7 +724,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     ValidateUniqueKeys(jObj, pk);
                     if (!_items.TryAdd(key, json))
                     {
-                        throw new InMemoryCosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
+                        throw new InMemoryCosmosException($"{MessageEntityAlreadyExists} id = {itemId}",
                             HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                     }
                 }
@@ -726,7 +733,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             {
                 if (!_items.TryAdd(key, json))
                 {
-                    throw new InMemoryCosmosException($"Entity with the specified id already exists in the system. id = {itemId}",
+                    throw new InMemoryCosmosException($"{MessageEntityAlreadyExists} id = {itemId}",
                         HttpStatusCode.Conflict, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
             }
@@ -786,7 +793,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         if (!_items.TryGetValue(key, out var json) || IsExpired(key))
         {
             EvictIfExpired(key);
-            throw new InMemoryCosmosException($"Entity with the specified id does not exist in the system. id = {id}",
+            throw new InMemoryCosmosException($"{MessageEntityDoesNotExist} id = {id}",
                 HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
@@ -824,7 +831,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
             if (requestOptions?.IfMatchEtag is not null && !_items.ContainsKey(key))
             {
-                throw new InMemoryCosmosException($"Entity with the specified id does not exist. id = {itemId}",
+                throw new InMemoryCosmosException($"{MessageEntityDoesNotExist} id = {itemId}",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
 
@@ -934,7 +941,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             if (!_items.ContainsKey(key) || IsExpired(key))
             {
                 EvictIfExpired(key);
-                throw new InMemoryCosmosException($"Entity with the specified id does not exist. id = {id}",
+                throw new InMemoryCosmosException($"{MessageEntityDoesNotExist} id = {id}",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
 
@@ -1018,7 +1025,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
             {
                 EvictIfExpired(key);
-                throw new InMemoryCosmosException($"Entity with the specified id does not exist. id = {id}",
+                throw new InMemoryCosmosException($"{MessageEntityDoesNotExist} id = {id}",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
 
@@ -1099,7 +1106,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
         {
             EvictIfExpired(key);
-            throw new InMemoryCosmosException($"Entity with the specified id does not exist. id = {id}",
+            throw new InMemoryCosmosException($"{MessageEntityDoesNotExist} id = {id}",
                 HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
@@ -1118,7 +1125,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     new Dictionary<string, object>(), null);
                 if (!matches)
                 {
-                    throw new InMemoryCosmosException("Precondition Failed",
+                    throw new InMemoryCosmosException(MessagePreconditionFailed,
                         HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
                 }
             }
@@ -1208,16 +1215,19 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 lock (_uniqueKeyWriteLock)
                 {
                     if (!ValidateUniqueKeysStream(jObj, pk))
-                        return CreateResponseMessage(HttpStatusCode.Conflict);
+                        return CreateResponseMessage(HttpStatusCode.Conflict,
+                            reason: $"{MessageEntityAlreadyExists} id = {itemId}");
 
                     if (!_items.TryAdd(key, json))
-                        return CreateResponseMessage(HttpStatusCode.Conflict);
+                        return CreateResponseMessage(HttpStatusCode.Conflict,
+                            reason: $"{MessageEntityAlreadyExists} id = {itemId}");
                 }
             }
             else
             {
                 if (!_items.TryAdd(key, json))
-                    return CreateResponseMessage(HttpStatusCode.Conflict);
+                    return CreateResponseMessage(HttpStatusCode.Conflict,
+                        reason: $"{MessageEntityAlreadyExists} id = {itemId}");
             }
 
             var etag = GenerateETag();
@@ -1258,7 +1268,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         if (!_items.TryGetValue(key, out var json) || IsExpired(key))
         {
             EvictIfExpired(key);
-            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
+            return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound,
+                reason: $"{MessageEntityDoesNotExist} id = {id}"));
         }
         var etag = _etags.GetValueOrDefault(key);
         if (!CheckIfNoneMatchStream(requestOptions, key))
@@ -1306,12 +1317,14 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             // IfMatch on non-existent item: return NotFound (matching real Cosmos)
             if (requestOptions?.IfMatchEtag is not null && !_items.ContainsKey(key))
             {
-                return CreateResponseMessage(HttpStatusCode.NotFound);
+                return CreateResponseMessage(HttpStatusCode.NotFound,
+                    reason: $"{MessageEntityDoesNotExist} id = {itemId}");
             }
 
             if (!CheckIfMatchStream(requestOptions, key))
             {
-                return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
+                return CreateResponseMessage(HttpStatusCode.PreconditionFailed,
+                    reason: MessagePreconditionFailed);
             }
             bool existed;
             string etag;
@@ -1324,7 +1337,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 lock (_uniqueKeyWriteLock)
                 {
                     if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: itemId))
-                        return CreateResponseMessage(HttpStatusCode.Conflict);
+                        return CreateResponseMessage(HttpStatusCode.Conflict,
+                            reason: $"{MessageEntityAlreadyExists} id = {itemId}");
                     existed = _items.TryGetValue(key, out previousJson);
                     if (existed) { previousEtag = _etags.GetValueOrDefault(key); previousTimestamp = _timestamps.GetValueOrDefault(key); }
                     etag = GenerateETag();
@@ -1337,7 +1351,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             else
             {
                 if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: itemId))
-                    return CreateResponseMessage(HttpStatusCode.Conflict);
+                    return CreateResponseMessage(HttpStatusCode.Conflict,
+                        reason: $"{MessageEntityAlreadyExists} id = {itemId}");
                 existed = _items.TryGetValue(key, out previousJson);
                 if (existed) { previousEtag = _etags.GetValueOrDefault(key); previousTimestamp = _timestamps.GetValueOrDefault(key); }
                 etag = GenerateETag();
@@ -1412,12 +1427,14 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             if (!_items.TryGetValue(key, out var previousJson) || IsExpired(key))
             {
                 EvictIfExpired(key);
-                return CreateResponseMessage(HttpStatusCode.NotFound);
+                return CreateResponseMessage(HttpStatusCode.NotFound,
+                    reason: $"{MessageEntityDoesNotExist} id = {id}");
             }
 
             if (!CheckIfMatchStream(requestOptions, key))
             {
-                return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
+                return CreateResponseMessage(HttpStatusCode.PreconditionFailed,
+                    reason: MessagePreconditionFailed);
             }
 
             var previousEtag = _etags.GetValueOrDefault(key);
@@ -1437,7 +1454,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 lock (_uniqueKeyWriteLock)
                 {
                     if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
-                        return CreateResponseMessage(HttpStatusCode.Conflict);
+                        return CreateResponseMessage(HttpStatusCode.Conflict,
+                            reason: $"{MessageEntityAlreadyExists} id = {id}");
                     etag = GenerateETag();
                     _etags[key] = etag;
                     _timestamps[key] = DateTimeOffset.UtcNow;
@@ -1448,7 +1466,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             else
             {
                 if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
-                    return CreateResponseMessage(HttpStatusCode.Conflict);
+                    return CreateResponseMessage(HttpStatusCode.Conflict,
+                        reason: $"{MessageEntityAlreadyExists} id = {id}");
                 etag = GenerateETag();
                 _etags[key] = etag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
@@ -1494,12 +1513,14 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
             {
                 EvictIfExpired(key);
-                return CreateResponseMessage(HttpStatusCode.NotFound);
+                return CreateResponseMessage(HttpStatusCode.NotFound,
+                    reason: $"{MessageEntityDoesNotExist} id = {id}");
             }
 
             if (!CheckIfMatchStream(requestOptions, key))
             {
-                return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
+                return CreateResponseMessage(HttpStatusCode.PreconditionFailed,
+                    reason: MessagePreconditionFailed);
             }
 
             ExecutePreTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
@@ -1582,12 +1603,14 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
         {
             EvictIfExpired(key);
-            return CreateResponseMessage(HttpStatusCode.NotFound);
+            return CreateResponseMessage(HttpStatusCode.NotFound,
+                reason: $"{MessageEntityDoesNotExist} id = {id}");
         }
 
         if (!CheckIfMatchStream(requestOptions, key))
         {
-            return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
+            return CreateResponseMessage(HttpStatusCode.PreconditionFailed,
+                reason: MessagePreconditionFailed);
         }
 
         var jObj = JsonParseHelpers.ParseJson(existingJson);
@@ -1602,7 +1625,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     new Dictionary<string, object>(), null);
                 if (!matches)
                 {
-                    return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
+                    return CreateResponseMessage(HttpStatusCode.PreconditionFailed,
+                        reason: MessagePreconditionFailed);
                 }
             }
         }
@@ -1625,7 +1649,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             lock (_uniqueKeyWriteLock)
             {
                 if (!ValidateUniqueKeysStream(jObj, pk, excludeItemId: id))
-                    return CreateResponseMessage(HttpStatusCode.Conflict);
+                    return CreateResponseMessage(HttpStatusCode.Conflict,
+                        reason: $"{MessageEntityAlreadyExists} id = {id}");
                 etag = GenerateETag();
                 _etags[key] = etag;
                 _timestamps[key] = DateTimeOffset.UtcNow;
@@ -3094,7 +3119,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         if (requestOptions.IfMatchEtag != currentEtag)
         {
-            throw new InMemoryCosmosException("Precondition Failed", HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            throw new InMemoryCosmosException(MessagePreconditionFailed, HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
     }
 
@@ -3129,12 +3154,12 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         if (requestOptions.IfNoneMatchEtag == "*" && _etags.ContainsKey(key))
         {
-            throw new InMemoryCosmosException("Precondition Failed", HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            throw new InMemoryCosmosException(MessagePreconditionFailed, HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
         if (_etags.TryGetValue(key, out var currentEtag) && requestOptions.IfNoneMatchEtag == currentEtag)
         {
-            throw new InMemoryCosmosException("Precondition Failed", HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
+            throw new InMemoryCosmosException(MessagePreconditionFailed, HttpStatusCode.PreconditionFailed, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
     }
 
@@ -3245,14 +3270,23 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         public override string ETag => _etag;
     }
 
-    private ResponseMessage CreateResponseMessage(HttpStatusCode statusCode, string json = null, string etag = null, int subStatusCode = 0)
+    private ResponseMessage CreateResponseMessage(HttpStatusCode statusCode, string json = null, string etag = null, int subStatusCode = 0, string reason = null)
     {
         var errorMessage = (int)statusCode >= 400
             ? $"Response status code does not indicate success: {statusCode} ({(int)statusCode})"
             : null;
+
+        // When a specific error reason is provided, embed it as a JSON body so the Cosmos SDK
+        // can extract it into CosmosException.Message when this response flows through the
+        // FakeCosmosHandler HTTP pipeline (ConvertToHttpResponse → SDK parses response body).
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/ — error response body format.
+        var contentJson = json ?? (reason is not null
+            ? new JObject { ["message"] = reason }.ToString(Formatting.None)
+            : null);
+
         var msg = new ResponseMessage(statusCode, requestMessage: null, errorMessage: errorMessage)
         {
-            Content = json is not null ? ToStream(json) : null
+            Content = contentJson is not null ? ToStream(contentJson) : null
         };
         msg.Headers["x-ms-activity-id"] = Guid.NewGuid().ToString();
         msg.Headers["x-ms-request-charge"] = SyntheticRequestCharge.ToString(CultureInfo.InvariantCulture);
