@@ -65,7 +65,7 @@ jobs:
         shell: bash
         run: |
           count=${{ inputs.runs || '2' }}
-          echo "runs=$(seq 1 $count | jq -s '.')" >> $GITHUB_OUTPUT
+          echo "runs=$(seq 1 $count | jq -sc '.')" >> $GITHUB_OUTPUT
 
   benchmark-inmemory:
     if: inputs.target == 'inmemory' || inputs.target == ''
