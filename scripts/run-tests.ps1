@@ -50,7 +50,16 @@ if ($Target -ne 'inmemory') {
     $filterExpr = 'Target!=InMemoryOnly'
 }
 if ($Filter) {
-    $filterExpr = if ($filterExpr) { "$filterExpr&$Filter" } else { $Filter }
+    if ($filterExpr -and $Filter -match '\|') {
+        # Distribute the base filter across each OR segment to maintain correct precedence.
+        # Without this: Target!=InMemoryOnly&A|B|C evaluates as (Target!=InMemoryOnly&A)|B|C
+        # With this:    Target!=InMemoryOnly&A|Target!=InMemoryOnly&B|Target!=InMemoryOnly&C
+        $filterExpr = ($Filter -split '\|' | ForEach-Object { "$filterExpr&$_" }) -join '|'
+    } elseif ($filterExpr) {
+        $filterExpr = "$filterExpr&$Filter"
+    } else {
+        $filterExpr = $Filter
+    }
 }
 
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null

@@ -1,6 +1,10 @@
 name: Emulator Parity Validation
 
 on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   schedule:
     - cron: '0 6 * * 1'  # Weekly Monday 6am UTC
   workflow_dispatch:
@@ -19,8 +23,6 @@ permissions:
 # connection-refused storms, timeouts) before adding the next.
 env:
   PARITY_FILTER: ${{ inputs.filter || 'FullyQualifiedName~FakeCosmosHandlerCrudTests|FullyQualifiedName~FakeCosmosHandlerTtlTests|FullyQualifiedName~FakeCosmosHandlerBatchTests|FullyQualifiedName~FakeCosmosHandlerQueryAdvancedTests|FullyQualifiedName~Issue18ExceptionTypeTests|FullyQualifiedName~Issue18EdgeCaseIntegrationTests' }}
-  # Note: Linux emulator job is commented out below. See #51 for details:
-  #   https://github.com/lemonlion/CosmosDB.InMemoryEmulator/issues/51
 
 jobs:
   test-inmemory:
@@ -29,16 +31,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
-
-      - name: Build
-        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
+      - uses: ./.github/actions/setup-dotnet-build
 
       - name: Run Tests (inmemory)
         shell: pwsh
@@ -52,70 +45,40 @@ jobs:
           path: test-results/
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # Linux emulator job — DISABLED
-  # The Dockerized Linux Cosmos emulator on GitHub Actions runners produces 65s
-  # request timeouts (HTTP 408) on PATCH and query operations, causing the job to
-  # exceed any reasonable timeout. See #51 for investigation and re-enablement:
-  #   https://github.com/lemonlion/CosmosDB.InMemoryEmulator/issues/51
+  # Linux emulator job. See #51 for prior investigation into 65s timeout issues.
+  # This job does not block CI — it runs alongside the other parity jobs.
   # ──────────────────────────────────────────────────────────────────────────────
-  # test-emulator-linux:
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 30
-  #
-  #   services:
-  #     cosmosdb:
-  #       image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
-  #       ports:
-  #         - 8081:8081
-  #         - 10250-10256:10250-10256
-  #       env:
-  #         AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 10
-  #         AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
-  #         AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: "127.0.0.1"
-  #
-  #   steps:
-  #     - uses: actions/checkout@v5
-  #
-  #     - name: Setup .NET
-  #       uses: actions/setup-dotnet@v5
-  #       with:
-  #         dotnet-version: |
-  #           8.0.x
-  #           10.0.x
-  #
-  #     - name: Wait for Cosmos DB Emulator
-  #       run: |
-  #         echo "Waiting for Cosmos DB Emulator HTTP endpoint..."
-  #         timeout=300
-  #         elapsed=0
-  #         while [ $elapsed -lt $timeout ]; do
-  #           status=$(curl -sk -o /dev/null -w "%{http_code}" https://localhost:8081/ 2>/dev/null || echo "000")
-  #           if [ "$status" = "200" ] || [ "$status" = "401" ]; then
-  #             echo "HTTP endpoint ready after ${elapsed}s (HTTP $status)"
-  #             break
-  #           fi
-  #           sleep 5
-  #           elapsed=$((elapsed + 5))
-  #           echo "Still waiting... (${elapsed}s)"
-  #         done
-  #         if [ $elapsed -ge $timeout ]; then
-  #           echo "::error::Cosmos DB Emulator did not start within ${timeout}s"
-  #           exit 1
-  #         fi
-  #
-  #     - name: Build
-  #       run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
-  #
-  #     - name: Run Tests (emulator-linux)
-  #       shell: pwsh
-  #       run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration -Filter $env:PARITY_FILTER
-  #
-  #     - name: Upload TRX
-  #       if: always()
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: trx-emulator-linux
-  #         path: test-results/
+  test-emulator-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      cosmosdb:
+        image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
+        ports:
+          - 8081:8081
+          - 10250-10256:10250-10256
+        env:
+          AZURE_COSMOS_EMULATOR_PARTITION_COUNT: 10
+          AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "false"
+          AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE: "127.0.0.1"
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-dotnet-build
+
+      - uses: ./.github/actions/wait-for-emulator
+
+      - name: Run Tests (emulator-linux)
+        shell: pwsh
+        run: ./scripts/run-tests.ps1 -Target emulator-linux -Project integration -Filter $env:PARITY_FILTER
+
+      - name: Upload TRX
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trx-emulator-linux
+          path: test-results/
 
   test-windows:
     runs-on: windows-latest
@@ -123,13 +86,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
+      - uses: ./.github/actions/setup-dotnet-build
 
       - name: Start Cosmos DB Windows Emulator
         shell: pwsh
@@ -144,23 +101,8 @@ jobs:
             exit 1
           }
           Start-Process -FilePath $emulatorExe -ArgumentList "/NoExplorer /NoFirewall /PartitionCount=3"
-          # Wait for readiness
-          $timeout = 300; $elapsed = 0
-          while ($elapsed -lt $timeout) {
-            try {
-              $r = Invoke-WebRequest -Uri "https://localhost:8081/" -SkipCertificateCheck -SkipHttpErrorCheck -TimeoutSec 5 -ErrorAction Stop
-              if ($r.StatusCode -in 200, 401) {
-                Write-Host "Emulator ready after ${elapsed}s"
-                break
-              }
-            } catch {}
-            Start-Sleep 5; $elapsed += 5
-            Write-Host "  Waiting... (${elapsed}s)"
-          }
-          if ($elapsed -ge $timeout) { Write-Error "Emulator did not start"; exit 1 }
 
-      - name: Build
-        run: dotnet build CosmosDB.InMemoryEmulator.sln --configuration Release
+      - uses: ./.github/actions/wait-for-emulator
 
       - name: Run Tests (emulator-windows)
         shell: pwsh

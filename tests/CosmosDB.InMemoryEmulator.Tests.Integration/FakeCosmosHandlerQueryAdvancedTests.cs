@@ -13,6 +13,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// and parameterized queries that go through the full SDK → HTTP → handler pipeline.
 /// Parity-validated: string/math/array/type/aggregate/subquery/parameterized tests run against both backends.
 /// Vector, FTS, and geospatial tests create inline containers and are tagged InMemoryOnly.
+/// NullCoalesce and GroupByHaving tests are tagged InMemoryOnly — Windows emulator (v2.14.0) does not support ?? operator or HAVING clause (see #53).
 /// </summary>
 [Collection(IntegrationCollection.Name)]
 public class FakeCosmosHandlerQueryAdvancedTests(EmulatorSession session) : IAsyncLifetime
@@ -292,6 +293,9 @@ public class FakeCosmosHandlerQueryAdvancedTests(EmulatorSession session) : IAsy
         results.First(r => r["name"]!.Value<string>() == "Bob")["level"]!.Value<string>().Should().Be("low");
     }
 
+    // Windows emulator (v2.14.0) returns null instead of coalesced value for ?? operator.
+    // Tracked: https://github.com/lemonlion/CosmosDB.InMemoryEmulator/issues/53
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     [Fact]
     public async Task Query_NullCoalesce_Works()
     {
@@ -541,6 +545,9 @@ public class FakeCosmosHandlerQueryAdvancedTests(EmulatorSession session) : IAsy
     //  GROUP BY with HAVING
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Windows emulator (v2.14.0) returns 400 "Syntax error near 'HAVING'" for GROUP BY HAVING queries.
+    // Tracked: https://github.com/lemonlion/CosmosDB.InMemoryEmulator/issues/53
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     [Fact]
     public async Task Query_GroupByHaving_FiltersGroups()
     {
