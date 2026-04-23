@@ -14,6 +14,10 @@ namespace CosmosDB.InMemoryEmulator.JsTriggers;
 /// </summary>
 public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
 {
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-write-stored-procedures-triggers-udfs#pre-triggers
+    //   "Pre-triggers are executed before modifying a database item."
+    //   "Pre-triggers can't have any input parameters. The request object in the trigger is used
+    //    to manipulate the request message associated with the operation."
     public JObject ExecutePreTrigger(string jsBody, JObject document)
         => ExecutePreTrigger(jsBody, document, null!);
 
@@ -22,6 +26,7 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
         var bodyJson = document.ToString(Newtonsoft.Json.Formatting.None);
         JsValue? updatedBody = null;
 
+        // TODO: No official source found for timeout/statement limits — these are emulator-imposed execution guards.
         var engine = new Engine(options =>
         {
             options.TimeoutInterval(TimeSpan.FromSeconds(5));
@@ -31,6 +36,10 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
         // Parse the document into JS land once
         var jsDoc = engine.Evaluate($"({bodyJson})");
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-write-stored-procedures-triggers-udfs#pre-triggers
+        //   Pre-trigger example: "var request = context.getRequest(); var itemToCreate = request.getBody();"
+        //   and "request.setBody(itemToCreate);" — "update the item that will be created"
+        //   getResponse() is not available in pre-triggers since the operation has not yet executed.
         // Wire up the Cosmos DB server-side pre-trigger API
         engine.SetValue("__getBody", new Func<JsValue>(() => jsDoc));
         engine.SetValue("__setBody", new Action<JsValue>(val => updatedBody = val));
@@ -54,6 +63,10 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
             }
             """);
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-write-stored-procedures-triggers-udfs#post-triggers
+        //   "An exception during the post-trigger execution fails the whole transaction.
+        //    Anything committed is rolled back and an exception is returned."
+        //   The same transactional abort semantics apply to pre-triggers.
         try
         {
             engine.Execute(jsBody);
@@ -66,6 +79,8 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-write-stored-procedures-triggers-udfs#pre-triggers
+        //   "request.setBody(itemToCreate);" — if the trigger called setBody(), the modified document is used.
         if (updatedBody is not null)
         {
             engine.SetValue("__toSerialize", updatedBody);
@@ -76,6 +91,9 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
         return document;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-write-stored-procedures-triggers-udfs#post-triggers
+    //   "Post-triggers are executed after modifying a database item."
+    //   "The post-trigger runs as part of the same transaction for the underlying item itself."
     public JObject? ExecutePostTrigger(string jsBody, JObject document)
         => ExecutePostTrigger(jsBody, document, null!);
 
@@ -84,6 +102,7 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
         var bodyJson = document.ToString(Newtonsoft.Json.Formatting.None);
         JsValue? updatedBody = null;
 
+        // TODO: No official source found for timeout/statement limits — these are emulator-imposed execution guards.
         var engine = new Engine(options =>
         {
             options.TimeoutInterval(TimeSpan.FromSeconds(5));
@@ -93,8 +112,10 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
         // Parse the document into JS land once
         var jsDoc = engine.Evaluate($"({bodyJson})");
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-write-stored-procedures-triggers-udfs#post-triggers
+        //   Post-trigger example: "var response = context.getResponse(); var createdItem = response.getBody();"
+        //   Post-triggers have access to both getResponse() (the committed item) and getRequest().
         // Wire up the Cosmos DB server-side post-trigger API
-        // Post-triggers have access to both getResponse() and getRequest()
         engine.SetValue("__getBody", new Func<JsValue>(() => jsDoc));
         engine.SetValue("__setBody", new Action<JsValue>(val => updatedBody = val));
 
@@ -119,6 +140,9 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
             }
             """);
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-write-stored-procedures-triggers-udfs#post-triggers
+        //   "An exception during the post-trigger execution fails the whole transaction.
+        //    Anything committed is rolled back and an exception is returned."
         try
         {
             engine.Execute(jsBody);
@@ -141,6 +165,9 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
         return null;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-write-stored-procedures-triggers-udfs
+    //   Trigger/sproc bodies declare a named function that the server invokes. All official examples
+    //   use a single named function (e.g., "function validateToDoItemTimestamp() { ... }").
     private static void InvokeFirstFunction(Engine engine, string jsBody)
     {
         var matches = System.Text.RegularExpressions.Regex.Matches(jsBody, @"\bfunction\s+(\w+)\s*\(");
@@ -150,6 +177,9 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-write-stored-procedures-triggers-udfs#udfs
+    //   UDFs are single JavaScript functions that accept parameters and return a computed value.
+    //   Example: "function tax(income) { ... return income * 0.4; }"
     public object? ExecuteUdf(string jsBody, object[] args)
     {
         var engine = new Engine(options =>
