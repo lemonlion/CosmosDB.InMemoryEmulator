@@ -47,6 +47,9 @@ internal class InMemoryCosmosClient : CosmosClient
     private readonly ConcurrentDictionary<string, bool> _explicitlyCreatedDatabases = new();
     private bool _disposed;
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.cosmosclient
+    //   "The returned not-initialized reference doesn't guarantee credentials or connectivity
+    //    validations because creation doesn't make any network calls"
     private static readonly Uri EmulatorEndpoint = new("https://localhost:8081/");
     private readonly CosmosClientOptions _clientOptions = new();
     private readonly CosmosResponseFactory _responseFactory = Substitute.For<CosmosResponseFactory>();
@@ -60,6 +63,11 @@ internal class InMemoryCosmosClient : CosmosClient
     /// <summary>Returns a stubbed <see cref="CosmosResponseFactory"/>.</summary>
     public override CosmosResponseFactory ResponseFactory => _responseFactory;
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.cosmosclient.createdatabaseifnotexistsasync
+    //   "Check if a database exists, and if it doesn't, create it. Only the database id is used to
+    //    verify if there is an existing database."
+    //   StatusCode 201 Created — "New database is created."
+    //   StatusCode 200 OK — "This means the database already exists."
     /// <summary>
     /// Creates a database if it does not already exist. Returns <see cref="HttpStatusCode.Created"/>
     /// for new databases or <see cref="HttpStatusCode.OK"/> for existing ones.
@@ -91,6 +99,10 @@ internal class InMemoryCosmosClient : CosmosClient
         return CreateDatabaseIfNotExistsAsync(id, (int?)null, requestOptions, cancellationToken);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-database
+    //   "201 Created — Returned when the operation is successful."
+    //   "409 Conflict — Returned when the ID provided for the new database has been taken by an
+    //    existing database."
     /// <summary>
     /// Creates a new database. Throws <see cref="CosmosException"/> with
     /// <see cref="HttpStatusCode.Conflict"/> if a database with the same <paramref name="id"/> already exists.
@@ -125,6 +137,10 @@ internal class InMemoryCosmosClient : CosmosClient
         return CreateDatabaseAsync(id, (int?)null, requestOptions, cancellationToken);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-database
+    //   "201 Created — Returned when the operation is successful."
+    //   "409 Conflict — Returned when the ID provided for the new database has been taken by an
+    //    existing database."
     /// <summary>
     /// Creates a new database using stream semantics. Returns <see cref="HttpStatusCode.Created"/>
     /// on success or <see cref="HttpStatusCode.Conflict"/> if the database already exists.
@@ -170,6 +186,10 @@ internal class InMemoryCosmosClient : CosmosClient
         return CreateDatabaseStreamAsync(databaseProperties, (int?)null, requestOptions, cancellationToken);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.cosmosclient.getdatabase
+    //   "Returns a proxy reference to a database."
+    //   "Database proxy reference doesn't guarantee existence. Please ensure database exists through
+    //    CreateDatabaseAsync or CreateDatabaseIfNotExistsAsync, before operating on it."
     /// <summary>
     /// Gets or creates an <see cref="InMemoryDatabase"/> with the given <paramref name="id"/>.
     /// The database is created lazily on first access.
@@ -183,6 +203,10 @@ internal class InMemoryCosmosClient : CosmosClient
         return _databases.GetOrAdd(id, name => new InMemoryDatabase(name, this));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.cosmosclient.getcontainer
+    //   "Returns a proxy reference to a container."
+    //   "Container proxy reference doesn't guarantee existence. Please ensure container exists through
+    //    CreateContainerAsync or CreateContainerIfNotExistsAsync, before operating on it."
     /// <summary>
     /// Gets or creates a container within the specified database. Both the database and
     /// container are created lazily on first access.
@@ -200,6 +224,9 @@ internal class InMemoryCosmosClient : CosmosClient
         return database.GetOrCreateContainer(containerId);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-databases
+    //   "200 OK — The operation is successful."
+    //   The response body contains a "Databases" array with database properties.
     /// <summary>
     /// Returns a feed iterator over all databases. The query text is ignored;
     /// all databases are returned as <see cref="DatabaseProperties"/>.
@@ -242,6 +269,8 @@ internal class InMemoryCosmosClient : CosmosClient
         return GetDatabaseQueryStreamIterator((string)null, continuationToken, requestOptions);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.cosmosclient.readaccountasync
+    //   Returns "A AccountProperties wrapped in a Task object."
     /// <summary>
     /// Returns synthetic <see cref="AccountProperties"/> with Id "in-memory-emulator".
     /// Falls back to an NSubstitute stub if reflection fails.
@@ -268,6 +297,12 @@ internal class InMemoryCosmosClient : CosmosClient
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-database
+    //   "204 No Content — The delete operation was successful."
+    //   "404 Not Found — The database is not found."
+    //   "Performing a DELETE on a database deletes the database resource and its child resources,
+    //    that is, collections, documents, attachments, stored procedures, triggers, user-defined
+    //    functions, users, and permissions within the database."
     internal bool RemoveDatabase(string id)
     {
         _explicitlyCreatedDatabases.TryRemove(id, out _);
@@ -279,6 +314,10 @@ internal class InMemoryCosmosClient : CosmosClient
         return _explicitlyCreatedDatabases.ContainsKey(id);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.cosmosclient
+    //   "CosmosClient is thread-safe. Its recommended to maintain a single instance of CosmosClient
+    //    per lifetime of the application which enables efficient connection management and performance."
+    //   CosmosClient implements IDisposable.
     /// <summary>
     /// Disposes the client and cascades disposal to all containers, triggering
     /// state persistence for any container with <see cref="InMemoryContainer.StateFilePath"/> set.
@@ -299,6 +338,16 @@ internal class InMemoryCosmosClient : CosmosClient
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/databases
+    //   "It is a unique name that identifies the database, that is, no two databases share the same
+    //    name in an account. The name must not exceed 255 characters."
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/concepts-limits
+    //   "Maximum length of database or container name: 255"
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-database
+    //   "400 Bad Request — Returned when the JSON body is invalid."
+    //   Characters '/', '\\', '#', '?' are forbidden in resource names because they are URI-reserved
+    //   characters used as path separators, fragment identifiers, and query delimiters in the
+    //   Cosmos DB REST API URI scheme (e.g. /dbs/{db-id}/colls/{coll-id}).
     internal static void ValidateResourceName(string name, string resourceType)
     {
         if (name.Length > 255)
