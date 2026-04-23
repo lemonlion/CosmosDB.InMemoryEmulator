@@ -2014,26 +2014,35 @@ public class StreamErrorBodyContentDeepDiveTests
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
 
     [Fact]
-    public async Task StreamError_404_Content_IsNull()
+    public async Task StreamError_404_Content_ContainsJsonMessage()
     {
         var response = await _container.ReadItemStreamAsync("nope", new PartitionKey("pk"));
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
-        response.Content.Should().BeNull();
+        // Error responses now include a JSON body so the Cosmos SDK can surface
+        // a meaningful message in CosmosException.Message when flowing through
+        // the FakeCosmosHandler HTTP pipeline.
+        response.Content.Should().NotBeNull();
+        using var reader = new StreamReader(response.Content!);
+        var body = await reader.ReadToEndAsync();
+        JObject.Parse(body)["message"]!.ToString().Should().Contain("in the system");
     }
 
     [Fact]
-    public async Task StreamError_409_Content_IsNull()
+    public async Task StreamError_409_Content_ContainsJsonMessage()
     {
         await _container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")), new PartitionKey("pk"));
         var response = await _container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")), new PartitionKey("pk"));
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
-        response.Content.Should().BeNull();
+        response.Content.Should().NotBeNull();
+        using var reader = new StreamReader(response.Content!);
+        var body = await reader.ReadToEndAsync();
+        JObject.Parse(body)["message"]!.ToString().Should().NotBeNullOrEmpty();
     }
 
     [Fact]
-    public async Task StreamError_412_Content_IsNull()
+    public async Task StreamError_412_Content_ContainsJsonMessage()
     {
         await _container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")), new PartitionKey("pk"));
@@ -2042,7 +2051,10 @@ public class StreamErrorBodyContentDeepDiveTests
             "1", new PartitionKey("pk"),
             new ItemRequestOptions { IfMatchEtag = "\"stale\"" });
         response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
-        response.Content.Should().BeNull();
+        response.Content.Should().NotBeNull();
+        using var reader = new StreamReader(response.Content!);
+        var body = await reader.ReadToEndAsync();
+        JObject.Parse(body)["message"]!.ToString().Should().Contain("One of the specified pre-condition is not met");
     }
 }
 
@@ -2474,5 +2486,316 @@ public class FakeCosmosHandlerResponseMetadataDeepDiveTests : IDisposable
             new TestDocument { Id = "2", PartitionKey = "pk", Name = "B" }, new PartitionKey("pk"));
 
         response.Headers["x-ms-session-token"].Should().NotBeNullOrEmpty();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Exception Message Consistency Tests
+//  Verify that all typed-API and stream-API paths use the same error messages
+//  so that callers who inspect ex.Message get consistent, meaningful text.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// <summary>
+/// Tests that all typed-API operations throw NotFound (404) with "in the system"
+/// in the message — matching the real Cosmos DB REST API response body.
+/// Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/
+/// </summary>
+public class TypedApiNotFoundMessageTests
+{
+    private readonly InMemoryContainer _container = new("test", "/partitionKey");
+
+    [Fact]
+    public async Task ReadItemAsync_NotFound_MessageContainsInTheSystem()
+    {
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.ReadItemAsync<TestDocument>("nope", new PartitionKey("pk")));
+
+        ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        ex.Message.Should().Contain("in the system");
+    }
+
+    [Fact]
+    public async Task ReplaceItemAsync_NotFound_MessageContainsInTheSystem()
+    {
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.ReplaceItemAsync(
+                new TestDocument { Id = "nope", PartitionKey = "pk", Name = "X" },
+                "nope", new PartitionKey("pk")));
+
+        ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        ex.Message.Should().Contain("in the system");
+    }
+
+    [Fact]
+    public async Task DeleteItemAsync_NotFound_MessageContainsInTheSystem()
+    {
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.DeleteItemAsync<TestDocument>("nope", new PartitionKey("pk")));
+
+        ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        ex.Message.Should().Contain("in the system");
+    }
+
+    [Fact]
+    public async Task UpsertItemAsync_WithIfMatchEtag_NotFound_MessageContainsInTheSystem()
+    {
+        // IfMatchEtag on non-existent item → 404 NotFound
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.UpsertItemAsync(
+                new TestDocument { Id = "nope", PartitionKey = "pk", Name = "X" },
+                new PartitionKey("pk"),
+                new ItemRequestOptions { IfMatchEtag = "\"any-etag\"" }));
+
+        ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        ex.Message.Should().Contain("in the system");
+    }
+
+    [Fact]
+    public async Task PatchItemAsync_NotFound_MessageContainsInTheSystem()
+    {
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.PatchItemAsync<TestDocument>("nope", new PartitionKey("pk"),
+                [PatchOperation.Set("/name", "X")]));
+
+        ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        ex.Message.Should().Contain("in the system");
+    }
+}
+
+/// <summary>
+/// Tests that all typed-API operations throw PreconditionFailed (412) with
+/// the correct message matching the real Cosmos DB REST API response body.
+/// Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/
+/// </summary>
+public class TypedApiPreconditionFailedMessageTests
+{
+    private readonly InMemoryContainer _container = new("test", "/partitionKey");
+
+    [Fact]
+    public async Task ReplaceItemAsync_StaleETag_PreconditionFailed_MessageMatchesRealCosmos()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.ReplaceItemAsync(
+                new TestDocument { Id = "1", PartitionKey = "pk", Name = "B" },
+                "1", new PartitionKey("pk"),
+                new ItemRequestOptions { IfMatchEtag = "\"stale-etag\"" }));
+
+        ex.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-document
+        ex.Message.Should().Contain("One of the specified pre-condition is not met");
+    }
+
+    [Fact]
+    public async Task DeleteItemAsync_StaleETag_PreconditionFailed_MessageMatchesRealCosmos()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.DeleteItemAsync<TestDocument>("1", new PartitionKey("pk"),
+                new ItemRequestOptions { IfMatchEtag = "\"stale-etag\"" }));
+
+        ex.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+        ex.Message.Should().Contain("One of the specified pre-condition is not met");
+    }
+
+    [Fact]
+    public async Task PatchItemAsync_StaleETag_PreconditionFailed_MessageMatchesRealCosmos()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.PatchItemAsync<TestDocument>("1", new PartitionKey("pk"),
+                [PatchOperation.Set("/name", "B")],
+                new PatchItemRequestOptions { IfMatchEtag = "\"stale-etag\"" }));
+
+        ex.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+        ex.Message.Should().Contain("One of the specified pre-condition is not met");
+    }
+
+    [Fact]
+    public async Task PatchItemAsync_FilterPredicateNotMet_PreconditionFailed_MessageMatchesRealCosmos()
+    {
+        await _container.CreateItemAsync(
+            new TestDocument { Id = "1", PartitionKey = "pk", Name = "A" }, new PartitionKey("pk"));
+
+        var ex = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.PatchItemAsync<TestDocument>("1", new PartitionKey("pk"),
+                [PatchOperation.Set("/name", "B")],
+                new PatchItemRequestOptions { FilterPredicate = "FROM c WHERE c.name = 'X'" }));
+
+        ex.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+        ex.Message.Should().Contain("One of the specified pre-condition is not met");
+    }
+}
+
+/// <summary>
+/// Tests that stream-API error responses include a JSON body with a "message"
+/// field so that errors are surfaced correctly through the FakeCosmosHandler
+/// HTTP pipeline (where the Cosmos SDK converts HTTP responses to CosmosExceptions).
+/// </summary>
+public class StreamApiErrorResponseBodyTests
+{
+    private readonly InMemoryContainer _container = new("test", "/partitionKey");
+
+    private static MemoryStream MakeStream(string json) =>
+        new(Encoding.UTF8.GetBytes(json));
+
+    private static async Task<string?> ReadBodyAsync(ResponseMessage response)
+    {
+        if (response.Content is null) return null;
+        using var reader = new StreamReader(response.Content);
+        return await reader.ReadToEndAsync();
+    }
+
+    [Fact]
+    public async Task ReadItemStream_NotFound_ResponseBodyContainsMessage()
+    {
+        var response = await _container.ReadItemStreamAsync("nope", new PartitionKey("pk"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var body = await ReadBodyAsync(response);
+        body.Should().NotBeNullOrEmpty();
+        var json = JObject.Parse(body!);
+        json["message"]!.ToString().Should().Contain("in the system");
+    }
+
+    [Fact]
+    public async Task ReplaceItemStream_NotFound_ResponseBodyContainsMessage()
+    {
+        var response = await _container.ReplaceItemStreamAsync(
+            MakeStream("""{"id":"nope","partitionKey":"pk"}"""), "nope", new PartitionKey("pk"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var body = await ReadBodyAsync(response);
+        body.Should().NotBeNullOrEmpty();
+        JObject.Parse(body!)["message"]!.ToString().Should().Contain("in the system");
+    }
+
+    [Fact]
+    public async Task DeleteItemStream_NotFound_ResponseBodyContainsMessage()
+    {
+        var response = await _container.DeleteItemStreamAsync("nope", new PartitionKey("pk"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var body = await ReadBodyAsync(response);
+        body.Should().NotBeNullOrEmpty();
+        JObject.Parse(body!)["message"]!.ToString().Should().Contain("in the system");
+    }
+
+    [Fact]
+    public async Task UpsertItemStream_WithIfMatchEtag_NotFound_ResponseBodyContainsMessage()
+    {
+        var response = await _container.UpsertItemStreamAsync(
+            MakeStream("""{"id":"nope","partitionKey":"pk"}"""),
+            new PartitionKey("pk"),
+            new ItemRequestOptions { IfMatchEtag = "\"any-etag\"" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var body = await ReadBodyAsync(response);
+        body.Should().NotBeNullOrEmpty();
+        JObject.Parse(body!)["message"]!.ToString().Should().Contain("in the system");
+    }
+
+    [Fact]
+    public async Task PatchItemStream_NotFound_ResponseBodyContainsMessage()
+    {
+        var response = await _container.PatchItemStreamAsync("nope", new PartitionKey("pk"),
+            [PatchOperation.Set("/name", "X")]);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var body = await ReadBodyAsync(response);
+        body.Should().NotBeNullOrEmpty();
+        JObject.Parse(body!)["message"]!.ToString().Should().Contain("in the system");
+    }
+
+    [Fact]
+    public async Task CreateItemStream_Conflict_ResponseBodyContainsMessage()
+    {
+        await _container.CreateItemStreamAsync(
+            MakeStream("""{"id":"1","partitionKey":"pk"}"""), new PartitionKey("pk"));
+        var response = await _container.CreateItemStreamAsync(
+            MakeStream("""{"id":"1","partitionKey":"pk"}"""), new PartitionKey("pk"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var body = await ReadBodyAsync(response);
+        body.Should().NotBeNullOrEmpty();
+        JObject.Parse(body!)["message"]!.ToString().Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task ReplaceItemStream_StaleETag_PreconditionFailed_ResponseBodyContainsMessage()
+    {
+        await _container.CreateItemStreamAsync(
+            MakeStream("""{"id":"1","partitionKey":"pk"}"""), new PartitionKey("pk"));
+        var response = await _container.ReplaceItemStreamAsync(
+            MakeStream("""{"id":"1","partitionKey":"pk","name":"B"}"""),
+            "1", new PartitionKey("pk"),
+            new ItemRequestOptions { IfMatchEtag = "\"stale\"" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+        var body = await ReadBodyAsync(response);
+        body.Should().NotBeNullOrEmpty();
+        JObject.Parse(body!)["message"]!.ToString().Should().Contain("One of the specified pre-condition is not met");
+    }
+
+    [Fact]
+    public async Task DeleteItemStream_StaleETag_PreconditionFailed_ResponseBodyContainsMessage()
+    {
+        await _container.CreateItemStreamAsync(
+            MakeStream("""{"id":"1","partitionKey":"pk"}"""), new PartitionKey("pk"));
+        var response = await _container.DeleteItemStreamAsync("1", new PartitionKey("pk"),
+            new ItemRequestOptions { IfMatchEtag = "\"stale\"" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+        var body = await ReadBodyAsync(response);
+        body.Should().NotBeNullOrEmpty();
+        JObject.Parse(body!)["message"]!.ToString().Should().Contain("One of the specified pre-condition is not met");
+    }
+}
+
+/// <summary>
+/// Tests that exception messages are consistent across all typed-API operations
+/// (no operation should use a different message format than the others).
+/// </summary>
+public class TypedApiMessageConsistencyTests
+{
+    private readonly InMemoryContainer _container = new("test", "/partitionKey");
+
+    [Fact]
+    public async Task AllNotFoundOperations_UseConsistentMessage_WithInTheSystem()
+    {
+        // All typed operations should produce NotFound messages containing "in the system"
+        var readEx = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.ReadItemAsync<TestDocument>("nope", new PartitionKey("pk")));
+
+        var replaceEx = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.ReplaceItemAsync(
+                new TestDocument { Id = "nope", PartitionKey = "pk", Name = "X" },
+                "nope", new PartitionKey("pk")));
+
+        var deleteEx = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.DeleteItemAsync<TestDocument>("nope", new PartitionKey("pk")));
+
+        var patchEx = await Assert.ThrowsAnyAsync<CosmosException>(() =>
+            _container.PatchItemAsync<TestDocument>("nope", new PartitionKey("pk"),
+                [PatchOperation.Set("/name", "X")]));
+
+        // All must contain "in the system"
+        readEx.Message.Should().Contain("in the system");
+        replaceEx.Message.Should().Contain("in the system");
+        deleteEx.Message.Should().Contain("in the system");
+        patchEx.Message.Should().Contain("in the system");
+
+        // All must start with the same prefix
+        const string expectedPrefix = "Entity with the specified id does not exist in the system.";
+        readEx.Message.Should().StartWith(expectedPrefix);
+        replaceEx.Message.Should().StartWith(expectedPrefix);
+        deleteEx.Message.Should().StartWith(expectedPrefix);
+        patchEx.Message.Should().StartWith(expectedPrefix);
     }
 }
