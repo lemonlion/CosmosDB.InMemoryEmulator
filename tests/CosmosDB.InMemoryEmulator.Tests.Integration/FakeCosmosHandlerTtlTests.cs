@@ -12,6 +12,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// CRUD goes through handler, TTL filtering verified via queries.
 /// Parity-validated: runs against both FakeCosmosHandler (in-memory) and real emulator.
 /// Change feed tombstone test is tagged InMemoryOnly.
+/// Per-item TTL override tests are tagged InMemoryOnly — Windows emulator (v2.14.0) does not honour ttl:-1 correctly (see #53).
 /// </summary>
 [Collection(IntegrationCollection.Name)]
 public class FakeCosmosHandlerTtlTests(EmulatorSession session) : IAsyncLifetime
@@ -104,6 +105,9 @@ public class FakeCosmosHandlerTtlTests(EmulatorSession session) : IAsyncLifetime
     //  Per-Item TTL Override
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Windows emulator (v2.14.0) does not correctly enforce per-item TTL overrides (ttl: -1 still expires).
+    // Tracked: https://github.com/lemonlion/CosmosDB.InMemoryEmulator/issues/53
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     [Fact]
     public async Task TTL_PerItemOverride_ShortTtlExpiresBeforeContainerDefault()
     {
@@ -123,6 +127,9 @@ public class FakeCosmosHandlerTtlTests(EmulatorSession session) : IAsyncLifetime
         results[0]["id"]!.Value<string>().Should().Be("default");
     }
 
+    // Windows emulator (v2.14.0) does not correctly enforce per-item TTL overrides (ttl: -1 still expires).
+    // Tracked: https://github.com/lemonlion/CosmosDB.InMemoryEmulator/issues/53
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     [Fact]
     public async Task TTL_PerItemOverride_MinusOne_NeverExpires()
     {

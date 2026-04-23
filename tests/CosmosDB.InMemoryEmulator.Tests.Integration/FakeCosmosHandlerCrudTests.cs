@@ -11,6 +11,7 @@ namespace CosmosDB.InMemoryEmulator.Tests;
 /// TDD tests for CRUD route handling through the SDK HTTP pipeline.
 /// Parity-validated: runs against both FakeCosmosHandler (in-memory) and real emulator.
 /// Tests tagged [Trait(TestTraits.Target, TestTraits.InMemoryOnly)] are excluded from emulator runs.
+/// Patch filter predicate tests are tagged InMemoryOnly — Windows emulator (v2.14.0) does not support filterPredicate syntax (see #53).
 /// </summary>
 [Collection(IntegrationCollection.Name)]
 public class FakeCosmosHandlerCrudTests(EmulatorSession session) : IAsyncLifetime
@@ -310,6 +311,9 @@ public class FakeCosmosHandlerCrudTests(EmulatorSession session) : IAsyncLifetim
         ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    // Windows emulator (v2.14.0) returns 400 "Syntax error near 'value'" for patch filter predicates.
+    // Tracked: https://github.com/lemonlion/CosmosDB.InMemoryEmulator/issues/53
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     [Fact]
     public async Task Handler_PatchItem_WithFilterPredicate_MatchingCondition_Succeeds()
     {
@@ -432,6 +436,9 @@ public class FakeCosmosHandlerCrudTests(EmulatorSession session) : IAsyncLifetim
         ex.Which.StatusCode.Should().Be((HttpStatusCode)429);
     }
 
+    // Windows emulator (v2.14.0) returns 400 BadRequest instead of 412 PreconditionFailed for non-matching patch filter predicates.
+    // Tracked: https://github.com/lemonlion/CosmosDB.InMemoryEmulator/issues/53
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)]
     [Fact]
     public async Task Handler_PatchItem_WithFilterPredicate_NonMatchingCondition_ThrowsPreconditionFailed()
     {

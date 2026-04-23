@@ -1,0 +1,32 @@
+name: Wait for Cosmos DB Emulator
+description: Polls the emulator HTTP endpoint until it returns 200 or 401, indicating readiness.
+
+inputs:
+  endpoint:
+    description: 'Emulator endpoint URL to poll'
+    default: 'https://localhost:8081'
+  timeout:
+    description: 'Maximum seconds to wait before failing'
+    default: '300'
+
+runs:
+  using: composite
+  steps:
+    - name: Wait for Cosmos DB Emulator
+      shell: bash
+      run: |
+        echo "Waiting for Cosmos DB Emulator at ${{ inputs.endpoint }}..."
+        timeout=${{ inputs.timeout }}
+        elapsed=0
+        while [ $elapsed -lt $timeout ]; do
+          status=$(curl -sk -o /dev/null -w "%{http_code}" "${{ inputs.endpoint }}/" 2>/dev/null || echo "000")
+          if [ "$status" = "200" ] || [ "$status" = "401" ]; then
+            echo "Emulator ready after ${elapsed}s (HTTP $status)"
+            exit 0
+          fi
+          sleep 5
+          elapsed=$((elapsed + 5))
+          echo "Still waiting... (${elapsed}s)"
+        done
+        echo "::error::Cosmos DB Emulator did not start within ${timeout}s"
+        exit 1

@@ -1,0 +1,87 @@
+name: Build & Test
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        framework: [net8.0, net10.0]
+    name: build (${{ matrix.framework }})
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-dotnet-build
+        with:
+          build-args: --framework ${{ matrix.framework }}
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output-${{ matrix.framework }}
+          path: |
+            src/**/bin/Release/${{ matrix.framework }}/**
+            src/**/obj/**
+            tests/**/bin/Release/${{ matrix.framework }}/**
+            tests/**/obj/**
+          retention-days: 1
+
+  test-unit:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+        shard_index: [0, 1, 2]  # indices into scripts/shard-profile.json
+    name: unit (${{ matrix.framework }}, shard ${{ matrix.shard_index }})
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-dotnet-build
+        with:
+          build: false
+
+      - name: Download build output
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output-${{ matrix.framework }}
+
+      - name: Restore executable permissions
+        run: find . -path '*/bin/Release/*' -type f -exec chmod +x {} +
+
+      - name: Unit Tests
+        run: |
+          filter=$(jq -r '.shard_profiles[${{ matrix.shard_index }}].filter' scripts/shard-profile.json)
+          dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Unit \
+            --configuration Release --no-build --verbosity normal \
+            --framework ${{ matrix.framework }} \
+            --filter "$filter"
+
+  test-integration:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+    name: integration (${{ matrix.framework }})
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-dotnet-build
+        with:
+          build: false
+
+      - name: Download build output
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output-${{ matrix.framework }}
+
+      - name: Restore executable permissions
+        run: find . -path '*/bin/Release/*' -type f -exec chmod +x {} +
+
+      - name: Integration Tests
+        run: dotnet test tests/CosmosDB.InMemoryEmulator.Tests.Integration --configuration Release --no-build --verbosity normal --framework ${{ matrix.framework }}
