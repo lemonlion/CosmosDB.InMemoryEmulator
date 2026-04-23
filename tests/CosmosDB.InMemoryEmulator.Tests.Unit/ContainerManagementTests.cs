@@ -539,6 +539,299 @@ public class UniqueKeyPolicyTests
     }
 }
 
+// ─── UniqueKeyPolicy with Nested Paths (Issue #10) ─────────────────────
+
+public class UniqueKeyPolicyNestedPathTests
+{
+    [Fact]
+    public async Task CreateItem_NestedPath_ViolatesUniqueKey_ThrowsConflict()
+    {
+        // Issue #10: /value/code nested path should be enforced
+        var properties = new ContainerProperties("unique-ctr", "/_partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/value/code" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", _partitionKey = "ref", value = new { code = "DUPLICATE" } }),
+            new PartitionKey("ref"));
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", _partitionKey = "ref", value = new { code = "DUPLICATE" } }),
+            new PartitionKey("ref"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task CreateItem_NestedPath_DifferentValues_Succeeds()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/_partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/value/code" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", _partitionKey = "ref", value = new { code = "ABC" } }),
+            new PartitionKey("ref"));
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", _partitionKey = "ref", value = new { code = "XYZ" } }),
+            new PartitionKey("ref"));
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task CreateItem_NestedPath_DifferentPartition_Succeeds()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/_partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/value/code" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", _partitionKey = "ref1", value = new { code = "DUPLICATE" } }),
+            new PartitionKey("ref1"));
+
+        // Same nested value but different partition — should succeed
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", _partitionKey = "ref2", value = new { code = "DUPLICATE" } }),
+            new PartitionKey("ref2"));
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task UpsertItem_NestedPath_ViolatesUniqueKey_ThrowsConflict()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/_partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/value/code" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", _partitionKey = "ref", value = new { code = "DUPLICATE" } }),
+            new PartitionKey("ref"));
+
+        var act = () => container.UpsertItemAsync(
+            JObject.FromObject(new { id = "2", _partitionKey = "ref", value = new { code = "DUPLICATE" } }),
+            new PartitionKey("ref"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task ReplaceItem_NestedPath_ViolatesUniqueKey_ThrowsConflict()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/_partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/value/code" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", _partitionKey = "ref", value = new { code = "A" } }),
+            new PartitionKey("ref"));
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", _partitionKey = "ref", value = new { code = "B" } }),
+            new PartitionKey("ref"));
+
+        // Replace item 2 to collide with item 1
+        var act = () => container.ReplaceItemAsync(
+            JObject.FromObject(new { id = "2", _partitionKey = "ref", value = new { code = "A" } }),
+            "2", new PartitionKey("ref"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task CreateItem_DeeplyNestedPath_ViolatesUniqueKey_ThrowsConflict()
+    {
+        // Three-level nesting: /a/b/c
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/a/b/c" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "p", a = new { b = new { c = "deep" } } }),
+            new PartitionKey("p"));
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "p", a = new { b = new { c = "deep" } } }),
+            new PartitionKey("p"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task CreateItem_DeeplyNestedPath_DifferentValues_Succeeds()
+    {
+        var properties = new ContainerProperties("unique-ctr", "/pk")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/a/b/c" } } }
+            }
+        };
+        var container = new InMemoryContainer(properties);
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", pk = "p", a = new { b = new { c = "val1" } } }),
+            new PartitionKey("p"));
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", pk = "p", a = new { b = new { c = "val2" } } }),
+            new PartitionKey("p"));
+
+        await act.Should().NotThrowAsync();
+    }
+}
+
+// ─── UniqueKeyPolicy via Database.CreateContainerAsync (Issue #13) ──────
+
+public class UniqueKeyPolicyViaDatabaseTests
+{
+    [Fact]
+    public async Task CreateItem_ViaDatabase_ViolatesUniqueKey_ThrowsConflict()
+    {
+        // Issue #13: UniqueKeyPolicy should be enforced when container is created
+        // via database.CreateContainerAsync(containerProperties)
+        var client = new InMemoryCosmosClient();
+        var database = (await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
+
+        var containerProps = new ContainerProperties("items", "/category")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/name" } } }
+            }
+        };
+        var container = (await database.CreateContainerAsync(containerProps)).Container;
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", category = "books", name = "Clean Code" }),
+            new PartitionKey("books"));
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", category = "books", name = "Clean Code" }),
+            new PartitionKey("books"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task CreateItem_ViaDatabase_NestedPath_ViolatesUniqueKey_ThrowsConflict()
+    {
+        // Combined Issue #10 + #13: nested paths via database.CreateContainerAsync
+        var client = new InMemoryCosmosClient();
+        var database = (await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
+
+        var containerProps = new ContainerProperties("refdata", "/_partitionKey")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/value/code" } } }
+            }
+        };
+        var container = (await database.CreateContainerAsync(containerProps)).Container;
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", _partitionKey = "ref", value = new { code = "DUPLICATE" } }),
+            new PartitionKey("ref"));
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", _partitionKey = "ref", value = new { code = "DUPLICATE" } }),
+            new PartitionKey("ref"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task UpsertItem_ViaDatabase_ViolatesUniqueKey_ThrowsConflict()
+    {
+        var client = new InMemoryCosmosClient();
+        var database = (await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
+
+        var containerProps = new ContainerProperties("items", "/category")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/name" } } }
+            }
+        };
+        var container = (await database.CreateContainerAsync(containerProps)).Container;
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", category = "books", name = "Clean Code" }),
+            new PartitionKey("books"));
+
+        var act = () => container.UpsertItemAsync(
+            JObject.FromObject(new { id = "2", category = "books", name = "Clean Code" }),
+            new PartitionKey("books"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task CreateItem_ViaCreateIfNotExists_ViolatesUniqueKey_ThrowsConflict()
+    {
+        var client = new InMemoryCosmosClient();
+        var database = (await client.CreateDatabaseIfNotExistsAsync("testdb")).Database;
+
+        var containerProps = new ContainerProperties("items", "/category")
+        {
+            UniqueKeyPolicy = new UniqueKeyPolicy
+            {
+                UniqueKeys = { new UniqueKey { Paths = { "/name" } } }
+            }
+        };
+        var container = (await database.CreateContainerIfNotExistsAsync(containerProps)).Container;
+
+        await container.CreateItemAsync(
+            JObject.FromObject(new { id = "1", category = "books", name = "Clean Code" }),
+            new PartitionKey("books"));
+
+        var act = () => container.CreateItemAsync(
+            JObject.FromObject(new { id = "2", category = "books", name = "Clean Code" }),
+            new PartitionKey("books"));
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+}
+
 // ─── ConflictResolutionPolicy Stored But Not Enforced ───────────────────
 
 public class ConflictResolutionPolicyTests
