@@ -244,12 +244,14 @@ public class PreviewSdkContainerMethodTests
     // ── SemanticRerankAsync ────────────────────────────────────────────────────
 
     [Fact]
-    public async Task SemanticRerankAsync_ThrowsNotSupportedException()
+    public async Task SemanticRerankAsync_ThrowsCosmosException()
     {
         var act = async () => await _container.SemanticRerankAsync(
             "my context", new[] { "doc1", "doc2" }, null);
 
-        await act.Should().ThrowAsync<NotSupportedException>()
+        // The in-memory emulator throws CosmosException (BadRequest) to match the exception
+        // type that the real service returns, so callers catching CosmosException work correctly.
+        await act.Should().ThrowAsync<CosmosException>()
             .WithMessage("*SemanticRerankAsync*");
     }
 

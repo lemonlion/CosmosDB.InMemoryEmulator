@@ -2359,9 +2359,13 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         IEnumerable<string> documents,
         IDictionary<string, object> options,
         CancellationToken cancellationToken = default)
-        => throw new NotSupportedException(
+        => throw new InMemoryCosmosException(
             "SemanticRerankAsync is not supported by the in-memory emulator. " +
-            "This API requires a live Cosmos DB endpoint with semantic ranking capabilities.");
+            "This API requires a live Cosmos DB endpoint with semantic ranking capabilities.",
+            HttpStatusCode.BadRequest,
+            0,
+            Guid.NewGuid().ToString(),
+            SyntheticRequestCharge);
 #endif
 
     // ═══════════════════════════════════════════════════════════════════════════
