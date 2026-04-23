@@ -143,7 +143,7 @@ internal class InMemoryDatabase : Database
         container.ExplicitlyCreated = true;
         if (!_containers.TryAdd(id, container))
         {
-            throw new InMemoryCosmosException("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
+            throw InMemoryCosmosException.Create("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
         }
         _explicitlyCreatedContainers.TryAdd(id, true);
         var response = BuildContainerResponse(container, partitionKeyPath, HttpStatusCode.Created);
@@ -167,7 +167,7 @@ internal class InMemoryDatabase : Database
             container.IndexingPolicy = containerProperties.IndexingPolicy;
         if (!_containers.TryAdd(id, container))
         {
-            throw new InMemoryCosmosException("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
+            throw InMemoryCosmosException.Create("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
         }
         _explicitlyCreatedContainers.TryAdd(id, true);
         var response = BuildContainerResponse(container, containerProperties, HttpStatusCode.Created);
@@ -255,7 +255,7 @@ internal class InMemoryDatabase : Database
     {
         if (_client != null && !_client.IsDatabaseExplicitlyCreated(Id))
         {
-            throw new InMemoryCosmosException($"Database '{Id}' not found.", HttpStatusCode.NotFound, 1003, Guid.NewGuid().ToString(), 0);
+            throw InMemoryCosmosException.Create($"Database '{Id}' not found.", HttpStatusCode.NotFound, 1003, Guid.NewGuid().ToString(), 0);
         }
         var response = Substitute.For<DatabaseResponse>();
         response.Database.Returns(this);
@@ -392,7 +392,7 @@ internal class InMemoryDatabase : Database
     {
         var user = new InMemoryUser(id, () => _users.TryRemove(id, out _));
         if (!_users.TryAdd(id, user))
-            throw new InMemoryCosmosException($"User '{id}' already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
+            throw InMemoryCosmosException.Create($"User '{id}' already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
 
         var response = Substitute.For<UserResponse>();
         response.StatusCode.Returns(HttpStatusCode.Created);

@@ -237,7 +237,7 @@ public class ChangeFeedTests
     }
 
     [Fact]
-    public async Task ChangeFeedProcessor_BuilderMethodsReturnBuilder()
+    public void ChangeFeedProcessor_BuilderMethodsReturnBuilder()
     {
         var builder = _container.GetChangeFeedProcessorBuilder<TestDocument>(
             "test-processor",
@@ -1380,7 +1380,7 @@ public class ChangeFeedIteratorLifecycleTests
     }
 
     [Fact]
-    public async Task ChangeFeed_EmptyFeed_HasMoreResults_IsFalse()
+    public void ChangeFeed_EmptyFeed_HasMoreResults_IsFalse()
     {
         var iterator = _container.GetChangeFeedIterator<TestDocument>(
             ChangeFeedStartFrom.Beginning(), ChangeFeedMode.Incremental);

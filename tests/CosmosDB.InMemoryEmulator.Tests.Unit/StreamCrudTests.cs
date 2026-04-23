@@ -1010,6 +1010,8 @@ public class StreamDivergentBehaviorTests
     [Fact]
     public async Task ReplaceStream_IdMismatch_Returns400()
     {
+        // SDK docs state body id must match the id parameter.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
         var container = new InMemoryContainer("mismatch", "/partitionKey");
         await container.CreateItemStreamAsync(
             ToStream("""{"id":"1","partitionKey":"pk1"}"""), new PartitionKey("pk1"));
@@ -1021,10 +1023,10 @@ public class StreamDivergentBehaviorTests
     }
 
     [Fact]
-    public async Task Divergent_ReplaceStream_IdMismatch_AlsoReturns400()
+    public async Task ReplaceStream_IdMismatch_AlsoReturns400()
     {
-        // The emulator now correctly validates body id matches parameter id,
-        // matching real Cosmos DB behavior.
+        // SDK docs state body id must match the id parameter.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
         var container = new InMemoryContainer("mismatch-div", "/partitionKey");
         await container.CreateItemStreamAsync(
             ToStream("""{"id":"1","partitionKey":"pk1","name":"orig"}"""), new PartitionKey("pk1"));
@@ -1305,14 +1307,15 @@ public class StreamETagWildcardTests
     }
 
     [Fact]
-    public async Task UpsertStream_IfMatch_OnNonExistentItem_ReturnsNotFound()
+    public async Task UpsertStream_IfMatch_OnNonExistentItem_CreatesItem()
     {
+        // If-Match is "applicable only on PUT and DELETE" per REST API docs.
+        // Upsert uses POST, so If-Match is ignored on the insert path.
         var container = new InMemoryContainer("wild-test", "/pk");
         var response = await container.UpsertItemStreamAsync(
             ToStream("""{"id":"1","pk":"a"}"""), new PartitionKey("a"),
             new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
-        // IfMatch on non-existent item returns NotFound (matches real Cosmos DB)
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 }
 

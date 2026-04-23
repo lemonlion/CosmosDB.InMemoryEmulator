@@ -399,16 +399,16 @@ public class ETagLifecycleTests
     }
 
     [Fact]
-    public async Task Upsert_WithIfMatch_WhenItemDoesNotExist_Returns404()
+    public async Task Upsert_WithIfMatch_WhenItemDoesNotExist_CreatesItem()
     {
-        var act = () => _container.UpsertItemAsync(
+        // If-Match is "applicable only on PUT and DELETE" per REST API docs.
+        // Upsert uses POST, so If-Match is ignored on the insert path.
+        var response = await _container.UpsertItemAsync(
             new TestDocument { Id = "new", PartitionKey = "pk1", Name = "Test" },
             new PartitionKey("pk1"),
             new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
 
-        // IfMatch on non-existent item: 404 (not 412)
-        var ex = await act.Should().ThrowAsync<CosmosException>();
-        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     [Fact]
@@ -712,17 +712,18 @@ public class ETagBodyMatchTests
 public class ETagWildcardUpsertTests
 {
     [Fact]
-    public async Task IfMatch_Wildcard_OnUpsert_WhenItemDoesNotExist_Throws404()
+    public async Task IfMatch_Wildcard_OnUpsert_WhenItemDoesNotExist_CreatesItem()
     {
+        // If-Match is "applicable only on PUT and DELETE" per REST API docs.
+        // Upsert uses POST, so If-Match (including wildcard) is ignored on the insert path.
         var container = new InMemoryContainer("test", "/partitionKey");
 
-        var act = () => container.UpsertItemAsync(
+        var response = await container.UpsertItemAsync(
             new TestDocument { Id = "new", PartitionKey = "pk1", Name = "New" },
             new PartitionKey("pk1"),
             new ItemRequestOptions { IfMatchEtag = "*" });
 
-        var ex = await act.Should().ThrowAsync<CosmosException>();
-        ex.And.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 }
 

@@ -50,7 +50,7 @@ public sealed class InMemoryUser : User
     {
         if (_parentUsers is not null && !_parentUsers.ContainsKey(_id))
         {
-            throw new InMemoryCosmosException(
+            throw InMemoryCosmosException.Create(
                 $"User with id '{_id}' not found.",
                 HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), 0);
         }
@@ -64,7 +64,7 @@ public sealed class InMemoryUser : User
         CancellationToken cancellationToken = default)
     {
         if (userProperties.Id != _id)
-            throw new InMemoryCosmosException($"Replacing user id is not allowed.", HttpStatusCode.BadRequest, 0, string.Empty, 0);
+            throw InMemoryCosmosException.Create($"Replacing user id is not allowed.", HttpStatusCode.BadRequest, 0, string.Empty, 0);
 
         _id = userProperties.Id;
         return Task.FromResult(BuildUserResponse(CreateUserProperties(_id), HttpStatusCode.OK));
@@ -91,7 +91,7 @@ public sealed class InMemoryUser : User
     {
         var props = InMemoryPermission.WithSyntheticMetadata(permissionProperties);
         if (!_permissions.TryAdd(props.Id, props))
-            throw new InMemoryCosmosException($"Permission '{props.Id}' already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
+            throw InMemoryCosmosException.Create($"Permission '{props.Id}' already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
 
         var perm = new InMemoryPermission(props.Id, _permissions);
         var response = Substitute.For<PermissionResponse>();

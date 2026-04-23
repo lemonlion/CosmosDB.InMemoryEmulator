@@ -297,7 +297,7 @@ public class LinqDivergentOperatorTests : IDisposable
     }
 
     [Fact(Skip = "APPROACH 1 PERMISSIVENESS: InMemoryContainer uses LINQ-to-Objects where DefaultIfEmpty is natively supported. Real Cosmos SDK throws NotSupportedException.")]
-    public async Task Linq_DefaultIfEmpty_RealCosmos_ShouldThrowNotSupported()
+    public void Linq_DefaultIfEmpty_RealCosmos_ShouldThrowNotSupported()
     {
         var act = () => _container.GetItemLinqQueryable<TestDocument>()
             .Where(d => d.Value > 100).DefaultIfEmpty().ToList();
@@ -305,7 +305,7 @@ public class LinqDivergentOperatorTests : IDisposable
     }
 
     [Fact]
-    public async Task Linq_DefaultIfEmpty_WorksInMemory_DivergentBehavior()
+    public void Linq_DefaultIfEmpty_WorksInMemory_DivergentBehavior()
     {
         var result = _container.GetItemLinqQueryable<TestDocument>()
             .Where(d => d.Value > 100).DefaultIfEmpty().ToList();

@@ -36,7 +36,7 @@ public sealed class InMemoryPermission : Permission
         CancellationToken cancellationToken = default)
     {
         if (!_parentPermissions.TryGetValue(Id, out var props))
-            throw new InMemoryCosmosException($"Permission '{Id}' not found.", HttpStatusCode.NotFound, 0, string.Empty, 0);
+            throw InMemoryCosmosException.Create($"Permission '{Id}' not found.", HttpStatusCode.NotFound, 0, string.Empty, 0);
 
         return Task.FromResult(BuildPermissionResponse(props, HttpStatusCode.OK));
     }
@@ -48,7 +48,7 @@ public sealed class InMemoryPermission : Permission
         CancellationToken cancellationToken = default)
     {
         if (!_parentPermissions.ContainsKey(Id))
-            throw new InMemoryCosmosException($"Permission '{Id}' not found.", HttpStatusCode.NotFound, 0, string.Empty, 0);
+            throw InMemoryCosmosException.Create($"Permission '{Id}' not found.", HttpStatusCode.NotFound, 0, string.Empty, 0);
 
         var updated = WithSyntheticMetadata(permissionProperties);
         _parentPermissions[Id] = updated;
@@ -60,7 +60,7 @@ public sealed class InMemoryPermission : Permission
         CancellationToken cancellationToken = default)
     {
         if (!_parentPermissions.TryRemove(Id, out _))
-            throw new InMemoryCosmosException($"Permission '{Id}' not found.", HttpStatusCode.NotFound, 0, string.Empty, 0);
+            throw InMemoryCosmosException.Create($"Permission '{Id}' not found.", HttpStatusCode.NotFound, 0, string.Empty, 0);
 
         return Task.FromResult(BuildPermissionResponse(null, HttpStatusCode.NoContent));
     }

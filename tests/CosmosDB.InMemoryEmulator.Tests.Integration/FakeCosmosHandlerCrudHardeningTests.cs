@@ -252,15 +252,16 @@ public class FakeCosmosHandlerCrudHardeningTests(EmulatorSession session) : IAsy
     }
 
     [Fact]
-    public async Task Handler_UpsertItem_NewItem_WithIfMatchETag_ThrowsNotFound()
+    public async Task Handler_UpsertItem_NewItem_WithIfMatchETag_CreatesItem()
     {
+        // If-Match is "applicable only on PUT and DELETE" per REST API docs.
+        // Upsert uses POST, so If-Match is ignored on the insert path.
         var doc = new TestDocument { Id = "e7-new", PartitionKey = "pk1", Name = "NeverCreated" };
 
-        var act = () => _container.UpsertItemAsync(doc, new PartitionKey("pk1"),
+        var response = await _container.UpsertItemAsync(doc, new PartitionKey("pk1"),
             new ItemRequestOptions { IfMatchEtag = "\"some-etag\"" });
 
-        var ex = await act.Should().ThrowAsync<CosmosException>();
-        ex.Which.StatusCode.Should().BeOneOf(HttpStatusCode.NotFound, HttpStatusCode.PreconditionFailed);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     [Fact]
@@ -293,13 +294,14 @@ public class FakeCosmosHandlerCrudHardeningTests(EmulatorSession session) : IAsy
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Fact]
+    [Trait(TestTraits.Target, TestTraits.InMemoryOnly)] // Windows emulator returns 200 (emulator bug); see docs link below
     public async Task Handler_ReplaceItem_BodyIdMismatch_Throws400()
     {
         var doc = new TestDocument { Id = "r1", PartitionKey = "pk1", Name = "Original" };
         await _container.CreateItemAsync(doc, new PartitionKey("pk1"));
 
-        // The SDK always sends PUT to /docs/{id} using the id from the C# object,
-        // so we can't easily force a mismatch through the typed API.
+        // The SDK docs state body id must match the id parameter.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
         var mismatch = new TestDocument { Id = "different-id", PartitionKey = "pk1", Name = "Mismatch" };
         var act = () => _container.ReplaceItemAsync(mismatch, "r1", new PartitionKey("pk1"));
 

@@ -528,7 +528,8 @@ public class ReplaceItemGapTests2
         await _container.CreateItemAsync(item, new PartitionKey("pk1"));
 
         // Replace with id parameter = "1" but item body has id = "different"
-        // Real Cosmos DB returns 400 BadRequest when body id differs from parameter id
+        // SDK docs state body id must match the id parameter.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-dotnet-create-item
         var replacement = new TestDocument { Id = "different", PartitionKey = "pk1", Name = "Replaced" };
         var act = () => _container.ReplaceItemAsync(replacement, "1", new PartitionKey("pk1"));
 
@@ -851,15 +852,16 @@ public class UpsertItemGapTests3
     }
 
     [Fact]
-    public async Task Upsert_WithIfMatch_OnNewItem_ThrowsPreconditionFailed()
+    public async Task Upsert_WithIfMatch_OnNewItem_CreatesItem()
     {
-        var act = () => _container.UpsertItemAsync(
+        // If-Match is "applicable only on PUT and DELETE" per REST API docs.
+        // Upsert uses POST, so If-Match is ignored on the insert path.
+        var response = await _container.UpsertItemAsync(
             new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
             new PartitionKey("pk1"),
             new ItemRequestOptions { IfMatchEtag = "\"nonexistent\"" });
 
-        var ex = await act.Should().ThrowAsync<CosmosException>();
-        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     [Fact]

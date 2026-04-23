@@ -61,7 +61,7 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
         }
         catch (JavaScriptException ex)
         {
-            throw new InMemoryCosmosException(
+            throw InMemoryCosmosException.Create(
                 $"Pre-trigger failed: {ex.Message}",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
@@ -126,7 +126,7 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
         }
         catch (JavaScriptException ex)
         {
-            throw new InMemoryCosmosException(
+            throw InMemoryCosmosException.Create(
                 $"Post-trigger failed: {ex.Message}",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
@@ -179,7 +179,7 @@ public class JintTriggerEngine : IJsTriggerEngine, IJsUdfEngine
         }
         catch (JavaScriptException ex)
         {
-            throw new InMemoryCosmosException(
+            throw InMemoryCosmosException.Create(
                 $"UDF execution failed: {ex.Message}",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }

@@ -111,7 +111,7 @@ internal class InMemoryCosmosClient : CosmosClient
         var database = new InMemoryDatabase(id, this);
         if (!_databases.TryAdd(id, database))
         {
-            throw new InMemoryCosmosException("Database already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
+            throw InMemoryCosmosException.Create("Database already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
         }
         _explicitlyCreatedDatabases.TryAdd(id, true);
         var response = BuildDatabaseResponse(database, HttpStatusCode.Created);
@@ -303,13 +303,13 @@ internal class InMemoryCosmosClient : CosmosClient
     {
         if (name.Length > 255)
         {
-            throw new InMemoryCosmosException(
+            throw InMemoryCosmosException.Create(
                 $"{resourceType} name must not exceed 255 characters.",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
         if (name.IndexOfAny(['/', '\\', '#', '?']) >= 0)
         {
-            throw new InMemoryCosmosException(
+            throw InMemoryCosmosException.Create(
                 $"{resourceType} name must not contain '/', '\\', '#', or '?' characters.",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
