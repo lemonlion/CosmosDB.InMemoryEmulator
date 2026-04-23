@@ -1,8 +1,8 @@
 name: Rebalance Test Shards
 
 on:
-  schedule:
-    - cron: '0 5 * * *'  # Daily at 05:00 UTC
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
