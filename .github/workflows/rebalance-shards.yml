@@ -58,6 +58,7 @@ jobs:
         if: steps.diff.outputs.changed == 'true' && github.ref == 'refs/heads/main'
         uses: peter-evans/create-pull-request@v7
         with:
+          token: ${{ secrets.REBALANCE_TEST_SHARDS_PAT }}
           commit-message: 'chore: rebalance test shard profile'
           branch: chore/rebalance-shards
           title: 'chore: rebalance test shard profile'
