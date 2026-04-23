@@ -16,13 +16,9 @@
 		<InternalsVisibleTo Include="CosmosDB.InMemoryEmulator.Tests.Performance" />
 	</ItemGroup>
 
-	<PropertyGroup>
-		<!-- Resolve the Cosmos SDK version for the HybridRow DLL reference path.
-		     This avoids hardcoding the version so updates to the PackageReference don't break the build. -->
-		<CosmosSDKVersion>3.58.0</CosmosSDKVersion>
-	</PropertyGroup>
-
 	<ItemGroup>
+		<!-- CosmosSDKVersion is defined in the root Directory.Build.props and updated by the
+		     CI compat-check workflow when testing against a different SDK release. -->
 		<PackageReference Include="Microsoft.Azure.Cosmos" Version="$(CosmosSDKVersion)" />
 		<PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
 		<PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
