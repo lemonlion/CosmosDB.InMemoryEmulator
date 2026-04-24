@@ -44,6 +44,9 @@ public sealed class InMemoryUser : User
 
     public override string Id => _id;
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-user
+    //   "200 OK: The operation was successful."
+    //   "404 Not Found: The user is no longer a resource, that is, the user was deleted."
     public override Task<UserResponse> ReadAsync(
         RequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
@@ -58,6 +61,10 @@ public sealed class InMemoryUser : User
         return Task.FromResult(BuildUserResponse(CreateUserProperties(_id), HttpStatusCode.OK));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-user
+    //   "The only replaceable property is the id of the user."
+    //   "200 Ok: The replace operation was successful."
+    //   "400 Bad Request: The JSON body is invalid."
     public override Task<UserResponse> ReplaceAsync(
         UserProperties userProperties,
         RequestOptions requestOptions = null,
@@ -70,6 +77,8 @@ public sealed class InMemoryUser : User
         return Task.FromResult(BuildUserResponse(CreateUserProperties(_id), HttpStatusCode.OK));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-user
+    //   "204 No Content: The delete operation was successful."
     public override Task<UserResponse> DeleteAsync(
         RequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
@@ -83,6 +92,9 @@ public sealed class InMemoryUser : User
         return new InMemoryPermission(id, _permissions);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-permission
+    //   "201 Created: The operation was successful."
+    //   "409 Conflict: The ID provided for the new permission has been taken by an existing permission."
     public override Task<PermissionResponse> CreatePermissionAsync(
         PermissionProperties permissionProperties,
         int? tokenExpiryInSeconds = null,
@@ -101,6 +113,8 @@ public sealed class InMemoryUser : User
         return Task.FromResult(response);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.user.upsertpermissionasync
+    //   Upsert semantics: creates if new (201 Created), replaces if existing (200 OK).
     public override Task<PermissionResponse> UpsertPermissionAsync(
         PermissionProperties permissionProperties,
         int? tokenExpiryInSeconds = null,
@@ -119,6 +133,8 @@ public sealed class InMemoryUser : User
         return Task.FromResult(response);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-permissions
+    //   "Performing a GET on the permissions URI path returns a list of permissions for the user."
     public override FeedIterator<T> GetPermissionQueryIterator<T>(
         string queryText = null,
         string continuationToken = null,
@@ -136,6 +152,11 @@ public sealed class InMemoryUser : User
         return GetPermissionQueryIterator<T>((string)null, continuationToken, requestOptions);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-user
+    //   "_etag: It is a system generated property representing the resource etag required
+    //    for optimistic concurrency control."
+    //   "_ts: It is a system generated property. It specifies the last updated timestamp
+    //    of the resource. The value is a timestamp."
     internal static UserProperties CreateUserProperties(string id)
     {
         var json = new JObject

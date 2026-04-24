@@ -76,6 +76,8 @@ public static class InMemoryCosmos
     {
         if (string.IsNullOrWhiteSpace(path))
             throw new ArgumentException("Partition key path must not be null or empty.", nameof(path));
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partitioning-overview
+        //   Partition key paths must start with '/' (e.g., "/tenantId", "/address/zipCode").
         if (!path.StartsWith('/'))
             throw new ArgumentException($"Partition key path must start with '/'. Got: '{path}'.", nameof(path));
     }
@@ -257,6 +259,9 @@ public sealed class InMemoryCosmosBuilder
                 "Do not set HttpClientFactory directly — use the wrapHandler parameter to customize " +
                 "the HTTP pipeline. HttpClientFactory is managed internally by InMemoryCosmos.");
 
+        // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.cosmosclientoptions.connectionmode
+        //   "ConnectionMode.Gateway is required when using a custom HttpClientFactory,
+        //    as Direct mode uses its own TCP transport."
         // Force required settings
         options.ConnectionMode = ConnectionMode.Gateway;
         options.LimitToEndpoint = true;

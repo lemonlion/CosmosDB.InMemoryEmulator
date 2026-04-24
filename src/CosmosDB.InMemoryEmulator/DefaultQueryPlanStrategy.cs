@@ -7,6 +7,10 @@ namespace CosmosDB.InMemoryEmulator;
 /// Default implementation of <see cref="IQueryPlanStrategy"/> that builds
 /// <c>PartitionedQueryExecutionInfo</c> using the current Cosmos SDK wire format (v2).
 /// </summary>
+// Ref: https://github.com/Azure/azure-cosmos-dotnet-v3 (SDK source — QueryPlan/QueryPartitionProvider)
+//   The SDK generates a PartitionedQueryExecutionInfo JSON payload containing queryInfo
+//   (aggregates, distinct, orderBy, top, offset, limit, rewrittenQuery) and queryRanges.
+//   This strategy mirrors that structure for in-memory query execution.
 public sealed class DefaultQueryPlanStrategy : IQueryPlanStrategy
 {
     /// <inheritdoc />
@@ -41,6 +45,9 @@ public sealed class DefaultQueryPlanStrategy : IQueryPlanStrategy
         // COUNT(DISTINCT ...) — dCountInfo
         AddCountDistinctInfo(queryInfo, sqlQuery);
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/pagination
+        //   "If the query returns a continuation token, then there are extra query results."
+        // queryRanges covers the full hash space [""..FF) so the query fans out to all partitions.
         return new JObject
         {
             ["partitionedQueryExecutionInfoVersion"] = FakeCosmosHandler.QueryPlanVersion,
@@ -91,6 +98,11 @@ public sealed class DefaultQueryPlanStrategy : IQueryPlanStrategy
         }
 
         // DISTINCT
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/distinct
+        //   "DISTINCT can be either Ordered or Unordered. You can use continuation tokens for
+        //    queries with DISTINCT if you add ORDER BY to the query."
+        // SDK query plan encodes: "Ordered" when DISTINCT + ORDER BY on same expression,
+        // "Unordered" otherwise, "None" when no DISTINCT.
         if (parsed.IsDistinct)
         {
             var isOrdered = false;
@@ -181,6 +193,9 @@ public sealed class DefaultQueryPlanStrategy : IQueryPlanStrategy
     internal static void DetectAggregates(
         SqlExpression? expr, JArray aggregates, JObject groupByAliasToAgg, string? alias)
     {
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-functions
+        //   Cosmos DB supports aggregate functions COUNT, SUM, MIN, MAX, AVG in queries.
+        //   The SDK maps AVG to "Average" in the query plan's aggregates array.
         if (expr is FunctionCallExpression func)
         {
             var name = func.FunctionName.ToUpperInvariant();

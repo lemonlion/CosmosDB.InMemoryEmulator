@@ -87,6 +87,11 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
     /// When true, <see cref="HasMoreResults"/> returns true before the first page is read,
     /// even when the result set is empty. This matches real Cosmos DB query iterator behavior.
     /// </summary>
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/pagination
+    //   "To ensure accurate query results, you should progress through all pages.
+    //    You should continue to execute queries until there are no extra pages."
+    // The real SDK iterator always returns HasMoreResults=true before the first ReadNextAsync
+    // call, even when the query matches zero items. The first page must be consumed to know.
     public bool GuaranteeFirstPage { get; set; }
 
     public override bool HasMoreResults => (GuaranteeFirstPage && !_hasReadFirstPage) || _offset < EnsureItems().Count;
@@ -103,6 +108,10 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
             _offset = items.Count;
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-response-headers
+        //   "x-ms-continuation: This header represents the intermediate state of query execution,
+        //    and is returned when there are additional results aside from what was returned in the response."
+        // Real Cosmos DB uses opaque continuation tokens; we simplify to offset-based for in-memory.
         var continuationToken = _offset < items.Count ? _offset.ToString() : null;
         return Task.FromResult<FeedResponse<T>>(new InMemoryFeedResponse<T>(page, continuationToken, PopulateIndexMetrics));
     }
@@ -130,6 +139,11 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
         private readonly IReadOnlyList<TItem> _items;
         private readonly bool _populateIndexMetrics;
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-response-headers
+        //   "x-ms-activity-id: Represents a unique identifier for the operation."
+        //   "x-ms-request-charge: The number of normalized request units (RU) for the operation."
+        //   "x-ms-item-count: The number of items returned for a query or read-feed request."
+        //   "x-ms-continuation: returned when there are additional results."
         public InMemoryFeedResponse(IReadOnlyList<TItem> items, string continuationToken = null, bool populateIndexMetrics = false)
         {
             _items = items;
@@ -153,6 +167,9 @@ public class InMemoryFeedIterator<T> : FeedIterator<T>
             ? "{\"UtilizedSingleIndexes\":[],\"PotentialSingleIndexes\":[],\"UtilizedCompositeIndexes\":[],\"PotentialCompositeIndexes\":[]}"
             : null!;
         public override string ContinuationToken { get; }
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-response-headers
+        //   "x-ms-request-charge: The number of normalized requests a.k.a. request units (RU) for the operation."
+        // Synthetic fixed charge of 1 RU; real Cosmos DB varies based on query complexity and data size.
         public override double RequestCharge => 1;
         public override string ActivityId { get; }
         public override string ETag => null!;

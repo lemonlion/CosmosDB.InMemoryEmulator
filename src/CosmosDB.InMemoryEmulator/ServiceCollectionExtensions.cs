@@ -102,6 +102,9 @@ public static class ServiceCollectionExtensions
         var finalHandler = options.HttpMessageHandlerWrapper?.Invoke(httpHandler) ?? httpHandler;
 
         // Create a real CosmosClient with the FakeCosmosHandler, wrapped for prefix PK support
+        // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.cosmosclientoptions.connectionmode
+        //   "ConnectionMode.Gateway is required when using a custom HttpClientFactory,
+        //    as Direct mode uses its own TCP transport."
         var innerClient = new CosmosClient(
             FakeConnectionString,
             new CosmosClientOptions
@@ -198,6 +201,8 @@ public static class ServiceCollectionExtensions
         var finalHandler = options.HttpMessageHandlerWrapper?.Invoke(httpHandler) ?? httpHandler;
 
         // Create a hidden internal CosmosClient with the FakeCosmosHandler
+        // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.cosmosclientoptions.connectionmode
+        //   "ConnectionMode.Gateway is required when using a custom HttpClientFactory."
         var innerClient = new CosmosClient(
             FakeConnectionString,
             new CosmosClientOptions
@@ -303,6 +308,8 @@ public static class ServiceCollectionExtensions
         var finalHandler = options.HttpMessageHandlerWrapper?.Invoke(httpHandler) ?? httpHandler;
 
         // Build CosmosClientOptions with the FakeCosmosHandler
+        // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.cosmosclientoptions.connectionmode
+        //   "ConnectionMode.Gateway is required when using a custom HttpClientFactory."
         var cosmosClientOptions = new CosmosClientOptions
         {
             ConnectionMode = ConnectionMode.Gateway,

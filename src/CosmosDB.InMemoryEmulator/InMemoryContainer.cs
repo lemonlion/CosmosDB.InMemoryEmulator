@@ -286,6 +286,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     /// <summary>The <see cref="Microsoft.Azure.Cosmos.Scripts.Scripts"/> instance for executing stored procedures and UDFs.</summary>
     public override Scripts Scripts => _scripts;
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/time-to-live
+    //   "If missing (or set to null), items aren't expired automatically."
+    //   "If present, and the value is set to '-1,' it's equal to infinity, and items don't expire by default."
+    //   "If present and the value is set to some nonzero number 'n,' items will expire 'n' seconds
+    //    after their last modified time."
     /// <summary>
     /// Container-level default TTL in seconds. When set, items expire after this duration
     /// unless overridden by a per-item <c>_ttl</c> property. Set to <c>null</c> to disable.
@@ -521,6 +526,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         ExcludedPaths = { new ExcludedPath { Path = "/\"_etag\"/?" } },
     };
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/index-overview
+    //   The _etag system property is always excluded from indexing by default in Cosmos DB.
     private static void EnsureEtagExcludedPath(IndexingPolicy policy)
     {
         const string etagPath = "/\"_etag\"/?";
@@ -677,12 +684,18 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Item CRUD — Typed
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+    //   Status codes: "201 Created: The operation was successful."
+    //   "409 Conflict: The ID provided for the new document has been taken by an existing document."
+    //   "413 Entity Too Large: The document size in the request exceeded the allowable document size."
     public override async Task<ItemResponse<T>> CreateItemAsync<T>(
         T item, PartitionKey? partitionKey = null,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var json = JsonConvert.SerializeObject(item, JsonSettings);
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/concepts-limits
+        //   "Maximum size of an item: 2 MB (UTF-8 length of JSON representation)"
         ValidateDocumentSize(json);
         var jObj = JsonParseHelpers.ParseJson(json);
 
@@ -690,6 +703,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         json = jObj.ToString(Newtonsoft.Json.Formatting.None);
         ValidateDocumentSize(json);
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+        //   "id - Required - It is the unique ID that identifies the document, that is, no two documents
+        //    should share the same id. The id must not exceed 255 characters."
         var itemId = jObj["id"]?.ToString() ?? throw new InvalidOperationException("Item must have an 'id' property.");
 
         if (itemId.Length == 0)
@@ -715,6 +731,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 lock (_uniqueKeyWriteLock)
                 {
                     ValidateUniqueKeys(jObj, pk);
+                    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+                    //   "409 Conflict: The ID provided for the new document has been taken by an existing document."
                     if (!_items.TryAdd(key, json))
                     {
                         throw InMemoryCosmosException.Create($"Entity with the specified id already exists in the system. id = {itemId}",
@@ -731,6 +749,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
             }
 
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+            //   "_etag: It is a system generated property that specifies the resource etag required
+            //    for optimistic concurrency control."
+            //   "_ts: It is a system generated property. It specifies the last updated timestamp of
+            //    the resource. The value is a timestamp."
             var etag = GenerateETag();
             _etags[key] = etag;
             _timestamps[key] = DateTimeOffset.UtcNow;
@@ -775,6 +798,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-document
+    //   Status codes: "200 Ok: The operation was successful."
+    //   "304 Not Modified: The document requested was not modified since the specified eTag value
+    //    in the If-Match header. The service returns an empty response body."
+    //   "404 Not Found: The document is no longer a resource, that is, the document was deleted."
     public override Task<ItemResponse<T>> ReadItemAsync<T>(
         string id, PartitionKey partitionKey,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -790,12 +818,19 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+        //   "If-None-Match: Optional (applicable only on GET) - Makes operation conditional to only execute
+        //    if the resource has changed. The value should be the etag of the resource."
         CheckIfNoneMatch(requestOptions, key);
         var etag = _etags.GetValueOrDefault(key);
         var result = JsonConvert.DeserializeObject<T>(json, JsonSettings);
         return Task.FromResult(CreateItemResponse(result, HttpStatusCode.OK, etag));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+    //   "x-ms-documentdb-is-upsert: If set to true, Cosmos DB creates the document with the ID
+    //    (and partition key value if applicable) if it doesn't exist, or update the document if it exists."
+    //   Returns 201 Created for new items, 200 OK for replaced items.
     public override async Task<ItemResponse<T>> UpsertItemAsync<T>(
         T item, PartitionKey? partitionKey = null,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -822,6 +857,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         {
             EvictIfExpired(key);
 
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+            //   "If-Match: Optional (applicable only on PUT and DELETE)"
             // Note: If-Match is documented as "applicable only on PUT and DELETE" in the REST API.
             // Upsert is POST-based, so If-Match is not evaluated for the insert path.
             // If the item exists, CheckIfMatch will evaluate it on the update path.
@@ -898,6 +935,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-document
+    //   Status codes: "200 Ok: The operation was successful."
+    //   "404 Not Found: The document no longer exists, i.e. the document was deleted."
+    //   "409 Conflict: The id provided for the new document has been taken by an existing document."
+    //   "413 Entity Too Large: The document size in the request exceeded the allowable document size."
     public override async Task<ItemResponse<T>> ReplaceItemAsync<T>(
         T item, string id, PartitionKey? partitionKey = null,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -938,6 +980,12 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
 
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+            //   "If-Match: Optional (applicable only on PUT and DELETE) - Used to make operation conditional
+            //    for optimistic concurrency. The value should be the etag value of the resource."
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency
+            //   "If the value of the if-match request header is no longer current, the server rejects the
+            //    operation with an 'HTTP 412 Precondition failure' response message."
             CheckIfMatch(requestOptions, key);
 
             // Pre-triggers run after ETag check (matching real Cosmos behavior)
@@ -1002,6 +1050,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-document
+    //   Status codes: "204 No Content: The delete operation was successful."
+    //   "404 Not Found: The document is not found."
     public override async Task<ItemResponse<T>> DeleteItemAsync<T>(
         string id, PartitionKey partitionKey,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -1022,6 +1073,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
 
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+            //   "If-Match: Optional (applicable only on PUT and DELETE) - Used to make operation conditional
+            //    for optimistic concurrency. The value should be the etag value of the resource."
             CheckIfMatch(requestOptions, key);
 
             ExecutePreTriggers(requestOptions, JsonParseHelpers.ParseJson(existingJson), "Delete");
@@ -1054,6 +1108,13 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/patch-a-document
+    //   Status codes: "200 OK: The operation was successful."
+    //   "400 Bad Request: The JSON body is invalid."
+    //   "412 Precondition Failed: The specified pre-condition isn't met"
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
+    //   "It's possible to execute multiple patch operations on a single document.
+    //    The maximum limit is 10 operations."
     public override async Task<ItemResponse<T>> PatchItemAsync<T>(
         string id, PartitionKey partitionKey,
         IReadOnlyList<PatchOperation> patchOperations,
@@ -1108,6 +1169,12 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         var jObj = JsonParseHelpers.ParseJson(existingJson);
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
+        //   "For the previously mentioned modes, it's also possible to add a SQL-like filter predicate
+        //    (for example, 'from c where c.taskNum = 3') such that the operation fails if the precondition
+        //    specified in the predicate isn't satisfied."
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/patch-a-document
+        //   "412 Precondition Failed: The specified pre-condition isn't met"
         if (requestOptions?.FilterPredicate is not null)
         {
             var predicateSql = $"SELECT * {requestOptions.FilterPredicate}";
@@ -1165,6 +1232,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Item CRUD — Stream
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+    //   "201 Created: The operation was successful."
+    //   "400 Bad Request: The JSON body is invalid."
+    //   "409 Conflict: The ID provided for the new document has been taken by an existing document."
+    //   "413 Entity Too Large: The document size in the request exceeded the allowable document size."
     public override async Task<ResponseMessage> CreateItemStreamAsync(
         Stream streamPayload, PartitionKey partitionKey,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -1185,6 +1257,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         var ttlError = ValidatePerItemTtlStream(jObj);
         if (ttlError is not null) return ttlError;
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+        //   "The ID field is automatically added when a document is created without specifying
+        //    the ID value."
         var itemId = jObj["id"]?.ToString() ?? Guid.NewGuid().ToString();
 
         if (itemId.Length == 0)
@@ -1248,6 +1323,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-document
+    //   "200 Ok: The operation was successful."
+    //   "304 Not Modified: The document requested was not modified since the specified eTag
+    //    value in the If-Match header. The service returns an empty response body."
+    //   "404 Not Found: The document is no longer a resource, that is, the document was deleted."
     public override Task<ResponseMessage> ReadItemStreamAsync(
         string id, PartitionKey partitionKey,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -1261,6 +1341,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotFound));
         }
         var etag = _etags.GetValueOrDefault(key);
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+        //   "If-None-Match: Optional (applicable only on GET). Makes operation conditional to
+        //    only execute if the resource has changed. The value should be the etag of the resource."
         if (!CheckIfNoneMatchStream(requestOptions, key))
         {
             return Task.FromResult(CreateResponseMessage(HttpStatusCode.NotModified, etag: etag));
@@ -1268,6 +1351,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, json, etag));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+    //   "x-ms-documentdb-is-upsert: If set to true, Cosmos DB creates the document with the ID
+    //    (and partition key value if applicable) if it doesn't exist, or update the document if
+    //    it exists."
+    // Returns 201 Created for insert, 200 OK for update.
     public override async Task<ResponseMessage> UpsertItemStreamAsync(
         Stream streamPayload, PartitionKey partitionKey,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -1288,6 +1376,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         var ttlError = ValidatePerItemTtlStream(jObj);
         if (ttlError is not null) return ttlError;
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+        //   "id: Required. It is the unique ID that identifies the document, that is, no two
+        //    documents should share the same id."
         var itemId = jObj["id"]?.ToString();
         if (itemId is null)
             return CreateResponseMessage(HttpStatusCode.BadRequest);
@@ -1375,6 +1466,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-document
+    //   "200 Ok: The operation was successful."
+    //   "400 Bad Request: The JSON body is invalid."
+    //   "404 Not Found: The document no longer exists, i.e. the document was deleted."
+    //   "409 Conflict: The id provided for the new document has been taken by an existing document."
     public override async Task<ResponseMessage> ReplaceItemStreamAsync(
         Stream streamPayload, string id, PartitionKey partitionKey,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -1415,6 +1511,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 return CreateResponseMessage(HttpStatusCode.NotFound);
             }
 
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+            //   "If-Match: Optional (applicable only on PUT and DELETE). Used to make operation
+            //    conditional for optimistic concurrency. The value should be the etag value of
+            //    the resource."
             if (!CheckIfMatchStream(requestOptions, key))
             {
                 return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
@@ -1478,6 +1578,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-document
+    //   "204 No Content: The delete operation was successful."
+    //   "404 Not Found: The document is not found."
     public override async Task<ResponseMessage> DeleteItemStreamAsync(
         string id, PartitionKey partitionKey,
         ItemRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -1497,6 +1600,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 return CreateResponseMessage(HttpStatusCode.NotFound);
             }
 
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+            //   "If-Match: Optional (applicable only on PUT and DELETE). Used to make operation
+            //    conditional for optimistic concurrency. The value should be the etag value of
+            //    the resource."
             if (!CheckIfMatchStream(requestOptions, key))
             {
                 return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
@@ -1532,6 +1639,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/patch-a-document
+    //   "200 OK: The operation was successful."
+    //   "400 Bad Request: The JSON body is invalid."
+    //   "412 Precondition Failed: The specified pre-condition isn't met"
     public override async Task<ResponseMessage> PatchItemStreamAsync(
         string id, PartitionKey partitionKey,
         IReadOnlyList<PatchOperation> patchOperations,
@@ -1544,6 +1655,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return CreateResponseMessage(HttpStatusCode.BadRequest);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
+        //   "It's possible to execute multiple patch operations on a single document. The
+        //    maximum limit is 10 operations."
         if (patchOperations.Count > 10)
         {
             return CreateResponseMessage(HttpStatusCode.BadRequest);
@@ -1585,6 +1699,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return CreateResponseMessage(HttpStatusCode.NotFound);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/patch-a-document
+        //   "412 Precondition Failed: The specified pre-condition isn't met"
         if (!CheckIfMatchStream(requestOptions, key))
         {
             return CreateResponseMessage(HttpStatusCode.PreconditionFailed);
@@ -1592,6 +1708,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         var jObj = JsonParseHelpers.ParseJson(existingJson);
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
+        //   "For the previously mentioned modes, it's also possible to add a SQL-like filter
+        //    predicate (for example, 'from c where c.taskNum = 3') such that the operation fails
+        //    if the precondition specified in the predicate isn't satisfied."
         if (requestOptions?.FilterPredicate is not null)
         {
             var predicateSql = $"SELECT * {requestOptions.FilterPredicate}";
@@ -1664,6 +1784,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  ReadMany
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.readmanyitemsasync
+    //   "ReadManyItemsAsync is meant to perform better latency-wise than a query with IN
+    //    statements to fetch a large number of independent items."
+    // Note: Items that are not found are silently skipped — no error is raised for missing items.
     public override Task<FeedResponse<T>> ReadManyItemsAsync<T>(
         IReadOnlyList<(string id, PartitionKey partitionKey)> items,
         ReadManyRequestOptions readManyRequestOptions = null, CancellationToken cancellationToken = default)
@@ -1730,6 +1854,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Query — Typed FeedIterator
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/query-documents
+    //   "400 Bad Request — The specified request was specified with an incorrect SQL syntax,
+    //    or missing required headers."
     private static List<string> ExecuteQuerySafe(Func<List<string>> queryFunc)
     {
         try
@@ -1744,6 +1871,14 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.getitemqueryiterator
+    //   "This method creates a query for items under a container in an Azure Cosmos database
+    //    using a SQL statement with parameterized values. It returns a FeedIterator."
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/query-documents
+    //   "x-ms-continuation — A string token returned for queries and read-feed operations if
+    //    there are more results to be read."
+    //   "x-ms-max-item-count — An integer indicating the maximum number of items to be
+    //    returned per page."
     public override FeedIterator<T> GetItemQueryIterator<T>(
         QueryDefinition queryDefinition, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
@@ -1760,6 +1895,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         };
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/query-documents
+    //   "200 OK — The operation was successful."
+    //   When queryText is null/empty, all items are returned (equivalent to SELECT * FROM c).
     public override FeedIterator<T> GetItemQueryIterator<T>(
         string queryText = null, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
@@ -1784,6 +1922,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         };
     }
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.getitemqueryiterator
+    //   "Query as a stream only supports single partition queries"
+    //   FeedRange overload distributes query execution across feed ranges for parallelization.
     public override FeedIterator<T> GetItemQueryIterator<T>(
         FeedRange feedRange, QueryDefinition queryDefinition, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
@@ -1805,6 +1946,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Query — Stream FeedIterator
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/query-documents
+    //   Stream variants return the raw JSON response body containing _rid, Documents array,
+    //   and _count, matching the REST API response envelope format.
     public override FeedIterator GetItemQueryStreamIterator(
         QueryDefinition queryDefinition, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
@@ -1841,6 +1985,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  LINQ
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/linq-to-sql
+    //   "You can create a LINQ query with GetItemLinqQueryable. This example shows LINQ query
+    //    generation and asynchronous execution with a FeedIterator."
+    //   "The query provider type system supports only the JSON primitive types: numeric,
+    //    Boolean, string, and null."
     public override IOrderedQueryable<T> GetItemLinqQueryable<T>(
         bool allowSynchronousQueryExecution = false, string continuationToken = null,
         QueryRequestOptions requestOptions = null, CosmosLinqSerializerOptions linqSerializerOptions = null)
@@ -1863,6 +2012,16 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Change Feed — Iterators
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-pull-model
+    //   "When you initially create FeedIterator, you must specify a required ChangeFeedStartFrom
+    //    value, which consists of both the starting position for reading changes and the value
+    //    you want to use for FeedRange."
+    //   "You can optionally specify ChangeFeedRequestOptions to set a PageSizeHint. When set,
+    //    this property sets the maximum number of items received per page."
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-modes
+    //   "Latest version mode — Only the most recent change for a specific item is included in
+    //    the change feed. Intermediate changes might not be available."
+    //   "When an item is deleted, it's no longer available in the feed." (Incremental mode)
     public override FeedIterator<T> GetChangeFeedIterator<T>(
         ChangeFeedStartFrom changeFeedStartFrom, ChangeFeedMode changeFeedMode,
         ChangeFeedRequestOptions changeFeedRequestOptions = null)
@@ -1935,6 +2094,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         eagerEntries = FilterChangeFeedEntriesByFeedRange(eagerEntries, feedRange);
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-modes
+        //   "Only the most recent change for a specific item is included in the change feed.
+        //    Intermediate changes might not be available."
+        //   "When an item is deleted, it's no longer available in the feed."
         if (changeFeedMode == ChangeFeedMode.Incremental)
         {
             eagerEntries = eagerEntries
@@ -1967,6 +2130,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return new InMemoryFeedIterator<T>(items);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-pull-model
+    //   "In addition to the examples that return entity objects, you can also obtain the
+    //    response with Stream support. Streams allow you to read data without having it first
+    //    deserialized, so you save on client resources."
     public override FeedIterator GetChangeFeedStreamIterator(
         ChangeFeedStartFrom changeFeedStartFrom, ChangeFeedMode changeFeedMode,
         ChangeFeedRequestOptions changeFeedRequestOptions = null)
@@ -2195,6 +2362,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Change Feed — Processor Builders
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.getchangefeedprocessorbuilder
+    //   "Initializes a ChangeFeedProcessorBuilder for change feed processing."
+    //   processorName: "A name that identifies the Processor and the particular work it will do."
     public override ChangeFeedProcessorBuilder GetChangeFeedProcessorBuilder<T>(
         string processorName, Container.ChangesHandler<T> onChangesDelegate)
         => ChangeFeedProcessorBuilderFactory.Create(processorName,
@@ -2233,6 +2403,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Feed Ranges
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.getfeedrangesasync
+    //   "Obtains a list of FeedRange that can be used to parallelize Feed operations."
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-pull-model
+    //   "When you get a list of FeedRange values for your container, you get one FeedRange
+    //    per physical partition."
     public override Task<IReadOnlyList<FeedRange>> GetFeedRangesAsync(CancellationToken cancellationToken = default)
     {
         var count = Math.Max(1, FeedRangeCount);
@@ -2253,6 +2428,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Container management
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-collection
+    //   "200 Ok — The operation was successful."
+    //   "404 Not Found — The collection is no longer a resource, that is, the collection
+    //    was deleted."
     public override Task<ContainerResponse> ReadContainerAsync(
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
@@ -2270,6 +2449,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return Task.FromResult(r);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-collection
+    //   "200 Ok — The operation was successful."
+    //   "404 Not Found — The collection is no longer a resource, that is, the collection
+    //    was deleted."
     public override Task<ResponseMessage> ReadContainerStreamAsync(
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
@@ -2283,6 +2466,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, JsonConvert.SerializeObject(_containerProperties, JsonSettings)));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-collection
+    //   "Replace Collection supports changing the indexing policy of a collection after creation.
+    //    Changing other properties of a collection like the ID or the partition key aren't
+    //    supported."
+    //   "400 Bad Request — The JSON body is invalid."
     public override Task<ContainerResponse> ReplaceContainerAsync(
         ContainerProperties containerProperties, ContainerRequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
@@ -2310,6 +2498,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return Task.FromResult(r);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-collection
+    //   "Replace Collection supports changing the indexing policy of a collection after creation."
+    //   "400 Bad Request — The JSON body is invalid."
     public override Task<ResponseMessage> ReplaceContainerStreamAsync(
         ContainerProperties containerProperties, ContainerRequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
@@ -2340,6 +2531,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return Task.FromResult(CreateResponseMessage(HttpStatusCode.OK, JsonConvert.SerializeObject(containerProperties, JsonSettings)));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-collection
+    //   "204 No Content — The delete operation was successful."
     public override Task<ContainerResponse> DeleteContainerAsync(
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
@@ -2362,6 +2555,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return Task.FromResult(r);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-collection
+    //   "204 No Content — The delete operation was successful."
     public override Task<ResponseMessage> DeleteContainerStreamAsync(
         ContainerRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
@@ -2385,6 +2580,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Throughput
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/set-throughput
+    //   "The throughput provisioned on an Azure Cosmos DB container is exclusively reserved
+    //    for that container."
+    //   "You can elastically scale throughput for a container by provisioning any amount of
+    //    throughput by using request units (RUs)."
     public override Task<int?> ReadThroughputAsync(CancellationToken cancellationToken = default)
         => Task.FromResult<int?>(_throughput);
 
@@ -2423,6 +2623,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Delete all items by partition key
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.container.deleteallitemsbypartitionkeystreamasync
+    //   "Deletes all items in the Container with the specified PartitionKey value. Starts an
+    //    asynchronous Cosmos DB background operation which deletes all items in the Container
+    //    with the specified value."
     public override Task<ResponseMessage> DeleteAllItemsByPartitionKeyStreamAsync(
         PartitionKey partitionKey, RequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
@@ -2444,6 +2648,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
     private static (string Id, string PartitionKey) ItemKey(string id, string partitionKey) => (id, partitionKey);
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/concepts-limits
+    //   "Maximum length of partition key value: 2,048 bytes"
     private string ExtractPartitionKeyValue(PartitionKey? partitionKey, JObject jObj)
     {
         var pk = ExtractPartitionKeyValueCore(partitionKey, jObj);
@@ -2453,6 +2659,12 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return pk;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partitioning-overview
+    //   "Azure Cosmos DB uses partitioning to scale individual containers in a database to
+    //    meet the performance needs of your application."
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "x-ms-documentdb-partitionkey — The partition key value for the requested document
+    //    or attachment operation."
     private string ExtractPartitionKeyValueCore(PartitionKey? partitionKey, JObject jObj)
     {
         if (partitionKey.HasValue)
@@ -2571,8 +2783,17 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return raw;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency
+    //   "Every item stored in an Azure Cosmos DB container has a system defined _etag property.
+    //    The value of the _etag is automatically generated and updated by the server every time
+    //    the item is updated."
     private static string GenerateETag() => $"\"{Interlocked.Increment(ref _etagCounter):x16}\"";
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "x-ms-documentdb-partitionkey — The partition key value for the requested document
+    //    or attachment operation. Required for operations against documents and attachments
+    //    when the collection definition includes a partition key definition."
+    // The SDK returns 400 (sub-status 1001) when the PK in the header doesn't match the document body.
     private void ValidatePartitionKeyConsistency(PartitionKey? explicitKey, JObject jObj)
     {
         if (!explicitKey.HasValue || explicitKey.Value == PartitionKey.None || explicitKey.Value == PartitionKey.Null)
@@ -2627,6 +2848,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return null;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/patch-a-document
+    //   Patch operations cannot target the 'id' property or partition key properties.
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/documents
+    //   "id — Required. It is a user settable property. It is the unique name that identifies
+    //    the document."
     private void ValidatePatchPaths(IReadOnlyList<PatchOperation> operations)
     {
         foreach (var op in operations)
@@ -2668,6 +2894,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-collection
+    //   "Changing other properties of a collection like the ID or the partition key aren't
+    //    supported."
     private void ValidateContainerReplace(ContainerProperties newProperties)
     {
         // Real Cosmos DB rejects partition key path changes
@@ -2681,6 +2910,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-time-to-live
+    //   "To set the TTL on an item, you need to provide a nonzero positive number, which
+    //    indicates the period, in seconds, to expire the item after the last modified timestamp
+    //    of the item _ts. You can provide a -1 as well when the item shouldn't expire."
     private void ValidatePerItemTtl(JObject jObj)
     {
         var ttlToken = jObj["ttl"] ?? jObj["_ttl"];
@@ -2692,6 +2925,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-time-to-live
+    //   "To set the TTL on an item, you need to provide a nonzero positive number [...].
+    //    You can provide a -1 as well when the item shouldn't expire."
     private ResponseMessage ValidatePerItemTtlStream(JObject jObj)
     {
         var ttlToken = jObj["ttl"] ?? jObj["_ttl"];
@@ -2702,6 +2938,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return null;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "An x-ms-max-item-count of -1 can be specified to let the service determine the optimal
+    //    item count. This is the recommended configuration value for x-ms-max-item-count."
     private static void ValidateMaxItemCount(QueryRequestOptions requestOptions)
     {
         if (requestOptions?.MaxItemCount == 0)
@@ -2720,6 +2959,14 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     private static readonly string[] ProhibitedCpClauses =
         { " WHERE ", " ORDER BY ", " GROUP BY ", " TOP ", " DISTINCT ", " OFFSET ", " LIMIT ", " JOIN " };
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/computed-properties
+    //   Computed properties have constraints: max 20 per container, must use SELECT VALUE
+    //   syntax, cannot reference other computed properties, and cannot use reserved system
+    //   property names.
+    // TODO: No single official source found for all computed property validation rules
+    //   — the per-container maximum of 20, cross-CP reference prohibition, self-reference
+    //   prohibition, and prohibited clause rules are derived from observed emulator behavior
+    //   and SDK error messages. Needs further verification.
     private static void ValidateComputedProperties(ContainerProperties properties)
     {
         var cps = properties.ComputedProperties;
@@ -2804,6 +3051,14 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/documents
+    //   "_rid — It is a system generated property. The resource ID is a unique identifier."
+    //   "_ts — It is a system generated property. It specifies the last updated timestamp."
+    //   "_self — It is a system generated property. It is the unique addressable URI."
+    //   "_etag — It is a system generated property that specifies the resource etag required
+    //    for optimistic concurrency control."
+    //   "_attachments — It is a system generated property that specifies the addressable path
+    //    for the attachments resource."
     private string EnrichWithSystemProperties(string json, string etag, DateTimeOffset timestamp)
     {
         var jObj = JsonParseHelpers.ParseJson(json);
@@ -2921,6 +3176,15 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     private static bool TriggerOperationMatches(TriggerOperation registered, TriggerOperation current)
         => registered == TriggerOperation.All || registered == current;
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency
+    //   "Insert (with a pre/post trigger) — Write and read — Multi-item transaction"
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-trigger
+    //   "triggerType — This value specifies when the trigger is fired. The acceptable values
+    //    are: Pre and Post. Pre triggers fire before an operation while Post triggers after
+    //    an operation."
+    //   "triggerOperation — It is the type of operation that invokes the trigger. The
+    //    acceptable values are: All, Create, Replace, and Delete."
+    // NOTE: Real Cosmos DB only fires the first matching trigger per operation.
     private JObject ExecutePreTriggers(ItemRequestOptions requestOptions, JObject jObj, string operationName)
     {
         var triggerNames = requestOptions?.PreTriggers;
@@ -2998,6 +3262,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return jObj;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-trigger
+    //   "triggerType — The acceptable values are: Pre and Post. Pre triggers fire before an
+    //    operation while Post triggers after an operation."
+    // NOTE: Real Cosmos DB only fires the first matching trigger per operation.
     private JObject ExecutePostTriggers(ItemRequestOptions requestOptions, JObject committedDoc, string operationName)
     {
         var triggerNames = requestOptions?.PostTriggers;
@@ -3075,6 +3343,16 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return responseBodyOverride;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency
+    //   "_etag can be used with the client supplied if-match request header to allow the server
+    //    to decide whether an item can be conditionally updated. If the value of the if-match
+    //    header matches the value of the _etag at the server, the item is then updated. If the
+    //    value of the if-match request header is no longer current, the server rejects the
+    //    operation with an 'HTTP 412 Precondition failure' response message."
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "If-Match — Optional (applicable only on PUT and DELETE). Used to make operation
+    //    conditional for optimistic concurrency. The value should be the etag value of the
+    //    resource."
     private void CheckIfMatch(ItemRequestOptions requestOptions, (string Id, string PartitionKey) key)
     {
         if (requestOptions?.IfMatchEtag is null)
@@ -3098,6 +3376,12 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "If-None-Match — Optional (applicable only on GET). Makes operation conditional to
+    //    only execute if the resource has changed. The value should be the etag of the resource."
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency
+    //   "_etag can be used with the if-none-match header to determine whether a refetch of a
+    //    resource is needed."
     private void CheckIfNoneMatch(ItemRequestOptions requestOptions, (string Id, string PartitionKey) key)
     {
         if (requestOptions?.IfNoneMatchEtag is null)
@@ -3120,6 +3404,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     /// IfNoneMatch check for write operations (Patch). Write operations return 412 PreconditionFailed
     /// instead of 304 NotModified when the ETag matches.
     /// </summary>
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency
+    //   "If the value of the if-match request header is no longer current, the server rejects
+    //    the operation with an 'HTTP 412 Precondition failure' response message."
+    //   For write operations, If-None-Match returns 412 instead of 304.
     private void CheckIfNoneMatchForWrite(ItemRequestOptions requestOptions, (string Id, string PartitionKey) key)
     {
         if (requestOptions?.IfNoneMatchEtag is null)
@@ -3138,6 +3426,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "If-Match — Optional (applicable only on PUT and DELETE). Used to make operation
+    //    conditional for optimistic concurrency."
     private bool CheckIfMatchStream(ItemRequestOptions requestOptions, (string Id, string PartitionKey) key)
     {
         if (requestOptions?.IfMatchEtag is null)
@@ -3158,6 +3449,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return true;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "If-None-Match — Optional (applicable only on GET). Makes operation conditional to
+    //    only execute if the resource has changed."
     private bool CheckIfNoneMatchStream(ItemRequestOptions requestOptions, (string Id, string PartitionKey) key)
     {
         if (requestOptions?.IfNoneMatchEtag is null)
@@ -3269,6 +3563,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return msg;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/concepts-limits
+    //   "Maximum size of an item: 2 MB (UTF-8 length of JSON representation)"
     private static void ValidateDocumentSize(string json)
     {
         var byteCount = Encoding.UTF8.GetByteCount(json);
@@ -3280,6 +3576,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/concepts-limits
+    //   "Maximum size of an item: 2 MB (UTF-8 length of JSON representation)"
     private ResponseMessage ValidateDocumentSizeStream(string json)
     {
         var byteCount = Encoding.UTF8.GetByteCount(json);
@@ -3290,6 +3588,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return null;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/unique-keys
+    //   "With unique keys, you make sure that one or more values within a logical partition
+    //    is unique."
+    //   "The partition key combined with the unique key guarantees the uniqueness of an item
+    //    within the scope of the container."
     private void ValidateUniqueKeys(JObject jObj, string partitionKey, string excludeItemId = null)
     {
         var policy = _containerProperties.UniqueKeyPolicy;
@@ -3330,6 +3633,15 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-time-to-live
+    //   "When DefaultTimeToLive is null, then your TTL is Off."
+    //   "When DefaultTimeToLive is -1 then, your TTL setting is On (No default)."
+    //   "When DefaultTimeToLive has any other integer value (except 0), then your TTL setting
+    //    is On. The server automatically deletes items based on the configured value."
+    //   "If the item doesn't have a TTL field, then by default, the TTL set to the container
+    //    applies to the item."
+    //   "To set the TTL on an item, you need to provide a nonzero positive number [...].
+    //    You can provide a -1 as well when the item shouldn't expire."
     private bool IsExpired((string Id, string PartitionKey) key)
     {
         // TTL feature is completely disabled when DefaultTimeToLive is null.
@@ -3367,6 +3679,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return elapsed >= DefaultTimeToLive.Value;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency
+    //   "System initiated execution of deleting items based on expiration (TTL) of an item"
+    //    — listed as a Write / Multi-item transaction.
     private void EvictIfExpired((string Id, string PartitionKey) key)
     {
         if (!IsExpired(key))
@@ -3448,6 +3763,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency
+    //   "Azure Cosmos DB natively supports JavaScript execution inside its database engine.
+    //    You can register stored procedures, pre/post triggers, user-defined-functions (UDFs),
+    //    and merge procedures on a container and later execute them transactionally."
     private sealed class InMemoryScripts : Scripts
     {
         private readonly InMemoryContainer _c;
@@ -3456,6 +3775,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         // ── Stored Procedure CRUD (typed) ─────────────────────────────────
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-stored-procedure
+        //   "201 Created — The operation was successful."
+        //   "409 Conflict — The ID provided for the new stored procedure has been taken by
+        //    an existing stored procedure."
         public override Task<StoredProcedureResponse> CreateStoredProcedureAsync(
             StoredProcedureProperties storedProcedureProperties, RequestOptions requestOptions = null,
             CancellationToken cancellationToken = default)
@@ -3471,6 +3794,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return Task.FromResult(r);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-stored-procedure
+        //   "200 Ok — The operation was successful."
+        //   "404 Not Found — The stored procedure is no longer a resource."
         public override Task<StoredProcedureResponse> ReadStoredProcedureAsync(
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
@@ -3484,6 +3810,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return Task.FromResult(r);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-stored-procedure
+        //   "200 Ok — The replace operation was successful."
+        //   "404 Not Found — The stored procedure to be replaced is no longer a resource,
+        //    that is, the stored procedure was deleted."
         public override Task<StoredProcedureResponse> ReplaceStoredProcedureAsync(
             StoredProcedureProperties storedProcedureProperties, RequestOptions requestOptions = null,
             CancellationToken cancellationToken = default)
@@ -3499,6 +3829,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return Task.FromResult(r);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-stored-procedure
+        //   "204 No Content — The delete operation was successful."
+        //   "404 Not Found — The stored procedure to be deleted is no longer a resource,
+        //    i.e. the resource was already deleted."
         public override Task<StoredProcedureResponse> DeleteStoredProcedureAsync(
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
@@ -3513,6 +3847,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         // ── Stored Procedure CRUD (stream) ────────────────────────────────
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-stored-procedure
+        //   "201 Created — The operation was successful."
+        //   "409 Conflict — The ID provided for the new stored procedure has been taken."
         public override Task<ResponseMessage> CreateStoredProcedureStreamAsync(
             StoredProcedureProperties storedProcedureProperties, RequestOptions requestOptions = null,
             CancellationToken cancellationToken = default)
@@ -3526,6 +3863,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 JsonConvert.SerializeObject(storedProcedureProperties)));
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-stored-procedure
+        //   "200 Ok / 404 Not Found"
         public override Task<ResponseMessage> ReadStoredProcedureStreamAsync(
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
@@ -3537,6 +3876,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 JsonConvert.SerializeObject(props)));
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-stored-procedure
+        //   "200 Ok / 404 Not Found"
         public override Task<ResponseMessage> ReplaceStoredProcedureStreamAsync(
             StoredProcedureProperties storedProcedureProperties, RequestOptions requestOptions = null,
             CancellationToken cancellationToken = default)
@@ -3550,6 +3891,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 JsonConvert.SerializeObject(storedProcedureProperties)));
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-stored-procedure
+        //   "204 No Content / 404 Not Found"
         public override Task<ResponseMessage> DeleteStoredProcedureStreamAsync(
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
@@ -3562,6 +3905,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         // ── Stored Procedure Execute ──────────────────────────────────────
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/execute-a-stored-procedure
+        //   "200 Ok — The operation was successful."
+        //   "404 Not Found" — when the stored procedure does not exist.
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/database-transactions-optimistic-concurrency
+        //   "Execute stored procedure — Write and read — Multi-item transaction"
         public override Task<StoredProcedureExecuteResponse<TOutput>> ExecuteStoredProcedureAsync<TOutput>(
             string storedProcedureId, PartitionKey partitionKey, dynamic[] parameters,
             StoredProcedureRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -3607,6 +3955,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return Task.FromResult(r);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/execute-a-stored-procedure
+        //   "200 Ok — The operation was successful."
         public override Task<ResponseMessage> ExecuteStoredProcedureStreamAsync(
             string storedProcedureId, PartitionKey partitionKey, dynamic[] parameters,
             StoredProcedureRequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -3645,6 +3995,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         // ── Trigger CRUD (typed) ──────────────────────────────────────────
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-trigger
+        //   "201 Created — The operation was successful."
+        //   "409 Conflict — The ID provided for the new trigger has been taken by an
+        //    existing trigger."
         public override Task<TriggerResponse> CreateTriggerAsync(
             TriggerProperties triggerProperties, RequestOptions requestOptions = null,
             CancellationToken cancellationToken = default)
@@ -3659,6 +4013,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return Task.FromResult(r);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-trigger
+        //   "200 Ok / 404 Not Found"
         public override Task<TriggerResponse> ReadTriggerAsync(
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
@@ -3671,6 +4027,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return Task.FromResult(r);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-trigger
+        //   "200 Ok / 404 Not Found"
         public override Task<TriggerResponse> ReplaceTriggerAsync(
             TriggerProperties triggerProperties, RequestOptions requestOptions = null,
             CancellationToken cancellationToken = default)
@@ -3685,6 +4043,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return Task.FromResult(r);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-trigger
+        //   "204 No Content — The delete operation was successful."
+        //   "404 Not Found — The trigger to be deleted is not found."
         public override Task<TriggerResponse> DeleteTriggerAsync(
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
@@ -3699,6 +4060,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         // ── Trigger CRUD (stream) ─────────────────────────────────────────
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-trigger
+        //   "201 Created / 409 Conflict"
         public override Task<ResponseMessage> CreateTriggerStreamAsync(
             TriggerProperties triggerProperties, RequestOptions requestOptions = null,
             CancellationToken cancellationToken = default)
@@ -3710,6 +4073,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 JsonConvert.SerializeObject(triggerProperties)));
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-trigger
+        //   "200 Ok / 404 Not Found"
         public override Task<ResponseMessage> ReadTriggerStreamAsync(
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
@@ -3719,6 +4084,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 JsonConvert.SerializeObject(props)));
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-trigger
+        //   "200 Ok / 404 Not Found"
         public override Task<ResponseMessage> ReplaceTriggerStreamAsync(
             TriggerProperties triggerProperties, RequestOptions requestOptions = null,
             CancellationToken cancellationToken = default)
@@ -3730,6 +4097,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 JsonConvert.SerializeObject(triggerProperties)));
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-trigger
+        //   "204 No Content / 404 Not Found"
         public override Task<ResponseMessage> DeleteTriggerStreamAsync(
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
@@ -3741,6 +4110,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         // ── UDF CRUD (typed) ──────────────────────────────────────────────
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-user-defined-function
+        //   "201 Created — The operation was successful."
+        //   "409 Conflict — The ID provided for the new UDF has been taken by an existing UDF."
         public override Task<UserDefinedFunctionResponse> CreateUserDefinedFunctionAsync(
             UserDefinedFunctionProperties userDefinedFunctionProperties, RequestOptions requestOptions = null,
             CancellationToken cancellationToken = default)
@@ -3757,6 +4129,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return Task.FromResult(r);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-user-defined-function
+        //   "200 Ok / 404 Not Found"
         public override Task<UserDefinedFunctionResponse> ReadUserDefinedFunctionAsync(
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
@@ -3769,6 +4143,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return Task.FromResult(r);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-user-defined-function
+        //   "200 Ok / 404 Not Found"
         public override Task<UserDefinedFunctionResponse> ReplaceUserDefinedFunctionAsync(
             UserDefinedFunctionProperties userDefinedFunctionProperties, RequestOptions requestOptions = null,
             CancellationToken cancellationToken = default)
@@ -3783,6 +4159,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             return Task.FromResult(r);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-user-defined-function
+        //   "204 No Content — The delete operation was successful."
+        //   "404 Not Found — The user-defined function to be deleted is not found."
         public override Task<UserDefinedFunctionResponse> DeleteUserDefinedFunctionAsync(
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
@@ -3797,6 +4176,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         // ── UDF CRUD (stream) ─────────────────────────────────────────────
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-user-defined-function
+        //   "201 Created / 409 Conflict"
         public override Task<ResponseMessage> CreateUserDefinedFunctionStreamAsync(
             UserDefinedFunctionProperties userDefinedFunctionProperties, RequestOptions requestOptions = null,
             CancellationToken cancellationToken = default)
@@ -3811,6 +4192,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 JsonConvert.SerializeObject(userDefinedFunctionProperties)));
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-user-defined-function
+        //   "200 Ok / 404 Not Found"
         public override Task<ResponseMessage> ReadUserDefinedFunctionStreamAsync(
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
@@ -3821,6 +4204,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 JsonConvert.SerializeObject(props)));
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-user-defined-function
+        //   "200 Ok / 404 Not Found"
         public override Task<ResponseMessage> ReplaceUserDefinedFunctionStreamAsync(
             UserDefinedFunctionProperties userDefinedFunctionProperties, RequestOptions requestOptions = null,
             CancellationToken cancellationToken = default)
@@ -3833,6 +4218,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 JsonConvert.SerializeObject(userDefinedFunctionProperties)));
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-user-defined-function
+        //   "204 No Content / 404 Not Found"
         public override Task<ResponseMessage> DeleteUserDefinedFunctionStreamAsync(
             string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
         {
@@ -4075,6 +4462,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     private const string UdfPropertiesKey = "__udf_properties__";
     private const string UdfEngineKey = "__udf_engine__";
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/computed-properties
+    //   "Computed properties have values that are derived from existing item properties, but the
+    //    properties aren't persisted in items themselves."
+    //   "Queries must use a VALUE clause in the projection."
     private (string Name, string FromAlias, SqlExpression Expr)[] GetParsedComputedProperties()
     {
         var cached = _parsedComputedProperties;
@@ -4180,12 +4571,18 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             items = AugmentWithComputedProperties(items, parameters);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/from
+        //   "input_alias IN — Specifies that the input_alias should represent the set of values
+        //    obtained by iterating over all array elements of each array returned by the underlying
+        //    container expression."
         // FROM alias IN c.field — top-level array iteration (must come before JOINs/WHERE)
         if (parsed.FromSource is not null)
         {
             items = ExpandFromSource(items, parsed);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/join
+        //   "Joins create a complete cross product of the sets participating in the join."
         // JOIN expansion (supports multiple JOINs) — must come before WHERE
         if (parsed.Joins is { Length: > 0 })
         {
@@ -4196,6 +4593,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             items = ExpandJoinedItems(items, parsed);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/where
+        //   "The WHERE clause returns a subset of items that satisfy the specified filter condition."
         // WHERE
         if (parsed.Where is not null)
         {
@@ -4206,6 +4605,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             });
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/group-by
+        //   "The GROUP BY clause collects rows that have the same values into summary rows."
         // GROUP BY / HAVING — also handles SELECT projection for grouped results
         var groupByApplied = false;
         if (parsed.GroupByFields is { Length: > 0 })
@@ -4214,6 +4615,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             groupByApplied = true;
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/order-by
+        //   "The ORDER BY clause returns the sorted result set of a query based on one or more
+        //    expressions."
         // ORDER BY
         if (parsed.OrderByFields is { Length: > 0 })
         {
@@ -4238,6 +4642,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             items = ApplyOrderByRank(items, parsed.RankExpression, parsed.FromAlias, parameters);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/keywords#top
+        //   "The TOP keyword returns the first N number of query results in an undefined order."
         // TOP — applied before projection only when DISTINCT is not active.
         // When DISTINCT is active, TOP is deferred until after deduplication.
         if (parsed.TopCount.HasValue && !parsed.IsDistinct)
@@ -4245,6 +4651,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             items = items.Take(parsed.TopCount.Value);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/offset-limit
+        //   "The OFFSET LIMIT clause returns a subset of the result set by skipping a specified
+        //    number of results and then taking a specified number of results."
         // OFFSET / LIMIT — when DISTINCT is active, defer until after dedup
         if (!parsed.IsDistinct && parsed.Offset.HasValue)
         {
@@ -4256,18 +4665,25 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             items = items.Take(parsed.Limit.Value);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/select
+        //   "The SELECT clause identifies fields to return in query results. The clause then
+        //    projects those fields into the JSON result set."
         // SELECT projection (skip if GROUP BY already projected)
         if (!groupByApplied && !parsed.IsSelectAll && parsed.SelectFields.Length > 0)
         {
             items = ProjectFields(items, parsed, parameters);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/computed-properties
+        //   "Wildcard projection doesn't automatically include computed properties."
         // SELECT * must not include computed properties (they are virtual)
         if (parsed.IsSelectAll && computedProps.Length > 0)
         {
             items = StripComputedProperties(items, computedProps);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/keywords#distinct
+        //   "The DISTINCT keyword eliminates duplicates in the projected query results."
         // DISTINCT — applied after projection so dedup works on projected shapes
         if (parsed.IsDistinct)
         {
@@ -4291,6 +4707,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             items = items.Take(parsed.TopCount.Value);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/select
+        //   "VALUE — Specifies that the JSON value should be retrieved instead of the complete
+        //    JSON object. This argument doesn't wrap the projected value in an object."
         // VALUE SELECT — unwrap scalar values from projected JObjects
         if (parsed.IsValueSelect && parsed.SelectFields.Length == 1)
         {
@@ -4330,6 +4749,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     // Sentinel for undefined (missing field) — distinct from null
     private static readonly object UndefinedSortSentinel = new();
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/order-by
+    //   "The ORDER BY clause returns the sorted result set of a query based on one or more
+    //    expressions. Multiple properties can be specified."
     private static List<string> ApplyOrderByFields(
         IEnumerable<string> items, OrderByField[] orderByFields, string fromAlias,
         IDictionary<string, object> parameters = null)
@@ -4442,6 +4864,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Query helpers — GROUP BY / HAVING
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/group-by
+    //   "The GROUP BY clause collects rows that have the same values into summary rows."
     private List<string> ApplyGroupBy(IEnumerable<string> items, CosmosSqlQuery parsed, IDictionary<string, object> parameters)
     {
         var fromAlias = parsed.FromAlias;
@@ -4548,6 +4972,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
                 var outputName = field.Alias ?? field.Expression;
 
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-count
+                //   "COUNT — returns the count of the values in the expression."
                 if (funcName == "COUNT")
                 {
                     if (innerArg is "1" or "*" or null)
@@ -4566,6 +4992,16 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         });
                     }
                 }
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-sum
+                //   "If any arguments in SUM are string, boolean, or null; the entire aggregate
+                //    system function returns undefined."
+                //   "If any individual argument has an undefined value, that value isn't included
+                //    in the SUM calculation."
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-avg
+                //   "If any arguments in AVG are string, boolean, or null; the entire aggregation
+                //    system function returns undefined."
+                //   "If any argument has an undefined value, that specific value isn't included
+                //    in the AVG calculation."
                 else if (funcName is "SUM" or "AVG" && innerArg != null)
                 {
                     var values = ExtractNumericValues(groupItems, innerArg, fromAlias, parameters);
@@ -4581,6 +5017,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                             resultObj[outputName] = values.Average();
                     }
                 }
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-min
+                //   "MIN — returns the minimum value of the specified expression."
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-max
+                //   "MAX — returns the maximum value of the specified expression."
                 else if (funcName is "MIN" or "MAX" && innerArg != null)
                 {
                     var tokens = ExtractTokenValues(groupItems, innerArg, fromAlias, parameters);
@@ -4732,6 +5172,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     /// boolean &lt; number &lt; string. Booleans compare as false &lt; true.
     /// Returns <see cref="UndefinedValue.Instance"/> when <paramref name="tokens"/> is empty.
     /// </summary>
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-min
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-max
+    // Ref: Observed behavior on Windows Cosmos DB Emulator — MIN/MAX type ordering:
+    //   boolean < number < string. MIN returns lowest-rank value; MAX returns highest-rank.
     private static object AggregateMinMax(List<JToken> tokens, bool isMin)
     {
         if (tokens.Count == 0)
@@ -4791,6 +5235,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         };
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/group-by
+    //   HAVING filters groups after aggregation (analogous to WHERE for GROUP BY results).
     private static bool EvaluateHavingCondition(
         WhereExpression having, List<string> groupItems, JObject resultObj,
         string fromAlias, IDictionary<string, object> parameters)
@@ -4863,6 +5309,14 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         };
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-count
+    //   "COUNT — returns the count of the values in the expression."
+    //   COUNT(1)/COUNT(*) counts all items; COUNT(c.field) counts items where field is
+    //   defined and non-null.
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-sum
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-avg
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-min
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-max
     private static object EvaluateHavingAggregate(
         FunctionCallExpression func, List<string> groupItems, string fromAlias,
         IDictionary<string, object> parameters = null)
@@ -4957,6 +5411,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Query helpers — JOIN expansion
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/join
+    //   "Joins create a complete cross product of the sets participating in the join. The result
+    //    is a set of tuples with every permutation of the item and the values within the targeted
+    //    array."
     private static List<string> ExpandJoinedItems(IEnumerable<string> items, CosmosSqlQuery parsed)
     {
         if (parsed.Join is null)
@@ -4984,6 +5442,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return expanded;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/join
+    //   "Joins create a complete cross product of the sets participating in the join."
+    //   Multiple JOINs produce successive cross-products.
     private static List<string> ExpandAllJoins(IEnumerable<string> items, CosmosSqlQuery parsed)
     {
         var current = items;
@@ -5018,6 +5479,12 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     /// <summary>
     /// Expands top-level <c>FROM alias IN c.field</c> — each array element becomes a result row.
     /// </summary>
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/from
+    //   "input_alias IN — Specifies that the input_alias should represent the set of values
+    //    obtained by iterating over all array elements of each array returned by the underlying
+    //    container expression."
+    //   "If a container expression accesses properties or array elements and that value doesn't
+    //    exist, that value is ignored and not processed further."
     private static List<string> ExpandFromSource(IEnumerable<string> items, CosmosSqlQuery parsed)
     {
         var sourcePath = parsed.FromSource;
@@ -5054,6 +5521,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Query helpers — SELECT projection
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/select
+    //   "SELECT * — Specifies that the value should be retrieved without making any changes.
+    //    Specifically if the processed value is an object, all properties are retrieved."
     private static List<string> ProjectFields(IEnumerable<string> items, CosmosSqlQuery parsed, IDictionary<string, object> parameters)
     {
         var hasAggregate = parsed.SelectFields.Any(f =>
@@ -5133,6 +5603,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return projected;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/select
+    //   "VALUE — Specifies that the JSON value should be retrieved instead of the complete
+    //    JSON object. This argument doesn't wrap the projected value in an object."
     private static List<string> UnwrapValueSelect(IEnumerable<string> items)
     {
         var unwrapped = new List<string>();
@@ -5166,6 +5639,13 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return unwrapped;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-count
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-sum
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-avg
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-min
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-max
+    //   Aggregate functions (COUNT, SUM, AVG, MIN, MAX) operate across all items in the
+    //   result set when used without GROUP BY.
     private static List<string> ProjectAggregateFields(IEnumerable<string> itemsEnumerable, CosmosSqlQuery parsed, IDictionary<string, object> parameters = null)
     {
         // Aggregates need multiple passes (Count, Sum, indexing) — materialize once
@@ -5207,6 +5687,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
             }
 
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-count
+            //   "COUNT — returns the count of the values in the expression."
             if (funcName == "COUNT")
             {
                 if (innerArg is "1" or "*" or null)
@@ -5215,6 +5697,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
                 else
                 {
+                    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-count
+                    //   COUNT(c.field) counts items where the field is defined and non-null.
                     var countPath = innerArg;
                     if (countPath.StartsWith(parsed.FromAlias + ".", StringComparison.OrdinalIgnoreCase))
                         countPath = countPath[(parsed.FromAlias.Length + 1)..];
@@ -5225,6 +5709,12 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     });
                 }
             }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-sum
+            //   "If any arguments in SUM are string, boolean, or null; the entire aggregate
+            //    system function returns undefined."
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-avg
+            //   "If any arguments in AVG are string, boolean, or null; the entire aggregation
+            //    system function returns undefined."
             else if (funcName is "SUM" or "AVG" && innerArg != null)
             {
                 var values = ExtractNumericValues(items, innerArg, parsed.FromAlias, parameters);
@@ -5241,6 +5731,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     // else: omit field entirely (undefined)
                 }
             }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-min
+            //   "MIN — returns the minimum value of the specified expression."
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-max
+            //   "MAX — returns the maximum value of the specified expression."
             else if (funcName is "MIN" or "MAX" && innerArg != null)
             {
                 var tokens = ExtractTokenValues(items, innerArg, parsed.FromAlias, parameters);
@@ -5278,6 +5772,13 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     /// resolving them globally across all items. Used for expressions like
     /// SELECT VALUE {"cnt": COUNT(1), "total": SUM(c.value)} FROM c.
     /// </summary>
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-count
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-sum
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-avg
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-min
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate-max
+    //   Aggregate functions operate across all items when used without GROUP BY,
+    //   returning a single result row.
     private static object EvaluateAggregateExpression(
         SqlExpression expr, IEnumerable<string> itemsEnumerable, string fromAlias, IDictionary<string, object> parameters)
     {
@@ -5436,6 +5937,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         WhereExpression expression, JObject item, string fromAlias,
         IDictionary<string, object> parameters, JoinClause join)
     {
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/where
+        //   "The WHERE clause returns a subset of items that satisfy the specified filter
+        //    condition."
+        //   "<filter_condition> ::= <scalar_expression>"
         return expression switch
         {
             ComparisonCondition c => EvaluateComparison(c, item, fromAlias, parameters),
@@ -5452,11 +5957,17 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         };
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/where
+    //   "<filter_condition> ::= <scalar_expression>"
+    //   Comparison operators produce false when either operand is undefined (three-value logic).
     private static bool EvaluateComparison(
         ComparisonCondition comparison, JObject item, string fromAlias, IDictionary<string, object> parameters)
     {
         var leftValue = ResolveValue(comparison.Left, item, fromAlias, parameters);
         var rightValue = ResolveValue(comparison.Right, item, fromAlias, parameters);
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/
+        //   Cosmos DB uses three-value logic: comparisons involving undefined values
+        //   evaluate to undefined (not true), so the item is excluded from results.
         if (leftValue is UndefinedValue || rightValue is UndefinedValue)
             return false;
         return comparison.Operator switch
@@ -5467,7 +5978,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             ComparisonOp.GreaterThan => CompareValues(leftValue, rightValue) > 0,
             ComparisonOp.LessThanOrEqual => CompareValues(leftValue, rightValue) <= 0,
             ComparisonOp.GreaterThanOrEqual => CompareValues(leftValue, rightValue) >= 0,
-            ComparisonOp.Like => IsTruthy(EvaluateLike(leftValue, rightValue)),
+            ComparisonOp.Like => IsTruthy(EvaluateLike(leftValue, rightValue)), // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/keywords#like
             _ => false
         };
     }
@@ -5867,6 +6378,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     {
         switch (func.FunctionName)
         {
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/startswith
             case "STARTSWITH":
                 {
                     if (func.Arguments.Length < 2)
@@ -5885,6 +6397,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         string.Equals(ResolveValue(func.Arguments[2], item, fromAlias, parameters)?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                     return fieldValue.StartsWith(prefix, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/endswith
             case "ENDSWITH":
                 {
                     if (func.Arguments.Length < 2)
@@ -5903,6 +6416,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         string.Equals(ResolveValue(func.Arguments[2], item, fromAlias, parameters)?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                     return fieldValue.EndsWith(suffix, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/contains
             case "CONTAINS":
                 {
                     if (func.Arguments.Length < 2)
@@ -5921,6 +6435,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         string.Equals(ResolveValue(func.Arguments[2], item, fromAlias, parameters)?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                     return fieldValue.Contains(search, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/array-contains
             case "ARRAY_CONTAINS":
                 {
                     if (func.Arguments.Length < 2)
@@ -5967,6 +6482,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         string.Equals(func.Arguments[2].Trim(), "true", StringComparison.OrdinalIgnoreCase);
                     return ArrayContainsMatch(jArray, searchStr, partial);
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/is-defined
             case "IS_DEFINED":
                 {
                     if (func.Arguments.Length < 1)
@@ -5989,6 +6505,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     var token = item.SelectToken(path);
                     return token is not null && token.Type != JTokenType.Undefined;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/is-null
             case "IS_NULL":
                 {
                     if (func.Arguments.Length < 1)
@@ -6023,6 +6540,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  EXISTS subquery evaluation
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/subquery
+    //   "An EXISTS expression is satisfied if the subquery returns at least one row."
     private static bool EvaluateExists(
         ExistsCondition exists, JObject item, string fromAlias,
         IDictionary<string, object> parameters, JoinClause join)
@@ -6170,6 +6689,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         };
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/keywords
+    //   "The BETWEEN keyword evaluates to a boolean indicating whether the target value
+    //    is between two specified values, inclusive."
     private static object EvalBetween(BetweenExpression b, JObject item, string fromAlias, IDictionary<string, object> parameters)
     {
         var value = EvaluateSqlExpression(b.Value, item, fromAlias, parameters);
@@ -6180,12 +6702,16 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return CompareValues(value, low) >= 0 && CompareValues(value, high) <= 0;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/keywords
+    //   "The ?? operator returns the first expression if it isn't null or undefined,
+    //    otherwise returns the second expression."
     private static object EvalCoalesce(CoalesceExpression coal, JObject item, string fromAlias, IDictionary<string, object> parameters)
     {
         var left = EvaluateSqlExpression(coal.Left, item, fromAlias, parameters);
         return left is not null and not UndefinedValue ? left : EvaluateSqlExpression(coal.Right, item, fromAlias, parameters);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/keywords#in
     private static object EvalIn(InExpression inExpr, JObject item, string fromAlias, IDictionary<string, object> parameters)
     {
         var value = EvaluateSqlExpression(inExpr.Value, item, fromAlias, parameters);
@@ -6291,6 +6817,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         switch (func.FunctionName)
         {
             // ── Type checking ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/is-defined
             case "IS_DEFINED":
                 {
                     if (func.Arguments.Length < 1)
@@ -6314,14 +6841,21 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         return parameters.ContainsKey(param.Name);
                     return args[0] != null;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/is-null
             case "IS_NULL": return args.Length > 0 && args[0] is null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/is-array
             case "IS_ARRAY":
                 return args.Length > 0 && (ResolveTokenType(func.Arguments, item, fromAlias) is JArray || args[0] is JArray);
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/is-bool
             case "IS_BOOL": return args.Length > 0 && args[0] is bool;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/is-number
             case "IS_NUMBER": return args.Length > 0 && args[0] is long or double or int or float or decimal;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/is-string
             case "IS_STRING": return args.Length > 0 && args[0] is string;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/is-object
             case "IS_OBJECT":
                 return args.Length > 0 && (ResolveTokenType(func.Arguments, item, fromAlias) is JObject || args[0] is JObject);
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/is-primitive
             case "IS_PRIMITIVE":
                 {
                     if (args.Length == 0)
@@ -6342,6 +6876,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
                     return args[0] is string or bool or long or double;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/is-finite-number
             case "IS_FINITE_NUMBER":
                 {
                     if (args.Length == 0)
@@ -6359,6 +6894,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         _ => false,
                     };
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/is-integer
             case "IS_INTEGER":
                 {
                     if (args.Length == 0)
@@ -6368,6 +6904,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
                     return args[0] is long or int;
                 }
+            // TODO: No official documentation page found for IS_NAN — needs verification
             case "IS_NAN":
                 {
                     if (args.Length == 0)
@@ -6377,6 +6914,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
                     return args[0] is double d && double.IsNaN(d);
                 }
+            // TODO: No official documentation page found for TYPE() — needs verification
             case "TYPE":
                 {
                     if (args.Length == 0)
@@ -6404,6 +6942,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
 
             // ── String functions ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/startswith
             case "STARTSWITH":
                 {
                     if (args.Length < 2)
@@ -6417,6 +6956,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     var ic = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                     return s.StartsWith(p, ic ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/endswith
             case "ENDSWITH":
                 {
                     if (args.Length < 2)
@@ -6430,6 +6970,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     var ic = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                     return s.EndsWith(p, ic ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/contains
             case "CONTAINS":
                 {
                     if (args.Length < 2)
@@ -6443,6 +6984,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     var ic = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                     return s.Contains(p, ic ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/concat
             case "CONCAT":
                 {
                     // Cosmos DB: if any arg is null, undefined, or not a string, CONCAT returns undefined
@@ -6450,6 +6992,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     if (args.Any(a => a is not string)) return UndefinedValue.Instance;
                     return string.Concat(args.Cast<string>());
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/length
             case "LENGTH":
                 {
                     if (args.Length == 0) return null;
@@ -6457,12 +7000,19 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     if (args[0] is not string s) return UndefinedValue.Instance;
                     return (object)(long)s.Length;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/lower
             case "LOWER": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string sl ? (object)sl.ToLowerInvariant() : UndefinedValue.Instance) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/upper
             case "UPPER": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string su ? (object)su.ToUpperInvariant() : UndefinedValue.Instance) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/trim
             case "TRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string st ? (object)st.Trim() : UndefinedValue.Instance) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/ltrim
             case "LTRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string slt ? (object)slt.TrimStart() : UndefinedValue.Instance) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/rtrim
             case "RTRIM": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string srt ? (object)srt.TrimEnd() : UndefinedValue.Instance) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/reverse
             case "REVERSE": return args.Length > 0 ? (args[0] is null or UndefinedValue ? UndefinedValue.Instance : args[0] is string rs ? (object)new string(rs.Reverse().ToArray()) : UndefinedValue.Instance) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/left
             case "LEFT":
                 {
                     if (args.Length < 2)
@@ -6476,6 +7026,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     if (c.Value < 0) return UndefinedValue.Instance;
                     return s[..(int)Math.Min(c.Value, s.Length)];
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/right
             case "RIGHT":
                 {
                     if (args.Length < 2)
@@ -6489,6 +7040,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     if (c.Value < 0) return UndefinedValue.Instance;
                     return s[Math.Max(0, s.Length - (int)c.Value)..];
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/substring
             case "SUBSTRING":
                 {
                     if (args.Length < 3)
@@ -6512,6 +7064,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     var li = (int)Math.Max(0, Math.Min(len.Value, s.Length - si));
                     return s.Substring(si, li);
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/replace
             case "REPLACE":
                 {
                     if (args.Length < 3)
@@ -6527,6 +7080,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     if (find.Length == 0) return s;
                     return s.Replace(find, rep ?? "");
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/index-of
             case "INDEX_OF":
                 {
                     if (args.Length < 2)
@@ -6547,6 +7101,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     }
                     return (object)(long)s.IndexOf(sub, StringComparison.Ordinal);
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/regexmatch
             case "REGEXMATCH":
                 {
                     if (args.Length < 2)
@@ -6584,6 +7139,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         return UndefinedValue.Instance;
                     }
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/replicate
             case "REPLICATE":
                 {
                     if (args.Length < 2)
@@ -6604,6 +7160,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
                     return count.Value == 0 ? "" : string.Concat(Enumerable.Repeat(s, (int)count.Value));
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/stringequals
             case "STRING_EQUALS":
             case "STRINGEQUALS":
                 {
@@ -6625,6 +7182,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     var ic = args.Length >= 3 && string.Equals(args[2]?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
                     return string.Equals(s1, s2, ic ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/stringtoarray
             case "STRINGTOARRAY":
                 {
                     if (args.Length == 0)
@@ -6649,6 +7207,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         return UndefinedValue.Instance;
                     }
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/stringtoboolean
             case "STRINGTOBOOLEAN":
                 {
                     if (args.Length == 0)
@@ -6665,6 +7224,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         _ => UndefinedValue.Instance,
                     };
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/stringtonull
             case "STRINGTONULL":
                 {
                     if (args.Length == 0)
@@ -6675,6 +7235,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     if (args[0] is null or UndefinedValue) return UndefinedValue.Instance;
                     return args[0].ToString()?.Trim() == "null" ? null : UndefinedValue.Instance;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/stringtonumber
             case "STRINGTONUMBER":
                 {
                     if (args.Length == 0)
@@ -6703,6 +7264,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
                     return UndefinedValue.Instance;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/stringtoobject
             case "STRINGTOOBJECT":
                 {
                     if (args.Length == 0)
@@ -6727,6 +7289,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         return UndefinedValue.Instance;
                     }
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/tostring
             case "TOSTRING" or "ToString":
                 if (args.Length == 0) return null;
                 if (args[0] is null or UndefinedValue) return UndefinedValue.Instance;
@@ -6735,6 +7298,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 if (args[0] is JArray or JObject) return ((JToken)args[0]).ToString(Newtonsoft.Json.Formatting.None);
                 if (args[0] is JValue jv && jv.Type == JTokenType.Null) return UndefinedValue.Instance;
                 return args[0].ToString();
+            // TODO: No official documentation page found for TONUMBER — needs verification
             case "TONUMBER" or "ToNumber":
                 {
                     if (args.Length == 0)
@@ -6759,6 +7323,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
                     return UndefinedValue.Instance;
                 }
+            // TODO: No official documentation page found for TOBOOLEAN — needs verification
             case "TOBOOLEAN" or "ToBoolean":
                 {
                     if (args.Length == 0)
@@ -6780,6 +7345,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
 
             // ── Array functions ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/array-contains
             case "ARRAY_CONTAINS":
                 {
                     if (func.Arguments.Length < 2)
@@ -6826,6 +7392,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         return ArrayContainsMatch(jArray, searchStr, partial);
                     }
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/array-length
             case "ARRAY_LENGTH":
                 {
                     if (func.Arguments.Length < 1)
@@ -6849,6 +7416,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     var evaluated = EvaluateSqlExpression(func.Arguments[0], item, fromAlias, parameters);
                     return evaluated is JArray evalArr ? (object)(long)evalArr.Count : UndefinedValue.Instance;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/array-slice
             case "ARRAY_SLICE":
                 {
                     if (func.Arguments.Length < 2)
@@ -6891,6 +7459,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     }
                     return null;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/array-concat
             case "ARRAY_CONCAT":
                 {
                     var result = new JArray();
@@ -6927,9 +7496,13 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
 
             // ── Math functions ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/abs
             case "ABS": return args.Length > 0 ? MathOp(args[0], Math.Abs) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/ceiling
             case "CEILING": return args.Length > 0 ? MathOp(args[0], Math.Ceiling) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/floor
             case "FLOOR": return args.Length > 0 ? MathOp(args[0], Math.Floor) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/round
             case "ROUND":
                 if (args.Length >= 2 && double.TryParse(args[0]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var roundVal)
                     && double.TryParse(args[1]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var roundPrec))
@@ -6943,10 +7516,15 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     return Math.Round(roundVal, prec, MidpointRounding.AwayFromZero);
                 }
                 return args.Length > 0 ? MathOp(args[0], v => Math.Round(v, MidpointRounding.AwayFromZero)) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/sqrt
             case "SQRT": return args.Length > 0 ? MathOp(args[0], Math.Sqrt) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/square
             case "SQUARE": return args.Length > 0 ? MathOp(args[0], v => v * v) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/power
             case "POWER": return args.Length >= 2 ? ArithmeticOp(args[0], args[1], Math.Pow) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/exp
             case "EXP": return args.Length > 0 ? MathOp(args[0], Math.Exp) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/log
             case "LOG":
                 if (args.Length >= 2 && double.TryParse(args[0]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var logVal)
                     && double.TryParse(args[1]?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var logBase))
@@ -6957,23 +7535,39 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     return logResult;
                 }
                 return args.Length > 0 ? MathOp(args[0], Math.Log) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/log10
             case "LOG10": return args.Length > 0 ? MathOp(args[0], Math.Log10) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/sign
             case "SIGN": return args.Length > 0 ? MathOp(args[0], v => Math.Sign(v)) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/trunc
             case "TRUNC": return args.Length > 0 ? MathOp(args[0], Math.Truncate) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/pi
             case "PI": return Math.PI;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/sin
             case "SIN": return args.Length > 0 ? MathOp(args[0], Math.Sin) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/cos
             case "COS": return args.Length > 0 ? MathOp(args[0], Math.Cos) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/tan
             case "TAN": return args.Length > 0 ? MathOp(args[0], Math.Tan) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/cot
             case "COT": return args.Length > 0 ? MathOp(args[0], v => 1.0 / Math.Tan(v)) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/asin
             case "ASIN": return args.Length > 0 ? MathOp(args[0], Math.Asin) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/acos
             case "ACOS": return args.Length > 0 ? MathOp(args[0], Math.Acos) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/atan
             case "ATAN": return args.Length > 0 ? MathOp(args[0], Math.Atan) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/atn2
             case "ATN2": return args.Length >= 2 ? ArithmeticOp(args[0], args[1], Math.Atan2) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/degrees
             case "DEGREES": return args.Length > 0 ? MathOp(args[0], v => v * (180.0 / Math.PI)) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/radians
             case "RADIANS": return args.Length > 0 ? MathOp(args[0], v => v * (Math.PI / 180.0)) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/rand
             case "RAND": return Random.Shared.NextDouble();
 
             // ── Integer math functions ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/numberbin
             case "NUMBERBIN":
                 {
                     if (args.Length < 2)
@@ -6990,9 +7584,13 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
                     return UndefinedValue.Instance;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/intadd
             case "INTADD": return args.Length >= 2 ? BitwiseOp(args[0], args[1], (a, b) => a + b) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/intsub
             case "INTSUB": return args.Length >= 2 ? BitwiseOp(args[0], args[1], (a, b) => a - b) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/intmul
             case "INTMUL": return args.Length >= 2 ? BitwiseOp(args[0], args[1], (a, b) => a * b) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/intdiv
             case "INTDIV":
                 {
                     if (args.Length < 2)
@@ -7009,6 +7607,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
                     return dividend.Value / divisor.Value;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/intmod
             case "INTMOD":
                 {
                     if (args.Length < 2)
@@ -7025,9 +7624,13 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
                     return dividend.Value % divisor.Value;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/intbitand
             case "INTBITAND": return args.Length >= 2 ? BitwiseOp(args[0], args[1], (a, b) => a & b) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/intbitor
             case "INTBITOR": return args.Length >= 2 ? BitwiseOp(args[0], args[1], (a, b) => a | b) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/intbitxor
             case "INTBITXOR": return args.Length >= 2 ? BitwiseOp(args[0], args[1], (a, b) => a ^ b) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/intbitnot
             case "INTBITNOT":
                 {
                     if (args.Length == 0)
@@ -7038,7 +7641,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     var value = ToLong(args[0]);
                     return value.HasValue ? ~value.Value : null;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/intbitleftshift
             case "INTBITLEFTSHIFT": return args.Length >= 2 ? BitwiseShiftOp(args[0], args[1], isLeft: true) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/intbitrightshift
             case "INTBITRIGHTSHIFT": return args.Length >= 2 ? BitwiseShiftOp(args[0], args[1], isLeft: false) : null;
 
             // ── Aggregates (passthrough for non-GROUP-BY contexts) ──
@@ -7056,6 +7661,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 return args.Length > 0 ? args[0] : null;
 
             // ── Conditional functions ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/iif
+            //   "IIF only treats boolean true as truthy. Non-boolean values always yield
+            //    the false branch."
             case "IIF":
                 {
                     if (args.Length < 3)
@@ -7069,6 +7677,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
 
             // ── Extended array functions ──
+            // TODO: No official documentation page found for ARRAY_CONTAINS_ANY — needs verification
             case "ARRAY_CONTAINS_ANY":
                 {
                     if (func.Arguments.Length < 2)
@@ -7104,6 +7713,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     var sourceValues = new HashSet<JToken>(sourceArray, JTokenValueComparer.Instance);
                     return searchArray.Any(t => sourceValues.Contains(t));
                 }
+            // TODO: No official documentation page found for ARRAY_CONTAINS_ALL — needs verification
             case "ARRAY_CONTAINS_ALL":
                 {
                     if (func.Arguments.Length < 2)
@@ -7139,6 +7749,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     var sourceValues = new HashSet<JToken>(sourceArray, JTokenValueComparer.Instance);
                     return searchArray.All(t => sourceValues.Contains(t));
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/setintersect
             case "SETINTERSECT":
                 {
                     if (func.Arguments.Length < 2)
@@ -7165,6 +7776,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     }
                     return result;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/setunion
             case "SETUNION":
                 {
                     if (func.Arguments.Length < 2)
@@ -7196,6 +7808,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     }
                     return result;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/setdifference
             case "SETDIFFERENCE":
                 {
                     if (func.Arguments.Length < 2)
@@ -7224,6 +7837,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
 
             // ── Array/Object utility functions ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/choose
             case "CHOOSE":
                 {
                     if (args.Length < 2) return UndefinedValue.Instance;
@@ -7231,6 +7845,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     if (!idx.HasValue || idx.Value < 1 || idx.Value >= args.Length) return UndefinedValue.Instance;
                     return args[(int)idx.Value];
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/objecttoarray
             case "OBJECTTOARRAY":
                 {
                     if (args.Length < 1) return null;
@@ -7245,6 +7860,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     }
                     return result;
                 }
+            // TODO: No official documentation page found for ARRAYTOOBJECT — needs verification
             case "ARRAYTOOBJECT":
                 {
                     if (args.Length < 1) return UndefinedValue.Instance;
@@ -7268,6 +7884,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
 
             // ── String utility functions ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/stringjoin
             case "STRINGJOIN":
                 {
                     if (args.Length < 2) return null;
@@ -7279,6 +7896,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     else return null;
                     return string.Join(separator, joinArr.Select(t => t.Value<string>()));
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/stringsplit
             case "STRINGSPLIT":
                 {
                     if (args.Length < 2) return null;
@@ -7291,6 +7909,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
 
             // ── Item functions ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/documentid
             case "DOCUMENTID":
                 {
                     // DOCUMENTID returns the _rid system property of the current document.
@@ -7300,6 +7919,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
             // ── Full-text search functions (approximate) ──
             // These use case-insensitive substring matching instead of real NLP tokenization.
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/fulltextcontains
             case "FULLTEXTCONTAINS":
                 {
                     if (args.Length < 2) return false;
@@ -7308,6 +7928,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     if (text is null || term is null) return false;
                     return text.Contains(term, StringComparison.OrdinalIgnoreCase);
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/fulltextcontainsall
             case "FULLTEXTCONTAINSALL":
                 {
                     if (args.Length < 2) return false;
@@ -7321,6 +7942,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     }
                     return true;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/fulltextcontainsany
             case "FULLTEXTCONTAINSANY":
                 {
                     if (args.Length < 2) return false;
@@ -7334,6 +7956,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     }
                     return false;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/fulltextscore
             case "FULLTEXTSCORE":
                 {
                     // Naive term-frequency scoring: count occurrences of each search term
@@ -7367,30 +7990,41 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
 
             // ── Spatial functions ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/st-distance
             case "ST_DISTANCE":
                 return args.Length >= 2 ? StDistance(args[0], args[1]) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/st-within
             case "ST_WITHIN":
                 return args.Length >= 2 ? (object)StWithin(args[0], args[1]) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/st-intersects
             case "ST_INTERSECTS":
                 return args.Length >= 2 ? (object)StIntersects(args[0], args[1]) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/st-isvalid
             case "ST_ISVALID":
                 return args.Length >= 1 ? (object)StIsValid(args[0]) : false;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/st-isvaliddetailed
             case "ST_ISVALIDDETAILED":
                 return args.Length >= 1 ? StIsValidDetailed(args[0]) : null;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/st-area
             case "ST_AREA":
                 return args.Length >= 1 ? StArea(args[0]) : null;
 
             // ── Vector functions ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/vectordistance
             case "VECTORDISTANCE":
                 return args.Length >= 2 ? VectorDistanceFunc(args) : null;
 
             // ── Date/time functions ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/getcurrentdatetime
             case "GETCURRENTDATETIME":
             case "GETCURRENTDATETIMESTATIC": return parameters.TryGetValue("__staticDateTime", out var sdt) ? sdt : DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/getcurrenttimestamp
             case "GETCURRENTTIMESTAMP":
             case "GETCURRENTTIMESTAMPSTATIC": return parameters.TryGetValue("__staticTimestamp", out var sts) ? sts : (object)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/getcurrentticks
             case "GETCURRENTTICKS":
             case "GETCURRENTTICKSSTATIC": return parameters.TryGetValue("__staticTicks", out var stk) ? stk : (object)DateTime.UtcNow.Ticks;
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/datetimeadd
             case "DATETIMEADD":
                 {
                     if (args.Length < 3)
@@ -7435,6 +8069,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         return UndefinedValue.Instance;
                     }
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/datetimepart
             case "DATETIMEPART":
                 {
                     if (args.Length < 2)
@@ -7469,6 +8104,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         _ => null,
                     };
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/datetimediff
             case "DATETIMEDIFF":
                 {
                     if (args.Length < 3) return UndefinedValue.Instance;
@@ -7493,6 +8129,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         _ => UndefinedValue.Instance,
                     };
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/datetimefromparts
             case "DATETIMEFROMPARTS":
                 {
                     if (args.Length < 3) return UndefinedValue.Instance;
@@ -7516,6 +8153,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         return UndefinedValue.Instance;
                     }
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/datetimebin
             case "DATETIMEBIN":
                 {
                     if (args.Length < 2) return UndefinedValue.Instance;
@@ -7573,6 +8211,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     }
                     return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/datetimetoticks
             case "DATETIMETOTICKS":
                 {
                     if (args.Length < 1) return null;
@@ -7582,6 +8221,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     if (dt.Kind == DateTimeKind.Unspecified) dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
                     return (object)dt.ToUniversalTime().Ticks;
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/tickstodatetime
             case "TICKSTODATETIME":
                 {
                     if (args.Length < 1) return UndefinedValue.Instance;
@@ -7597,6 +8237,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         return UndefinedValue.Instance;
                     }
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/datetimetotimestamp
             case "DATETIMETOTIMESTAMP":
                 {
                     if (args.Length < 1) return UndefinedValue.Instance;
@@ -7606,6 +8247,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     if (dt.Kind == DateTimeKind.Unspecified) dt = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
                     return (object)new DateTimeOffset(dt.ToUniversalTime()).ToUnixTimeMilliseconds();
                 }
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/timestamptodatetime
             case "TIMESTAMPTODATETIME":
                 {
                     if (args.Length < 1) return UndefinedValue.Instance;
@@ -7615,6 +8257,8 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ");
                 }
             // ── COALESCE function ──
+            // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/keywords
+            //   "The ?? operator returns the first expression if it isn't null or undefined."
             // COALESCE skips null and undefined, returning the first concrete value.
             // When all args are exhausted: returns null if any arg was null,
             // otherwise returns undefined (omitted from results).
@@ -7670,12 +8314,14 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Utility helpers
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/select
+    //   "The WHERE clause applies a filter on the source to retrieve a subset of JSON items."
+    //   WHERE requires a strict boolean — null, undefined, and non-boolean values all evaluate to false.
     private static bool IsTruthy(object value) => value switch
     {
         null => false,
         UndefinedValue => false,
         bool b => b,
-        // Cosmos DB: WHERE requires strict boolean — non-boolean values evaluate to false
         _ => false
     };
 
@@ -8035,6 +8681,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return results;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/working-with-json
+    //   Arithmetic on null or undefined yields undefined. NaN and Infinity results
+    //   are also treated as undefined by Cosmos DB (not representable in JSON).
     private static object ArithmeticOp(object left, object right, Func<double, double, double> op)
     {
         if (left is null or UndefinedValue || right is null or UndefinedValue)
@@ -8046,7 +8695,6 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             double.TryParse(right.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var r))
         {
             var result = op(l, r);
-            // Cosmos DB treats NaN and Infinity as undefined
             if (double.IsNaN(result) || double.IsInfinity(result))
                 return UndefinedValue.Instance;
             // Only convert back to long when both operands were integers and the result
@@ -8095,6 +8743,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         return UndefinedValue.Instance;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/mathematical-functions
+    //   Math functions on null or undefined yield undefined. NaN and Infinity
+    //   results are also treated as undefined by Cosmos DB (not representable in JSON).
     private static object MathOp(object value, Func<double, double> op)
     {
         if (value is null or UndefinedValue)
@@ -8107,7 +8758,6 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         if (double.TryParse(value.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var n))
         {
             var result = op(n);
-            // Cosmos DB treats NaN and Infinity as undefined
             if (double.IsNaN(result) || double.IsInfinity(result))
                 return UndefinedValue.Instance;
             // Preserve integer type when input was integer and result is a whole number
@@ -8234,9 +8884,15 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     //  Patch operations
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update-faq
+    //   "We don't support partial document update for system-generated properties like _id, _ts, _etag, _rid."
     private static readonly HashSet<string> SystemProperties = new(StringComparer.OrdinalIgnoreCase)
         { "/_ts", "/_etag", "/_rid", "/_self", "/_attachments" };
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
+    //   "The partial document update operation is based on the JSON Patch RFC."
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update-getting-started
+    //   "Invalid patch request: Can't patch system property SYSTEM_PROPERTY."
     private static void ApplyPatchOperations(JObject jObj, IReadOnlyList<PatchOperation> patchOperations)
     {
         foreach (var operation in patchOperations)
@@ -8258,6 +8914,12 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
             switch (operation.OperationType)
             {
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
+                //   "Add: If the target path specifies an element that doesn't exist, it's added.
+                //    If the target path specifies an element that already exists, its value is replaced.
+                //    If the target path is a valid array index, a new element is inserted into the array
+                //    at the specified index. Instead of specifying an index, you can also use the '-' character.
+                //    Specifying an index greater than the array length results in an error."
                 case PatchOperationType.Add:
                     {
                         var value = GetPatchValue(operation);
@@ -8284,6 +8946,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
                         break;
                     }
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
+                //   "Set is similar to Add except with the array data type.
+                //    If the target path is a valid array index, the existing element at that index is updated."
                 case PatchOperationType.Set:
                     {
                         var value = GetPatchValue(operation);
@@ -8304,6 +8969,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         }
                         break;
                     }
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
+                //   "Replace is similar to Set except it follows strict replace-only semantics.
+                //    In case the target path specifies an element or an array that doesn't exist,
+                //    it results in an error."
                 case PatchOperationType.Replace:
                     {
                         var value = GetPatchValue(operation);
@@ -8329,6 +8998,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         }
                         break;
                     }
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
+                //   "Remove: If the target path specifies an element that doesn't exist, it results
+                //    in an error. If the target path is an array index, it's deleted and any elements
+                //    above the specified index are shifted back one position."
                 case PatchOperationType.Remove:
                     {
                         if (int.TryParse(propertyName, out var idx) && rawParent is JArray arr)
@@ -8352,6 +9025,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         }
                         break;
                     }
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
+                //   "Move: This operator removes the value at a specified location and adds it to the
+                //    target location. The 'from' location MUST exist for the operation to be successful.
+                //    The 'path' attribute can't be a JSON child of the 'from' JSON location."
                 case PatchOperationType.Move:
                     {
                         var sourcePath = GetPatchSourcePath(operation);
@@ -8384,6 +9061,13 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
                         break;
                     }
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update
+                //   "Increment: This operator increments a field by the specified value. It can accept
+                //    both positive and negative values. If the field doesn't exist, it creates the field
+                //    and sets it to the specified value."
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update-getting-started
+                //   "For Operation: Node(PATH) isn't a number. Increment operation can only work on
+                //    integer and float."
                 case PatchOperationType.Increment:
                     {
                         var incrementValue = GetPatchValue(operation);

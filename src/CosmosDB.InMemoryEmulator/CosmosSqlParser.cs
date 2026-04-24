@@ -246,6 +246,10 @@ public static class CosmosSqlTokenizer
     // allows [expr, expr] array literals and [0] numeric indexers to tokenize correctly.
     // If needed in the future, require the content to contain a space to disambiguate.
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/keywords
+    //   "The query language includes reserved keywords: SELECT, DISTINCT, TOP, VALUE, AS,
+    //    FROM, JOIN, IN, WHERE, AND, OR, NOT, BETWEEN, LIKE, IS, ORDER BY, ASC, DESC,
+    //    GROUP BY, HAVING, OFFSET, LIMIT, EXISTS, ARRAY, ESCAPE, etc."
     private static readonly Dictionary<string, CosmosSqlToken> Keywords = new(StringComparer.OrdinalIgnoreCase)
     {
         ["SELECT"] = CosmosSqlToken.Select,
@@ -340,6 +344,12 @@ public static class CosmosSqlTokenizer
 
 public static class CosmosSqlParser
 {
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/
+    //   "Use the query language for Cosmos DB to query data in loosely structured schemas
+    //    while still using familiar ANSI SQL keywords."
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/keywords
+    //   The SQL grammar supports SELECT, FROM, WHERE, JOIN, ORDER BY, GROUP BY, HAVING,
+    //   OFFSET/LIMIT, DISTINCT, TOP, VALUE, BETWEEN, LIKE, IN, IS NULL, EXISTS, and ARRAY.
     private static readonly HashSet<string> LegacyFunctionNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "STARTSWITH", "ENDSWITH", "CONTAINS", "ARRAY_CONTAINS", "IS_DEFINED", "IS_NULL",
@@ -462,6 +472,8 @@ public static class CosmosSqlParser
         select (SqlExpression)new FunctionCallExpression(name.ToUpperInvariant(), args);
 
     // Dotted function call: namespace.FUNC_NAME(args...) — supports udf.xxx()
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/user-defined-functions
+    //   "UDF names are case-sensitive. Use the udf. prefix to call user-defined functions."
     // UDF names preserve original casing (Cosmos DB UDFs are case-sensitive);
     // built-in dotted functions (e.g. ST_DISTANCE) are uppercased.
     private static readonly TokenListParser<CosmosSqlToken, SqlExpression> DottedFunctionCall =
@@ -611,6 +623,8 @@ public static class CosmosSqlParser
             BitwiseXorExpr,
             (op, left, right) => new BinaryExpression(left, op, right));
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/string-concat
+    //   "The || operator concatenates two strings in Cosmos DB SQL queries."
     // ── String concat: || ──
 
     private static readonly TokenListParser<CosmosSqlToken, SqlExpression> StringConcatExpr =

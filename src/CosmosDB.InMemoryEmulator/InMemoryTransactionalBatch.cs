@@ -31,11 +31,19 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
         Converters = { new StringEnumConverter { AllowIntegerValues = true } }
     };
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/concepts-limits#per-request-limits
+    //   "Maximum number of operations in a transactional batch: 100"
     private const int MaxBatchOperations = 100;
+
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/concepts-limits#per-request-limits
+    //   "Maximum request size (for example, stored procedure, CRUD): 2 MB"
     private const int MaxBatchSizeBytes = 2 * 1024 * 1024;
 
     private enum BatchOpType { Create, Read, Upsert, Replace, Delete, Patch, CreateStream, UpsertStream, ReplaceStream }
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.transactionalbatch
+    //   "Represents a batch of operations against items with the same PartitionKey in a container
+    //    that will be performed in a transactional manner at the Azure Cosmos DB service."
     private readonly InMemoryContainer _container;
     private readonly PartitionKey _partitionKey;
     private readonly List<(Func<Task> Execute, BatchOpType Type)> _operations = new();
@@ -50,6 +58,8 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
         _partitionKey = partitionKey;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+    //   "201 Created - The operation was successful."
     public override TransactionalBatch CreateItem<T>(T item, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
         var json = JsonConvert.SerializeObject(item, JsonSettings);
@@ -64,6 +74,10 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
         return this;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+    //   "x-ms-documentdb-is-upsert: If set to true, Cosmos DB creates the document with the ID
+    //    [...] if it doesn't exist, or update the document if it exists."
+    //   Returns 201 Created for new items, 200 OK for replaced items.
     public override TransactionalBatch UpsertItem<T>(T item, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
         var json = JsonConvert.SerializeObject(item, JsonSettings);
@@ -79,6 +93,8 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
         return this;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-document
+    //   "200 Ok - The operation was successful."
     public override TransactionalBatch ReplaceItem<T>(string id, T item, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
         var json = JsonConvert.SerializeObject(item, JsonSettings);
@@ -93,6 +109,8 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
         return this;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-document
+    //   "204 No Content - The delete operation was successful."
     public override TransactionalBatch DeleteItem(string id, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
         _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(id) + 128;
@@ -100,6 +118,8 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
         return this;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-document
+    //   "200 Ok - The operation was successful."
     public override TransactionalBatch ReadItem(string id, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
         _estimatedBatchSize += System.Text.Encoding.UTF8.GetByteCount(id) + 128;
@@ -112,6 +132,11 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
         return this;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "If-Match: Used to make operation conditional for optimistic concurrency.
+    //    The value should be the etag value of the resource."
+    //   "If-None-Match: Makes operation conditional to only execute if the resource has changed.
+    //    The value should be the etag of the resource."
     private static ItemRequestOptions? ToItemRequestOptions(TransactionalBatchItemRequestOptions? options)
     {
         if (options is null)
@@ -142,21 +167,34 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/concepts-limits#per-request-limits
+        //   "Maximum number of operations in a transactional batch: 100"
         if (_operations.Count > MaxBatchOperations)
         {
             throw InMemoryCosmosException.Create("Batch request has more operations than what is supported.",
                 HttpStatusCode.BadRequest, 0, string.Empty, 0);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/concepts-limits#per-request-limits
+        //   "Maximum request size (for example, stored procedure, CRUD): 2 MB"
+        // When the batch exceeds the size limit, all operations are marked as FailedDependency
+        // and the overall response status is 413 RequestEntityTooLarge.
         if (_estimatedBatchSize > MaxBatchSizeBytes)
         {
             var overSizeResults = new List<(HttpStatusCode status, bool isSuccess)>();
+            // Ref: https://github.com/Azure/azure-cosmos-dotnet-v3 (TransactionalBatchResponse.cs)
+            //   When a batch request fails as a whole (e.g. oversize), individual operations
+            //   are populated with the overall response status. Here we use FailedDependency
+            //   since no operations were executed.
             for (var i = 0; i < _operations.Count; i++)
                 overSizeResults.Add((HttpStatusCode.FailedDependency, false));
             return new InMemoryBatchResponse(HttpStatusCode.RequestEntityTooLarge, false, overSizeResults, _readResults, _writeEtags,
                 "Request size is too large.", _container.CurrentSessionToken);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.transactionalbatch
+        //   "Represents a batch of operations [...] that will be performed in a transactional manner"
+        //   Snapshot container state before executing so we can atomically roll back on failure.
         var itemsSnapshot = _container.SnapshotItems();
         var etagsSnapshot = _container.SnapshotEtags();
         var timestampsSnapshot = _container.SnapshotTimestamps();
@@ -173,6 +211,15 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
             {
                 var (execute, opType) = _operations[i];
                 await execute();
+                // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-document
+                //   "200 Ok - The operation was successful."
+                // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-document
+                //   "204 No Content - The delete operation was successful."
+                // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-document
+                //   "200 Ok - The operation was successful."
+                // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+                //   "201 Created - The operation was successful."
+                //   Upsert returns 200 when replacing an existing item, 201 when creating a new one.
                 var statusCode = opType switch
                 {
                     BatchOpType.Read => HttpStatusCode.OK,
@@ -193,6 +240,12 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
             }
         }
 
+        // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.transactionalbatch
+        //   "Represents a batch of operations [...] that will be performed in a transactional manner"
+        // Ref: https://github.com/Azure/azure-cosmos-dotnet-v3 (TransactionalBatchResponse.cs)
+        //   On failure, all preceding successful operations are rolled back and their status
+        //   is set to 424 FailedDependency. Operations after the failed one also receive
+        //   FailedDependency without being executed.
         if (failedIndex >= 0)
         {
             var touchedKeys = _container.EndBatchTracking();
@@ -211,6 +264,7 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
                 $"Batch operation at index {failedIndex} failed with status code {(int)failedStatusCode}.", _container.CurrentSessionToken);
         }
 
+        // Batch succeeded — overall response is 200 OK.
         _container.EndBatchTracking();
         return new InMemoryBatchResponse(HttpStatusCode.OK, true, operationResults, _readResults, _writeEtags, sessionToken: _container.CurrentSessionToken);
     }
@@ -220,6 +274,8 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
 
     #region Unimplemented overrides
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+    //   "201 Created - The operation was successful."
     public override TransactionalBatch CreateItemStream(Stream streamPayload, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
         var json = new StreamReader(streamPayload).ReadToEnd();
@@ -247,6 +303,8 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
         return this;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+    //   Upsert via stream — returns 201 Created for new items, 200 OK for replaced items.
     public override TransactionalBatch UpsertItemStream(Stream streamPayload, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
         var json = new StreamReader(streamPayload).ReadToEnd();
@@ -273,6 +331,8 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
         return this;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-document
+    //   "200 Ok - The operation was successful."
     public override TransactionalBatch ReplaceItemStream(string id, Stream streamPayload, TransactionalBatchItemRequestOptions? requestOptions = null)
     {
         var json = new StreamReader(streamPayload).ReadToEnd();
@@ -298,6 +358,8 @@ internal class InMemoryTransactionalBatch : TransactionalBatch
         return this;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/patch-a-document (partial update)
+    //   Patch returns 200 OK on success.
     public override TransactionalBatch PatchItem(string id, IReadOnlyList<PatchOperation> patchOperations, TransactionalBatchPatchItemRequestOptions? requestOptions = null)
     {
         var estimatedSize = patchOperations.Sum(op =>

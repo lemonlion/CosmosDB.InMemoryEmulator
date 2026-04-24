@@ -10,6 +10,9 @@ using NSubstitute;
 
 namespace CosmosDB.InMemoryEmulator;
 
+// Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-processor
+//   "The delegate receives batches of changes as they are generated in the change feed and can process them."
+//   The ChangeFeedProcessorContext provides LeaseToken, Diagnostics, Headers, and FeedRange per batch.
 internal sealed class InMemoryChangeFeedProcessorContext : ChangeFeedProcessorContext
 {
     public override string LeaseToken { get; } = "0";
@@ -24,6 +27,10 @@ internal sealed class NoOpChangeFeedProcessor : ChangeFeedProcessor
     public override Task StopAsync() => Task.CompletedTask;
 }
 
+// Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-processor
+//   "The change feed processor has four main components: The monitored container [...],
+//    The lease container [...], The compute instance [...], The delegate [...]"
+//   This class implements the processor lifecycle: polling, delegate invocation, and checkpointing.
 internal sealed class InMemoryChangeFeedProcessor<T> : ChangeFeedProcessor
 {
     private readonly InMemoryContainer _container;
@@ -48,6 +55,8 @@ internal sealed class InMemoryChangeFeedProcessor<T> : ChangeFeedProcessor
         _handler = (_, changes, ct) => legacyHandler(changes, ct);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.changefeedprocessor.startasync
+    //   "Start listening for changes."
     public override Task StartAsync()
     {
         _checkpoint = _container.GetChangeFeedCheckpoint();
@@ -56,6 +65,8 @@ internal sealed class InMemoryChangeFeedProcessor<T> : ChangeFeedProcessor
         return Task.CompletedTask;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.changefeedprocessor.stopasync
+    //   "Stops listening for changes."
     public override async Task StopAsync()
     {
         if (_cts != null)
@@ -68,12 +79,21 @@ internal sealed class InMemoryChangeFeedProcessor<T> : ChangeFeedProcessor
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-processor
+    //   "Processing life cycle: 1. Read the change feed. 2. If there are no changes, sleep for a
+    //    predefined amount of time (customizable by using WithPollInterval in the Builder) and go to
+    //    step 1. 3. If there are changes, send them to the delegate. 4. When the delegate finishes
+    //    processing the changes successfully, update the lease store with the latest processed point
+    //    in time and go to step 1."
     private async Task PollAsync(CancellationToken cancellationToken)
     {
         var context = new InMemoryChangeFeedProcessorContext();
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.changefeedprocessorbuilder.withpollinterval
+            //   "Gets or sets the delay in between polling the change feed for new changes,
+            //    after all current changes are drained."
             await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
 
             var iterator = _container.GetChangeFeedIterator<T>(_checkpoint);
@@ -82,6 +102,9 @@ internal sealed class InMemoryChangeFeedProcessor<T> : ChangeFeedProcessor
             while (iterator.HasMoreResults)
             {
                 var response = await iterator.ReadNextAsync(cancellationToken);
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-pull-model
+                //   "When you try to read the change feed and there are no new changes available,
+                //    you receive a response with NotModified status."
                 if (response.StatusCode == HttpStatusCode.NotModified)
                 {
                     break;
@@ -92,14 +115,25 @@ internal sealed class InMemoryChangeFeedProcessor<T> : ChangeFeedProcessor
 
             if (changes.Count > 0)
             {
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-modes
+                //   "Only the most recent change for a specific item is included in the change feed.
+                //    Intermediate changes might not be available." (latest version mode)
                 // Deduplicate: keep only the latest version per item (by id),
                 // matching LatestVersion change feed processor behavior.
                 var deduped = DeduplicateByItemId(changes);
                 try
                 {
                     await _handler(context, deduped, cancellationToken);
+                    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-processor
+                    //   "When the delegate finishes processing the changes successfully, update the
+                    //    lease store with the latest processed point in time and go to step 1."
                     _checkpoint += changes.Count; // advance past ALL entries, including intermediates
                 }
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-processor
+                //   "If your delegate implementation has an unhandled exception [...] The new thread
+                //    restarts from there, effectively sending the same batch of changes to the delegate.
+                //    This behavior continues until your delegate processes the changes correctly, and
+                //    it's the reason the change feed processor has an 'at least once' guarantee."
                 catch (Exception) when (!cancellationToken.IsCancellationRequested)
                 {
                     // Handler threw — do not advance checkpoint so the same batch is redelivered
@@ -108,6 +142,9 @@ internal sealed class InMemoryChangeFeedProcessor<T> : ChangeFeedProcessor
         }
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-modes
+    //   "Only the most recent change for a specific item is included in the change feed.
+    //    Intermediate changes might not be available." (latest version mode)
     private static IReadOnlyCollection<T> DeduplicateByItemId(List<T> changes)
     {
         var seen = new Dictionary<string, T>();
@@ -128,6 +165,9 @@ internal sealed class InMemoryChangeFeedProcessor<T> : ChangeFeedProcessor
     }
 }
 
+// Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/change-feed-processor
+//   Stream-based variant of the change feed processor. The delegate receives a Stream of changes
+//   instead of typed objects, allowing raw JSON processing without deserialization.
 internal sealed class InMemoryChangeFeedStreamProcessor : ChangeFeedProcessor
 {
     private readonly InMemoryContainer _container;
@@ -202,6 +242,11 @@ internal sealed class InMemoryChangeFeedStreamProcessor : ChangeFeedProcessor
     }
 }
 
+// Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/change-feed
+//   "Each change appears exactly once in the change feed, and the clients must manage the
+//    checkpointing logic."
+//   This variant provides manual checkpoint control: the checkpoint only advances when the
+//   delegate explicitly invokes the checkpoint callback.
 internal sealed class InMemoryManualCheckpointChangeFeedProcessor<T> : ChangeFeedProcessor
 {
     private readonly InMemoryContainer _container;
@@ -263,6 +308,10 @@ internal sealed class InMemoryManualCheckpointChangeFeedProcessor<T> : ChangeFee
                 var checkpointed = false;
                 try
                 {
+                    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/change-feed
+                    //   "Each change appears exactly once in the change feed, and the clients must
+                    //    manage the checkpointing logic."
+                    //   The checkpoint delegate allows the handler to control when progress is committed.
                     await _handler(context, changes, async () => { checkpointed = true; await Task.CompletedTask; }, cancellationToken);
                 }
                 catch (Exception) when (!cancellationToken.IsCancellationRequested)
@@ -276,6 +325,10 @@ internal sealed class InMemoryManualCheckpointChangeFeedProcessor<T> : ChangeFee
     }
 }
 
+// Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/change-feed
+//   "Each change appears exactly once in the change feed, and the clients must manage the
+//    checkpointing logic."
+//   Stream-based variant with manual checkpoint control.
 internal sealed class InMemoryManualCheckpointStreamChangeFeedProcessor : ChangeFeedProcessor
 {
     private readonly InMemoryContainer _container;
@@ -353,6 +406,12 @@ internal sealed class InMemoryManualCheckpointStreamChangeFeedProcessor : Change
     }
 }
 
+// Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.changefeedprocessorbuilder
+//   "Builds a new instance of the ChangeFeedProcessor with the specified configuration."
+//   This factory creates a ChangeFeedProcessorBuilder pre-configured with our in-memory processor
+//   via reflection into SDK internals, with an NSubstitute fallback if reflection fails.
+//   Reflection targets private fields of ChangeFeedProcessorBuilder in the Cosmos SDK — these are
+//   internal implementation details that may change across SDK versions. See IsReflectionCompatible().
 internal static class ChangeFeedProcessorBuilderFactory
 {
     private static readonly Assembly CosmosAssembly = typeof(Container).Assembly;
@@ -460,14 +519,31 @@ internal static class ChangeFeedProcessorBuilderFactory
         return builder;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.changefeedprocessorbuilder
+    //   Fallback builder using NSubstitute when reflection into SDK internals is not possible.
+    //   Stubs the fluent builder API methods: WithInstanceName, WithLeaseContainer, WithStartTime,
+    //   WithPollInterval, WithMaxItems, and Build.
     private static ChangeFeedProcessorBuilder CreateFallbackBuilder(ChangeFeedProcessor processor)
     {
         var builder = Substitute.For<ChangeFeedProcessorBuilder>();
+        // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.changefeedprocessorbuilder.withinstancename
+        //   "Sets the compute instance name that will host the processor."
         builder.WithInstanceName(Arg.Any<string>()).Returns(builder);
+        // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.changefeedprocessorbuilder.withleasecontainer
+        //   "Sets the Cosmos Container to hold the leases state"
         builder.WithLeaseContainer(Arg.Any<Container>()).Returns(builder);
+        // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.changefeedprocessorbuilder.withstarttime
+        //   "Sets the time (exclusive) to start looking for changes after."
         builder.WithStartTime(Arg.Any<DateTime>()).Returns(builder);
+        // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.changefeedprocessorbuilder.withpollinterval
+        //   "Gets or sets the delay in between polling the change feed for new changes,
+        //    after all current changes are drained."
         builder.WithPollInterval(Arg.Any<TimeSpan>()).Returns(builder);
+        // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.changefeedprocessorbuilder.withmaxitems
+        //   "Sets the maximum number of items to be returned in the enumeration operation."
         builder.WithMaxItems(Arg.Any<int>()).Returns(builder);
+        // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.changefeedprocessorbuilder.build
+        //   "Builds a new instance of the ChangeFeedProcessor with the specified configuration."
         builder.Build().Returns(processor);
         return builder;
     }

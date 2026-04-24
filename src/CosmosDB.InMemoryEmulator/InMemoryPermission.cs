@@ -30,6 +30,9 @@ public sealed class InMemoryPermission : Permission
 
     public override string Id { get; }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-permission
+    //   "200 Ok: The operation was successful."
+    //   "404 Not Found: The permission is no longer a resource, that is, the permission was deleted."
     public override Task<PermissionResponse> ReadAsync(
         int? tokenExpiryInSeconds = null,
         RequestOptions requestOptions = null,
@@ -41,6 +44,9 @@ public sealed class InMemoryPermission : Permission
         return Task.FromResult(BuildPermissionResponse(props, HttpStatusCode.OK));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-permission
+    //   "200 Ok: The replace operation was successful."
+    //   "404 Not Found: The user to be replaced is no longer a resource, that is, the permission was deleted."
     public override Task<PermissionResponse> ReplaceAsync(
         PermissionProperties permissionProperties,
         int? tokenExpiryInSeconds = null,
@@ -55,6 +61,9 @@ public sealed class InMemoryPermission : Permission
         return Task.FromResult(BuildPermissionResponse(updated, HttpStatusCode.OK));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-permission
+    //   "204 No Content: The delete operation was successful."
+    //   "404 Not Found: The permission to be deleted is no longer a resource, i.e. the permission was deleted."
     public override Task<PermissionResponse> DeleteAsync(
         RequestOptions requestOptions = null,
         CancellationToken cancellationToken = default)
@@ -65,6 +74,12 @@ public sealed class InMemoryPermission : Permission
         return Task.FromResult(BuildPermissionResponse(null, HttpStatusCode.NoContent));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-permission
+    //   "_etag: It is a system generated property that represents the resource etag
+    //    required for optimistic concurrency control."
+    //   "_ts: It is a system generated property. It specifies the last updated timestamp
+    //    of the resource. The value is a timestamp."
+    //   "_token: It is a system generated resource token for the particular resource and user."
     internal static PermissionProperties WithSyntheticMetadata(PermissionProperties source)
     {
         // PermissionProperties has private setters for ETag, Token, LastModified.

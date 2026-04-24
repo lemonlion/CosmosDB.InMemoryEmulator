@@ -2174,6 +2174,11 @@ public class FakeCosmosHandler : HttpMessageHandler
         return null;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-response-headers
+    //   "x-ms-continuation: This header represents the intermediate state of query (or read-feed)
+    //    execution, and is returned when there are additional results aside from what was returned
+    //    in the response. Clients can resubmit the request with a request header containing the
+    //    value of x-ms-continuation."
     private static (string Key, int Offset)? DecodeContinuation(HttpRequestMessage request)
     {
         if (!request.Headers.TryGetValues("x-ms-continuation", out var values))
@@ -2210,6 +2215,12 @@ public class FakeCosmosHandler : HttpMessageHandler
     private HttpResponseMessage CreateJsonResponse(string json)
         => CreateJsonResponse(json, HttpStatusCode.OK);
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-response-headers
+    //   "x-ms-request-charge: This is the number of normalized requests a.k.a. request units (RU)
+    //    for the operation."
+    //   "x-ms-activity-id: Represents a unique identifier for the operation."
+    //   "x-ms-session-token: The session token of the request. For session consistency, clients must
+    //    echo this request via the x-ms-session-token request header for subsequent operations."
     private HttpResponseMessage CreateJsonResponse(string json, HttpStatusCode statusCode)
     {
         var response = new HttpResponseMessage(statusCode)
@@ -2230,6 +2241,11 @@ public class FakeCosmosHandler : HttpMessageHandler
         return response;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-database
+    //   Response body includes: "id" (unique user generated name), "_rid" (system generated
+    //    resource ID), "_ts" (last updated timestamp), "_self" (unique addressable URI),
+    //    "_etag" (resource etag for optimistic concurrency), "_colls" (addressable path of
+    //    collections resource), "_users" (addressable path of users resource).
     private string GetDatabaseMetadata(string databaseName)
     {
         var metadata = new JObject
@@ -2245,6 +2261,9 @@ public class FakeCosmosHandler : HttpMessageHandler
         return metadata.ToString(Formatting.None);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-the-database-account
+    //   The account resource includes writableLocations, readableLocations,
+    //   userConsistencyPolicy with defaultConsistencyLevel, and queryEngineConfiguration.
     private const string AccountMetadata = """
         {
             "id": "fake-account",
@@ -2265,6 +2284,13 @@ public class FakeCosmosHandler : HttpMessageHandler
         }
         """;
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-collection
+    //   Response body includes: "id" (unique name), "_rid", "_ts", "_self", "_etag",
+    //    "indexingPolicy" (indexing settings), and "partitionKey" (partitioning config).
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-collection
+    //   "partitionKey: paths — An array of paths using which data within the collection can be
+    //    partitioned." "kind — The algorithm used for partitioning."
+    //    "version — To use large partition key, set the version to 2."
     private string GetCollectionMetadata()
     {
         var paths = new JArray(_container.PartitionKeyPaths.Select(path => (JToken)path));
@@ -2314,6 +2340,9 @@ public class FakeCosmosHandler : HttpMessageHandler
             ["partitionKey"] = new JObject
             {
                 ["paths"] = paths,
+                // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/hierarchical-partition-keys
+                //   Hierarchical partition keys use "MultiHash" kind with multiple paths.
+                //   Single partition keys use "Hash" kind.
                 ["kind"] = paths.Count > 1 ? "MultiHash" : "Hash",
                 ["version"] = 2
             },
@@ -2323,6 +2352,11 @@ public class FakeCosmosHandler : HttpMessageHandler
         return metadata.ToString(Formatting.None);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-partition-key-ranges
+    //   "PartitionKeyRanges: This is the list of partition key ranges for the collection."
+    //   Each range includes: "id" (stable unique ID within collection), "minInclusive"
+    //   (minimum partition key hash value), "maxExclusive" (maximum partition key hash value),
+    //   "_rid", "_self", "_ts", "_etag".
     private string GetPartitionKeyRanges()
     {
         var ranges = new JArray();
@@ -2806,6 +2840,10 @@ public class FakeCosmosHandler : HttpMessageHandler
                 return await InvokeHandlerAsync(_default, request, cancellationToken);
             }
 
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-collection
+            //   "POST https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls"
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-collections
+            //   "GET https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls"
             // Container creation: POST /dbs/{db}/colls
             // Container listing: GET /dbs/{db}/colls
             var collsMatch = Regex.Match(path, @"^/dbs/([^/]+)/colls/?$");
@@ -2818,12 +2856,20 @@ public class FakeCosmosHandler : HttpMessageHandler
                     return HandleListContainers(dbNameForColls);
             }
 
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-databases
+            //   "GET https://{databaseaccount}.documents.azure.com/dbs"
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-database
+            //   "POST https://{databaseaccount}.documents.azure.com/dbs"
             // Database management: /dbs
             if (Regex.IsMatch(path, @"^/dbs/?$"))
             {
                 return await HandleDatabaseListOrCreate(request, method, cancellationToken);
             }
 
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-database
+            //   "GET https://{databaseaccount}.documents.azure.com/dbs/{db-id}"
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-database
+            //   "DELETE https://{databaseaccount}.documents.azure.com/dbs/{db-id}"
             // Database CRUD: /dbs/{id}
             if (Regex.IsMatch(path, @"^/dbs/[^/]+/?$") && !path.Contains("/colls"))
             {
@@ -2836,6 +2882,12 @@ public class FakeCosmosHandler : HttpMessageHandler
                 var dbName = match.Groups[1].Value;
                 var containerName = match.Groups[2].Value;
 
+                // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-collection
+                //   "DELETE https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}"
+                // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-collection
+                //   "GET https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}"
+                // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-collection
+                //   "PUT https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}"
                 // Container-level operations (not sub-resources)
                 if (Regex.IsMatch(path, @"/colls/[^/]+/?$"))
                 {
@@ -2892,6 +2944,10 @@ public class FakeCosmosHandler : HttpMessageHandler
             return await InvokeHandlerAsync(_default, request, cancellationToken);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-collection
+        //   "201 Created: The operation was successful."
+        //   "409 Conflict: The ID provided for the new collection has been taken by an
+        //    existing collection."
         private async Task<HttpResponseMessage> HandleCreateContainerAsync(
             HttpRequestMessage request, string dbName, CancellationToken cancellationToken)
         {
@@ -2948,6 +3004,10 @@ public class FakeCosmosHandler : HttpMessageHandler
             return CreateContainerMetadataResponse(newHandler, HttpStatusCode.Created);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-collection
+        //   "204 No Content: The delete operation was successful."
+        //   "404 Not Found: The collection to be deleted is no longer a resource, that is,
+        //    the collection was deleted."
         private HttpResponseMessage HandleDeleteContainer(string dbName, string containerName)
         {
             var registryKey = ResolveExistingRegistryKey(dbName, containerName);
@@ -2978,6 +3038,10 @@ public class FakeCosmosHandler : HttpMessageHandler
             };
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-collection
+        //   "200 Ok: The operation was successful."
+        //   "404 Not Found: The collection is no longer a resource, that is, the collection
+        //    was deleted."
         private HttpResponseMessage HandleReadContainer(string dbName, string containerName)
         {
             var registryKey = ResolveExistingRegistryKey(dbName, containerName);
@@ -2994,6 +3058,10 @@ public class FakeCosmosHandler : HttpMessageHandler
             };
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-collections
+        //   "200 OK: The operation was successful."
+        //   Response body: "_rid" (resource ID for the database), "_count" (number of
+        //   collections returned), "DocumentCollections" (array of collection resources).
         private HttpResponseMessage HandleListContainers(string dbName)
         {
             var containerArray = new JArray();
@@ -3030,6 +3098,10 @@ public class FakeCosmosHandler : HttpMessageHandler
             return response;
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-collection
+        //   "Replace Collection supports changing the indexing policy of a collection after
+        //    creation. Changing other properties of a collection like the ID or the partition
+        //    key aren't supported."
         private async Task<HttpResponseMessage> HandleReplaceContainer(
             HttpRequestMessage request, string dbName, string containerName, CancellationToken cancellationToken)
         {
@@ -3048,6 +3120,9 @@ public class FakeCosmosHandler : HttpMessageHandler
                 if (newPkPath is not null)
                 {
                     var existingPkPath = handler.BackingInMemoryContainer.PartitionKeyPaths.FirstOrDefault();
+                    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-collection
+                    //   "Changing other properties of a collection like the ID or the partition
+                    //    key aren't supported."
                     if (existingPkPath is not null && !string.Equals(newPkPath, existingPkPath, StringComparison.Ordinal))
                     {
                         return new HttpResponseMessage(HttpStatusCode.BadRequest)
@@ -3083,6 +3158,11 @@ public class FakeCosmosHandler : HttpMessageHandler
             return await InvokeHandlerAsync(_default, request, cancellationToken);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-database
+        //   "200 Ok: The operation was successful."
+        //   "404 Not Found: The database is no longer a resource, i.e. the resource was deleted."
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-database
+        //   "204 No Content: The delete operation was successful."
         private HttpResponseMessage HandleDatabaseCrud(
             HttpRequestMessage request, string path, string method)
         {
@@ -3117,6 +3197,9 @@ public class FakeCosmosHandler : HttpMessageHandler
                 : containerName;
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-response-headers
+        //   "etag: The etag header shows the resource etag for the resource retrieved.
+        //    The etag has the same value as the _etag property in the response body."
         private static HttpResponseMessage CreateContainerMetadataResponse(
             FakeCosmosHandler handler, HttpStatusCode statusCode)
         {

@@ -6,6 +6,12 @@ namespace CosmosDB.InMemoryEmulator;
 /// MurmurHash3 (32-bit) implementation used for partition key range assignment.
 /// Shared between <see cref="InMemoryContainer"/> and <see cref="FakeCosmosHandler"/>.
 /// </summary>
+// Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partitioning-overview
+//   "The items in a container are divided into distinct subsets called logical partitions.
+//    Logical partitions form based on the value of a partition key associated with each item."
+// Cosmos DB uses hash-based partitioning internally to map partition keys to physical partitions.
+// MurmurHash3 is the specific hash function used by the Cosmos DB SDK for partition key routing.
+// Ref: https://github.com/Azure/azure-cosmos-dotnet-v3 (SDK source — MurmurHash3 in Routing/)
 internal static class PartitionKeyHash
 {
     internal static uint MurmurHash3(string value)
@@ -52,6 +58,10 @@ internal static class PartitionKeyHash
     /// <summary>
     /// Returns the 0-based range index for a partition key value given N total ranges.
     /// </summary>
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/partitioning-overview
+    //   "A container scales by distributing data and throughput across physical partitions.
+    //    Internally, one or more logical partitions map to a single physical partition."
+    // The hash space is divided into N equal intervals to simulate partition key range routing.
     internal static int GetRangeIndex(string partitionKeyValue, int rangeCount)
     {
         if (rangeCount <= 1) return 0;

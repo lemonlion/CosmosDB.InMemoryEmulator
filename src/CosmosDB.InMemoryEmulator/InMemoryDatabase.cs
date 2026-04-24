@@ -28,6 +28,10 @@ internal class InMemoryDatabase : Database
     private readonly ConcurrentDictionary<string, bool> _explicitlyCreatedContainers = new();
     private readonly ConcurrentDictionary<string, InMemoryUser> _users = new();
     private readonly InMemoryCosmosClient _client;
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-collection
+    //   "The user specified manual throughput (RU/s) for the collection expressed in units of
+    //    100 request units per second. The minimum is 400 up to 1,000,000 (or higher by
+    //    requesting a limit increase)."
     private int _throughput = 400;
 
     /// <summary>
@@ -83,6 +87,11 @@ internal class InMemoryDatabase : Database
 
     // ── CreateContainerIfNotExistsAsync ─────────────────────────────────────
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.database.createcontainerifnotexistsasync
+    //   "Check if a container exists, and if it doesn't, create it. Only the container id is
+    //    used to verify if there is an existing container. Other container properties such as
+    //    throughput are not validated and can be different then the passed properties."
+    //   StatusCode: 201 Created - New container is created. 200 OK - Container already exists.
     public override Task<ContainerResponse> CreateContainerIfNotExistsAsync(
         string id, string partitionKeyPath, int? throughput = null,
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -102,6 +111,9 @@ internal class InMemoryDatabase : Database
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         var id = containerProperties.Id;
+        // TODO: No official source found — needs verification
+        //   Defaulting partition key path to "/id" when not specified is an emulator convenience;
+        //   the REST API requires a partitionKey definition for API version 2018-12-31 and higher.
         if (string.IsNullOrEmpty(containerProperties.PartitionKeyPath) && containerProperties.PartitionKeyPaths is null)
             containerProperties.PartitionKeyPath = "/id";
         var created = false;
@@ -129,6 +141,10 @@ internal class InMemoryDatabase : Database
 
     // ── CreateContainerAsync ────────────────────────────────────────────────
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-collection
+    //   "201 Created - The operation was successful."
+    //   "409 Conflict - The ID provided for the new collection has been taken by an
+    //    existing collection."
     public override Task<ContainerResponse> CreateContainerAsync(
         string id, string partitionKeyPath, int? throughput = null,
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
@@ -143,6 +159,9 @@ internal class InMemoryDatabase : Database
         container.ExplicitlyCreated = true;
         if (!_containers.TryAdd(id, container))
         {
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-collection
+            //   "409 Conflict - The ID provided for the new collection has been taken by an
+            //    existing collection."
             throw InMemoryCosmosException.Create("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
         }
         _explicitlyCreatedContainers.TryAdd(id, true);
@@ -156,6 +175,9 @@ internal class InMemoryDatabase : Database
     {
         var id = containerProperties.Id;
         InMemoryCosmosClient.ValidateResourceName(id, "Container");
+        // TODO: No official source found — needs verification
+        //   Defaulting partition key path to "/id" when not specified is an emulator convenience;
+        //   the REST API requires a partitionKey definition for API version 2018-12-31 and higher.
         if (string.IsNullOrEmpty(containerProperties.PartitionKeyPath) && containerProperties.PartitionKeyPaths is null)
             containerProperties.PartitionKeyPath = "/id";
         var container = new InMemoryContainer(containerProperties);
@@ -167,6 +189,9 @@ internal class InMemoryDatabase : Database
             container.IndexingPolicy = containerProperties.IndexingPolicy;
         if (!_containers.TryAdd(id, container))
         {
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-collection
+            //   "409 Conflict - The ID provided for the new collection has been taken by an
+            //    existing collection."
             throw InMemoryCosmosException.Create("Container already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
         }
         _explicitlyCreatedContainers.TryAdd(id, true);
@@ -183,11 +208,17 @@ internal class InMemoryDatabase : Database
 
     // ── CreateContainerStreamAsync ──────────────────────────────────────────
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-collection
+    //   "201 Created - The operation was successful."
+    //   "409 Conflict - The ID provided for the new collection has been taken by an
+    //    existing collection."
     public override Task<ResponseMessage> CreateContainerStreamAsync(
         ContainerProperties containerProperties, int? throughput = null,
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         var id = containerProperties.Id;
+        // TODO: No official source found — needs verification
+        //   Defaulting partition key path to "/id" when not specified is an emulator convenience.
         if (string.IsNullOrEmpty(containerProperties.PartitionKeyPath) && containerProperties.PartitionKeyPaths is null)
             containerProperties.PartitionKeyPath = "/id";
         var container = new InMemoryContainer(containerProperties);
@@ -214,6 +245,9 @@ internal class InMemoryDatabase : Database
 
     // ── GetContainer ────────────────────────────────────────────────────────
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.database.getcontainer
+    //   "Returns a Container reference. Reference doesn't guarantee existence.
+    //    Please ensure container already exists or is created through a create operation."
     public override Container GetContainer(string id)
     {
         return GetOrCreateContainer(id);
@@ -228,6 +262,10 @@ internal class InMemoryDatabase : Database
 
     // ── GetContainerQueryIterator ───────────────────────────────────────────
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-collections
+    //   "Performing a GET on the collections resource of a particular database, i.e. the colls
+    //    URI path, returns a list of the collections in the database."
+    //   Status code: "200 OK - The operation was successful."
     public override FeedIterator<T> GetContainerQueryIterator<T>(
         string queryText = null, string continuationToken = null,
         QueryRequestOptions requestOptions = null)
@@ -250,11 +288,16 @@ internal class InMemoryDatabase : Database
 
     // ── Read / Delete ───────────────────────────────────────────────────────
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-database
+    //   "200 Ok - The operation was successful."
+    //   "404 Not Found - The database is no longer a resource, i.e. the resource was deleted."
     public override Task<DatabaseResponse> ReadAsync(
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         if (_client != null && !_client.IsDatabaseExplicitlyCreated(Id))
         {
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-database
+            //   "404 Not Found - The database is no longer a resource, i.e. the resource was deleted."
             throw InMemoryCosmosException.Create($"Database '{Id}' not found.", HttpStatusCode.NotFound, 1003, Guid.NewGuid().ToString(), 0);
         }
         var response = Substitute.For<DatabaseResponse>();
@@ -270,6 +313,11 @@ internal class InMemoryDatabase : Database
         return Task.FromResult(CreateStreamResponse(HttpStatusCode.OK));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-database
+    //   "204 No Content - The delete operation was successful."
+    //   "Performing a DELETE on a database deletes the database resource and its child
+    //    resources, that is, collections, documents, attachments, stored procedures,
+    //    triggers, user-defined functions, users, and permissions within the database."
     public override Task<DatabaseResponse> DeleteAsync(
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
@@ -284,6 +332,8 @@ internal class InMemoryDatabase : Database
         return Task.FromResult(response);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-database
+    //   "204 No Content - The delete operation was successful."
     public override Task<ResponseMessage> DeleteStreamAsync(
         RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
@@ -327,6 +377,11 @@ internal class InMemoryDatabase : Database
 
     // ── Throughput (not meaningful for in-memory, but returns sensible defaults) ─
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.database.readthroughputasync
+    //   "Gets database throughput in measurement of request units per second in the
+    //    Azure Cosmos service."
+    //   StatusCode 404: "NotFound - This means the database does not exist or has no
+    //    throughput assigned."
     public override Task<int?> ReadThroughputAsync(CancellationToken cancellationToken = default)
         => Task.FromResult<int?>(_throughput);
 
@@ -338,6 +393,9 @@ internal class InMemoryDatabase : Database
         return Task.FromResult(response);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/set-throughput
+    //   "After you create an Azure Cosmos DB container or a database, you can update the
+    //    provisioned throughput."
     public override Task<ThroughputResponse> ReplaceThroughputAsync(int throughput, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         _throughput = throughput;
@@ -359,6 +417,10 @@ internal class InMemoryDatabase : Database
 
     // ── Stream query iterators ──────────────────────────────────────────────
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-collections
+    //   "returns a list of the collections in the database"
+    //   Response body property: "DocumentCollections - This property is the array containing
+    //    the collections returned as part of the list operation."
     public override FeedIterator GetContainerQueryStreamIterator(QueryDefinition queryDefinition, string continuationToken = null, QueryRequestOptions requestOptions = null)
         => GetContainerQueryStreamIterator((string)null, continuationToken, requestOptions);
 
@@ -373,11 +435,16 @@ internal class InMemoryDatabase : Database
 
     // ── DefineContainer (fluent builder) ────────────────────────────────────
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.database.definecontainer
+    //   "Creates a containerBuilder."
     public override ContainerBuilder DefineContainer(string name, string partitionKeyPath)
         => new ContainerBuilder(this, name, partitionKeyPath);
 
     // ── User management (stub store — no authorization enforced) ───────────
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.database.getuser
+    //   "Returns a User reference. Reference doesn't guarantee existence. Please ensure
+    //    user already exists or is created through a create operation."
     public override User GetUser(string id)
     {
         if (_users.TryGetValue(id, out var existing))
@@ -388,10 +455,15 @@ internal class InMemoryDatabase : Database
         return new InMemoryUser(id, () => _users.TryRemove(id, out _), _users);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-user
+    //   "201 Created - The operation was successful."
+    //   "409 Conflict - The ID provided for the new user has been taken by an existing user."
     public override Task<UserResponse> CreateUserAsync(string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         var user = new InMemoryUser(id, () => _users.TryRemove(id, out _));
         if (!_users.TryAdd(id, user))
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-user
+            //   "409 Conflict - The ID provided for the new user has been taken by an existing user."
             throw InMemoryCosmosException.Create($"User '{id}' already exists.", HttpStatusCode.Conflict, 0, string.Empty, 0);
 
         var response = Substitute.For<UserResponse>();
@@ -401,6 +473,11 @@ internal class InMemoryDatabase : Database
         return Task.FromResult(response);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.database.upsertuserasync
+    //   "Upserts a user as an asynchronous operation in the Azure Cosmos service."
+    // TODO: No official source found for UpsertUser status codes — needs verification.
+    //   The SDK docs do not specify 201/200 status codes for upsert. The 201 Created / 200 OK
+    //   pattern here mirrors standard Cosmos DB upsert semantics observed on the emulator.
     public override Task<UserResponse> UpsertUserAsync(string id, RequestOptions requestOptions = null, CancellationToken cancellationToken = default)
     {
         var created = false;
@@ -413,6 +490,10 @@ internal class InMemoryDatabase : Database
         return Task.FromResult(response);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-users
+    //   "To return a list of the users under a database, performing a GET operation on
+    //    the users resource of a particular database."
+    //   Status code: "200 Ok - The operation was successful."
     public override FeedIterator<T> GetUserQueryIterator<T>(string queryText = null, string continuationToken = null, QueryRequestOptions requestOptions = null)
     {
         return new InMemoryFeedIterator<T>(
