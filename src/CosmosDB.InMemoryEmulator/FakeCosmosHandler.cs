@@ -139,6 +139,8 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// Set of <c>x-ms-*</c> request headers that this handler recognises and processes.
     /// Any <c>x-ms-*</c> header not in this set is recorded in <see cref="UnrecognisedHeaders"/>.
     /// </summary>
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   Common x-ms-* request headers used by the Cosmos DB REST API.
     private static readonly HashSet<string> KnownRequestHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
         "x-ms-documentdb-partitionkey",
@@ -371,16 +373,26 @@ public class FakeCosmosHandler : HttpMessageHandler
             }
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-database-account
+        //   "GET https://{databaseaccount}.documents.azure.com/"
         if (method == "GET" && path is "/" or "")
         {
             return CreateJsonResponse(AccountMetadata);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-partition-key-ranges
+        //   "GET https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/pkranges"
         if (path.Contains("/pkranges"))
         {
             return HandlePartitionKeyRanges(request);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-collection
+        //   "GET https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}"
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-collection
+        //   "PUT https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}"
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-collection
+        //   "DELETE on the collection resource returns 204 No Content."
         if (path.Contains("/colls/") && !path.Contains("/docs"))
         {
             if (method == "GET")
@@ -398,6 +410,11 @@ public class FakeCosmosHandler : HttpMessageHandler
             }
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-database
+        //   "POST https://{databaseaccount}.documents.azure.com/dbs" returns 201 Created.
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-databases
+        //   "GET https://{databaseaccount}.documents.azure.com/dbs" returns 200 Ok with
+        //   a body containing { "_rid": "", "Databases": [...], "_count": N }.
         // Database management: /dbs (list/create)
         if (Regex.IsMatch(path, @"^/dbs/?$"))
         {
@@ -420,6 +437,10 @@ public class FakeCosmosHandler : HttpMessageHandler
             return CreateJsonResponse(dbList.ToString(Formatting.None));
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-database
+        //   "GET https://{databaseaccount}.documents.azure.com/dbs/{db-id}" returns 200 Ok.
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-database
+        //   "DELETE on the database resource returns 204 No Content."
         // Database CRUD: /dbs/{id} (read/replace/delete)
         if (Regex.IsMatch(path, @"^/dbs/[^/]+/?$"))
         {
@@ -433,6 +454,11 @@ public class FakeCosmosHandler : HttpMessageHandler
             };
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-collection
+        //   "POST https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls" returns 201 Created.
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-collections
+        //   "GET https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls" returns 200 Ok
+        //   with { "_rid": ..., "DocumentCollections": [...], "_count": N }.
         // Container management: /dbs/{id}/colls (list/create containers)
         if (Regex.IsMatch(path, @"^/dbs/[^/]+/colls/?$"))
         {
@@ -460,6 +486,14 @@ public class FakeCosmosHandler : HttpMessageHandler
             }
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-document
+        //   "GET https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/docs/{doc-id}"
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-document
+        //   "PUT https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/docs/{doc-id}"
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-document
+        //   "DELETE https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/docs/{doc-id}"
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/patch-a-document
+        //   "PATCH https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/docs/{id}"
         // Document-specific routes: /docs/{id} (point read, replace, delete, patch)
         if (path.Contains("/docs/") && HasDocumentId(path))
         {
@@ -476,6 +510,9 @@ public class FakeCosmosHandler : HttpMessageHandler
             }
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+        //   "POST https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/docs"
+        //   POST is overloaded: batch, query plan, query, upsert, or create — distinguished by headers.
         // POST /docs (overloaded: batch, query plan, query, upsert, create)
         if (method == "POST" && path.Contains("/docs"))
         {
@@ -503,6 +540,10 @@ public class FakeCosmosHandler : HttpMessageHandler
             return await HandleCreateAsync(request, cancellationToken);
         }
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-documents
+        //   "GET https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/docs"
+        //   "Performing a GET on the documents resource of a particular collection returns a list
+        //    of documents under the collection."
         if (method == "GET" && path.Contains("/docs"))
         {
             return await HandleReadFeedAsync(request, cancellationToken);
@@ -521,6 +562,9 @@ public class FakeCosmosHandler : HttpMessageHandler
     //  CRUD route handlers
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+    //   "POST https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/docs"
+    //   Returns 201 Created on success, 409 Conflict if id already exists.
     private async Task<HttpResponseMessage> HandleCreateAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -531,6 +575,9 @@ public class FakeCosmosHandler : HttpMessageHandler
         return ConvertToHttpResponse(result);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+    //   "x-ms-documentdb-is-upsert: If set to true, Cosmos DB creates the document with the ID
+    //    (and partition key value if applicable) if it doesn't exist, or update the document if it exists."
     private async Task<HttpResponseMessage> HandleUpsertAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -541,6 +588,9 @@ public class FakeCosmosHandler : HttpMessageHandler
         return ConvertToHttpResponse(result);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-a-document
+    //   "GET https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/docs/{doc-id}"
+    //   Returns 200 Ok on success, 404 Not Found if the document was deleted.
     private async Task<HttpResponseMessage> HandlePointReadAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -550,6 +600,9 @@ public class FakeCosmosHandler : HttpMessageHandler
         return ConvertToHttpResponse(result);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/replace-a-document
+    //   "PUT https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/docs/{doc-id}"
+    //   Returns 200 Ok on success, 404 Not Found if the document no longer exists.
     private async Task<HttpResponseMessage> HandleReplaceAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -561,6 +614,9 @@ public class FakeCosmosHandler : HttpMessageHandler
         return ConvertToHttpResponse(result);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/delete-a-document
+    //   "DELETE https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/docs/{doc-id}"
+    //   Returns 204 No Content on success, 404 Not Found if the document is not found.
     private async Task<HttpResponseMessage> HandleDeleteAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -570,6 +626,10 @@ public class FakeCosmosHandler : HttpMessageHandler
         return ConvertToHttpResponse(result);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/patch-a-document
+    //   "PATCH https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/docs/{id}"
+    //   Returns 200 Ok on success, 412 Precondition Failed if condition is not met.
+    //   Body contains "operations" array and optional "condition" filter predicate.
     private async Task<HttpResponseMessage> HandlePatchAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -598,6 +658,8 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// Cosmos OperationType enum values used in the HybridRow batch wire protocol.
     /// Values from Microsoft.Azure.Documents.OperationType (in Microsoft.Azure.Cosmos.Direct assembly).
     /// </summary>
+    // TODO: No official REST API source found — batch operation type numeric values are internal
+    //   SDK constants (Microsoft.Azure.Documents.OperationType). Needs verification against SDK source.
     private static class BatchOperationTypes
     {
         public const int Create = 0;
@@ -929,6 +991,8 @@ public class FakeCosmosHandler : HttpMessageHandler
             },
             new MemorySpanResizer<byte>(128));
 
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-response-headers
+        //   Batch responses include standard headers: x-ms-request-charge, x-ms-activity-id, x-ms-session-token.
         var httpResponse = new HttpResponseMessage(batchResponse.StatusCode);
         httpResponse.Content = new ByteArrayContent(responseStream.ToArray());
         httpResponse.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
@@ -953,6 +1017,13 @@ public class FakeCosmosHandler : HttpMessageHandler
     //  CRUD helpers
     // ═══════════════════════════════════════════════════════════════════════════
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-response-headers
+    //   "Content-Type: application/json. The SQL API always returns the response body in standard JSON format."
+    //   "x-ms-request-charge: the number of normalized requests a.k.a. request units (RU) for the operation."
+    //   "x-ms-activity-id: Represents a unique identifier for the operation."
+    //   "x-ms-session-token: The session token of the request. For session consistency, clients must
+    //    echo this request via the x-ms-session-token request header for subsequent operations."
+    //   "etag: shows the resource etag for the resource retrieved."
     private HttpResponseMessage ConvertToHttpResponse(ResponseMessage cosmosResponse)
     {
         var httpResponse = new HttpResponseMessage(cosmosResponse.StatusCode);
@@ -985,6 +1056,8 @@ public class FakeCosmosHandler : HttpMessageHandler
         return httpResponse;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/documents
+    //   Document URIs follow the pattern: dbs/{db-id}/colls/{coll-id}/docs/{doc-id}
     private static string ExtractDocumentId(HttpRequestMessage request)
     {
         var path = request.RequestUri?.AbsolutePath ?? "";
@@ -1005,6 +1078,11 @@ public class FakeCosmosHandler : HttpMessageHandler
         return afterDocs.Length > 0;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "If-Match: Used to make operation conditional for optimistic concurrency. The value should
+    //    be the etag value of the resource." (applicable only on PUT and DELETE)
+    //   "If-None-Match: Makes operation conditional to only execute if the resource has changed.
+    //    The value should be the etag of the resource." (applicable only on GET)
     private static ItemRequestOptions BuildItemRequestOptions(HttpRequestMessage request)
     {
         var options = new ItemRequestOptions();
@@ -1019,6 +1097,9 @@ public class FakeCosmosHandler : HttpMessageHandler
         return options;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/querying-cosmosdb-resources-using-the-rest-api
+    //   "Set the Content-Type header to application/query+json."
+    //   "Set the x-ms-documentdb-isquery header to True."
     private static bool IsQueryRequest(HttpRequestMessage request)
     {
         var contentType = request.Content?.Headers?.ContentType?.MediaType ?? "";
@@ -1030,18 +1111,26 @@ public class FakeCosmosHandler : HttpMessageHandler
         return false;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/create-a-document
+    //   "x-ms-documentdb-is-upsert: If set to true, Cosmos DB creates the document with the ID
+    //    (and partition key value if applicable) if it doesn't exist, or update the document if it exists."
     private static bool IsUpsertRequest(HttpRequestMessage request)
     {
         return request.Headers.TryGetValues("x-ms-documentdb-is-upsert", out var values) &&
                values.Any(v => v.Equals("True", StringComparison.OrdinalIgnoreCase));
     }
 
+    // TODO: No official REST API source found — x-ms-cosmos-is-batch-request is an internal SDK
+    //   header for the transactional batch wire protocol. Needs verification against SDK source.
     private static bool IsBatchRequest(HttpRequestMessage request)
     {
         return request.Headers.TryGetValues("x-ms-cosmos-is-batch-request", out var values) &&
                values.Any(v => v.Equals("True", StringComparison.OrdinalIgnoreCase));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/patch-a-document
+    //   Body contains "operations" array (each with "op", "path", "value") and optional "condition".
+    //   Supported ops: set, replace, add, remove, incr, move.
     private static (IReadOnlyList<PatchOperation> Operations, string? Condition) ParsePatchBody(string body)
     {
         var jObj = JObject.Parse(body);
@@ -1073,6 +1162,12 @@ public class FakeCosmosHandler : HttpMessageHandler
         return (operations, condition);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/get-partition-key-ranges
+    //   "GET https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/pkranges"
+    //   Returns 200 Ok with { "_rid": ..., "PartitionKeyRanges": [...], "_count": N }.
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "If-None-Match: Makes operation conditional to only execute if the resource has changed."
+    //   Returns 304 Not Modified when ETag matches.
     private HttpResponseMessage HandlePartitionKeyRanges(HttpRequestMessage request)
     {
         if (request.Headers.IfNoneMatch.Any(etag => etag.Tag == PkRangesEtag))
@@ -1089,6 +1184,10 @@ public class FakeCosmosHandler : HttpMessageHandler
         return response;
     }
 
+    // Ref: https://github.com/Azure/azure-cosmos-dotnet-v3/blob/master/Microsoft.Azure.Cosmos/src/Query/Core/QueryPlan/QueryPlanHandler.cs
+    //   The SDK's QueryPlanHandler calls TryGetPartitionedQueryExecutionInfoAsync via the gateway
+    //   when the native ServiceInterop DLL is unavailable (non-Windows). The gateway returns a
+    //   PartitionedQueryExecutionInfo JSON that drives the SDK's query pipeline construction.
     /// <summary>
     /// Handles the gateway query plan request that the SDK sends on non-Windows platforms
     /// (where the native ServiceInterop DLL is unavailable). Parses the SQL query and
@@ -1108,6 +1207,8 @@ public class FakeCosmosHandler : HttpMessageHandler
         return CreateJsonResponse(queryPlan.ToString(Formatting.None));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/aggregate
+    //   Cosmos DB SQL supports the aggregate functions COUNT, SUM, MIN, MAX, and AVG.
     private static bool HasAggregateInSelect(CosmosSqlQuery parsed)
     {
         return parsed.SelectFields.Any(field => ContainsAggregate(field.SqlExpr));
@@ -1143,6 +1244,10 @@ public class FakeCosmosHandler : HttpMessageHandler
         };
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/query-documents
+    //   "POST https://{databaseaccount}.documents.azure.com/dbs/{db-id}/colls/{coll-id}/docs"
+    //   Body contains "query" (SQL text) and "parameters" (array of {name, value} objects).
+    //   Response: { "_rid": ..., "Documents": [...], "_count": N } with x-ms-continuation header.
     private async Task<HttpResponseMessage> HandleQueryAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -1233,6 +1338,11 @@ public class FakeCosmosHandler : HttpMessageHandler
         return BuildPagedResponse(allDocuments, offset, maxItemCount, cacheKey);
     }
 
+    // Ref: https://github.com/Azure/azure-cosmos-dotnet-v3/blob/master/Microsoft.Azure.Cosmos/src/Query/Core/Pipeline/CrossPartition/OrderBy/OrderByQueryResult.cs
+    //   "For cross partition order by queries a query like 'SELECT c.id, c.field_0 ORDER BY r.field_7'
+    //    gets rewritten as: SELECT r._rid, [{"item": r.field_7}] AS orderByItems,
+    //    {"id": r.id, "field_0": r.field_0} AS payload FROM r ... ORDER BY r.field_7"
+    //   The SDK expects each result to contain _rid, orderByItems (array of {item: value}), and payload.
     private async Task<List<JToken>> HandleOrderByQueryAsync(
         CosmosSqlQuery parsed, JObject queryBody, PartitionKey? partitionKey,
         string orderByAlias, string payloadAlias, CancellationToken cancellationToken)
@@ -1436,6 +1546,13 @@ public class FakeCosmosHandler : HttpMessageHandler
         return projected;
     }
 
+    // Ref: https://github.com/Azure/azure-cosmos-dotnet-v3/blob/master/Microsoft.Azure.Cosmos/src/Query/Core/Pipeline/GroupBy/GroupByQueryPipelineStage.cs
+    //   "SELECT c.team, c.name, COUNT(1) AS count FROM c GROUP BY c.team, c.name" gets rewritten as:
+    //   "SELECT [{"item": c.team}, {"item": c.name}] AS groupByItems,
+    //    {"team": c.team, "name": c.name, "count": {"item": COUNT(1)}} AS payload
+    //    FROM c GROUP BY c.team, c.name"
+    //   The SDK's GroupByQueryPipelineStage expects each result to contain groupByItems and payload.
+    //   Aggregate values in payload are wrapped as {"item": <value>}; AVG uses {"sum": N, "count": N}.
     /// <summary>
     /// Handles GROUP BY queries that the SDK has rewritten to the groupByItems + payload format.
     /// Reconstructs the original GROUP BY query, executes on InMemoryContainer (which computes
@@ -1522,6 +1639,10 @@ public class FakeCosmosHandler : HttpMessageHandler
         }).ToList();
     }
 
+    // Ref: https://github.com/Azure/azure-cosmos-dotnet-v3/blob/master/Microsoft.Azure.Cosmos/src/Query/Core/Pipeline/GroupBy/GroupByQueryPipelineStage.cs
+    //   The SDK rewrites GROUP BY queries from e.g.:
+    //   "SELECT c.name, COUNT(1) AS cnt FROM c GROUP BY c.name" to the groupByItems+payload format.
+    //   This method reverses that rewrite to reconstruct the original SQL for execution.
     /// <summary>
     /// Reconstructs the original GROUP BY SQL from the SDK-rewritten format.
     /// The SDK rewrites e.g. <c>SELECT c.name, COUNT(1) AS cnt FROM c GROUP BY c.name</c> to
@@ -1564,6 +1685,9 @@ public class FakeCosmosHandler : HttpMessageHandler
         return sb.ToString();
     }
 
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/query/offset-limit
+    //   "OFFSET <offset_amount> LIMIT <limit_amount>"
+    //   The SDK pipeline applies OFFSET/LIMIT itself; stripping it here avoids double-application.
     /// <summary>
     /// Strips OFFSET ... LIMIT ... from a SQL query string so the SDK pipeline
     /// can apply OFFSET/LIMIT itself (avoiding double application).
@@ -1576,6 +1700,10 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// <summary>Static accessor for <see cref="DefaultQueryPlanStrategy"/>.</summary>
     internal static string StripOffsetLimitStatic(string sql) => StripOffsetLimit(sql);
 
+    // Ref: https://github.com/Azure/azure-cosmos-dotnet-v3/blob/master/Microsoft.Azure.Cosmos/src/Query/Core/Pipeline/CrossPartition/OrderBy/OrderByQueryResult.cs
+    //   "SELECT r._rid, [{"item": r.field_7}] AS orderByItems, {"id": r.id, ...} AS payload
+    //    FROM r ... ORDER BY r.field_7"
+    //   This method produces the rewritten ORDER BY query in the format the SDK expects.
     /// <summary>
     /// Builds the ORDER BY rewritten query in the format the SDK expects:
     /// <c>SELECT c._rid, [{"item": c.field}] AS orderByItems, c AS payload FROM c ... ORDER BY c.field ASC</c>
@@ -1785,6 +1913,12 @@ public class FakeCosmosHandler : HttpMessageHandler
                     string.Equals(prop.Key, "item", StringComparison.OrdinalIgnoreCase)));
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "x-ms-documentdb-partitionkeyrangeid: Used in change feed requests. The partition key range
+    //    ID for reading data."
+    // Ref: https://learn.microsoft.com/en-us/azure/cosmos-db/nosql/how-to-query-container#cross-partition-query
+    //   Cross-partition queries fan out to all physical partitions; each partition key range
+    //   is queried independently and results are merged by the SDK.
     private List<JToken> FilterDocumentsByRange(List<JToken> documents, string? rangeId, string? payloadPropertyName = null)
     {
         if (_partitionKeyRangeCount <= 1 || rangeId is null)
@@ -1813,6 +1947,11 @@ public class FakeCosmosHandler : HttpMessageHandler
         return PartitionKeyHash.GetRangeIndex(pkValue, _partitionKeyRangeCount);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-documents
+    //   "Performing a GET on the documents resource of a particular collection returns a list
+    //    of documents under the collection."
+    //   Request uses x-ms-max-item-count, x-ms-continuation, x-ms-documentdb-partitionkeyrangeid
+    //   headers. Response: { "_rid": ..., "Documents": [...], "_count": N }.
     private async Task<HttpResponseMessage> HandleReadFeedAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -1852,6 +1991,15 @@ public class FakeCosmosHandler : HttpMessageHandler
         return BuildPagedResponse(allDocuments, offset, maxItemCount, cacheKey);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/query-documents
+    //   Response body: { "_rid": <collection-rid>, "Documents": [...], "_count": N }
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-response-headers
+    //   "x-ms-request-charge: number of normalized request units (RU) consumed."
+    //   "x-ms-activity-id: unique identifier for the operation."
+    //   "x-ms-session-token: session token of the request for session consistency."
+    //   "x-ms-item-count: number of items returned for a query or read-feed request."
+    //   "x-ms-continuation: intermediate state of query execution; returned when there are
+    //    additional results. Clients resubmit with x-ms-continuation header to resume."
     private HttpResponseMessage BuildPagedResponse(
         List<JToken> allDocuments, int offset, int maxItemCount, string cacheKey)
     {
@@ -1907,6 +2055,8 @@ public class FakeCosmosHandler : HttpMessageHandler
         return allDocuments;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/query-documents
+    //   Body: { "query": "<SQL>", "parameters": [{"name": "@param", "value": <val>}, ...] }
     private static QueryDefinition BuildQueryDefinition(string sqlQuery, JObject queryBody)
     {
         var queryDef = new QueryDefinition(sqlQuery);
@@ -1926,6 +2076,13 @@ public class FakeCosmosHandler : HttpMessageHandler
         return queryDef;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "x-ms-documentdb-partitionkey: The partition key value for the requested document or
+    //    attachment operation. ... this is an array containing just one value."
+    //   "By design it's a single partition query. Supported in API versions 2015-12-16 and newer."
+    // Ref: https://learn.microsoft.com/en-us/dotnet/api/microsoft.azure.cosmos.partitionkeybuilder
+    //   PartitionKeyBuilder supports hierarchical (multi-component) partition keys where the
+    //   header array contains multiple values, one per partition key path level.
     private static PartitionKey? ExtractPartitionKey(HttpRequestMessage request)
     {
         if (request.Headers.TryGetValues("x-ms-documentdb-partitionkey", out var values))
@@ -1986,6 +2143,10 @@ public class FakeCosmosHandler : HttpMessageHandler
         return null;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "x-ms-max-item-count: An integer indicating the maximum number of items to be returned
+    //    per page. An x-ms-max-item-count of -1 can be specified to let the service determine
+    //    the optimal item count."
     private static int ExtractMaxItemCount(HttpRequestMessage request)
     {
         if (request.Headers.TryGetValues("x-ms-max-item-count", out var values) &&
@@ -1997,6 +2158,12 @@ public class FakeCosmosHandler : HttpMessageHandler
         return 0;
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/common-cosmosdb-rest-request-headers
+    //   "x-ms-documentdb-partitionkeyrangeid: Used in change feed requests. The partition key
+    //    range ID for reading data."
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-documents
+    //   "x-ms-documentdb-partitionkeyrangeid: The partition key range ID for reading data.
+    //    Available from REST API version 2016-07-11 onwards."
     private static string? ExtractPartitionKeyRangeId(HttpRequestMessage request)
     {
         if (request.Headers.TryGetValues("x-ms-documentdb-partitionkeyrangeid", out var values))
