@@ -786,7 +786,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         if (!_items.TryGetValue(key, out var json) || IsExpired(key))
         {
             EvictIfExpired(key);
-            throw InMemoryCosmosException.Create($"Entity with the specified id does not exist in the system. id = {id}",
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/http-status-codes-for-cosmosdb
+            //   404 Not found — "The operation is attempting to act on a resource that no longer exists."
+            throw InMemoryCosmosException.Create($"Resource Not Found. Entity with the specified id does not exist in the system. id = {id}",
                 HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
@@ -934,7 +936,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             if (!_items.ContainsKey(key) || IsExpired(key))
             {
                 EvictIfExpired(key);
-                throw InMemoryCosmosException.Create($"Entity with the specified id does not exist. id = {id}",
+                // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/http-status-codes-for-cosmosdb
+                //   404 Not found — "The operation is attempting to act on a resource that no longer exists."
+                throw InMemoryCosmosException.Create($"Resource Not Found. Entity with the specified id does not exist in the system. id = {id}",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
 
@@ -1018,7 +1022,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
             {
                 EvictIfExpired(key);
-                throw InMemoryCosmosException.Create($"Entity with the specified id does not exist. id = {id}",
+                // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/http-status-codes-for-cosmosdb
+                //   404 Not found — "The operation is attempting to act on a resource that no longer exists."
+                throw InMemoryCosmosException.Create($"Resource Not Found. Entity with the specified id does not exist in the system. id = {id}",
                     HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
             }
 
@@ -1099,7 +1105,9 @@ internal class InMemoryContainer : Container, IContainerTestSetup
         if (!_items.TryGetValue(key, out var existingJson) || IsExpired(key))
         {
             EvictIfExpired(key);
-            throw InMemoryCosmosException.Create($"Entity with the specified id does not exist. id = {id}",
+            // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/http-status-codes-for-cosmosdb
+            //   404 Not found — "The operation is attempting to act on a resource that no longer exists."
+            throw InMemoryCosmosException.Create($"Resource Not Found. Entity with the specified id does not exist in the system. id = {id}",
                 HttpStatusCode.NotFound, 0, Guid.NewGuid().ToString(), SyntheticRequestCharge);
         }
 
@@ -3247,9 +3255,22 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
     private ResponseMessage CreateResponseMessage(HttpStatusCode statusCode, string json = null, string etag = null, int subStatusCode = 0)
     {
-        var errorMessage = (int)statusCode >= 400
-            ? $"Response status code does not indicate success: {statusCode} ({(int)statusCode})"
-            : null;
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/http-status-codes-for-cosmosdb
+        var errorMessage = statusCode switch
+        {
+            HttpStatusCode.NotFound => "Resource Not Found. Entity with the specified id does not exist in the system.",
+            _ when (int)statusCode >= 400 => $"Response status code does not indicate success: {statusCode} ({(int)statusCode})",
+            _ => null
+        };
+
+        // For error responses with no explicit body, synthesize a JSON error body matching the
+        // real Cosmos DB REST API format. The SDK reads this body to populate CosmosException.ResponseBody.
+        // Ref: Observed Cosmos DB REST API error body: {"code":"NotFound","message":"Resource Not Found. ..."}
+        if (json is null && errorMessage is not null)
+        {
+            json = $"{{\"code\":\"{statusCode}\",\"message\":\"{errorMessage}\"}}";
+        }
+
         var msg = new ResponseMessage(statusCode, requestMessage: null, errorMessage: errorMessage)
         {
             Content = json is not null ? ToStream(json) : null

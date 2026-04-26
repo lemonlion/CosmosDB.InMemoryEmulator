@@ -1932,10 +1932,39 @@ public class CosmosExceptionDeepDiveTests
         }
         catch (CosmosException ex)
         {
-            // CosmosException.Message includes the user-provided message
+            // CosmosException.Message includes "Resource Not Found" matching real SDK behavior
+            ex.Message.Should().Contain("Resource Not Found");
             ex.Message.Should().Contain("Entity with the specified id does not exist");
             ex.StatusCode.Should().Be(HttpStatusCode.NotFound);
         }
+    }
+
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/http-status-codes-for-cosmosdb
+    //   404 Not found — "The operation is attempting to act on a resource that no longer exists."
+    // Ref: Observed Cosmos DB REST API error body: {"code":"NotFound","message":"Resource Not Found. ..."}
+    // The exception message should contain "Resource Not Found" to match the real SDK behavior,
+    // enabling code that checks for this string (e.g., e.Message.Contains("Resource Not Found")).
+    [Theory]
+    [InlineData("ReadItem")]
+    [InlineData("ReplaceItem")]
+    [InlineData("DeleteItem")]
+    [InlineData("PatchItem")]
+    public async Task CosmosException_NotFound_Message_ContainsResourceNotFound(string operation)
+    {
+        Func<Task> act = operation switch
+        {
+            "ReadItem" => () => _container.ReadItemAsync<TestDocument>("nope", new PartitionKey("pk")),
+            "ReplaceItem" => () => _container.ReplaceItemAsync(
+                new TestDocument { Id = "nope", PartitionKey = "pk" }, "nope", new PartitionKey("pk")),
+            "DeleteItem" => () => _container.DeleteItemAsync<TestDocument>("nope", new PartitionKey("pk")),
+            "PatchItem" => () => _container.PatchItemAsync<TestDocument>("nope", new PartitionKey("pk"),
+                new[] { PatchOperation.Set("/name", "x") }),
+            _ => throw new ArgumentException(operation)
+        };
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        ex.Which.Message.ToLower().Should().Contain("resource not found");
     }
 
     [Fact]
@@ -2014,26 +2043,34 @@ public class StreamErrorBodyContentDeepDiveTests
     private readonly InMemoryContainer _container = new("test", "/partitionKey");
 
     [Fact]
-    public async Task StreamError_404_Content_IsNull()
+    public async Task StreamError_404_Content_ContainsErrorBody()
     {
         var response = await _container.ReadItemStreamAsync("nope", new PartitionKey("pk"));
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
-        response.Content.Should().BeNull();
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/http-status-codes-for-cosmosdb
+        // Real Cosmos DB returns a JSON error body for 404 responses.
+        response.Content.Should().NotBeNull();
+        using var reader = new StreamReader(response.Content);
+        var body = reader.ReadToEnd();
+        body.Should().Contain("Resource Not Found");
     }
 
     [Fact]
-    public async Task StreamError_409_Content_IsNull()
+    public async Task StreamError_409_Content_ContainsErrorBody()
     {
         await _container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")), new PartitionKey("pk"));
         var response = await _container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")), new PartitionKey("pk"));
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
-        response.Content.Should().BeNull();
+        response.Content.Should().NotBeNull();
+        using var reader = new StreamReader(response.Content);
+        var body = reader.ReadToEnd();
+        body.Should().Contain("Conflict");
     }
 
     [Fact]
-    public async Task StreamError_412_Content_IsNull()
+    public async Task StreamError_412_Content_ContainsErrorBody()
     {
         await _container.CreateItemStreamAsync(
             new MemoryStream(Encoding.UTF8.GetBytes("""{"id":"1","partitionKey":"pk"}""")), new PartitionKey("pk"));
@@ -2042,7 +2079,10 @@ public class StreamErrorBodyContentDeepDiveTests
             "1", new PartitionKey("pk"),
             new ItemRequestOptions { IfMatchEtag = "\"stale\"" });
         response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
-        response.Content.Should().BeNull();
+        response.Content.Should().NotBeNull();
+        using var reader = new StreamReader(response.Content);
+        var body = reader.ReadToEnd();
+        body.Should().Contain("PreconditionFailed");
     }
 }
 

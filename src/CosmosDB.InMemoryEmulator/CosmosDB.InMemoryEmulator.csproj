@@ -41,7 +41,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="..\CosmosDB.InMemoryEmulator.ProductionExtensions\CosmosDB.InMemoryEmulator.ProductionExtensions.csproj" />
+		<ProjectReference Include="..\CosmosDB.InMemoryEmulator.ProductionExtensions\CosmosDB.InMemoryEmulator.ProductionExtensions.csproj" PrivateAssets="All" />
 	</ItemGroup>
 
 </Project>

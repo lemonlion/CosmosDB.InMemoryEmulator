@@ -112,6 +112,33 @@ public class FakeCosmosHandlerCrudTests(EmulatorSession session) : IAsyncLifetim
         ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/http-status-codes-for-cosmosdb
+    //   404 Not found — "The operation is attempting to act on a resource that no longer exists."
+    // Ref: Observed Cosmos DB REST API error body: {"code":"NotFound","message":"Resource Not Found. ..."}
+    // The exception message should contain "Resource Not Found" to match the real SDK behavior.
+    [Theory]
+    [InlineData("ReadItem")]
+    [InlineData("ReplaceItem")]
+    [InlineData("DeleteItem")]
+    [InlineData("PatchItem")]
+    public async Task Handler_NotFound_Message_ContainsResourceNotFound(string operation)
+    {
+        Func<Task> act = operation switch
+        {
+            "ReadItem" => () => _container.ReadItemAsync<TestDocument>("nonexistent", new PartitionKey("pk1")),
+            "ReplaceItem" => () => _container.ReplaceItemAsync(
+                new TestDocument { Id = "nonexistent", PartitionKey = "pk1" }, "nonexistent", new PartitionKey("pk1")),
+            "DeleteItem" => () => _container.DeleteItemAsync<TestDocument>("nonexistent", new PartitionKey("pk1")),
+            "PatchItem" => () => _container.PatchItemAsync<TestDocument>("nonexistent", new PartitionKey("pk1"),
+                new[] { PatchOperation.Set("/name", "x") }),
+            _ => throw new ArgumentException(operation)
+        };
+
+        var ex = await act.Should().ThrowAsync<CosmosException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        ex.Which.Message.ToLower().Should().Contain("resource not found");
+    }
+
     [Fact]
     public async Task Handler_ReadItem_WithPartitionKey_ReturnsCorrectItem()
     {
