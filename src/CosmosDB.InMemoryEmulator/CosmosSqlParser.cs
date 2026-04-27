@@ -969,6 +969,24 @@ public static class CosmosSqlParser
                     return new SqlExpressionCondition(func);
                 }
 
+                var hasNestedFunctions = func.Arguments.Any(ContainsFunctionCall);
+                if (hasNestedFunctions)
+                {
+                    return new SqlExpressionCondition(func);
+                }
+
+                var hasArithmetic = func.Arguments.Any(ContainsArithmetic);
+                if (hasArithmetic)
+                {
+                    return new SqlExpressionCondition(func);
+                }
+
+                var hasComplexExpressions = func.Arguments.Any(ContainsComplexExpression);
+                if (hasComplexExpressions)
+                {
+                    return new SqlExpressionCondition(func);
+                }
+
                 if (LegacyFunctionNames.Contains(func.FunctionName))
                 {
                     var args = func.Arguments.Select(ExprToString).ToArray();

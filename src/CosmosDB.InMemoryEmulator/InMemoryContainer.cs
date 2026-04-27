@@ -305,6 +305,16 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     }
     private int? _defaultTimeToLive;
 
+    /// <summary>
+    /// The unique key policy for this container. Set to configure unique key constraints
+    /// that enforce uniqueness of one or more values within a logical partition.
+    /// </summary>
+    public UniqueKeyPolicy UniqueKeyPolicy
+    {
+        get => _containerProperties.UniqueKeyPolicy;
+        set => _containerProperties.UniqueKeyPolicy = value ?? new UniqueKeyPolicy();
+    }
+
     /// <summary>The partition key path(s) for this container.</summary>
     public IReadOnlyList<string> PartitionKeyPaths { get; }
 
@@ -3318,17 +3328,22 @@ internal class InMemoryContainer : Container, IContainerTestSetup
 
         foreach (var uniqueKey in policy.UniqueKeys)
         {
-            var newValues = uniqueKey.Paths.Select(p => jObj.SelectToken(p.TrimStart('/'))?.ToString()).ToList();
+            var newTokens = uniqueKey.Paths.Select(p => jObj.SelectToken(CosmosPathToSelectTokenPath(p))).ToList();
+
+            // Cosmos DB allows multiple items where ALL unique key paths are null/missing
+            if (newTokens.All(t => t is null || t.Type == JTokenType.Null))
+                continue;
 
             foreach (var (existingKey, existingJson) in _items)
             {
                 if (existingKey.PartitionKey != partitionKey) continue;
                 if (excludeItemId != null && existingKey.Id == excludeItemId) continue;
+                if (IsExpired(existingKey)) continue;
 
                 var existingObj = JsonParseHelpers.ParseJson(existingJson);
-                var existingValues = uniqueKey.Paths.Select(p => existingObj.SelectToken(p.TrimStart('/'))?.ToString()).ToList();
+                var existingTokens = uniqueKey.Paths.Select(p => existingObj.SelectToken(CosmosPathToSelectTokenPath(p))).ToList();
 
-                if (newValues.SequenceEqual(existingValues))
+                if (UniqueKeyTokensMatch(newTokens, existingTokens))
                 {
                     throw InMemoryCosmosException.Create(
                         "Unique index constraint violation.",
@@ -3336,6 +3351,53 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Compares two lists of JTokens for unique key equality, preserving JSON type information.
+    /// Null/missing tokens are treated as equal to each other. Different JSON types (e.g. integer 42 vs string "42")
+    /// are treated as distinct values. Numeric types (Integer/Float) are compared by value so that 1 and 1.0 conflict.
+    /// This matches real Cosmos DB behavior.
+    /// </summary>
+    private static bool UniqueKeyTokensMatch(List<JToken> newTokens, List<JToken> existingTokens)
+    {
+        if (newTokens.Count != existingTokens.Count) return false;
+
+        for (int i = 0; i < newTokens.Count; i++)
+        {
+            var a = newTokens[i];
+            var b = existingTokens[i];
+
+            bool aNull = a is null || a.Type == JTokenType.Null;
+            bool bNull = b is null || b.Type == JTokenType.Null;
+
+            if (aNull && bNull) continue;
+            if (aNull || bNull) return false;
+
+            bool aNumeric = a.Type == JTokenType.Integer || a.Type == JTokenType.Float;
+            bool bNumeric = b.Type == JTokenType.Integer || b.Type == JTokenType.Float;
+
+            if (aNumeric && bNumeric)
+            {
+                // Compare numeric values regardless of Integer/Float distinction
+                if ((double)a != (double)b) return false;
+            }
+            else
+            {
+                if (a.Type != b.Type) return false;
+                if (!JToken.DeepEquals(a, b)) return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Converts a Cosmos DB path (e.g. "/value/code") to a Newtonsoft.Json SelectToken path (e.g. "value.code").
+    /// </summary>
+    private static string CosmosPathToSelectTokenPath(string cosmosPath)
+    {
+        var segments = cosmosPath.TrimStart('/').Split('/');
+        return BuildSelectTokenPath(segments);
     }
 
     private bool ValidateUniqueKeysStream(JObject jObj, string partitionKey, string excludeItemId = null)
@@ -5983,6 +6045,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         return jArray.Any(t => t.Type == JTokenType.Null);
                     }
 
+                    if (searchValue is UndefinedValue)
+                    {
+                        return false;
+                    }
+
                     var searchStr = searchValue.ToString();
                     var partial = func.Arguments.Length >= 3 &&
                         string.Equals(func.Arguments[2].Trim(), "true", StringComparison.OrdinalIgnoreCase);
@@ -6333,7 +6400,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                     // (even when its value is null).
                     if (func.Arguments[0] is ParameterExpression param)
                         return parameters.ContainsKey(param.Name);
-                    return args[0] != null;
+                    return args[0] is not null and not UndefinedValue;
                 }
             case "IS_NULL": return args.Length > 0 && args[0] is null;
             case "IS_ARRAY":
@@ -6841,6 +6908,11 @@ internal class InMemoryContainer : Container, IContainerTestSetup
                         if (searchValue is null)
                         {
                             return jArray.Any(t => t.Type == JTokenType.Null);
+                        }
+
+                        if (searchValue is UndefinedValue)
+                        {
+                            return false;
                         }
 
                         var searchStr = searchValue.ToString();
@@ -8456,6 +8528,7 @@ internal class InMemoryContainer : Container, IContainerTestSetup
     /// <summary>
     /// Converts path segments to a Newtonsoft.Json SelectToken-compatible path.
     /// Numeric segments become array indexers (e.g., ["runs","0"] → "runs[0]").
+    /// Segments containing special characters (spaces, dots, etc.) use bracket notation.
     /// </summary>
     internal static string BuildSelectTokenPath(IEnumerable<string> segments)
     {
@@ -8465,6 +8538,10 @@ internal class InMemoryContainer : Container, IContainerTestSetup
             if (int.TryParse(segment, out _))
             {
                 sb.Append('[').Append(segment).Append(']');
+            }
+            else if (segment.IndexOfAny(new[] { '.', ' ', '[', ']', '\'', '"' }) >= 0)
+            {
+                sb.Append("['").Append(segment).Append("']");
             }
             else
             {
