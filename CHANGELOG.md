@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.8] - 2026-07-14
+
+### Fixed
+- FakeCosmosHandler now implements the change feed HTTP protocol (A-IM: Incremental feed), fixing `ArgumentException: continuationToken must be a non-empty string` when using `ChangeFeedProcessor` through the SDK pipeline
+
+## [4.0.7] - 2026-07-14
+
+### Fixed
+- Removed known limitations that were only relevant to the direct `InMemoryContainer` approach (no longer the recommended usage pattern)
+- Marked Known Limitation #18 (ChangeFeedProcessor Stream Handler) as FIXED
+
 ## [4.0.5] - 2026-04-23
 
 ### Fixed

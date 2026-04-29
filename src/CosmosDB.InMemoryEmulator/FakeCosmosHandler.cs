@@ -141,6 +141,7 @@ public class FakeCosmosHandler : HttpMessageHandler
     /// </summary>
     private static readonly HashSet<string> KnownRequestHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
+        "A-IM",
         "x-ms-documentdb-partitionkey",
         "x-ms-documentdb-isquery",
         "x-ms-documentdb-is-upsert",
@@ -1816,6 +1817,13 @@ public class FakeCosmosHandler : HttpMessageHandler
     private async Task<HttpResponseMessage> HandleReadFeedAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-documents
+        //   "A-IM: Incremental feed" header distinguishes change feed from regular read feed.
+        if (IsChangeFeedRequest(request))
+        {
+            return await HandleChangeFeedAsync(request);
+        }
+
         var maxItemCount = ExtractMaxItemCount(request);
         var continuation = DecodeContinuation(request);
         var rangeId = ExtractPartitionKeyRangeId(request);
@@ -1850,6 +1858,116 @@ public class FakeCosmosHandler : HttpMessageHandler
         allDocuments = FilterDocumentsByRange(allDocuments, rangeId);
 
         return BuildPagedResponse(allDocuments, offset, maxItemCount, cacheKey);
+    }
+
+    /// <summary>
+    /// Handles change feed HTTP requests (GET /docs with A-IM: Incremental feed).
+    /// The SDK's ChangeFeedProcessor sends these requests and expects:
+    /// - An <c>etag</c> response header containing a non-empty continuation token
+    ///   (used by <c>AutoCheckpointer.CheckpointAsync</c>)
+    /// - HTTP 200 with documents when changes exist
+    /// - HTTP 304 Not Modified when no new changes are available
+    /// </summary>
+    /// <remarks>
+    /// Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-documents
+    ///   "If-None-Match: *" means read from the beginning;
+    ///   "If-None-Match: {etag}" means resume from that checkpoint position.
+    ///   The response etag is the logical sequence number (LSN) of the last change returned.
+    /// </remarks>
+    private async Task<HttpResponseMessage> HandleChangeFeedAsync(HttpRequestMessage request)
+    {
+        var maxItemCount = ExtractMaxItemCount(request);
+        var rangeId = ExtractPartitionKeyRangeId(request);
+
+        // Determine checkpoint from If-None-Match header.
+        // "*" or absent → read from beginning (checkpoint 0).
+        // Quoted numeric string (e.g. "\"42\"") → resume from that position.
+        long checkpoint = 0;
+        if (request.Headers.IfNoneMatch.Count > 0)
+        {
+            var tag = request.Headers.IfNoneMatch.First().Tag;
+            // Strip surrounding quotes: "\"42\"" → "42"
+            var unquoted = tag?.Trim('"') ?? "";
+            if (unquoted != "*" && long.TryParse(unquoted, out var parsed))
+            {
+                checkpoint = parsed;
+            }
+        }
+
+        // Read changes from the backing container's change feed
+        var iterator = _container.GetChangeFeedIterator<JObject>(checkpoint);
+        var allChanges = new List<JObject>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync();
+            if (page.StatusCode == HttpStatusCode.NotModified)
+                break;
+            allChanges.AddRange(page);
+        }
+        var totalChanges = allChanges.Count;
+
+        allChanges = FilterDocumentsByRange(allChanges.Cast<JToken>().ToList(), rangeId)
+            .Cast<JObject>().ToList();
+
+        // Apply maxItemCount paging
+        var paged = maxItemCount > 0 && allChanges.Count > maxItemCount
+            ? allChanges.Take(maxItemCount).ToList()
+            : allChanges;
+
+        var newCheckpoint = checkpoint + totalChanges;
+
+        if (paged.Count == 0)
+        {
+            // No new changes — return 304 Not Modified with the current checkpoint as etag
+            var notModified = new HttpResponseMessage(HttpStatusCode.NotModified);
+            notModified.Headers.Add("x-ms-request-charge", "1");
+            notModified.Headers.Add("x-ms-activity-id", Guid.NewGuid().ToString());
+            notModified.Headers.Add("x-ms-item-count", "0");
+            notModified.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue(
+                $"\"{newCheckpoint}\"");
+            return notModified;
+        }
+
+        var responseBody = new JObject
+        {
+            ["_rid"] = _collectionRid,
+            ["Documents"] = new JArray(paged),
+            ["_count"] = paged.Count
+        };
+
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseBody.ToString(), Encoding.UTF8, "application/json")
+        };
+
+        response.Headers.Add("x-ms-request-charge", "1");
+        response.Headers.Add("x-ms-activity-id", Guid.NewGuid().ToString());
+        response.Headers.Add("x-ms-session-token", _container.CurrentSessionToken);
+        response.Headers.Add("x-ms-item-count", paged.Count.ToString());
+
+        // The SDK reads the etag header as the continuation token for CheckpointAsync.
+        // This MUST be non-empty or DocumentServiceLeaseCheckpointerCore.CheckpointAsync throws.
+        response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue(
+            $"\"{newCheckpoint}\"");
+
+        // If there are more changes beyond this page, set continuation to signal more pages
+        if (paged.Count < allChanges.Count)
+        {
+            response.Headers.Add("x-ms-continuation", $"\"{newCheckpoint}\"");
+        }
+
+        return response;
+    }
+
+    private static bool IsChangeFeedRequest(HttpRequestMessage request)
+    {
+        // Ref: https://learn.microsoft.com/en-us/rest/api/cosmos-db/list-documents
+        //   The A-IM header with value "Incremental feed" indicates a change feed request.
+        if (!request.Headers.TryGetValues("A-IM", out var values))
+        {
+            return false;
+        }
+        return values.Any(v => v.Contains("Incremental", StringComparison.OrdinalIgnoreCase));
     }
 
     private HttpResponseMessage BuildPagedResponse(

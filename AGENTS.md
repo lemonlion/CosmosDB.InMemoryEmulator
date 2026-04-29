@@ -2,10 +2,10 @@
 
 ## TDD Workflow
 
-- Always use Test-Driven Development (TDD): write tests first, then follow the red-green-refactor cycle.
+- Always use Test-Driven Development (TDD): write integration tests first, then follow the red-green-refactor cycle.
 - Write a failing test (red), implement the minimum code to make it pass (green), then refactor.
-- Write additional failing tests to cover edge cases and error conditions, and repeat the cycle until you have comprehensive test coverage for the feature or bug fix you're working on.
-- For every unit test written, if possible, write the equivalent integration test, testing the same functionality from the entry point.
+- Write additional failing integration tests to cover edge cases and error conditions, and repeat the cycle until you have comprehensive test coverage for the feature or bug fix you're working on.
+- Only write unit tests when it's not possible to test with integration tests
 
 ## Bug Fixing
 
