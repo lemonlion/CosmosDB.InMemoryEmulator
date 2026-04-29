@@ -869,37 +869,6 @@ public class ChangeFeedAdvancedTests
         response.StatusCode.Should().NotBe(HttpStatusCode.InternalServerError);
     }
 
-    [Fact(Skip = "InMemoryContainer cannot be cast to ContainerInternal, which is required by " +
-                   "ChangeFeedProcessorBuilder.WithLeaseContainer(). The real Cosmos SDK internally casts the " +
-                   "lease Container to ContainerInternal (an internal abstract class) to access internal APIs for " +
-                   "lease management. InMemoryContainer extends the public Container abstract class but not " +
-                   "ContainerInternal, so this cast fails with InvalidCastException. Implementing ContainerInternal " +
-                   "would require depending on internal SDK types that are not part of the public API surface.")]
-    public async Task ChangeFeedProcessor_StreamHandler_InvokesHandler()
-    {
-        await _container.CreateItemAsync(
-            new TestDocument { Id = "1", PartitionKey = "pk1", Name = "Test" },
-            new PartitionKey("pk1"));
-
-        var invoked = false;
-        var leaseContainer = new InMemoryContainer("leases", "/id");
-        var processor = _container.GetChangeFeedProcessorBuilder(
-                "stream-processor",
-                (ChangeFeedProcessorContext ctx, Stream changes, CancellationToken ct) =>
-                {
-                    invoked = true;
-                    return Task.CompletedTask;
-                })
-            .WithInstanceName("instance")
-            .WithLeaseContainer(leaseContainer)
-            .Build();
-
-        await processor.StartAsync();
-        await Task.Delay(500);
-        await processor.StopAsync();
-
-        invoked.Should().BeTrue();
-    }
 }
 
 
